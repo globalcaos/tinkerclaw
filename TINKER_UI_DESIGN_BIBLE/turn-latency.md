@@ -682,3 +682,11 @@ instead of as a gap.
 the prompt key (the `chat.send` idempotencyKey, PQ-1) and emitted unconditionally like the runner's
 `[turn-span]` lines, would turn the upper bound into a distribution. Until it exists, quote no p50
 for this window. **RUN: unmeasured.**
+
+### 9.1 What held the window on 2026-10-15, and the step markers (bug-log `stale-plugin-registry-rebuild-storm`, `pre-reply-stall-invisible`)
+
+**Measured.** Tabs sat in "preparing context" for minutes. A 20 s `diagnostic.cpuProfile` of the gateway (pid 327459, 13:47) put 43.6% of the main thread under `runEmbeddedAttempt`, 38.9% of it in `loadPluginRegistrySnapshot` → `loadInstalledPluginIndex` → `buildInstalledPluginIndex`: every embedded run (chat turns, `jev-explain`, title suggestions, Fractals, subagents) rebuilt the plugin index from ~146 manifests while building its tools (`createPdfTool` → provider-auth checks). The persisted registry (`~/.openclaw/plugins/installs.json`) dated from 2026-09-23 and was `stale` (`policy-changed, source-changed, stale-manifest, stale-package`), and the derived fallback was cached for 1 s, so the rebuild ran on nearly every run. Event loop: ELU 1.0, p99 4.6-5.7 s (24 s at 12:58). After `openclaw plugins registry --refresh` (13:50) the same profile no longer showed the rebuild, and the loop read p99 234 ms, ELU 0.38, with 4 runs active.
+
+**Changed.** The gateway refreshes a stale persisted registry once at start (`plugin-registry-startup-refresh.ts`, the CLI's own call, and logs why). The derived fallback is cached 60 s, keyed as before by policy hash, roots and load paths. A fallback logs its reason once per process. Jev calls fail after 1 s (`JEV_MAX_WAIT_MS`, the owner's rule), and `jev-explain` runs no longer take `sessions`-lane slots from chat turns.
+
+**The step markers.** Inside this window, `getReplyFromConfig` now records the step a prompt is in (`config`, `workspace`, `media-understanding`, `link-understanding`, `session-init`, `reset-model`, `directives`, `inline-actions`, `before-agent-reply-hooks`, `sandbox-media`, `prepare-run`), and the stuck-session line reads `phase=pre:<step>:<seconds>s` until the reply operation exists, where it used to read `phase=none`. This names the step a stalled prompt is in. It is not the `turn.span` pair above, so the window still has no distribution: **RUN: still unmeasured as a p50.**

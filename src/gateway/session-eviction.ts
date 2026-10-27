@@ -32,6 +32,7 @@ import { type SessionEntry, updateSessionStore } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { clearAgentRunContext } from "../infra/agent-events.js";
 import { emitCompactionTelemetry } from "../infra/compaction-telemetry.js";
+import { contentText, renderTurnEvictionMarker } from "../memory/engram/eviction-marker.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import type { ErrorShape } from "./protocol/index.js";
 import { archiveFileOnDisk, resolveSessionModelRef } from "./session-utils.js";
@@ -73,6 +74,8 @@ export type TranscriptEvictionResult =
       tokensAfter: number;
       kept: number;
       lines: string[];
+      /** FORK 2026-10-25 — the text of the first and last DROPPED user messages, for the marker. */
+      droppedUserText: { first?: string; last?: string };
       reason?: undefined;
     };
 
@@ -202,6 +205,7 @@ export function evictTranscriptTail(raw: string, keepFraction: number): Transcri
   const keptSet = new Set(kept);
   let keptChars = 0;
   let droppedChars = 0;
+  const droppedUserText: { first?: string; last?: string } = {};
   for (const entry of entries) {
     if (entry.type !== "message") {
       continue;
@@ -211,6 +215,14 @@ export function evictTranscriptTail(raw: string, keepFraction: number): Transcri
       keptChars += chars;
     } else {
       droppedChars += chars;
+      const text =
+        entryRole(entry) === "user"
+          ? contentText((entry.message as { content?: unknown } | undefined)?.content).trim()
+          : "";
+      if (text) {
+        droppedUserText.first ??= text;
+        droppedUserText.last = text;
+      }
     }
   }
   return {
@@ -221,7 +233,52 @@ export function evictTranscriptTail(raw: string, keepFraction: number): Transcri
     tokensAfter: estimateTokens(keptChars),
     kept: keptMessages,
     lines: kept.map((e) => JSON.stringify(e)),
+    droppedUserText,
   };
+}
+
+/** customType of the marker entry the EVICT button leaves where it cut (a hidden custom_message). */
+export const EVICTION_MARKER_CUSTOM_TYPE = "openclaw.evicted-turns";
+
+/**
+ * FORK 2026-10-25 — leave a marker where the oldest turns were cut. Total Recall's rule is that
+ * whatever leaves the context leaves a marker quoting the exact words and pointing back to the
+ * rest; the EVICT button used to drop the turns and leave nothing, so the model could not tell that
+ * anything had gone, or where it went.
+ *
+ * The marker is a pi `custom_message` entry with `display: false`: pi sends it to the model as a
+ * user-role text block (the same shape a compaction summary takes, which also sits in front of the
+ * first kept user message), and the chat history, which renders `message` entries, never shows it.
+ * It goes right before the first kept message and is chained in, so the parentId walk stays
+ * unbroken: the marker's parent is the entry before it, and the first kept message's parent is
+ * the marker.
+ */
+export function insertEvictionMarker(
+  lines: string[],
+  marker: string,
+  opts: { id: string; timestamp: string },
+): string[] {
+  const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  const at = entries.findIndex((e) => e.type === "message");
+  if (at < 0) {
+    return lines;
+  }
+  const prevId = at > 0 && typeof entries[at - 1].id === "string" ? entries[at - 1].id : null;
+  const entry: Record<string, unknown> = {
+    type: "custom_message",
+    customType: EVICTION_MARKER_CUSTOM_TYPE,
+    content: marker,
+    display: false,
+    details: { source: "evict" },
+    id: opts.id,
+    parentId: prevId,
+    timestamp: opts.timestamp,
+  };
+  if ("parentId" in entries[at]) {
+    entries[at].parentId = opts.id;
+  }
+  entries.splice(at, 0, entry);
+  return entries.map((e) => JSON.stringify(e));
 }
 
 /**
@@ -382,9 +439,21 @@ export async function evictSessionTranscript(params: {
     provenance: "estimated",
   });
   let archivedTranscript: string;
+  let marker = "";
   try {
     archivedTranscript = archiveFileOnDisk(params.filePath, "bak");
-    fs.writeFileSync(params.filePath, `${eviction.lines.join("\n")}\n`, "utf-8");
+    marker = renderTurnEvictionMarker({
+      evicted: eviction.evicted,
+      evictedTokens: eviction.evictedTokens,
+      firstUserText: eviction.droppedUserText.first,
+      lastUserText: eviction.droppedUserText.last,
+      archivePath: archivedTranscript,
+    });
+    const lines = insertEvictionMarker(eviction.lines, marker, {
+      id: randomUUID().slice(0, 8),
+      timestamp: new Date().toISOString(),
+    });
+    fs.writeFileSync(params.filePath, `${lines.join("\n")}\n`, "utf-8");
   } catch (err) {
     // A failed rewrite still closes its pair, or the panel's busy pulse never drops.
     emitCompactionTelemetry(compactionTarget, {
@@ -398,6 +467,9 @@ export async function evictSessionTranscript(params: {
     clearAgentRunContext(runId);
     throw err;
   }
+  // The marker is sent to the model too, so it counts in what is left (P11: measured over what
+  // the model is sent). Its own part, rounded on its own.
+  const tokensAfter = eviction.tokensAfter + estimateTokens(marker.length);
   // `completed` means the transcript was rewritten; the store invalidation below is bookkeeping
   // about cached counts, not part of what the next call will send.
   emitCompactionTelemetry(compactionTarget, {
@@ -406,7 +478,7 @@ export async function evictSessionTranscript(params: {
     lane: "embedded",
     completed: true,
     tokensBefore: eviction.tokensBefore,
-    tokensAfter: eviction.tokensAfter,
+    tokensAfter,
     tokensDropped: eviction.evictedTokens,
     durationMs: Date.now() - startedAt,
     provenance: "estimated",
@@ -440,7 +512,7 @@ export async function evictSessionTranscript(params: {
       evicted: eviction.evicted,
       evictedTokens: eviction.evictedTokens,
       tokensBefore: eviction.tokensBefore,
-      tokensAfter: eviction.tokensAfter,
+      tokensAfter,
       kept: eviction.kept,
       archived: archivedTranscript,
     },

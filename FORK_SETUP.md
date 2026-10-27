@@ -246,8 +246,8 @@ This is the step most people never find, because until 2026-09-08 there was noth
 the nightly jobs that make this fork maintain itself lived only in one machine's private cron
 store. They now ship with the repo, in `extensions/tinkerclaw-tinker-bridge/crons/`.
 
-Six jobs: nightly memory consolidation, an AI-field scan, a read-only security sweep, an
-agent-OSS survey, workspace hygiene, and a model-rank refresh. Full descriptions and the
+Seven jobs: a nightly reflection on your day, memory consolidation, an AI-field scan, a
+read-only security sweep, an agent-OSS survey, workspace hygiene, and a model-rank refresh. Full descriptions and the
 safety rules every routine follows are in that directory's `README.md`.
 
 ```bash

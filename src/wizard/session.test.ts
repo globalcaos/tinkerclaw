@@ -72,6 +72,23 @@ describe("WizardSession", () => {
     expect(done.status).toBe("cancelled");
   });
 
+  test("marks a sensitive text step so the client can mask it", async () => {
+    const session = new WizardSession(async (prompter) => {
+      await prompter.text({ message: "Token", sensitive: true });
+      await prompter.text({ message: "Name" });
+    });
+
+    const first = await session.next();
+    expect(first.step?.sensitive).toBe(true);
+    if (!first.step) {
+      throw new Error("expected first step");
+    }
+    await session.answer(first.step.id, "secret");
+
+    const second = await session.next();
+    expect(second.step?.sensitive).toBeUndefined();
+  });
+
   test("does not lose terminal completion when the last answer finishes the runner immediately", async () => {
     const session = new WizardSession(async (prompter) => {
       await prompter.text({ message: "Token" });

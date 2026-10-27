@@ -219,7 +219,7 @@ Set up the project's test environment once (a virtualenv with the device librari
 toolchain) and write its path into the plan, so the next session runs `{{test_cmd}}` from `{{test_dir}}` with
 the right interpreter. Build it to run in parallel from the start: one database and one mock server per
 test worker, timing tests marked and run alone, fakes that do only the work a test reads, test-only settings
-for costly production ones such as password hashing. Retrofitting that later cost the AcmeVision 2.0 build
+for costly production ones such as password hashing. Retrofitting that later cost the OrbisVision 2.0 build
 a turn; the measured reasons are in `master-worker-coding` § Speed tactics.
 
 ### 3. Build hop by hop

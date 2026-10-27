@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectAgentMessage, detectSystemNotice } from "./system-notice.js";
+import { detectAgentMessage, detectSystemNotice, stripRecallPack } from "./system-notice.js";
 
 // The exact string src/agents/main-session-restart-recovery.ts injects (buildResumeMessage).
 const REAL_RESUME =
@@ -122,5 +122,49 @@ describe("detectAgentMessage", () => {
   it("anything else is not an agent message", () => {
     expect(detectAgentMessage("How is Amygdala going?")).toBeNull();
     expect(detectAgentMessage("[System] x")).toBeNull();
+  });
+});
+
+describe("detectSystemNotice: behind total-recall's retrieval pack", () => {
+  // the architect 2026-10-13 20:56: "I see a big green prompt that I did not do". The 15:36 restart report was stored like this.
+  const pack =
+    "## Retrieved Memory Context\n\n## Retrieved Context\n[2026-10-13T12:24:31] [agent_message] Miro quines fotos…\n\n" +
+    '## Humor: the purple line only\n\n- "Each one gets its own lane now." → unobserved\n\n';
+  it("finds the [System] restart report and names the skill", () => {
+    const n = detectSystemNotice(
+      pack +
+        "[Tue 2026-10-13 15:36 GMT+2] [System] The gateway restart you requested at 15:35 finished at 15:36.",
+    );
+    expect(n).not.toBeNull();
+    expect(n!.who).toBe("the gateway-restart skill");
+    expect(n!.headline).toMatch(/^The gateway restart you requested/);
+  });
+  it("leaves a typed message behind the pack as a typed message", () => {
+    expect(
+      detectSystemNotice(pack + "[Tue 2026-10-13 20:56 GMT+2] I see a big green prompt"),
+    ).toBeNull();
+  });
+});
+
+describe("stripRecallPack: both pack heads, typed text untouched", () => {
+  // 2026-10-13 census: chat 90ac52f8 stored two agent prompts behind the memory-bank head.
+  const bank =
+    "## From the Shared Memory Bank\n\n(memory files and notes every session shares, synced from disk)\n\n" +
+    "## Retrieved Context\n[2026-10-10T05:39:33] [system_event] # AMYGDALA v2\n\n";
+  it("cuts the memory-bank head to the stamp, so ⟦AGENT⟧ leads", () => {
+    expect(
+      stripRecallPack(bank + "[Tue 2026-10-13 20:58 GMT+2] ⟦AGENT⟧ CLI committed 4f7f12c1."),
+    ).toBe("⟦AGENT⟧ CLI committed 4f7f12c1.");
+  });
+  it("finds [System] behind the memory-bank head", () => {
+    expect(
+      detectSystemNotice(
+        bank + "[Tue 2026-10-13 15:36 GMT+2] [System] The gateway restart you requested at 15:35.",
+      )!.who,
+    ).toBe("the gateway-restart skill");
+  });
+  it("leaves text without a pack head alone", () => {
+    const typed = "## From my notes\n[Tue 2026-10-13 20:56 GMT+2] hello";
+    expect(stripRecallPack(typed)).toBe(typed);
   });
 });

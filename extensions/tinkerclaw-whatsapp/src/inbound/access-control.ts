@@ -18,6 +18,27 @@ export type InboundAccessControlResult = {
 
 const PAIRING_REPLY_HISTORY_GRACE_MS = 30_000;
 
+const LID_JID_RE = /^(\d+)(?::\d+)?@(lid|hosted\.lid)$/;
+
+/**
+ * FORK 2026-10-13: a DM delivered on a LID now carries the sender's resolved
+ * +E.164 in `from`, so a contact listed in allowFrom by number passes the
+ * normal check. A contact listed ONLY by their LID ("<lid>@lid") would not:
+ * normalizeE164 turns that entry into a fake "+<lid digits>". This matches the
+ * chat's LID against entries written literally as LIDs (device suffix
+ * ignored). It never matches a phone entry, so it adds no one beyond the list.
+ */
+function isDmChatLidListed(allowEntries: string[], remoteJid: string): boolean {
+  const chat = typeof remoteJid === "string" ? LID_JID_RE.exec(remoteJid.trim()) : null;
+  if (!chat) {
+    return false;
+  }
+  return allowEntries.some((entry) => {
+    const listed = typeof entry === "string" ? LID_JID_RE.exec(entry.trim()) : null;
+    return listed !== null && listed[1] === chat[1];
+  });
+}
+
 function logWhatsAppVerbose(enabled: boolean | undefined, message: string) {
   if (!enabled) {
     return;
@@ -107,7 +128,8 @@ export async function checkInboundAccessControl(params: {
     isSenderAllowed: (allowEntries) => {
       return params.group
         ? policy.isGroupSenderAllowed(allowEntries, params.senderE164)
-        : policy.isDmSenderAllowed(allowEntries, params.from);
+        : policy.isDmSenderAllowed(allowEntries, params.from) ||
+            isDmChatLidListed(allowEntries, params.remoteJid);
     },
   });
   if (params.group && access.decision !== "allow") {

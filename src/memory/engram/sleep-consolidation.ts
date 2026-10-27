@@ -138,6 +138,12 @@ export interface SleepConsolidationConfig {
   skillExtraction?: SkillExtractionDeps;
   /** Opt-in Mem0 write-reconciliation sweep (Upgrade 8). */
   reconciliation?: ReconciliationDeps;
+  /**
+   * Emit the J5 `j.consolidation.run` row for this call (default true). A caller that loops over
+   * many stores owns the cycle and passes false, then emits ONE aggregated row itself: one row per
+   * store put 4,736 rows into one night's cycle (2026-10-10).
+   */
+  emitCycleRow?: boolean;
 }
 
 export interface ConsolidationResult {
@@ -254,13 +260,15 @@ export async function runSleepConsolidation(
     // logging.md §4.12 (J5) + L10: an idle night is a MEASUREMENT. Emitting nothing here would
     // make "the cycle never ran" and "the cycle ran and found nothing" the same reading, and the
     // first is the failure this row exists to catch.
-    emitJConsolidationRun({
-      durMs: Date.now() - start,
-      eventsScanned: 0,
-      skillsExtracted: 0,
-      skillsDeprecated: 0,
-      sessionKey: store.sessionKey,
-    });
+    if (config.emitCycleRow !== false) {
+      emitJConsolidationRun({
+        durMs: Date.now() - start,
+        eventsScanned: 0,
+        skillsExtracted: 0,
+        skillsDeprecated: 0,
+        sessionKey: store.sessionKey,
+      });
+    }
     return {
       newEpisodes: [],
       summariesGenerated: 0,
@@ -458,13 +466,15 @@ export async function runSleepConsolidation(
   // (skill-library.ts) and this pipeline never calls it, so the series will show a library that
   // only ever grows — which is the weak half of the J5 claim and exactly why the slot is recorded
   // rather than left out. The moment a deprecation step lands it is counted here.
-  emitJConsolidationRun({
-    durMs: durationMs,
-    eventsScanned: unprocessed.length,
-    skillsExtracted,
-    skillsDeprecated: 0,
-    sessionKey: store.sessionKey,
-  });
+  if (config.emitCycleRow !== false) {
+    emitJConsolidationRun({
+      durMs: durationMs,
+      eventsScanned: unprocessed.length,
+      skillsExtracted,
+      skillsDeprecated: 0,
+      sessionKey: store.sessionKey,
+    });
+  }
 
   return {
     newEpisodes: episodes,

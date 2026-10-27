@@ -26,6 +26,15 @@ export const EVENTS_DB_MAX_BYTES_ENV = "OPENCLAW_EVENTS_DB_MAX_BYTES";
 export const EVENTS_DB_DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
 /** The salt lives beside the database, so a sandboxed database gets a sandboxed salt. */
 export const EVENTS_SALT_BASENAME = "events.salt";
+/**
+ * Events from a process that runs no writer (a standalone script that called startEventSpool)
+ * wait in this directory beside the database until the gateway's writer ingests them (emit.ts).
+ */
+export const EVENTS_SPOOL_DIRNAME = "events-spool";
+
+export function resolveEventsSpoolDir(dbPath: string): string {
+  return join(dirname(dbPath), EVENTS_SPOOL_DIRNAME);
+}
 
 export type EventsDbResolution =
   | { readonly enabled: true; readonly dbPath: string; readonly saltPath: string }

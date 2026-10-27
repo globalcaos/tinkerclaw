@@ -67,6 +67,11 @@ export interface DecideDeps {
   rules?: (tool: string, args: string, o?: { enforcedOnly?: boolean }) => RulesResult;
   /** THALAMUS v4: routing questions that ride on this call. Their verdicts are taken out before any family sees them. */
   companion?: Companion;
+  /**
+   * Progressive activation (earned.ts, 2026-10-15): true when this rule's reviews earned it the right to act in shadow
+   * mode. Asked only for notes and send-backs.
+   */
+  earned?: (family: string, kind: string, reasonCode: string) => boolean;
 }
 
 export interface DecideInput {
@@ -87,11 +92,13 @@ export interface DecideResult {
   released?: string[];
 }
 
+// 2026-10-15: the owner's rule, a Jev call with no answer within 1 s has failed (was 1.6/2.6/1.6/4.6 s). The
+// Jev client clamps any longer budget to the same second (src/infra/jev/jev.ts JEV_MAX_WAIT_MS).
 const DEFAULT_BUDGET: Record<Seam, number> = {
-  prompt: 1600,
-  "pre-tool": 2600,
-  "post-tool": 1600,
-  stop: 4600,
+  prompt: 1000,
+  "pre-tool": 1000,
+  "post-tool": 1000,
+  stop: 1000,
 };
 
 const EXTERNAL: EffectClass[] = ["send", "spend", "restart-own-system", "delete"];
@@ -205,6 +212,15 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
   const notAllowed = verdicts.length > 0 && verdicts.every((v) => v.skipped === "not-allowed");
   const degraded = verdicts.some((v) => v.skipped !== undefined && v.skipped !== "not-allowed");
   const judgeUnavailable = jevOn && questions.length > 0 && !consulted;
+  // 2026-10-22: a refusal went unflagged because every stop-seam answer was skipped, and nothing said why (breaker,
+  // timeout, error). The decision keeps only "jev-unavailable"; this line keeps the reason for the next diagnosis.
+  if (judgeUnavailable && !notAllowed) {
+    const why = new Map<string, number>();
+    for (const v of verdicts) if (v.skipped) why.set(v.skipped, (why.get(v.skipped) ?? 0) + 1);
+    console.warn(
+      `[amygdala] jev unavailable seam=${seam} turn=${situation.turnId} skipped=${[...why].map(([k, n]) => `${k}:${n}`).join(",") || "none"}`,
+    );
+  }
 
   // 4. Every family's opinion (observe first, so a family's state update is visible to the others at this step).
   const asked = new Map(
@@ -295,18 +311,26 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
       : null;
   const code = response.kind === "proceed" && fallbackCode ? fallbackCode : best.reasonCode;
   if (response.kind === "hold") state.turnHeld = true;
+  const decidedFamily =
+    response.kind === "proceed" && (judgeUnavailable || dormantSkip) ? "fallback" : family;
+  const reasonCode = withDrivers(code, response.kind === "proceed" ? [] : drivers);
+  const earned =
+    (response.kind === "note" || response.kind === "send-back") &&
+    (deps.earned?.(decidedFamily, response.kind, reasonCode) ?? false);
   const decision: Decision = {
     situationId: situation.id,
     response,
-    family: response.kind === "proceed" && (judgeUnavailable || dormantSkip) ? "fallback" : family,
-    reasonCode: withDrivers(code, response.kind === "proceed" ? [] : drivers),
+    family: decidedFamily,
+    reasonCode,
     verdictIds: verdicts.map((v) => v.id),
     mode: deps.config.mode,
     // A family listed in `enforceFamilies` acts while the rest stays in shadow, and only with a note: it adds a line to
-    // the agent's context and can never hold or block (the architect 2026-10-03, personality first).
+    // the agent's context and can never hold or block (the architect 2026-10-03, personality first). A note or send-back whose
+    // rule earned it from the reviews acts too (2026-10-15, progressive activation).
     enforced:
       response.kind !== "proceed" &&
       (enforceMode ||
+        earned ||
         (response.kind === "note" &&
           (deps.config.enforceFamilies ?? []).includes(family as FamilyId))),
     degraded,

@@ -1,4 +1,4 @@
-// FORK 2026-10-02 (the architect: "When I switch tabs, particularly when I go back to the AcmeVision tab,
+// FORK 2026-10-02 (the architect: "When I switch tabs, particularly when I go back to the OrbisVision tab,
 // the first thing I see is in the middle of the conversation, and I have to scroll down … let's also
 // pay attention at the point we leave it when we switch tabs, and when we restart gateway or restart
 // the computer.")

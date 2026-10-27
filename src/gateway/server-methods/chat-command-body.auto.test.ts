@@ -9,9 +9,9 @@ import { buildChatSendCommandBody } from "./chat-command-body.js";
 
 describe("buildChatSendCommandBody -- /think-leading messages", () => {
   it("prepends the model directive in front of a user-typed /think", () => {
-    expect(
-      buildChatSendCommandBody({ message: "/think xhigh keep going", model: "auto" }),
-    ).toBe("/model auto /think xhigh keep going");
+    expect(buildChatSendCommandBody({ message: "/think xhigh keep going", model: "auto" })).toBe(
+      "/model auto /think xhigh keep going",
+    );
   });
 
   it("does NOT add a second /think when the user already typed one", () => {

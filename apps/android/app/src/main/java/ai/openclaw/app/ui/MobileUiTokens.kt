@@ -72,6 +72,23 @@ internal fun lightMobileColors() =
     chipBorderError = Color(0xFFF3C8C8),
   )
 
+// 2026-10-20 (the architect): the native screens (⚙ settings and the stock tabs) wear Tinker's dark wood,
+// cream text and brass accent, like the rest of the Jarvis app.
+internal fun woodMobileColors() =
+  darkMobileColors().copy(
+    surface = Color(0xFF1C140F),
+    surfaceStrong = Color(0xFF241A13),
+    cardSurface = Color(0xFF2A2019),
+    border = Color(0xFF4A3A28),
+    borderStrong = Color(0xFF6B5545),
+    text = Color(0xFFF3E6CF),
+    textSecondary = Color(0xFFC9B48F),
+    textTertiary = Color(0xFF8A7A62),
+    accent = Color(0xFFC9A86A),
+    accentSoft = Color(0xFF3A2D1E),
+    accentBorderStrong = Color(0xFFB08A4A),
+  )
+
 internal fun darkMobileColors() =
   MobileColors(
     surface = Color(0xFF1A1C20),

@@ -61,6 +61,7 @@ describe("setup: optional Jev token", () => {
     expect(readFileSync(file, "utf8")).toBe("tok-wizard-secret\n");
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(notes.join("\n")).not.toContain("tok-wizard-secret");
+    expect(p.text).toHaveBeenCalledWith(expect.objectContaining({ sensitive: true }));
   });
 
   it("asks nothing when a token already exists", async () => {

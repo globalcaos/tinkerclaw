@@ -8,6 +8,10 @@
  * 2. `llm_output` -- capture user reaction to previous humor attempt by scanning
  *    for positive signals (laughter, emoji, affirmation).
  *
+ * And one gateway method, `limbic.reaction.set` -- his tap on a purple line's chips in Tinker (laughed / neutral /
+ * not now) becomes the outcome of that line's attempt row (J7 §8.6, plan Phase 1.4). Each new row is also judged
+ * joke or plain (`src/joke-judge.ts`).
+ *
  * Reads persona humor settings from Identity Persistence shared state at
  * `~/.openclaw/cognitive/identity-persistence.json`. Falls back to config
  * defaults when that file is absent.
@@ -20,19 +24,24 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { isSlashCommandPrompt, ownerWords } from "openclaw/plugin-sdk/fork-prompt-envelope";
 import { createHumorTrigger, type HumorTrigger } from "./src/humor-trigger.js";
+import { createJokeJudge } from "./src/joke-judge.js";
 import {
   createLimbicRuntime,
   type LimbicRuntime,
   type HumorCalibration,
 } from "./src/limbic-runtime.js";
 import {
+  applyTap,
   buildHumorBlock,
   extractSpokenLine,
   jokesOff,
   lastTurnReplyText,
   reactionTo,
+  TAP_REACTIONS,
   type SpokenLineAttempt,
+  type TapReaction,
 } from "./src/spoken-line.js";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +78,8 @@ function frequencyToNumber(freq: string): number {
       return 0.25;
     case "high":
       return 0.5;
+    case "max":
+      return 0.9;
     default:
       return 0.1;
   }
@@ -123,6 +134,22 @@ function readRecentSpokenLines(): SpokenLineAttempt[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Thalamus owns the Jev settings: where Jev lives, and whether real text may be sent to it at all
+ * (`jev.sendRealSituations`). The judge reads them from the live gateway config, never from its own copy.
+ */
+function thalamusJev(api: OpenClawPluginApi): Record<string, unknown> {
+  let cfg: unknown;
+  try {
+    cfg = api.runtime.config.current();
+  } catch {
+    cfg = api.config;
+  }
+  type Cfg = { plugins?: { entries?: Record<string, { config?: { jev?: unknown } }> } };
+  const jev = (cfg as Cfg | undefined)?.plugins?.entries?.["tinkerclaw-thalamus"]?.config?.jev;
+  return jev && typeof jev === "object" ? (jev as Record<string, unknown>) : {};
 }
 
 /**
@@ -186,6 +213,31 @@ export default definePluginEntry({
     // Spoken lines and how the principal reacted to each, newest last
     let recentSpokenLines = readRecentSpokenLines();
 
+    const jevCfg = thalamusJev(api);
+    const judge = createJokeJudge({
+      allowed: () => {
+        const j = thalamusJev(api);
+        return j.enabled !== false && j.sendRealSituations === true;
+      },
+      baseUrl: typeof jevCfg.baseUrl === "string" ? jevCfg.baseUrl : "https://api.typesafe.ai",
+      model: typeof jevCfg.model === "string" ? jevCfg.model : "jev-latest",
+    });
+    /** Joke or plain, asked once per new row; a tap that lands first ("laughed", "not now") keeps its answer. */
+    const judgeLine = async (sessionKey: string, line: string): Promise<void> => {
+      const isJoke = await judge(line);
+      if (isJoke === undefined) {
+        return;
+      }
+      const i = recentSpokenLines.findLastIndex(
+        (a) => a.sessionKey === sessionKey && a.line === line,
+      );
+      if (i < 0 || recentSpokenLines[i].isJoke !== undefined) {
+        return;
+      }
+      recentSpokenLines = recentSpokenLines.with(i, { ...recentSpokenLines[i], isJoke });
+      writeHumorState(runtime, trigger, turnCount, recentSpokenLines);
+    };
+
     // -------------------------------------------------------------------
     // Hook: before_prompt_build -- record the last spoken line, say whether a joke is welcome now
     // -------------------------------------------------------------------
@@ -193,7 +245,7 @@ export default definePluginEntry({
       "before_prompt_build",
       async (event: { prompt?: string; messages?: unknown[] }, ctx: { sessionKey?: string }) => {
         const sessionKey = ctx.sessionKey ?? "";
-        if (!sessionKey.startsWith(TINKER_PREFIX)) {
+        if (!sessionKey.startsWith(TINKER_PREFIX) || isSlashCommandPrompt(event.prompt)) {
           return;
         }
 
@@ -207,13 +259,24 @@ export default definePluginEntry({
         ) {
           recentSpokenLines = [
             ...recentSpokenLines,
-            { ts: Date.now(), sessionKey, line, reaction: reactionTo(event.prompt) },
+            {
+              ts: Date.now(),
+              sessionKey,
+              line,
+              reaction: reactionTo(event.prompt),
+              reactionSource: "text" as const,
+            },
           ].slice(-RECENT_KEEP);
+          void judgeLine(sessionKey, line);
         }
         writeHumorState(runtime, trigger, turnCount, recentSpokenLines);
 
+        // FORK 2026-10-10 (J-series Phase 1.5): the gate and the last lines change every turn, so they ride the turn
+        // (prependContext). As system context they reached a warm Claude Code worker only when it spawned, and a
+        // changed block moved the whole cached prefix.
         return {
-          prependSystemContext: buildHumorBlock({
+          prependContext: buildHumorBlock({
+            frequency,
             jokesOff: jokesOff(event.prompt),
             recent: recentSpokenLines.slice(-RECENT_SHOW),
           }),
@@ -234,11 +297,11 @@ export default definePluginEntry({
         },
         _ctx: { sessionKey?: string },
       ) => {
-        // Look for user message to check for reaction
+        // Look for user message to check for reaction: only his own words count (an agent's turn is unobserved)
         const userText =
-          event.userMessage ??
-          event.messages?.filter((m) => m.role === "user").pop()?.content ??
-          "";
+          ownerWords(
+            event.userMessage ?? event.messages?.findLast((m) => m.role === "user")?.content,
+          ) ?? "";
 
         if (!userText || !lastAttemptId) {
           return;
@@ -255,6 +318,40 @@ export default definePluginEntry({
         // Clear the attempt ID after checking (one-shot)
         lastAttemptId = undefined;
       },
+    );
+
+    // -------------------------------------------------------------------
+    // Gateway method: limbic.reaction.set -- his tap on a purple line's chips
+    // -------------------------------------------------------------------
+    api.registerGatewayMethod(
+      "limbic.reaction.set",
+      async ({ params, respond }) => {
+        const p = (params ?? {}) as Record<string, unknown>;
+        const sessionKey = typeof p.sessionKey === "string" ? p.sessionKey : "";
+        const line = typeof p.line === "string" ? p.line.trim() : "";
+        const reaction = p.reaction as TapReaction;
+        if (
+          !sessionKey.startsWith(TINKER_PREFIX) ||
+          !line ||
+          line.length > 2000 ||
+          !TAP_REACTIONS.includes(reaction)
+        ) {
+          respond(false, undefined, {
+            code: "INVALID_REQUEST",
+            message: `need sessionKey (${TINKER_PREFIX}…), line, reaction (${TAP_REACTIONS.join(" | ")})`,
+          });
+          return;
+        }
+        const out = applyTap(recentSpokenLines, { sessionKey, line, reaction, now: Date.now() });
+        recentSpokenLines = out.rows.slice(-RECENT_KEEP);
+        writeHumorState(runtime, trigger, turnCount, recentSpokenLines);
+        api.logger.info(`[computational-humor] tap ${reaction} on "${line.slice(0, 60)}"`);
+        if (out.row.isJoke === undefined) {
+          void judgeLine(sessionKey, line);
+        }
+        respond(true, { row: out.row }, undefined);
+      },
+      { scope: "operator.write" },
     );
 
     api.logger.info(

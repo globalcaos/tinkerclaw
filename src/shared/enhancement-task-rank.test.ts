@@ -180,7 +180,7 @@ describe("the lists", () => {
     const sl = shortlistFromResult(
       result(
         [e("skill:amazon-shopper", "USE", "jev", 0.9)],
-        [e("recipe:acme-coding", "INSPIRE", "local", 0, "Commit diagram")],
+        [e("recipe:orbis-coding", "INSPIRE", "local", 0, "Commit diagram")],
         "mixed",
       ),
     );
@@ -188,7 +188,7 @@ describe("the lists", () => {
     expect(sl.source).toBe("jev");
     expect(sl.entries.map((x) => [x.cardId, x.rank, x.mode, x.source, x.section])).toEqual([
       ["skill:amazon-shopper", 1, "USE", "jev", undefined],
-      ["recipe:acme-coding", 2, "INSPIRE", "local", "Commit diagram"],
+      ["recipe:orbis-coding", 2, "INSPIRE", "local", "Commit diagram"],
     ]);
     expect(sl.entries[0].fit).toMatchObject({ value: "made-for", source: "jev" });
     expect(sl.entries[1].fit).toBeUndefined();
@@ -203,20 +203,20 @@ describe("the lists", () => {
   it("the note names the section for an inspiration and prints no percentage for a local entry", () => {
     const cards: EnhancementCard[] = seedCards([
       { kind: "skill", name: "amazon-shopper", description: "Ranks Amazon listings." },
-      { kind: "recipe", name: "acme-coding", description: "Codes a ACME feature." },
+      { kind: "recipe", name: "orbis-coding", description: "Codes a ORBIS feature." },
     ]);
     const byId = new Map(cards.map((c) => [c.id, c]));
     const sl = shortlistFromResult(
       result(
         [e("skill:amazon-shopper", "USE", "jev", 0.9)],
-        [e("recipe:acme-coding", "INSPIRE", "local", 0, "Commit diagram")],
+        [e("recipe:orbis-coding", "INSPIRE", "local", 0, "Commit diagram")],
         "mixed",
       ),
     );
     const lines = shortlistContext(sl, byId)!.split("\n");
     expect(lines[1]).toMatch(/^1\. skill amazon-shopper, 90%; made for this task:/);
     expect(lines[2]).toMatch(
-      /^2\. recipe acme-coding; not made for this, but it works the same way \(the "Commit diagram" part\):/,
+      /^2\. recipe orbis-coding; not made for this, but it works the same way \(the "Commit diagram" part\):/,
     );
     expect(lines[2]).not.toContain("%");
   });
@@ -230,13 +230,13 @@ describe("the line the owner sees", () => {
           e("skill:amazon-shopper", "USE", "jev", 0.9),
           e("recipe:plan-family-trip", "USE", "jev", 0.05),
         ],
-        [e("recipe:acme-coding", "INSPIRE", "jev", 0.5, "Commit diagram")],
+        [e("recipe:orbis-coding", "INSPIRE", "jev", 0.5, "Commit diagram")],
         "jev",
       ),
       names,
     );
     expect(line).toBe(
-      "Use: amazon-shopper, plan-family-trip · Inspiration: acme-coding (§ Commit diagram) · source: Jev",
+      "Use: amazon-shopper, plan-family-trip · Inspiration: orbis-coding (§ Commit diagram) · source: Jev",
     );
   });
 
@@ -279,7 +279,7 @@ describe("when a plan may be seeded", () => {
   });
 
   it("names the recipe slug of a recipe card only", () => {
-    expect(recipeSlugOf("recipe:acme-coding")).toBe("acme-coding");
+    expect(recipeSlugOf("recipe:orbis-coding")).toBe("orbis-coding");
     expect(recipeSlugOf("skill:amazon-shopper")).toBeUndefined();
   });
 });

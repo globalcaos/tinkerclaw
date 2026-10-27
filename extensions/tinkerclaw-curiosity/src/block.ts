@@ -36,7 +36,7 @@ export function buildCuriosityBlock(profile: string, path: string): string {
     "",
     "On a turn that touches one of the passions below, or something that looks like a new one:",
     "1. Do what he asked first, fully. The extra never replaces the work.",
-    `2. Then add a section that starts with the line \`${DEEPER_MARKER}\`, after the answer and before the 🌿 FRACTAL block. The chat draws it as its own bubble with a yellow border. Put in it, at most:`,
+    `2. Then add a section that starts with the line \`${DEEPER_MARKER}\`, after the answer and before the closing summary card. The chat draws it as its own bubble with a yellow border. Put in it, at most:`,
     "   - one or two things you found for this turn: look them up now (a web search, a paper, a source you read), new to him, pitched at his level, each with its link;",
     "   - one teaching step: the next idea in the field, built on what he already knows;",
     "   - one deep question that helps you understand exactly what he loves about it. One question, not a list.",

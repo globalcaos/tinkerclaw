@@ -54,7 +54,9 @@ export type UsageVia =
   | "recipe-cli"
   | "recipe-skill"
   | "mcp"
-  | "plugin-tool";
+  | "plugin-tool"
+  /** FORK 2026-10-21: a child agent (a Workflow subagent) the turn launched made the call. */
+  | "subagent";
 export interface UsageMark {
   kind: UsageKind;
   name: string;
@@ -95,6 +97,12 @@ export interface UsageRegistry {
    */
   isSkillDir?(absDir: string): boolean;
   /**
+   * Optional (FORK 2026-10-21): the skill a bare command word runs when it is a PATH entry that
+   * resolves into a skill directory (`jarvis` → skills/jarvis-voice/bin/jarvis, `teams` →
+   * skills/teams-hack/scripts/teams.mjs). Undefined for anything else.
+   */
+  skillForCommand?(word: string): { name: string; path: string } | undefined;
+  /**
    * Optional (FORK 2026-09-30, THALAMUS v4 section 13A): every skill and recipe this registry can resolve,
    * first-wins by name, with the same names `attributeToolUsage` puts on a mark. It exists so the enhancement
    * cards can be seeded from what is really installed. Registries built without it simply lack it.
@@ -111,6 +119,7 @@ const USAGE_VIAS: ReadonlySet<string> = new Set<UsageVia>([
   "recipe-skill",
   "mcp",
   "plugin-tool",
+  "subagent",
 ]);
 
 export function isUsageMark(v: unknown): v is UsageMark {
@@ -248,8 +257,14 @@ function attributeExec(
   const workdir = firstString(args, ["workdir", "cwd"] as const);
   let cwd = (workdir && resolveToolPath(expandHomeVar(workdir), ctx)) || ctx.cwd;
   const marks: UsageMark[] = [];
-  for (const words of splitShellSegments(command.slice(0, MAX_COMMAND_CHARS))) {
+  // FORK 2026-10-21: `S=~/…/skills/x/scripts/run.py; python3 -I $S` named the skill only in the
+  // assignment, a segment with no command word, and the use only as `$S`: no chip. Plain
+  // assignments are remembered and `$S` / `${S}` expanded in the segments after them.
+  const vars = new Map<string, string>();
+  for (const raw of splitShellSegments(command.slice(0, MAX_COMMAND_CHARS))) {
+    const words = expandShellVars(raw, vars);
     const at = commandIndex(words);
+    rememberAssignments(words, at, vars);
     if (at < 0) {
       continue;
     }
@@ -268,6 +283,17 @@ function attributeExec(
     }
     if (isWriteShaped(head, words, at)) {
       continue;
+    }
+    // FORK 2026-10-21: a bare command that is a PATH link into a skill (`jarvis "…"`) is that skill.
+    if (
+      !words[at].heredoc &&
+      !words[at].text.includes("/") &&
+      typeof reg.skillForCommand === "function"
+    ) {
+      const viaPath = reg.skillForCommand(words[at].text);
+      if (viaPath && typeof viaPath.name === "string" && viaPath.name) {
+        marks.push({ kind: "skill", name: viaPath.name, path: viaPath.path, via: "exec" });
+      }
     }
     const recipeSlug = recipeStateSlug(words, at);
     if (recipeSlug !== undefined) {
@@ -501,6 +527,12 @@ interface ShellWord {
   text: string;
   /** The word follows `>` / `>>` / `>|`: a file the command WRITES. */
   redirectTarget: boolean;
+  /**
+   * FORK 2026-10-21: the word sits in a heredoc BODY (text fed to a command, not a command). Its
+   * paths still count, as before (a python heredoc that opens a skill file reads it), but a bare
+   * word at the start of a body line is not a command run (`jarvis` at the start of a note).
+   */
+  heredoc?: boolean;
 }
 
 /** Split a command into segments (`;`, `&&`, `||`, `|`, `&`, newline, parentheses) of words. */
@@ -511,6 +543,7 @@ function splitShellSegments(src: string): ShellWord[][] {
   let started = false;
   let quote: '"' | "'" | null = null;
   let pendingRedirect = false;
+  const heredocs: Array<{ delim: string; strip: boolean }> = [];
   const endWord = () => {
     if (started) {
       words.push({ text: cur, redirectTarget: pendingRedirect });
@@ -561,6 +594,29 @@ function splitShellSegments(src: string): ShellWord[][] {
       endWord(); // `&>file`: the `>` below marks the target
       continue;
     }
+    if (c === "\n" && heredocs.length > 0) {
+      endSegment();
+      let pos = i + 1;
+      for (const h of heredocs) {
+        const body: string[] = [];
+        while (pos < src.length) {
+          const nl = src.indexOf("\n", pos);
+          const lineEnd = nl < 0 ? src.length : nl;
+          const raw = src.slice(pos, lineEnd);
+          pos = lineEnd + 1;
+          if ((h.strip ? raw.replace(/^\t+/, "") : raw) === h.delim) {
+            break;
+          }
+          body.push(raw);
+        }
+        for (const seg of splitShellSegments(body.join("\n"))) {
+          segments.push(seg.map((w) => ({ ...w, heredoc: true })));
+        }
+      }
+      heredocs.length = 0;
+      i = pos - 1;
+      continue;
+    }
     if (c === "\n" || c === ";" || c === "|" || c === "&" || c === "(" || c === ")" || c === "`") {
       endSegment();
       continue;
@@ -587,6 +643,29 @@ function splitShellSegments(src: string): ShellWord[][] {
     }
     if (c === "<") {
       endWord(); // input redirect / heredoc: what follows is read, not written
+      if (src[i + 1] === "<" && src[i + 2] !== "<") {
+        // `<<DELIM` / `<<-'DELIM'`: remember the delimiter; the body starts at the next newline.
+        let j = i + 2;
+        const strip = src[j] === "-";
+        if (strip) {
+          j += 1;
+        }
+        while (src[j] === " " || src[j] === "\t") {
+          j += 1;
+        }
+        let delim = "";
+        while (j < src.length && !/[\s;&|()<>]/.test(src[j])) {
+          if (src[j] !== "'" && src[j] !== '"' && src[j] !== "\\") {
+            delim += src[j];
+          }
+          j += 1;
+        }
+        if (delim) {
+          heredocs.push({ delim, strip });
+          i = j - 1;
+          continue;
+        }
+      }
       while (src[i + 1] === "<" || src[i + 1] === "-") {
         i += 1;
       }
@@ -650,6 +729,60 @@ const INTERPRETERS: ReadonlySet<string> = new Set([
 const RECIPE_STATE_CLI = /(?:^|[-_])recipe-state(?:\.[cm]?js)?$/;
 const PATH_TOKEN_SPLIT = /[\s'"`()[\]{},;=<>|&]+/;
 const FILE_WITH_EXTENSION = /^[^/]+\.[A-Za-z0-9]{1,6}$/;
+
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
+const DECLARE_COMMANDS: ReadonlySet<string> = new Set([
+  "export",
+  "local",
+  "declare",
+  "typeset",
+  "readonly",
+]);
+const VAR_REF = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+const MAX_SHELL_VARS = 64;
+
+/**
+ * Record `NAME=value` from a segment that is only assignments (bash keeps them for the rest of the
+ * command) or from export/local/declare. `NAME=value cmd` sets NAME for `cmd`'s environment only,
+ * and `$NAME` in that same segment still reads the OLD value, so it is not recorded. A value holding
+ * a command substitution cannot be known here and is dropped.
+ */
+function rememberAssignments(words: ShellWord[], at: number, vars: Map<string, string>): void {
+  const record = (text: string) => {
+    const m = ASSIGNMENT.exec(text);
+    if (!m) {
+      return;
+    }
+    if (m[2].includes("$(") || m[2].includes("`") || vars.size >= MAX_SHELL_VARS) {
+      vars.delete(m[1]);
+      return;
+    }
+    vars.set(m[1], m[2]);
+  };
+  if (at < 0) {
+    words.forEach((w) => record(w.text));
+  } else if (DECLARE_COMMANDS.has(words[at].text)) {
+    words.slice(at + 1).forEach((w) => record(w.text));
+  }
+}
+
+/** `$NAME` / `${NAME}` → a value an earlier segment assigned; unknown names stay as written. */
+function expandShellVars(words: ShellWord[], vars: Map<string, string>): ShellWord[] {
+  if (vars.size === 0) {
+    return words;
+  }
+  return words.map((w) =>
+    w.text.includes("$")
+      ? {
+          ...w,
+          text: w.text.replace(VAR_REF, (all, braced?: string, bare?: string) => {
+            const value = vars.get(braced ?? bare ?? "");
+            return value === undefined ? all : value;
+          }),
+        }
+      : w,
+  );
+}
 
 function baseName(word: string): string {
   const slash = word.lastIndexOf("/");
@@ -770,6 +903,207 @@ function firstString(args: Record<string, unknown>, keys: readonly string[]): st
   return undefined;
 }
 
+// ── Subagents (FORK 2026-10-21) ─────────────────────────────────────────────────────────────────
+
+/**
+ * A Workflow the turn launched runs its agents as separate Claude Code sessions. Their tool calls
+ * never reach the bridge's stream, so the skills and recipes they used drew no chip on the turn
+ * that launched them (audit 2026-10-21, scripts/usage-attribution-audit.ts). The Workflow tool's
+ * result names the folder those agents write to ("Transcript dir: …/subagents/workflows/wf_…"),
+ * and the bridge persists that result. History reads the folder and attributes every child call
+ * with the same rules, marked `via: "subagent"`.
+ *
+ * Bounds: only a folder under `<claude>/projects/` with a `/subagents/` segment is read (a path in a
+ * transcript is not trusted further than that); files are read incrementally, from where the last
+ * read stopped, since a background workflow keeps appending after its turn ended; a line is parsed
+ * only when it holds a tool_use and its head names the assistant role.
+ */
+const TRANSCRIPT_DIR_LINE = /^Transcript dir: (\/[^\n]+?)\s*$/m;
+const SUBAGENT_FILE = /^agent-[A-Za-z0-9_-]+\.jsonl$/;
+const SUBAGENT_MAX_FILES = 256;
+const SUBAGENT_CACHE_FILES = 1024;
+const LINE_HEAD_BYTES = 512;
+
+interface SubagentFileState {
+  offset: number;
+  ino: number;
+  marks: UsageMark[];
+}
+const subagentFiles = new Map<string, SubagentFileState>();
+
+function claudeProjectsDir(homeDir: string): string {
+  const configured = process.env.CLAUDE_CONFIG_DIR?.trim();
+  return path.join(
+    configured ? resolveUserPath(configured) : path.join(homeDir, ".claude"),
+    "projects",
+  );
+}
+
+/**
+ * The subagent transcript folder a tool result names (the Workflow tool's "Transcript dir:" line),
+ * or undefined when it names none or one outside `<claude>/projects/…/subagents/`.
+ */
+export function subagentTranscriptDir(
+  resultText: unknown,
+  opts?: { homeDir?: string },
+): string | undefined {
+  if (typeof resultText !== "string" || !resultText.includes("Transcript dir: ")) {
+    return undefined;
+  }
+  const raw = TRANSCRIPT_DIR_LINE.exec(resultText)?.[1];
+  if (!raw || raw.includes(NUL)) {
+    return undefined;
+  }
+  const dir = path.resolve(raw);
+  const projects = claudeProjectsDir(opts?.homeDir || safeHomeDir());
+  const inside = toSlash(dir).startsWith(`${toSlash(projects)}/`);
+  return inside && toSlash(dir).includes("/subagents/") ? dir : undefined;
+}
+
+/**
+ * Usage marks of every agent transcript in a subagent folder (or of one `agent-*.jsonl`), merged,
+ * each `via: "subagent"` without a toolCallId (the child's call has no row in the parent chat).
+ * Never throws; an unreadable folder gives [].
+ */
+export function attributeSubagentUsage(
+  dirOrFile: string,
+  reg: UsageRegistry,
+  opts?: { homeDir?: string; cwd?: string },
+): UsageMark[] {
+  try {
+    let files: string[];
+    if (dirOrFile.endsWith(".jsonl")) {
+      files = [dirOrFile];
+    } else {
+      files = fs
+        .readdirSync(dirOrFile)
+        .filter((name) => SUBAGENT_FILE.test(name))
+        .toSorted()
+        .slice(0, SUBAGENT_MAX_FILES)
+        .map((name) => path.join(dirOrFile, name));
+    }
+    let out: UsageMark[] = [];
+    for (const file of files) {
+      out = mergeUsageMarks(out, readSubagentFile(file, reg, opts));
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function readSubagentFile(
+  file: string,
+  reg: UsageRegistry,
+  opts: { homeDir?: string; cwd?: string } | undefined,
+): UsageMark[] {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    return [];
+  }
+  let state = subagentFiles.get(file);
+  if (!state || state.ino !== stat.ino || stat.size < state.offset) {
+    state = { offset: 0, ino: stat.ino, marks: [] };
+  }
+  if (stat.size > state.offset) {
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(file, "r");
+      const buf = Buffer.alloc(stat.size - state.offset);
+      const n = fs.readSync(fd, buf, 0, buf.length, state.offset);
+      const lastNewline = buf.lastIndexOf(10, n - 1);
+      if (lastNewline >= 0) {
+        state.marks = mergeUsageMarks(
+          state.marks,
+          subagentMarksFromLines(buf.subarray(0, lastNewline + 1), reg, opts),
+        );
+        state.offset += lastNewline + 1;
+      }
+    } catch {
+      // keep what was read before
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // already closed
+        }
+      }
+    }
+  }
+  if (subagentFiles.size >= SUBAGENT_CACHE_FILES && !subagentFiles.has(file)) {
+    subagentFiles.clear();
+  }
+  subagentFiles.set(file, state);
+  return state.marks;
+}
+
+function subagentMarksFromLines(
+  buf: Buffer,
+  reg: UsageRegistry,
+  opts: { homeDir?: string; cwd?: string } | undefined,
+): UsageMark[] {
+  const marks: UsageMark[] = [];
+  let start = 0;
+  // Jump from one `"tool_use"` to the next instead of walking every line: most lines hold none.
+  let hit = buf.indexOf('"tool_use"', 0);
+  while (hit >= 0) {
+    const lineStart = buf.lastIndexOf(10, hit) + 1;
+    let end = buf.indexOf(10, hit);
+    if (end < 0) {
+      end = buf.length;
+    }
+    if (lineStart >= start) {
+      // Claude Code writes `"type":"assistant"` AFTER the message on a subagent line, so the head
+      // is asked for the role instead; the api-request log lines repeat the same blocks and are skipped.
+      const head = buf.toString("utf8", lineStart, Math.min(end, lineStart + LINE_HEAD_BYTES));
+      if (
+        !head.startsWith('{"type":"api-request') &&
+        (head.includes('"role":"assistant"') || head.includes('"type":"assistant"'))
+      ) {
+        marks.push(...subagentMarksFromLine(buf.toString("utf8", lineStart, end), reg, opts));
+      }
+    }
+    start = end + 1;
+    hit = start < buf.length ? buf.indexOf('"tool_use"', start) : -1;
+  }
+  return marks;
+}
+
+function subagentMarksFromLine(
+  line: string,
+  reg: UsageRegistry,
+  opts: { homeDir?: string; cwd?: string } | undefined,
+): UsageMark[] {
+  let entry: { type?: unknown; cwd?: unknown; message?: { content?: unknown } };
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  const content = entry?.type === "assistant" ? entry.message?.content : undefined;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  const cwd = typeof entry.cwd === "string" && entry.cwd ? entry.cwd : opts?.cwd;
+  const marks: UsageMark[] = [];
+  for (const block of content) {
+    const b = block as { type?: unknown; name?: unknown; input?: unknown } | null;
+    if (b?.type !== "tool_use" || typeof b.name !== "string") {
+      continue;
+    }
+    for (const mark of attributeToolUsage({ name: b.name, args: b.input }, reg, {
+      ...opts,
+      ...(cwd ? { cwd } : {}),
+    })) {
+      marks.push({ ...mark, via: "subagent" });
+    }
+  }
+  return marks;
+}
+
 // ── Registry (fs-backed, every probe cached) ────────────────────────────────────────────────────
 
 /** Recipe-library layout, as `extensions/tinkerclaw-prefrontal/recipe-locate.ts` reads it. */
@@ -801,6 +1135,8 @@ interface SkillDirEntry {
 export function createUsageRegistry(opts: {
   skillRoots: string[];
   recipeRoots: string[];
+  /** FORK 2026-10-21: PATH directories whose entries may link into a skill (`skillForCommand`). */
+  commandDirs?: string[];
   pluginToolOwner?: (tool: string) => { pluginId: string; path?: string } | undefined;
   /** The plugins that register tools, for `list()`. Absent: plugins are not listed. */
   pluginList?: () => Array<{ pluginId: string; path?: string }>;
@@ -809,13 +1145,18 @@ export function createUsageRegistry(opts: {
   const recipeRoots = uniquePaths(opts?.recipeRoots);
   const pluginToolOwner = opts?.pluginToolOwner;
   const pluginList = opts?.pluginList;
+  const commandDirs = uniquePaths(opts?.commandDirs);
 
-  const skillDirCache = new Map<string, boolean>();
+  /** Directories known to hold a SKILL.md. Misses are never kept (see isSkillDir). */
+  const skillDirCache = new Map<string, true>();
   const rememberSkillDir = (dir: string, hit: boolean) => {
+    if (!hit) {
+      return;
+    }
     if (skillDirCache.size >= FS_CACHE_LIMIT) {
       skillDirCache.clear();
     }
-    skillDirCache.set(dir, hit);
+    skillDirCache.set(dir, true);
   };
   let skillEntries: SkillDirEntry[] | undefined;
   const listSkillDirs = (): SkillDirEntry[] => {
@@ -864,9 +1205,11 @@ export function createUsageRegistry(opts: {
       return false;
     }
     const dir = path.resolve(absDir);
-    const cached = skillDirCache.get(dir);
-    if (cached !== undefined) {
-      return cached;
+    // FORK 2026-10-21: only a HIT is cached. A cached miss outlived the SKILL.md written a moment
+    // later (a skill built in the same turn): the live tool-start probe cached "not a skill", the
+    // history pass inside the same 60 s registry read it back, and its memo kept the empty answer.
+    if (skillDirCache.has(dir)) {
+      return true;
     }
     const hit = fileExists(path.join(dir, SKILL_FILE));
     rememberSkillDir(dir, hit);
@@ -990,6 +1333,43 @@ export function createUsageRegistry(opts: {
     return out;
   };
 
+  const commandCache = new Map<string, { name: string; path: string } | null>();
+  const skillForCommand = (word: string): { name: string; path: string } | undefined => {
+    if (
+      typeof word !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(word) ||
+      !commandDirs.length
+    ) {
+      return undefined;
+    }
+    const cached = commandCache.get(word);
+    if (cached !== undefined) {
+      return cached ?? undefined;
+    }
+    let hit: { name: string; path: string } | null = null;
+    for (const dir of commandDirs) {
+      const target = safeRealpath(path.join(dir, word));
+      if (target) {
+        // First PATH hit wins, as the shell picks it; a non-skill hit shadows any later skill.
+        hit =
+          skillFromPath(target, {
+            skillDirByName,
+            recipeByPath,
+            recipeBySlug,
+            pluginForTool,
+            isRecipePath,
+            isSkillDir,
+          }) ?? null;
+        break;
+      }
+    }
+    if (commandCache.size >= FS_CACHE_LIMIT) {
+      commandCache.clear();
+    }
+    commandCache.set(word, hit);
+    return hit ?? undefined;
+  };
+
   return {
     skillDirByName,
     recipeByPath,
@@ -997,6 +1377,7 @@ export function createUsageRegistry(opts: {
     pluginForTool,
     isRecipePath,
     isSkillDir,
+    skillForCommand,
     list,
   };
 }
@@ -1200,6 +1581,7 @@ export function getUsageRegistry(): UsageRegistry {
     registry = createUsageRegistry({
       skillRoots: discoverSkillRoots(cfg, home),
       recipeRoots: discoverRecipeRoots(home),
+      commandDirs: discoverCommandDirs(home),
       pluginToolOwner: activePluginToolOwner,
       pluginList: activePluginList,
     });
@@ -1315,6 +1697,22 @@ function readInstalledPluginPaths(claudeDir: string): Set<string> {
     // no Claude Code plugins on this host
   }
   return out;
+}
+
+/**
+ * FORK 2026-10-21: the PATH directories in the user's home (`~/.local/bin`, `~/bin` and any other
+ * PATH entry under home). The gateway's own PATH may lack them (a systemd unit), while the shell
+ * the worker runs commands in has them, so the two usual ones are always listed. System dirs are
+ * left out: nothing there links into a skill, and probing them per command word buys nothing.
+ */
+function discoverCommandDirs(home: string): string[] {
+  if (!home) {
+    return [];
+  }
+  const fromPath = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter((dir) => dir && path.isAbsolute(dir) && dir.startsWith(`${home}${path.sep}`));
+  return [path.join(home, ".local", "bin"), path.join(home, "bin"), ...fromPath];
 }
 
 /**

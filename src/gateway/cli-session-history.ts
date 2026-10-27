@@ -1,6 +1,9 @@
 import type { SessionEntry } from "../config/sessions.js";
 import { logWarn } from "../logger.js";
-import { CHAT_ROW_CONTRACT_RE } from "../shared/appended-prompt-blocks.js";
+import {
+  CHAT_ROW_CONTRACT_RE,
+  withoutLeadingPromptBlocks,
+} from "../shared/appended-prompt-blocks.js";
 import {
   type ClaudeCliFallbackSeed,
   readClaudeCliFallbackSeed,
@@ -268,9 +271,11 @@ export function withoutChatRowContract(rows: unknown[]): unknown[] {
     if (!rec || rec.role !== "user") {
       return row;
     }
+    // FORK 2026-10-10 — and without the blocks the bridge puts in FRONT (`<turn_context>`, the
+    // reverted Fractal result): appended-prompt-blocks.ts LEADING_PROMPT_BLOCKS.
     const cut = (text: string): string => {
       const m = CHAT_ROW_CONTRACT_RE.exec(text);
-      return m ? text.slice(0, m.index) : text;
+      return withoutLeadingPromptBlocks(m ? text.slice(0, m.index) : text);
     };
     if (typeof rec.content === "string") {
       const next = cut(rec.content);

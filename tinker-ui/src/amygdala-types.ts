@@ -33,6 +33,8 @@ export interface JevDecision {
   degraded: boolean;
   /** The tool call this decision judged, so a note can ride on that tool row. */
   toolUseId?: string;
+  /** The decision reached the agent; absent on feeds from before 2026-10-15 (taken as a shadow record). */
+  enforced?: boolean;
 }
 
 /** `amygdala2.intervention`: a hold, proof check, ask, note, send-back or refusal strip. */
@@ -90,6 +92,11 @@ export interface StatusView {
   askedToday: number;
   waitingForYou: number;
   notesDropped: number;
+  /**
+   * What a Rewind does on this gateway (extensions/tinkerclaw-amygdala/src/status.ts `REWIND_LEVEL`): from 2 it takes
+   * the exchange out of the model's context and hands back the owner's words. Absent on an older gateway.
+   */
+  rewind?: number;
 }
 
 /** `amygdala2.marker`: "sent back twice, delivered with a marker". */

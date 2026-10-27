@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { withDrivers } from "../src/events.js";
 import { contextKey } from "../src/learn/keys.js";
 import {
   loosenFromFalseAlarms,
@@ -40,10 +41,10 @@ const fakeChange = (): Change => ({
 
 /** A fake engine: records every proposal and answers "applied". */
 function fakeEngine() {
-  const calls: { p: Proposal; by?: string }[] = [];
+  const calls: { p: Proposal; by?: string; ownerOnly?: boolean }[] = [];
   const engine: ChangeEngineApi = {
     async propose(p, o) {
-      calls.push({ p, by: o?.proposedBy });
+      calls.push({ p, by: o?.proposedBy, ownerOnly: o?.ownerOnly });
       return { outcome: "applied", change: fakeChange() } as ChangeOutcome;
     },
     async approve() {
@@ -468,5 +469,120 @@ describe("suggestProbCutoff", () => {
       [0.2, false],
     ]);
     expect(suggestProbCutoff(data, [], [0.25, 0.5, 0.75])).toBe(0.75);
+  });
+});
+
+// 2026-10-25: the reviewers' verdicts feed the retune (they had judged 3,288 flags and 5,574 passes; it read 37 labels).
+describe("the reviewers feed the retune", () => {
+  /** A flag on `q` at `prob` that a reviewer judged; returns the situation. */
+  function reviewed(
+    s: ReturnType<typeof setup>,
+    o: { q?: string; prob?: number; verdict: string; confidence?: "low" | "medium" | "high" },
+  ): Situation {
+    const q = o.q ?? "novelty";
+    const h = history(s.store, { answers: [noul(q, o.prob ?? 0.8)] });
+    s.store.saveDecision(
+      {
+        situationId: h.situation.id,
+        response: { kind: "note", templateId: "novelty", slots: {}, channel: "additionalContext" },
+        family: "personality",
+        reasonCode: withDrivers(q, [q]),
+        verdictIds: [],
+        mode: "shadow",
+        enforced: false,
+        degraded: false,
+      },
+      { id: `flag-${h.decisionId}`, seam: "post-tool", ts: T0 - DAY },
+    );
+    s.store.saveReview({
+      decisionId: `flag-${h.decisionId}`,
+      sessionKey: "s",
+      turnId: h.situation.turnId,
+      ts: T0 - DAY,
+      status: "done",
+      kind: "flag",
+      model: "claude-code/claude-sonnet-5-5",
+      review: {
+        verdict: o.verdict as "noise",
+        reason: "r",
+        confidence: o.confidence ?? "medium",
+        sawOutcome: true,
+      },
+    });
+    return h.situation;
+  }
+
+  it("five noise or harmful reviews in a context propose a loosening, as an owner-only card", async () => {
+    const s = setup();
+    let sit: Situation | undefined;
+    for (const [v, p] of [
+      ["noise", 0.72],
+      ["noise", 0.75],
+      ["harmful", 0.8],
+      ["noise", 0.78],
+      ["noise", 0.71],
+    ] as const)
+      sit = reviewed(s, { verdict: v, prob: p });
+    const out = await loosenFromFalseAlarms(s.deps);
+    expect(out).toHaveLength(1);
+    expect(s.calls[0]).toEqual({
+      p: {
+        kind: "cutoff",
+        scope: "context",
+        questionId: "novelty",
+        contextKey: contextKey(sit as Situation, "novelty"),
+        cutoff: { kind: "prob", at: 0.82 },
+      },
+      by: "code",
+      ownerOnly: true,
+    });
+  });
+
+  it("one useful review blocks it; a low-confidence false alarm does not count; harmless lowers the ratio", async () => {
+    const useful = setup();
+    for (let i = 0; i < 6; i++) reviewed(useful, { verdict: "noise" });
+    reviewed(useful, { verdict: "useful" });
+    expect(await loosenFromFalseAlarms(useful.deps)).toHaveLength(0);
+
+    const low = setup();
+    for (let i = 0; i < 4; i++) reviewed(low, { verdict: "noise" });
+    reviewed(low, { verdict: "noise", confidence: "low" });
+    expect(await loosenFromFalseAlarms(low.deps)).toHaveLength(0);
+
+    const harmless = setup();
+    for (let i = 0; i < 5; i++) reviewed(harmless, { verdict: "noise" });
+    reviewed(harmless, { verdict: "harmless" });
+    expect(await loosenFromFalseAlarms(harmless.deps)).toHaveLength(0);
+  });
+
+  it("a pass a reviewer judged missed tightens like the owner's miss label; a low-confidence one does not", async () => {
+    const s = setup();
+    const pass = (prob: number, confidence: "low" | "medium") => {
+      const h = history(s.store, { answers: [noul("novelty", prob)] });
+      s.store.saveReview({
+        decisionId: h.decisionId,
+        sessionKey: "s",
+        turnId: h.situation.turnId,
+        ts: T0 - DAY,
+        status: "done",
+        kind: "pass",
+        model: "claude-code/claude-sonnet-5-5",
+        review: { verdict: "missed", reason: "r", confidence, sawOutcome: true },
+      });
+      return h;
+    };
+    pass(0.5, "low");
+    expect(await tightenFromMisses(s.deps)).toHaveLength(0);
+    const h = pass(0.6, "medium");
+    await tightenFromMisses(s.deps);
+    expect(s.calls.map((c) => c.p)).toEqual([
+      {
+        kind: "cutoff",
+        scope: "context",
+        questionId: "novelty",
+        contextKey: contextKey(h.situation, "novelty"),
+        cutoff: { kind: "prob", at: 0.55 },
+      },
+    ]);
   });
 });

@@ -37,7 +37,7 @@ params:
 ## Goal
 
 A user manual a customer can follow step by step, with a picture for every step, rebuilt from the product at
-every turn. Derived from the AcmeVision 2.0 build (2026-10-01/02), where the user manual reached 70 pages in
+every turn. Derived from the OrbisVision 2.0 build (2026-10-01/02), where the user manual reached 70 pages in
 English and Spanish from 130 pictures taken on the real stack.
 
 ## When to Use
@@ -56,7 +56,7 @@ English and Spanish from 130 pictures taken on the real stack.
 
 **Done when:** every write operation of the API is either called by a screen or named as maintainer-only.
 
-List the API's write routes and search the UI source for each. On AcmeVision 2.0, 7 of 42 had no screen
+List the API's write routes and search the UI source for each. On OrbisVision 2.0, 7 of 42 had no screen
 (users, roles, own password, motion settings, process restart), so the manual could only show API calls between
 pictures. From then on a unit that adds a write route adds its screen in the same unit, or says why the route is
 for maintainers only.
@@ -100,7 +100,7 @@ Give the stack a disk share of its own, so storage screens do not follow whateve
 
 **Done when:** a pair check over every EN/ES picture reports no pair in a different state.
 
-Each step is taken in every language from the same seed, and a tool compares what each pair shows (AcmeVision:
+Each step is taken in every language from the same seed, and a tool compares what each pair shows (OrbisVision:
 `tools.pair_states`, 58 pairs).
 
 ### 6. Judge every re-taken picture

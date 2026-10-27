@@ -138,6 +138,112 @@ class InvokeDispatcher(
         }
       }
 
+      // Jarvis: let the agent see what the owner sees (JarvisLook.kt).
+      "jarvis.screenshot" -> {
+        val o = runCatching { org.json.JSONObject(paramsJson ?: "{}") }.getOrElse { org.json.JSONObject() }
+        runCatching {
+          ai.openclaw.app.jarvis.JarvisLook.screenshotJson(
+            maxWidth = o.optInt("maxWidth", 720),
+            quality = o.optInt("quality", 70),
+          )
+        }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+      // Jarvis pushes an app update itself: the same download + silent install the banner runs.
+      "jarvis.update" -> {
+        runCatching { ai.openclaw.app.update.AppUpdater.downloadAndInstall(ai.openclaw.app.jarvis.JarvisLook.appContext()) }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok("""{"started":true}""") },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+      // Jarvis: phone pictures -> the Pi's disk (PhotoBackup.kt). run starts one now, status reports.
+      "jarvis.backup.run" -> {
+        val o = runCatching { org.json.JSONObject(paramsJson ?: "{}") }.getOrElse { org.json.JSONObject() }
+        val minutes = o.optInt("minutes", 10).coerceIn(1, 120)
+        runCatching {
+          ai.openclaw.app.jarvis.PhotoBackup.runNow(
+            ai.openclaw.app.jarvis.JarvisLook.appContext(),
+            budgetMs = minutes * 60_000L,
+            force = o.optBoolean("force", false),
+            reason = o.optString("reason", "manual"),
+          )
+        }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok("""{"started":$it,"minutes":$minutes}""") },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+      "jarvis.backup.status" ->
+        runCatching {
+          ai.openclaw.app.jarvis.PhotoBackup.statusJson(ai.openclaw.app.jarvis.JarvisLook.appContext())
+        }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      // Find my phone: ring at full alarm volume, ignoring silent mode (JarvisRing.kt).
+      // Jarvis calls the architect by voice (JarvisSay.kt): {"text": "..."}; returns at once, speaks in the background.
+      // 2026-10-23 (plan "phone app self-update", layer 1): the six phone verbs, the same code the page
+      // and pack scripts use (JarvisVerbs.kt). jarvis.say {text, voice?, buzz?}: buzz = the old
+      // locked-phone flag, kept so a Pi script written for the build before still works.
+      "jarvis.say", "jarvis.buzz", "jarvis.play", "jarvis.notify", "jarvis.open", "jarvis.keepAwake" ->
+        jarvisVerb(command.removePrefix("jarvis."), paramsJson)
+      // Layer 2: the content pack (JarvisPack.kt).
+      "jarvis.pack.status" -> GatewaySession.InvokeResult.ok(ai.openclaw.app.jarvis.JarvisPack.status(ai.openclaw.app.jarvis.JarvisLook.appContext()).toString())
+      "jarvis.pack.update" -> {
+        val outcome = ai.openclaw.app.jarvis.JarvisPack.check(ai.openclaw.app.jarvis.JarvisLook.appContext(), "command")
+        GatewaySession.InvokeResult.ok(kotlinx.serialization.json.JsonObject(mapOf("outcome" to kotlinx.serialization.json.JsonPrimitive(outcome))).toString())
+      }
+      "jarvis.pack.run" -> {
+        val params = parseJsonObject(paramsJson)
+        val event = (params["event"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.trim().orEmpty()
+        if (!event.matches(Regex("^[A-Za-z][A-Za-z0-9_-]{0,40}$"))) {
+          GatewaySession.InvokeResult.error(code = "INVALID_REQUEST", message = "INVALID_REQUEST: event name required")
+        } else {
+          val data = params["data"] as? kotlinx.serialization.json.JsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap())
+          runCatching { ai.openclaw.app.jarvis.JarvisPack.runEvent(ai.openclaw.app.jarvis.JarvisLook.appContext(), event, data) }.fold(
+            onSuccess = { GatewaySession.InvokeResult.ok(it.toString()) },
+            onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: script failed: ${it.message}") },
+          )
+        }
+      }
+      "jarvis.ring" -> {
+        val secs = runCatching { org.json.JSONObject(paramsJson ?: "{}").optInt("seconds", 60) }.getOrDefault(60)
+        runCatching { ai.openclaw.app.jarvis.JarvisRing.ring(ai.openclaw.app.jarvis.JarvisLook.appContext(), secs) }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+      "jarvis.ring.stop" -> {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { ai.openclaw.app.jarvis.JarvisRing.stop() }
+        GatewaySession.InvokeResult.ok("""{"stopping":true}""")
+      }
+      // Downloads folder, read-only (JarvisFiles.kt).
+      "jarvis.files.list" -> {
+        val limit = runCatching { org.json.JSONObject(paramsJson ?: "{}").optInt("limit", 10) }.getOrDefault(10)
+        runCatching { ai.openclaw.app.jarvis.JarvisFiles.listJson(ai.openclaw.app.jarvis.JarvisLook.appContext(), limit) }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+      "jarvis.files.get" -> {
+        val name = runCatching { org.json.JSONObject(paramsJson ?: "{}").optString("name") }.getOrDefault("")
+        runCatching { ai.openclaw.app.jarvis.JarvisFiles.getJson(ai.openclaw.app.jarvis.JarvisLook.appContext(), name) }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+      "jarvis.tinker.eval" -> {
+        val js =
+          runCatching { org.json.JSONObject(paramsJson ?: "{}").optString("javaScript") }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: return GatewaySession.InvokeResult.error(code = "INVALID_REQUEST", message = "INVALID_REQUEST: javaScript required")
+        runCatching { ai.openclaw.app.jarvis.JarvisLook.tinkerEvalJson(js) }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
+
       // A2UI commands
       OpenClawCanvasA2UICommand.Reset.rawValue ->
         withReadyA2ui {
@@ -219,6 +325,24 @@ class InvokeDispatcher(
       else -> GatewaySession.InvokeResult.error(code = "INVALID_REQUEST", message = "INVALID_REQUEST: unknown command")
     }
   }
+
+  private fun parseJsonObject(paramsJson: String?): kotlinx.serialization.json.JsonObject =
+    paramsJson
+      ?.takeIf { it.isNotBlank() }
+      ?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as? kotlinx.serialization.json.JsonObject }.getOrNull() }
+      ?: kotlinx.serialization.json.JsonObject(emptyMap())
+
+  private fun jarvisVerb(
+    verb: String,
+    paramsJson: String?,
+  ): GatewaySession.InvokeResult =
+    runCatching { ai.openclaw.app.jarvis.JarvisVerbs.run(ai.openclaw.app.jarvis.JarvisLook.appContext(), verb, parseJsonObject(paramsJson)) }.fold(
+      onSuccess = { GatewaySession.InvokeResult.ok(it.toString()) },
+      onFailure = {
+        val code = if (it is IllegalArgumentException) "INVALID_REQUEST" else "UNAVAILABLE"
+        GatewaySession.InvokeResult.error(code = code, message = "$code: ${it.message}")
+      },
+    )
 
   private suspend fun withReadyA2ui(block: suspend () -> GatewaySession.InvokeResult): GatewaySession.InvokeResult {
     var a2uiUrl =

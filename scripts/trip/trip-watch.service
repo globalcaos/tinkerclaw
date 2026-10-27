@@ -1,0 +1,19 @@
+# FORK 2026-10-19 (the architect: phone app) — one flight-watch pass; started by trip-watch.timer.
+# Install: cp trip-watch.service trip-watch.timer ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now trip-watch.timer
+# Adjust the checkout path below if the repo is not at ~/src/tinkerclaw.
+# `node` and `openclaw` must be on PATH for the user manager, which has no nvm directory. Set both in
+# trip-watch.env, e.g. PATH=/home/<you>/.nvm/versions/node/<version>/bin:/usr/local/bin:/usr/bin:/bin
+# and OPENCLAW_BIN=/usr/local/bin/openclaw (check `systemctl --user show-environment`).
+[Unit]
+Description=Trip corner: flight status watch, alerts and phone notifications
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Optional: PATH=..., OPENCLAW_BIN=..., TRIP_NOTIFY_NODE=..., TRIP_WHATSAPP_TARGET=+34..., AERODATABOX_KEY=...
+EnvironmentFile=-%h/.openclaw/data/trip/trip-watch.env
+Environment=TRIP_DIR=%h/.openclaw/data/trip
+ExecStart=/usr/bin/env node %h/src/tinkerclaw/scripts/trip/flight-watch.mjs --once
+TimeoutStartSec=5min
+Nice=10

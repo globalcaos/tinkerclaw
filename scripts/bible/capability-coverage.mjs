@@ -98,7 +98,11 @@ const OPENCLAW = process.env.OPENCLAW_DIR || path.join(homedir(), ".openclaw");
  * machine happened to have three days of logs would be switched off the first time it flapped.
  * The journal makes the REPORT sharper; it must never make the GATE non-deterministic.
  */
-export const BLIND_CAP = 157;
+// 2026-10-27: 157 -> 160, measured on the publish cut. Three rows arrived, no forgotten signal: the UI panels
+// ui.panel.aa-unrouted-models and ui.panel.tab-resync (BLIND by R16, like every tinker-ui module) and
+// rpc:memory.forget, the forget plugin's gateway method, BLIND by R6+R7 while the plugin ships off (not in
+// plugins.allow). TINKER_UI_DESIGN_BIBLE/observability.md section 8 has the record.
+export const BLIND_CAP = 160;
 // 2026-08-05: 377 -> 358, pulled down in the same session that earned it. What moved it:
 // fractal-reflection's first instruments and per-hook liveness at the registerTypedHook seam.
 // 2026-09-07: 358 -> 145 after the scorer was taught about noteRpcDispatch(req.method), the

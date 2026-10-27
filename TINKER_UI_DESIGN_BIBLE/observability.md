@@ -479,9 +479,14 @@ instrument; never substitute it for one.
 ## 8. The ratchet
 
 `BLIND_CAP` in `scripts/bible/capability-coverage.mjs` is the measured structural status quo —
-**157 on 2026-10-07** — and the build stops when that measurement rises. The stop is intentionally
+**160 on 2026-10-27** — and the build stops when that measurement rises. The stop is intentionally
 cheap and binary; the diagnosis is neither. It asks whether a capability arrived with nothing
 watching it, or whether the scorer lost context about a signal that already exists.
+
+**2026-10-27: 157 → 160.** Found by the publish cut, where the gate went red against the published base.
+Three new rows, no forgotten signal: two `tinker-ui` modules BLIND by R16, the `aa-unrouted-models` panel and
+`tab-resync`, and `rpc:memory.forget`, the forget plugin's gateway method, BLIND by R6⋈R7 because the plugin
+ships off and is not in `plugins.allow` on a fresh clone. It turns DECLARED once an owner allows the plugin.
 
 **2026-10-06 and 2026-10-07: 154 → 156 → 157.** Three new rows, all `tinker-ui` modules BLIND by R16: the
 USERS panel `hive-admin` and its grouping helper `hive-owner-groups` (10-06), then the left-rail Users button

@@ -44,7 +44,10 @@ const ranked = (
 let home: string;
 let prevHome: string | undefined;
 let prevUserHome: string | undefined;
-let hook: (e: unknown, c: unknown) => Promise<{ prependSystemContext?: string } | undefined>;
+let hook: (
+  e: unknown,
+  c: unknown,
+) => Promise<{ prependContext?: string; prependSystemContext?: string } | undefined>;
 let events: Array<{
   stream?: string;
   data?: { kind?: string; message?: string; payload?: Record<string, unknown>; phase?: string };
@@ -123,9 +126,18 @@ describe("the matcher hook on the shared ranking", () => {
   it("runs for a Tinker tab (it used to return for anything not ending :main), with no ranker: lexical, as before", async () => {
     events.length = 0;
     const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-plain" });
-    expect(out?.prependSystemContext).toContain("<active_recipe");
+    expect(out?.prependContext).toContain("<active_recipe");
     expect(trail("matched").length + trail("merged").length).toBeGreaterThan(0);
-    expect(out?.prependSystemContext).not.toContain("<recipe_advice");
+    expect(out?.prependContext).not.toContain("<recipe_advice");
+  });
+
+  it("rides the turn as prependContext, never the system prompt, and leaves a /compact turn alone (Phase 1.5)", async () => {
+    const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-turn" });
+    expect(out?.prependContext).toContain("<active_recipe");
+    expect(out?.prependSystemContext).toBeUndefined();
+    expect(
+      await hook({ prompt: "[Sat 2026-10-10 11:32 GMT+2] /compact", messages: [] }, tinker),
+    ).toEqual({});
   });
 
   it("still never runs for a subagent, a cron job, a heartbeat or a channel chat", async () => {
@@ -159,8 +171,8 @@ describe("the matcher hook on the shared ranking", () => {
           { prompt, messages: [] },
           { ...tinker, runId: `r-${Math.random()}`, ...over },
         );
-        expect(out?.prependSystemContext ?? "").not.toContain("<active_recipe");
-        expect(out?.prependSystemContext ?? "").not.toContain("<recipe_advice");
+        expect(out?.prependContext ?? "").not.toContain("<active_recipe");
+        expect(out?.prependContext ?? "").not.toContain("<recipe_advice");
         expect(trail("advice")).toHaveLength(0);
         expect(trail("matched")).toHaveLength(0);
       }
@@ -183,7 +195,7 @@ describe("the matcher hook on the shared ranking", () => {
     try {
       events.length = 0;
       const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-jev" });
-      const ctx = out!.prependSystemContext!;
+      const ctx = out!.prependContext!;
       expect(ctx).toContain("<active_recipe");
       const tag = /<recipe_advice source="Jev">([^<]*)<\/recipe_advice>/.exec(ctx);
       expect(tag?.[1]).toBe(
@@ -207,7 +219,7 @@ describe("the matcher hook on the shared ranking", () => {
     try {
       events.length = 0;
       const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-inspire" });
-      const ctx = out?.prependSystemContext ?? "";
+      const ctx = out?.prependContext ?? "";
       expect(ctx).not.toContain("<active_recipe");
       expect(ctx).not.toContain("<recipe_gap");
       expect(ctx).toContain("Inspiration: trip-planner-recipe (§ Flights) · source: Jev");
@@ -223,8 +235,8 @@ describe("the matcher hook on the shared ranking", () => {
     );
     try {
       const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-low" });
-      expect(out?.prependSystemContext ?? "").not.toContain("<active_recipe");
-      expect(out?.prependSystemContext).toContain("Use: trip-planner-recipe · source: Jev");
+      expect(out?.prependContext ?? "").not.toContain("<active_recipe");
+      expect(out?.prependContext).toContain("Use: trip-planner-recipe · source: Jev");
     } finally {
       off();
     }
@@ -236,8 +248,8 @@ describe("the matcher hook on the shared ranking", () => {
     );
     try {
       const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-local" });
-      expect(out?.prependSystemContext).toContain("<active_recipe");
-      expect(out?.prependSystemContext).toContain("Use: trip-planner-recipe · source: local");
+      expect(out?.prependContext).toContain("<active_recipe");
+      expect(out?.prependContext).toContain("Use: trip-planner-recipe · source: local");
     } finally {
       off();
     }
@@ -252,9 +264,9 @@ describe("the matcher hook on the shared ranking", () => {
         { prompt: "plan a family trip", messages: [] },
         { ...tinker, runId: "r-follow" },
       );
-      expect(out?.prependSystemContext ?? "").not.toContain("<active_recipe");
-      expect(out?.prependSystemContext ?? "").not.toContain("<recipe_gap");
-      expect(out?.prependSystemContext ?? "").not.toContain("<recipe_advice");
+      expect(out?.prependContext ?? "").not.toContain("<active_recipe");
+      expect(out?.prependContext ?? "").not.toContain("<recipe_gap");
+      expect(out?.prependContext ?? "").not.toContain("<recipe_advice");
     } finally {
       off();
     }
@@ -267,8 +279,8 @@ describe("the matcher hook on the shared ranking", () => {
     try {
       events.length = 0;
       const out = await hook({ prompt: TRIP, messages: [] }, { ...tinker, runId: "r-quiet" });
-      expect(out?.prependSystemContext).toContain("<active_recipe");
-      expect(out?.prependSystemContext).not.toContain("<recipe_advice");
+      expect(out?.prependContext).toContain("<active_recipe");
+      expect(out?.prependContext).not.toContain("<recipe_advice");
       expect(trail("advice")).toHaveLength(0);
     } finally {
       off();
@@ -285,13 +297,13 @@ describe("the matcher hook on the shared ranking", () => {
       { ...tinker, runId: "r-tail" },
     );
     // the question may legitimately match a shipped recipe on its own words; what it must not do is match the recipe named only in the tail
-    expect(out?.prependSystemContext ?? "").not.toContain("trip-planner-recipe");
+    expect(out?.prependContext ?? "").not.toContain("trip-planner-recipe");
     // and the same request WITHOUT the tail still matches its own words
     const own = await hook(
       { prompt: `${TRIP}${tail}`, messages: [] },
       { ...tinker, runId: "r-tail-own" },
     );
-    expect(own?.prependSystemContext).toContain("<active_recipe");
+    expect(own?.prependContext).toContain("<active_recipe");
   });
 
   it("asks the ranker once per run: two hooks, one call", async () => {

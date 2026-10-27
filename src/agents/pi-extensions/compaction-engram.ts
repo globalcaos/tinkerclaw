@@ -22,6 +22,7 @@ import { declareInstrument, noteInstrumentFired } from "../../infra/instrument-l
 import { createEventStore } from "../../memory/engram/event-store.js";
 import type { EventKind, MemoryEvent } from "../../memory/engram/event-types.js";
 import { createMetricsCollector } from "../../memory/engram/metrics.js";
+import { eventContentKey, storeContentIndex } from "../../memory/engram/store-content-index.js";
 import { createTimeRangeMarker, renderMarker } from "../../memory/engram/time-range-marker.js";
 import {
   getPointerCompactionRuntime,
@@ -83,6 +84,23 @@ function resolveSessionKey(ctx: {
   } catch {
     return undefined;
   }
+}
+
+/** Where the compacted turns still live: the session transcript, before the first kept entry. */
+function transcriptAddress(
+  ctx: { sessionManager?: { getSessionFile?: () => string | undefined } },
+  firstKeptEntryId: string | undefined,
+): { transcriptPath?: string; firstKeptEntryId?: string } {
+  let transcriptPath: string | undefined;
+  try {
+    transcriptPath = ctx.sessionManager?.getSessionFile?.() || undefined;
+  } catch {
+    transcriptPath = undefined;
+  }
+  return {
+    ...(transcriptPath ? { transcriptPath } : {}),
+    ...(firstKeptEntryId ? { firstKeptEntryId } : {}),
+  };
 }
 
 // FORK 2026-07-28 — LIVENESS + EFFECTIVENESS. This extension is the arm that actually runs under
@@ -147,12 +165,21 @@ export default function compactionEngramExtension(
         return undefined;
       }
 
-      // 1. Persist all messages to ENGRAM event store
+      // 1. Persist the messages to the ENGRAM `compaction` archive, each distinct one ONCE.
+      // FORK 2026-10-11 — this loop appended every message on every compaction, so the shared archive
+      // grew as a stack of overlapping snapshots: 10,758 of its 26,793 events were exact copies in
+      // the 2026-10-10 census, 3,845 of them the empty text of assistant turns that held only tool
+      // calls. It writes the store directly, so the ingestion pipeline's content dedupe never covered
+      // it. Now an empty message is not archived (it carries nothing, and this writer does not
+      // archive the tool call itself), and a message the archive already holds reuses the stored
+      // event, so a manifest still names real ids.
       const baseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
       mkdirSync(baseDir, { recursive: true });
       const store = createEventStore({ baseDir, sessionKey: "compaction" });
+      const archived = storeContentIndex(store.filePath);
       const metrics = createMetricsCollector({ baseDir });
       const events: MemoryEvent[] = [];
+      let appended = 0;
       let totalTokens = 0;
       const topicHints: string[] = [];
 
@@ -164,17 +191,26 @@ export default function compactionEngramExtension(
         const tokens = estimateTokens(text);
         totalTokens += tokens;
 
-        const ev = store.append({
-          kind: roleToEventKind(role, isError),
-          content: text,
-          tokens,
-          turnId: i,
-          sessionKey: "live",
-          metadata: {
-            tags: role === "toolResult" && msg.toolName ? [String(msg.toolName)] : undefined,
-          },
-        });
-        events.push(ev);
+        if (text.trim().length > 0) {
+          const kind = roleToEventKind(role, isError);
+          const key = eventContentKey(kind, text);
+          let ev = archived.get(key);
+          if (!ev) {
+            ev = store.append({
+              kind,
+              content: text,
+              tokens,
+              turnId: i,
+              sessionKey: "live",
+              metadata: {
+                tags: role === "toolResult" && msg.toolName ? [String(msg.toolName)] : undefined,
+              },
+            });
+            archived.set(key, ev);
+            appended++;
+          }
+          events.push(ev);
+        }
 
         // Extract topic hints from user messages and tool names
         if (role === "user" && text.length > 0) {
@@ -200,7 +236,13 @@ export default function compactionEngramExtension(
       if (pointerMode && ptrHandler) {
         // Pointer mode: build a manifest from the persisted events and store it
         // as a compaction_marker in the session event store.
-        const manifest = buildManifest(events);
+        // FORK 2026-10-25 — plus the exact address: pi keeps every compacted turn in the session
+        // transcript, before the first kept entry. The marker is rebuilt from these messages on
+        // every compaction, never from an older marker.
+        const manifest = {
+          ...buildManifest(events),
+          ...transcriptAddress(ctx, preparation.firstKeptEntryId),
+        };
         ptrHandler.eventStore.append({
           turnId: events[events.length - 1]?.turnId ?? 0,
           sessionKey: ptrHandler.eventStore.sessionKey,
@@ -214,19 +256,22 @@ export default function compactionEngramExtension(
 
         metrics.record("compaction", "engram_pointer_compaction", 1, {
           eventsStored: events.length,
+          eventsAppended: appended,
           tokensEvicted: totalTokens,
           markerTokens: estimateTokens(rendered),
           pointerMode: 1,
         });
       } else {
-        // Default mode: create a time-range marker as a lightweight breadcrumb
-        const firstEvent = events[0];
-        const lastEvent = events[events.length - 1];
+        // Default mode: create a time-range marker as a lightweight breadcrumb.
+        // A reused event keeps the time it was first archived, so take the span, not the ends; and
+        // a compaction of only empty messages archives nothing, so fall back to now.
+        const times = events.map((e) => e.timestamp).toSorted();
+        const nowIso = new Date().toISOString();
         const marker = createTimeRangeMarker({
           startTurnId: 0,
           endTurnId: allMessages.length - 1,
-          startTime: firstEvent.timestamp,
-          endTime: lastEvent.timestamp,
+          startTime: times[0] ?? nowIso,
+          endTime: times[times.length - 1] ?? nowIso,
           topicHints: [...new Set(topicHints)].slice(0, 5),
           eventCount: events.length,
           tokenCount: totalTokens,
@@ -236,6 +281,7 @@ export default function compactionEngramExtension(
 
         metrics.record("compaction", "engram_compaction", 1, {
           eventsStored: events.length,
+          eventsAppended: appended,
           tokensEvicted: totalTokens,
           markerTokens: estimateTokens(rendered),
         });
@@ -274,7 +320,10 @@ export default function compactionEngramExtension(
       // names the arm that actually produced the summary, and record the outcome in the algorithm
       // ledger. `tokensBefore` comes from pi, so it is third-party-reported — recordCompactionOutcome
       // assigns that provenance itself and it must not be restated or overridden here.
-      noteInstrumentFired("compaction:engram-executor", `${variant} events=${events.length}`);
+      noteInstrumentFired(
+        "compaction:engram-executor",
+        `${variant} events=${events.length} new=${appended}`,
+      );
       recordCompactionOutcome({
         variant,
         outcome: "fired",

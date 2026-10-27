@@ -2805,11 +2805,16 @@ function patchAttemptToolDigest() {
 // subpaths. `fork-jev` is the Jev client the amygdala and Thalamus share; `fork-thalamus` is the pure routing
 // logic and the provider registry. Same reason as fork-telemetry above: package.json is tier-1, an upstream
 // merge takes THEIRS wholesale, and an importer of either subpath then fails to resolve. Each entry lands
-// beside its fork siblings so the re-applied file stays diff-identical to the fork's own.
+// beside its fork siblings so the re-applied file stays diff-identical to the fork's own. 2026-10-09: `fork-prompt-envelope`,
+// the one prompt cleaner the amygdala, the humour gate and the effort router share, rides the same list.
 const THALAMUS_SDK_SUBPATHS = [
   { name: "fork-jev", after: ["./plugin-sdk/fork-telemetry", "./plugin-sdk/fork-overseer-budget"] },
   { name: "fork-thalamus", after: ["./plugin-sdk/fork-jev", "./plugin-sdk/fork-telemetry"] },
   { name: "fork-thalamus-runtime", after: ["./plugin-sdk/fork-thalamus", "./plugin-sdk/fork-jev"] },
+  {
+    name: "fork-prompt-envelope",
+    after: ["./plugin-sdk/fork-thalamus-runtime", "./plugin-sdk/fork-thalamus"],
+  },
 ];
 
 function patchForkThalamusExports() {
@@ -2870,7 +2875,13 @@ function patchForkThalamusEntrypoints() {
       continue;
     }
     // Each entry goes after the one before it, so the order matches the fork's own file.
-    const chain = ["fork-telemetry", "fork-jev", "fork-thalamus", "fork-thalamus-runtime"];
+    const chain = [
+      "fork-telemetry",
+      "fork-jev",
+      "fork-thalamus",
+      "fork-thalamus-runtime",
+      "fork-prompt-envelope",
+    ];
     const prev =
       chain
         .slice(0, chain.indexOf(name))
@@ -3014,6 +3025,16 @@ const TIER1_REQUIRED_MARKERS = [
     file: "scripts/lib/plugin-sdk-entrypoints.json",
     what: "fork-jev, fork-thalamus and fork-thalamus-runtime entrypoints",
     pattern: /"fork-jev"[\s\S]*"fork-thalamus"[\s\S]*"fork-thalamus-runtime"/,
+  },
+  {
+    file: "package.json",
+    what: "./plugin-sdk/fork-prompt-envelope export",
+    pattern: /"\.\/plugin-sdk\/fork-prompt-envelope": \{/,
+  },
+  {
+    file: "scripts/lib/plugin-sdk-entrypoints.json",
+    what: "fork-prompt-envelope entrypoint",
+    pattern: /"fork-prompt-envelope"/,
   },
   {
     file: "tsdown.config.ts",

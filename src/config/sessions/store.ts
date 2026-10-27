@@ -357,7 +357,16 @@ type SessionStoreSaveMetrics = {
   unchanged: boolean;
   /** Entries in the store as serialized; reused from maintenance when it already counted. */
   entries: number | null;
+  /** Wall-clock ms per phase of this save. Read only by the slow-save warning below. */
+  phaseMs: { maintenance: number; sidecars: number; stringify: number; write: number };
 };
+
+/**
+ * A save at or over this many ms logs which phase took the time. 2026-10-09 18:10-18:30:
+ * 140 holds of sessions.json, the longest 124 s (one 5.9 MB save), writers queued up to
+ * 497 s, and the `store.save` row says only the total. Plain log line, not §4.3 columns.
+ */
+const SLOW_STORE_SAVE_WARN_MS = 10_000;
 
 /**
  * logging.md §9 step 6 — one `store.save` row per COMPLETED save.
@@ -390,6 +399,12 @@ function emitStoreSaveEvent(startedAtMs: number, metrics: SessionStoreSaveMetric
   const durMs = finishedAtMs - startedAtMs;
   const written = metrics.written;
   const entries = metrics.entries;
+  if (durMs >= SLOW_STORE_SAVE_WARN_MS) {
+    const { maintenance, sidecars, stringify, write } = metrics.phaseMs;
+    log.warn(
+      `slow session store save: ${durMs}ms (maintenance ${maintenance}ms, sidecars ${sidecars}ms, stringify ${stringify}ms, write ${write}ms), ${entries ?? "?"} entries`,
+    );
+  }
   setImmediate(() => {
     emitEvent("store.save", {
       tsMs: finishedAtMs,
@@ -407,7 +422,12 @@ async function saveSessionStoreUnlocked(
   handoff?: SessionStoreCacheHandoff,
 ): Promise<void> {
   const startedAtMs = Date.now();
-  const metrics: SessionStoreSaveMetrics = { written: null, unchanged: false, entries: null };
+  const metrics: SessionStoreSaveMetrics = {
+    written: null,
+    unchanged: false,
+    entries: null,
+    phaseMs: { maintenance: 0, sidecars: 0, stringify: 0, write: 0 },
+  };
   // Deliberately NOT a `finally`: a save that threw must not emit a row (see above).
   await saveSessionStoreUnlockedInner(storePath, store, opts, handoff, metrics);
   emitStoreSaveEvent(startedAtMs, metrics);
@@ -420,6 +440,12 @@ async function saveSessionStoreUnlockedInner(
   handoff: SessionStoreCacheHandoff | undefined,
   metrics: SessionStoreSaveMetrics,
 ): Promise<void> {
+  let phaseStartedAtMs = Date.now();
+  const endPhase = (phase: keyof SessionStoreSaveMetrics["phaseMs"]): void => {
+    const nowMs = Date.now();
+    metrics.phaseMs[phase] += nowMs - phaseStartedAtMs;
+    phaseStartedAtMs = nowMs;
+  };
   normalizeSessionStore(store);
 
   if (!opts?.skipMaintenance) {
@@ -575,6 +601,7 @@ async function saveSessionStoreUnlockedInner(
       });
     }
   }
+  endPhase("maintenance");
 
   await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
   // FORK 2026-09-21 — deliberately NOT stripping `systemPromptReport` from
@@ -592,12 +619,15 @@ async function saveSessionStoreUnlockedInner(
   // update. `store` itself stays hydrated, so the in-memory object cache and
   // every live reader are unaffected — only the bytes on disk shrink.
   const persisted = await externalizeSessionStoreSkillsSnapshots({ storePath, store });
+  endPhase("sidecars");
   // Only a `skipMaintenance` save pays for its own key count (~28-80 us at the 500-entry
   // default cap, under 1.5% of the stringify below on a 3 MB store); a maintained save
   // reuses the count maintenance already computed.
   metrics.entries ??= Object.keys(persisted).length;
   const json = JSON.stringify(persisted, null, 2);
-  if (getSerializedSessionStore(storePath) === json) {
+  const unchanged = getSerializedSessionStore(storePath) === json;
+  endPhase("stringify");
+  if (unchanged) {
     // Writing nothing IS the save here, which is not the same as giving up.
     metrics.unchanged = true;
     updateSessionStoreWriteCaches({ storePath, store, serialized: json, handoff });
@@ -608,6 +638,7 @@ async function saveSessionStoreUnlockedInner(
   // one place, only once the atomic write has resolved.
   const writeOnce = async (): Promise<void> => {
     await writeSessionStoreAtomic({ storePath, store, serialized: json, handoff });
+    endPhase("write");
     metrics.written = json;
   };
 

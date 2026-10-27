@@ -131,3 +131,103 @@ describe("createProductionOrchestrationRuntime", () => {
     expect(methods).toEqual(["fork.subagents.spawn", "agent.wait", "chat.history"]);
   });
 });
+
+// 2026-10-09: a requester at maxChildrenPerAgent active children gets its next spawn REFUSED
+// (src/agents/subagent-spawn.ts), not queued; a sibling unit or another fan-out frees a slot soon.
+describe("spawn refused for max active children", () => {
+  function refusingGateway(refusals: number, message: string) {
+    const methods: string[] = [];
+    let spawns = 0;
+    const call = (async (args: { method: string }) => {
+      methods.push(args.method);
+      if (args.method === "fork.subagents.spawn") {
+        spawns++;
+        if (spawns <= refusals) throw new Error(message);
+        return { ok: true, childSessionKey: "cs", runId: `r${spawns}` };
+      }
+      if (args.method === "agent.wait") return { status: "ok" };
+      if (args.method === "chat.history")
+        return { messages: [{ role: "assistant", content: "the answer" }] };
+      return {};
+    }) as unknown as CallGateway;
+    return { call, methods, spawns: () => spawns };
+  }
+
+  it("waits for a slot and then runs the unit", async () => {
+    const g = refusingGateway(
+      2,
+      "sessions_spawn has reached max active children for this session (10/10)",
+    );
+    const rt = createProductionOrchestrationRuntime({ callGateway: g.call, spawnRetryDelayMs: 1 });
+    expect(await rt.agent("q")).toBe("the answer");
+    expect(g.methods).toEqual([
+      "fork.subagents.spawn",
+      "fork.subagents.spawn",
+      "fork.subagents.spawn",
+      "agent.wait",
+      "chat.history",
+    ]);
+  });
+
+  it("does not retry any other spawn error", async () => {
+    const g = refusingGateway(
+      5,
+      "sessions_spawn is not allowed at this depth (current depth: 1, max: 1)",
+    );
+    const rt = createProductionOrchestrationRuntime({ callGateway: g.call, spawnRetryDelayMs: 1 });
+    await expect(rt.agent("q")).rejects.toThrow(/depth/);
+    expect(g.spawns()).toBe(1);
+  });
+
+  it("passes maxInFlight to the runtime", async () => {
+    let now = 0;
+    let peak = 0;
+    const call = (async (args: { method: string }) => {
+      if (args.method === "fork.subagents.spawn") {
+        now++;
+        peak = Math.max(peak, now);
+        return { ok: true, childSessionKey: "cs", runId: "r" };
+      }
+      if (args.method === "agent.wait") {
+        await new Promise((r) => setTimeout(r, 5));
+        now--;
+        return { status: "ok" };
+      }
+      if (args.method === "chat.history")
+        return { messages: [{ role: "assistant", content: "x" }] };
+      return {};
+    }) as unknown as CallGateway;
+    const rt = createProductionOrchestrationRuntime({ callGateway: call, maxInFlight: 2 });
+    await rt.parallel(["a", "b", "c", "d", "e"].map((x) => () => rt.agent(x)));
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+});
+
+// 2026-10-09: when a Claude seat hits its usage limit, the child's only "reply" is a synthetic error
+// message (model "<synthetic>", stopReason "error"). agent.wait still says ok, so the unit returned the
+// error text as its answer and 11 J-series analysts were read as finished.
+describe("a child that ended in a provider error", () => {
+  it("fails the unit instead of returning the error text as the answer", async () => {
+    const { call } = mockGateway([
+      { role: "user", content: "task" },
+      {
+        role: "assistant",
+        model: "<synthetic>",
+        stopReason: "error",
+        content: [
+          { type: "text", text: "You've hit your weekly limit · resets 8am (Europe/Madrid)" },
+        ],
+      },
+    ]);
+    const rt = createProductionOrchestrationRuntime({ callGateway: call });
+    await expect(rt.agent("task")).rejects.toThrow(/weekly limit/);
+  });
+
+  it("still returns a normal answer", async () => {
+    const { call } = mockGateway([
+      { role: "assistant", model: "claude-opus-5-5", stopReason: "stop", content: "the answer" },
+    ]);
+    const rt = createProductionOrchestrationRuntime({ callGateway: call });
+    expect(await rt.agent("task")).toBe("the answer");
+  });
+});

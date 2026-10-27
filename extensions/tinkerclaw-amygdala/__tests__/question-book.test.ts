@@ -162,18 +162,19 @@ describe("QuestionBook", () => {
   it("get defaults to the active version; addOverlay and setActive work", () => {
     const overlayDir = join(tmp(), "overlay");
     const book = new QuestionBook({ seedDir, overlayDir });
-    const v1 = book.get("danger-level") as Question;
-    expect(book.activeVersion("danger-level")).toBe(1);
-    const v2: Question = { ...v1, version: 2, parent: 1, instructions: "test-question" };
-    book.addOverlay(v2);
-    expect(book.versions("danger-level").map((q) => q.version)).toEqual([1, 2]);
-    expect(book.get("danger-level")?.version).toBe(1);
-    book.setActive("danger-level", 2);
+    const seed = book.get("danger-level") as Question;
+    const n = seed.version;
+    expect(book.activeVersion("danger-level")).toBe(n);
+    const next: Question = { ...seed, version: n + 1, parent: n, instructions: "test-question" };
+    book.addOverlay(next);
+    expect(book.versions("danger-level").map((q) => q.version)).toEqual([n, n + 1]);
+    expect(book.get("danger-level")?.version).toBe(n);
+    book.setActive("danger-level", n + 1);
     expect(book.get("danger-level")?.instructions).toBe("test-question");
-    expect(book.get("danger-level", 1)?.version).toBe(1);
+    expect(book.get("danger-level", n)?.version).toBe(n);
     // a fresh book loads the overlay and takes the highest version as active
     const again = new QuestionBook({ seedDir, overlayDir });
-    expect(again.activeVersion("danger-level")).toBe(2);
+    expect(again.activeVersion("danger-level")).toBe(n + 1);
     expect(() => book.setActive("danger-level", 9)).toThrow();
     expect(() => book.setActive("no-such-question", 1)).toThrow();
   });

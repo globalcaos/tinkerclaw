@@ -9,9 +9,10 @@
  *   - before_prompt_build (priority 50): retrieval pack injection
  *   - llm_output: assistant response ingestion (fire-and-forget)
  *   - before_compaction: persist messages being compacted
- *   - gateway_stop: end the FTS worker thread the pack refreshes use
+ *   - gateway_stop: end the FTS worker thread the pack refreshes use, and the transcript catch-up
  *
- * Tool:  recall (query + optional limit)
+ * Tool:  recall (query + optional limit/scope) — searches the session transcripts (FORK 2026-10-09);
+ *        recall (id + optional offset/length) — one evicted tool result or entry back (FORK 2026-10-25)
  * Gateway method: engram.search (Tinker UI search)
  *
  * Cross-extension discovery: writes `~/.openclaw/cognitive/total-recall.json`
@@ -20,11 +21,16 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { emitAgentEvent } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import {
+  definePluginEntry,
+  type OpenClawPluginApi,
+  type OpenClawPluginToolContext,
+} from "openclaw/plugin-sdk/core";
 import { declareInstrument, noteInstrumentFired } from "openclaw/plugin-sdk/fork-instrumentation";
+import { isSlashCommandPrompt } from "openclaw/plugin-sdk/fork-prompt-envelope";
 // The ENGRAM library is NOT vendored into this extension. It lives once, at
 // src/memory/engram/, and reaches this plugin through the sanctioned SDK
 // surface. A private copy used to live in ./src/ and drifted for four months —
@@ -34,11 +40,25 @@ import {
   assembleRetrievalPackAsync,
   createEventStore,
   createIngestionPipeline,
+  createTranscriptCatchUp,
+  findTranscriptItem,
+  openTranscriptIndex,
+  estimateTokens,
   recall as recallSearch,
+  recallTranscripts,
+  RECALL_BY_ID_MAX_LENGTH,
   shutdownFtsWorker,
+  sliceTranscriptItem,
+  transcriptIndexPath,
+  transcriptSessionId,
   type EventStore,
   type IngestionPipeline,
+  type RecallByIdOutput,
+  type TranscriptCatchUp,
+  type TranscriptIndex,
 } from "openclaw/plugin-sdk/memory-engram";
+import { loadSessionStore, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 
 // -- Constants --
 
@@ -49,9 +69,35 @@ const TOTAL_RECALL_STATE_PATH = join(COGNITIVE_DIR, "total-recall.json");
 // -- Tool Schema (TypeBox) --
 
 const RecallParams = Type.Object({
-  query: Type.String({ description: "Search query for memory retrieval." }),
+  query: Type.Optional(
+    Type.String({
+      description: "Words to look for: a name, a path, a decision, an error message.",
+    }),
+  ),
+  id: Type.Optional(
+    Type.String({
+      description:
+        "Fetch one item of this chat back whole instead of searching: the toolCallId an " +
+        "[Evicted ...] marker names, or a transcript entry id.",
+    }),
+  ),
+  offset: Type.Optional(
+    Type.Number({ description: "With id: the char to start from, for a long item (default 0)." }),
+  ),
+  length: Type.Optional(
+    Type.Number({
+      description: `With id: how many chars to return (default 20000, max ${RECALL_BY_ID_MAX_LENGTH}).`,
+    }),
+  ),
   limit: Type.Optional(
-    Type.Number({ description: "Maximum number of results to return (default 10)." }),
+    Type.Number({ description: "Maximum number of results to return (default 10, max 50)." }),
+  ),
+  scope: Type.Optional(
+    Type.Union([Type.Literal("session"), Type.Literal("all")], {
+      description:
+        'Where to look: "session" = this chat only; "all" = every chat (default; owner only, ' +
+        "other callers always get this chat only).",
+    }),
   ),
 });
 
@@ -141,6 +187,8 @@ export type EngramSearchHit = {
   timestamp: string;
   kind: string;
   content: string;
+  /** Present and true when `content` was cut at ENGRAM_SEARCH_MAX_CONTENT_CHARS. */
+  clipped?: boolean;
   score: number;
   sessionKey: string;
 };
@@ -151,11 +199,60 @@ export type EngramSearchPayload = {
   truncated: boolean;
 };
 
-/** Upper bound on `limit`, so a typo'd or hostile value cannot blow the token budget. */
-const ENGRAM_SEARCH_MAX_LIMIT = 200;
+/**
+ * Upper bound on `limit`. FORK 2026-10-09 — 20, was 200: `recall` selects at most 20 events (its
+ * MMR pass runs at k=20), so anything above 20 promised results that could never arrive.
+ */
+const ENGRAM_SEARCH_MAX_LIMIT = 20;
 const ENGRAM_SEARCH_DEFAULT_LIMIT = 20;
-/** Rough tokens-per-result used to turn `limit` into a recall token budget. */
-const ENGRAM_SEARCH_TOKENS_PER_RESULT = 400;
+/** Characters of one result's content an engram.search answer carries; longer content is cut and marked. */
+const ENGRAM_SEARCH_MAX_CONTENT_CHARS = 4_000;
+/**
+ * FORK 2026-10-09 — the store searched when the caller names no session: the main chat's. It
+ * used to be "main", which names a different store (2 stale events on the live gateway), so a
+ * search without a key came back empty whatever it asked. A key the caller passes still wins.
+ */
+const MAIN_CHAT_SESSION_KEY = "agent:main:main";
+
+/** `limit` clamped to [1, ENGRAM_SEARCH_MAX_LIMIT]; a missing or unusable value is `fallback`. */
+function clampSearchLimit(raw: unknown, fallback: number): number {
+  return Math.max(
+    1,
+    Math.min(ENGRAM_SEARCH_MAX_LIMIT, Math.floor(Number(raw ?? fallback) || fallback)),
+  );
+}
+
+/**
+ * FORK 2026-10-09 — ask `recall` for everything it ranks, then cut by COUNT, not by tokens.
+ *
+ * Both callers (engram.search and the agent `recall` tool) used to turn `limit` into a token
+ * budget, `limit * 400`. recall's packer walks its ranked hits in order and STOPS at the first
+ * one that does not fit, so a single long top hit (a pasted log, a whole memory file) emptied the
+ * answer. Measured on copies of the live stores: 16, 5 and 3 of 24 real queries came back empty
+ * at limit 5, 10 and 20, with matching events in the store; cut by count, none of the 24 did.
+ *
+ * A caller asking for N results wants the N best, whatever their size. A token budget belongs to
+ * whoever puts text into a prompt, and neither caller does: the UI lists hits, and the tool trims
+ * each one to 500 chars. Unbounded is safe because recall selects at most 20 events BEFORE it
+ * packs, so its budget only ever decided how many of those 20 survived.
+ *
+ * Independent of how recall's packer treats an oversized hit, on purpose: correct either way.
+ * `truncated` now means "recall ranked more than `limit`", and `totalTokens` is measured over the
+ * hits returned, with recall's own per-event measure.
+ */
+async function recallTopEvents(query: string, store: EventStore, limit: number) {
+  const result = await recallSearch({ query, maxTokens: Number.POSITIVE_INFINITY }, store);
+  const events = result.events.slice(0, limit);
+  return {
+    events,
+    totalTokens: events.reduce(
+      (sum, e) => sum + (e.event.tokens || estimateTokens(e.event.content)),
+      0,
+    ),
+    truncated: result.events.length > limit,
+    queryCount: result.queryCount,
+  };
+}
 
 /**
  * `engram.search` gateway RPC. Exported (rather than inlined in `register`) so the
@@ -168,14 +265,10 @@ export async function handleEngramSearch({
   const p = (params ?? {}) as { query?: unknown; sessionKey?: unknown; limit?: unknown };
   const query = typeof p.query === "string" ? p.query : "";
   const sessionKey =
-    typeof p.sessionKey === "string" && p.sessionKey.trim() ? p.sessionKey.trim() : "main";
-  const limit = Math.max(
-    1,
-    Math.min(
-      ENGRAM_SEARCH_MAX_LIMIT,
-      Number(p.limit ?? ENGRAM_SEARCH_DEFAULT_LIMIT) || ENGRAM_SEARCH_DEFAULT_LIMIT,
-    ),
-  );
+    typeof p.sessionKey === "string" && p.sessionKey.trim()
+      ? p.sessionKey.trim()
+      : MAIN_CHAT_SESSION_KEY;
+  const limit = clampSearchLimit(p.limit, ENGRAM_SEARCH_DEFAULT_LIMIT);
 
   if (!query.trim()) {
     respond(false, undefined, { code: "INVALID_REQUEST", message: "query is required" });
@@ -185,22 +278,29 @@ export async function handleEngramSearch({
   let payload: EngramSearchPayload;
   try {
     const store = getOrCreateStore(sessionKey);
-    const result = await recallSearch(
-      { query, maxTokens: limit * ENGRAM_SEARCH_TOKENS_PER_RESULT },
-      store,
-    );
-    payload = {
-      results: result.events.map((e) => ({
+    const top = await recallTopEvents(query, store, limit);
+    // FORK 2026-10-09: with no token budget the answer is bounded by count (<= 20) AND by
+    // clipping each result's content, so one call can never carry twenty whole transcripts.
+    // totalTokens describes what is DELIVERED: a clipped result counts its clipped text.
+    let totalTokens = 0;
+    const results = top.events.map((e) => {
+      const content = String(e.event.content ?? "");
+      const clipped = content.length > ENGRAM_SEARCH_MAX_CONTENT_CHARS;
+      const delivered = clipped ? `${content.slice(0, ENGRAM_SEARCH_MAX_CONTENT_CHARS)}…` : content;
+      totalTokens += clipped
+        ? estimateTokens(delivered)
+        : e.event.tokens || estimateTokens(content);
+      return {
         id: e.event.id,
         timestamp: e.event.timestamp,
         kind: e.event.kind,
-        content: e.event.content,
+        content: delivered,
+        ...(clipped ? { clipped: true } : {}),
         score: Math.round(e.score * 1000) / 1000,
         sessionKey: e.event.sessionKey,
-      })),
-      totalTokens: result.totalTokens,
-      truncated: result.truncated,
-    };
+      };
+    });
+    payload = { results, totalTokens, truncated: top.truncated };
   } catch (err) {
     respond(false, undefined, {
       code: "UNAVAILABLE",
@@ -212,6 +312,147 @@ export async function handleEngramSearch({
   // Deliberately OUTSIDE the try: a throw from respond() itself must not fall into
   // the catch and emit a SECOND response frame for the same request id.
   respond(true, payload);
+}
+
+// -- Transcript recall (FORK 2026-10-09, J1) ----------------------------------
+//
+// `recall` searches the gateway transcripts — the files `chat.history` / `sessions_history`
+// read — through engram's transcript index (src/memory/engram/transcript-index.ts), not the
+// per-session event store, which holds assistant text only (J1 gap note §2: 1-6% of messages,
+// no user turn, no tool output).
+//
+// Scope: other chats can hold other people's words (WhatsApp groups), so only an owner caller
+// that is not sandboxed reaches past its own chat. Everyone else is held to "session".
+
+/** How long a call waits for the background catch-up before searching what is indexed. */
+const TRANSCRIPT_CATCHUP_WAIT_MS = 1500;
+
+const transcriptIndexes = new Map<string, { index: TranscriptIndex; catchUp: TranscriptCatchUp }>();
+
+function transcriptIndexFor(agentId: string, sessionsDir: string) {
+  let entry = transcriptIndexes.get(agentId);
+  if (!entry) {
+    // resolveStateDir(), not ENGRAM_BASE_DIR: os.homedir() ignores a test's HOME inside a vitest
+    // worker thread (measured 2026-10-09), so a homedir()-based path wrote test rows into the
+    // real ~/.openclaw/engram. In the gateway both resolve to ~/.openclaw/engram.
+    const dbPath = transcriptIndexPath(join(resolveStateDir(), "engram"), agentId);
+    const index = openTranscriptIndex(dbPath);
+    entry = { index, catchUp: createTranscriptCatchUp({ index, sessionsDir }) };
+    transcriptIndexes.set(agentId, entry);
+  }
+  return entry;
+}
+
+function closeTranscriptIndexes(): void {
+  for (const { index, catchUp } of transcriptIndexes.values()) {
+    catchUp.stop();
+    index.close();
+  }
+  transcriptIndexes.clear();
+}
+
+export type TranscriptRecallOutput = {
+  scope: "session" | "all";
+  results: Array<{
+    sessionKey?: string;
+    sessionId: string;
+    when: string;
+    role: string;
+    text: string;
+    thisSession: boolean;
+  }>;
+  coverage: { thisSessionCurrent: boolean; transcriptsPending: number };
+  tookMs: number;
+};
+
+/** The calling chat's session store and transcript, resolved the way the gateway resolves them. */
+function resolveRecallSession(ctx: OpenClawPluginToolContext) {
+  const cfg = ctx.getRuntimeConfig?.() ?? ctx.runtimeConfig ?? ctx.config;
+  const agentId = ctx.agentId ?? /^agent:([^:]+):/.exec(ctx.sessionKey ?? "")?.[1] ?? "main";
+  const storePath = resolveStorePath(cfg?.session?.store, { agentId });
+  const sessionsDir = dirname(storePath);
+  const store = loadSessionStore(storePath);
+  const fileOf = (e: { sessionId?: string; sessionFile?: string } | undefined) => {
+    if (e?.sessionFile) {
+      return isAbsolute(e.sessionFile) ? e.sessionFile : join(sessionsDir, e.sessionFile);
+    }
+    return e?.sessionId ? join(sessionsDir, `${e.sessionId}.jsonl`) : undefined;
+  };
+  const sessionFile = ctx.sessionKey ? fileOf(store[ctx.sessionKey]) : undefined;
+  return { agentId, sessionsDir, store, fileOf, sessionFile };
+}
+
+/** `recall({ id })`: one item of THIS chat's transcript, whole or a slice (engram transcript-item.ts). */
+export function runRecallById(
+  ctx: OpenClawPluginToolContext,
+  params: RecallInput & { id: string },
+): RecallByIdOutput {
+  const { sessionFile } = resolveRecallSession(ctx);
+  if (!sessionFile) {
+    return { id: params.id, found: false, reason: "this chat has no transcript to look in" };
+  }
+  const item = findTranscriptItem(sessionFile, params.id);
+  if (!item) {
+    return {
+      id: params.id,
+      found: false,
+      reason: "no tool result or entry with this id in this chat's transcript",
+    };
+  }
+  return sliceTranscriptItem(params.id, item, params.offset, params.length);
+}
+
+export async function runTranscriptRecall(
+  ctx: OpenClawPluginToolContext,
+  params: RecallInput & { query: string },
+): Promise<TranscriptRecallOutput> {
+  const startedMs = Date.now();
+  const { agentId, sessionsDir, store, fileOf, sessionFile } = resolveRecallSession(ctx);
+  const mayReachAll = ctx.senderIsOwner === true && ctx.sandboxed !== true;
+  const scope: "session" | "all" = mayReachAll && params.scope !== "session" ? "all" : "session";
+
+  const { index, catchUp } = transcriptIndexFor(agentId, sessionsDir);
+  if (scope === "all") {
+    // Warm index: only appended bytes, done in milliseconds. Cold index (first call ever): the
+    // pass keeps running in the background and this call searches what is indexed by then.
+    catchUp.kick();
+    await Promise.race([
+      catchUp.idle(),
+      new Promise<void>((resolve) => setTimeout(resolve, TRANSCRIPT_CATCHUP_WAIT_MS).unref?.()),
+    ]);
+  }
+  const result = await recallTranscripts({
+    index,
+    query: params.query,
+    scope,
+    sessionFile,
+    sessionKey: ctx.sessionKey,
+    limit: params.limit ?? 10,
+  });
+
+  const keyOf = new Map<string, string>();
+  for (const [key, entry] of Object.entries(store)) {
+    const file = fileOf(entry);
+    if (file) {
+      keyOf.set(file, key);
+    }
+  }
+  return {
+    scope,
+    results: result.hits.map((hit) => ({
+      sessionKey: keyOf.get(hit.path),
+      sessionId: transcriptSessionId(hit.path),
+      when: hit.ts,
+      role: hit.role,
+      text: hit.snippet,
+      thisSession: hit.path === sessionFile,
+    })),
+    coverage: {
+      thisSessionCurrent: result.sessionSynced,
+      transcriptsPending: scope === "all" ? catchUp.pending() : 0,
+    },
+    tookMs: Date.now() - startedMs,
+  };
 }
 
 // -- Retrieval pack stability (FORK 2026-07-29) --------------------------------
@@ -248,9 +489,10 @@ export interface CachedPack {
   builtAtMs: number;
   /**
    * FORK 2026-09-03 — set ONLY on the placeholder a cold session installs before its
-   * background rebuild has produced anything. It marks an entry that is worth nothing to
-   * serve, so a FAILED rebuild can drop it and let the next turn retry, instead of pinning
-   * an empty pack in the cache for the whole PACK_REBUILD_MAX_AGE_MS window.
+   * background rebuild has produced anything. It marks an entry that is not this session's own
+   * pack, so a FAILED rebuild can drop it and let the next turn retry, instead of pinning a
+   * placeholder in the cache for the whole PACK_REBUILD_MAX_AGE_MS window. FORK 2026-10-09 —
+   * the placeholder is empty, or the latest shared-bank section (see SharedBankSeed).
    *
    * A rebuild that legitimately yields "" is NOT seeded and stays cached — that is the
    * behaviour which stops an unproductive store re-running FTS on every single turn.
@@ -326,6 +568,121 @@ function persistPack(sessionKey: string, entry: CachedPack): void {
   } catch (err) {
     // Never fatal — the only thing lost is the NEXT cold start's warm seed.
     console.log(`[total-recall] pack persist failed session=${sessionKey}: ${String(err)}`);
+  }
+}
+
+// -- Shared-bank seed (FORK 2026-10-09) -----------------------------------------
+//
+// MEASURED: 190 of 230 empty retrieval packs were the first turn of a brand-new session. Such a
+// session has no store and no persisted pack, so the cold path served nothing, although the
+// shared memory bank (the cc-experience store, below) is the SAME for every session and the last
+// refresh of any session had just rendered a section of it.
+//
+// So each committed refresh that renders a bank section keeps it, in memory and on disk (the
+// first sessions after a restart are exactly the cold ones), and a cold session with no usable
+// pack of its own is seeded with it instead of nothing. The seed is still the cold PLACEHOLDER
+// (`seeded: true`): the scheduler skips the interval for it, any real pack replaces it
+// (packWriter), and a failed rebuild drops it, exactly as for the empty placeholder. It adds no
+// prompt change either: the session's prompt changes once, seed -> own pack, where it used to
+// change once, nothing -> own pack.
+//
+// The section was ranked against another session's query, so it is a fair seed and no more.
+// Alternatives rejected:
+//   - Build a bank-only pack on the cold path: that is the 20-28 s event-loop freeze the
+//     2026-09-03 change took off the hook.
+//   - Serve another session's whole persisted pack: its first section is that session's own
+//     conversation, which is not this session's to see. Only the bank is shared.
+type SharedBankSeed = { section: string; builtAtMs: number };
+
+/**
+ * Beside the per-session packs. A session pack never carries `section` and this file never
+ * carries `sessionKey`, so a session key that sanitises to the same name cannot be misread as
+ * either; the worst it can do is overwrite the other, which costs one cold start its seed.
+ */
+const SHARED_BANK_SEED_PATH = join(PACK_CACHE_DIR, "_shared-bank.json");
+
+let sharedBankSeed: SharedBankSeed | undefined;
+/** True once the disk has been read, or a refresh has recorded a newer seed than it holds. */
+let sharedBankSeedLoaded = false;
+
+/**
+ * The bank section of a pack, heading included: one renderer for the pack and its seed.
+ *
+ * FORK 2026-10-09: this store holds the shared memory bank (auto-memory files and notes, synced
+ * from disk by the memory bridge), which chat workers and plain Claude Code sessions both write.
+ * The old heading, "Learned From Claude Code Sessions", read as another agent's report once the
+ * chat worker itself became a Claude Code process; memory is knowledge, with no author to name
+ * (owner decision, 2026-10-09).
+ */
+/**
+ * FORK 2026-10-10 — no CJK text reaches the owner's chat. The bank indexed upstream's `docs/zh-CN`
+ * translations and a Chinese hooks page surfaced in his prompt (owner, 16:07: "no Chinese allowed").
+ * The indexer now skips locale folders (jarvis-icu c5dba13); this drops any retrieved entry that
+ * still carries Han, kana or Hangul, whatever store it came from.
+ */
+const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
+export function dropCjkEntries(pack: string): string {
+  if (!CJK_RE.test(pack)) {
+    return pack;
+  }
+  const kept = pack.split(/\n(?=\[\d{4}-\d\d-\d\dT)/).filter((entry) => !CJK_RE.test(entry));
+  return kept.some((entry) => /^\[\d{4}-\d\d-\d\dT/.test(entry)) ? kept.join("\n") : "";
+}
+
+function renderSharedBankSection(ccPack: string): string {
+  return (
+    "## From the Shared Memory Bank\n\n" +
+    "(memory files and notes every session shares, synced from disk)\n\n" +
+    ccPack +
+    "\n"
+  );
+}
+
+function loadSharedBankSeed(): SharedBankSeed | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(SHARED_BANK_SEED_PATH, "utf-8")) as
+      | Partial<SharedBankSeed>
+      | undefined;
+    if (
+      !parsed ||
+      typeof parsed.section !== "string" ||
+      !parsed.section ||
+      typeof parsed.builtAtMs !== "number"
+    ) {
+      return undefined;
+    }
+    return { section: parsed.section, builtAtMs: parsed.builtAtMs };
+  } catch {
+    // Absent, truncated or half-written: no seed, which is the cold start this replaced.
+    return undefined;
+  }
+}
+
+/**
+ * The latest bank section. Read from disk once, on the first cold start that asks, unless a
+ * refresh in this process has already recorded a newer one.
+ */
+function currentSharedBankSeed(): SharedBankSeed | undefined {
+  if (!sharedBankSeedLoaded) {
+    sharedBankSeedLoaded = true;
+    sharedBankSeed = loadSharedBankSeed();
+  }
+  return sharedBankSeed;
+}
+
+/** Keep the section a refresh just rendered: in memory, then on disk. */
+function recordSharedBankSeed(seed: SharedBankSeed): void {
+  sharedBankSeed = seed;
+  sharedBankSeedLoaded = true;
+  try {
+    ensureDir(PACK_CACHE_DIR);
+    const tmp = `${SHARED_BANK_SEED_PATH}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(seed), "utf-8");
+    // Write-then-rename, like the session packs: a reader never sees a half-written seed.
+    renameSync(tmp, SHARED_BANK_SEED_PATH);
+  } catch (err) {
+    // Never fatal: this process still serves the seed from memory.
+    console.log(`[total-recall] shared-bank seed persist failed: ${String(err)}`);
   }
 }
 
@@ -524,8 +881,9 @@ export function packIsStillFresh(
 // PACK_REFRESH_MIN_INTERVAL_MS, measured from the END of one run to the START of the next.
 // The stale pack keeps being served meanwhile — the hook never waits on any of this.
 //
-// The one exemption from the interval is a cold placeholder (`seeded`): it holds nothing to
-// serve, so its first pack must not wait out a timer.
+// The one exemption from the interval is a cold placeholder (`seeded`): it holds nothing of the
+// session's own (it is empty, or the shared-bank seed), so its first pack must not wait out a
+// timer.
 
 /** Minimum time between the END of one refresh of a session and the START of its next. */
 export const PACK_REFRESH_MIN_INTERVAL_MS = 60_000;
@@ -732,9 +1090,10 @@ export function packRefreshInputs(resolveStores: PackRefreshArgs["resolveStores"
 //     and rewrites the prompt-cache prefix (see packIsStillFresh). Prompt stability over a pack
 //     that is already superseded. (Ordering by `builtAtMs` instead would be worse: the stale run
 //     writes first, and the NEWER run's write is the one refused.)
-//   - The exception is an entry worth nothing — absent, or the cold placeholder (`seeded`): any
-//     real pack beats it, superseded or not, even at the price of that second change. Content over
-//     stability, because the alternative is serving no memory at all until the newer run lands.
+//   - The exception is an entry that is not the session's own pack — absent, or the cold
+//     placeholder (`seeded`: empty, or the shared-bank seed): any real pack beats it, superseded
+//     or not, even at the price of that second change. Content over stability, because the
+//     alternative is serving none of the session's memory until the newer run lands.
 // Runs are numbered by a process-local counter, not Date.now(): the order must not depend on the
 // wall clock, and the number never leaves the process (it is not part of CachedPack or the file).
 
@@ -825,6 +1184,50 @@ const packWriter = createPackWriter({
   },
 });
 
+// -- Pack query (FORK 2026-10-09) ----------------------------------------------
+//
+// MEASURED on the 93 MB shared bank: ~1K chars of full-text query search in ~3 s, 4K in 11 s,
+// 12K in 32 s and 45K in 71-85 s, because the search costs more the more distinct terms the query
+// has (search-index.ts, parseQuery). The hook hands over the whole prompt, preamble included, and
+// Tinker refreshes had a 20 s journal median. So a refresh searches with the prompt's TAIL: that
+// is where the newest message sits, i.e. what the task is now, while the preamble is much the
+// same every turn and pulls much the same events every turn.
+//
+// Alternatives rejected:
+//   - The head of the prompt: that is the preamble, the same query every turn.
+//   - Capping terms inside the library's search: that changes the ranking for every caller; this
+//     changes only what this plugin asks.
+// The cost: a long message is searched by its last ~2,000 chars only. The `recall` tool remains
+// the full-query path, at no cost until the model asks.
+
+/** How much of the prompt, from its end, a pack refresh searches with. */
+export const PACK_QUERY_MAX_CHARS = 2_000;
+
+/** How far into the window the first whitespace may sit and still count as near the cut. */
+const PACK_QUERY_WORD_SLACK_CHARS = 64;
+
+/**
+ * The full-text query a pack refresh searches with: the last {@link PACK_QUERY_MAX_CHARS}
+ * characters of `prompt`, trimmed. When the cut lands inside a word and a whitespace is near,
+ * the query starts after it instead, so it does not open with the back half of a word (which
+ * matches nothing, or the wrong events).
+ */
+export function packQuery(prompt: string): string {
+  const text = prompt.trim();
+  if (text.length <= PACK_QUERY_MAX_CHARS) {
+    return text;
+  }
+  const cut = text.length - PACK_QUERY_MAX_CHARS;
+  let window = text.slice(cut);
+  if (!/\s/u.test(text.charAt(cut - 1))) {
+    const space = window.search(/\s/u);
+    if (space !== -1 && space <= PACK_QUERY_WORD_SLACK_CHARS) {
+      window = window.slice(space);
+    }
+  }
+  return window.trim();
+}
+
 /**
  * Rebuild a session's retrieval pack OFF the critical path and update the cache for the
  * next turn. Never throws: this runs detached, so an unhandled rejection here would be an
@@ -834,7 +1237,10 @@ const packWriter = createPackWriter({
  * makes to the cache goes through `packWriter`.
  */
 async function refreshPackInBackground(args: PackRefreshArgs): Promise<void> {
-  const { sessionKey, query, budgetTokens, logger } = args;
+  const { sessionKey, budgetTokens, logger } = args;
+  // FORK 2026-10-09 — the hook hands over the whole prompt; this is the one place it is cut to
+  // what is worth searching with (packQuery).
+  const query = packQuery(args.query);
   const startedMs = Date.now();
   // Numbered before the inputs are read, so a refresh numbered later took NEWER inputs.
   const runSeq = packWriter.begin(sessionKey);
@@ -847,7 +1253,7 @@ async function refreshPackInBackground(args: PackRefreshArgs): Promise<void> {
     // "OFF-PATH" named where the call sat in the source, not where it ran. The journal shows
     // the price — `pack refreshed OFF-PATH … tookMs=24130` with nothing interleaved, i.e. 24s
     // of dead event loop for every connected client.
-    const [sessionPack, ccPack] = await Promise.all([
+    const [rawSessionPack, rawCcPack] = await Promise.all([
       eventCount > 0 && sessionBudget > 0
         ? assembleRetrievalPackAsync(query, store, { maxTokens: sessionBudget })
         : Promise.resolve(""),
@@ -855,20 +1261,32 @@ async function refreshPackInBackground(args: PackRefreshArgs): Promise<void> {
         ? assembleRetrievalPackAsync(query, ccStore, { maxTokens: ccBudget })
         : Promise.resolve(""),
     ]);
+    const sessionPack = dropCjkEntries(rawSessionPack);
+    const ccPack = dropCjkEntries(rawCcPack);
     const sections: string[] = [];
     if (sessionPack) {
       sections.push("## Retrieved Memory Context\n\n" + sessionPack + "\n");
     }
-    if (ccPack) {
-      sections.push(
-        "## Learned From Claude Code Sessions\n\n" +
-          "(distilled experience synced from Claude Code; each row carries its " +
-          "provenance tags)\n\n" +
-          ccPack +
-          "\n",
-      );
+    // Rendered once, used twice: in this pack, and as the seed the next brand-new session
+    // starts from (SharedBankSeed).
+    const bankSection = ccPack ? renderSharedBankSection(ccPack) : "";
+    if (bankSection) {
+      sections.push(bankSection);
     }
-    const rendered = sections.join("\n");
+    let rendered = sections.join("\n");
+    // FORK 2026-10-09 — a rebuild that finds nothing for THIS query (a "hello" ranks nothing) keeps
+    // the latest shared-bank section instead of emptying the pack. Seen live: a new session's first
+    // turn was served the bank seed (2,773 chars), and its second turn was served chars=0 because
+    // the empty rebuild replaced it. Same rule as the cold start: only while the bank has events now,
+    // under the same 24 h cap. The entry is a real pack (not `seeded`), so the interval applies.
+    let bankFallback = false;
+    if (!rendered && ccCount > 0) {
+      const latest = currentSharedBankSeed();
+      if (latest && Date.now() - latest.builtAtMs <= PERSISTED_PACK_MAX_AGE_MS) {
+        rendered = latest.section;
+        bankFallback = true;
+      }
+    }
     const entry: CachedPack = {
       pack: rendered,
       eventCount,
@@ -879,14 +1297,21 @@ async function refreshPackInBackground(args: PackRefreshArgs): Promise<void> {
     if (!packWriter.commit(sessionKey, runSeq, entry)) {
       return;
     }
+    // FORK 2026-10-09 — only a COMMITTED refresh updates the shared-bank seed: a refused one is
+    // superseded, so a refresh with newer inputs is already running and will record its own.
+    if (bankSection) {
+      recordSharedBankSeed({ section: bankSection, builtAtMs: entry.builtAtMs });
+    }
     logger.info?.(
       `[total-recall] pack refreshed OFF-PATH session=${sessionKey} events=${eventCount} ` +
-        `ccEvents=${ccCount} chars=${rendered.length} tookMs=${Date.now() - startedMs}`,
+        `ccEvents=${ccCount} chars=${rendered.length} queryChars=${query.length} ` +
+        `${bankFallback ? "source=shared-bank " : ""}tookMs=${Date.now() - startedMs}`,
     );
   } catch (err) {
     // The stale pack stays cached and keeps being served — degraded, not broken. But a cold
-    // session's PLACEHOLDER is not a stale pack, it is nothing: leaving it cached would make
-    // ONE failed rebuild suppress retrieval for the whole 30-minute freshness window. Drop it
+    // session's PLACEHOLDER is not a stale pack, it is none of the session's memory (empty, or
+    // the shared-bank seed): leaving it cached would make ONE failed rebuild suppress the
+    // session's own retrieval for the whole 30-minute freshness window. Drop it
     // so the next turn takes the cold path again — which is what the pre-2026-09-03 code did
     // implicitly, by never caching anything when the build threw. Not if a newer refresh of this
     // session has started, though: the placeholder is then that refresh's to replace (packWriter).
@@ -954,8 +1379,9 @@ export default definePluginEntry({
 
     // -------------------------------------------------------------------
     // Hook 1: before_prompt_build (priority 50)
-    // Injects retrieval pack into system prompt. Lower priority than
-    // Identity Persistence (100) so persona block comes first.
+    // Injects the retrieval pack in front of the turn's prompt (prependContext). FORK 2026-10-10
+    // (J-series Phase 1.5): it used to go into the system prompt, where a warm Claude Code worker
+    // saw it only at spawn and every new pack moved the whole cached prefix.
     // -------------------------------------------------------------------
     api.on(
       "before_prompt_build",
@@ -974,7 +1400,7 @@ export default definePluginEntry({
         }
 
         const query = payload.query ?? payload.userMessage ?? payload.prompt ?? "";
-        if (!query.trim()) {
+        if (!query.trim() || isSlashCommandPrompt(query)) {
           return;
         }
 
@@ -1019,20 +1445,23 @@ export default definePluginEntry({
         }
 
         // Reuse the previous pack VERBATIM while the task has not moved. Returning
-        // byte-identical text is the whole point: an unchanged system prompt keeps
-        // deriveSessionKey stable, so the claude-cli worker is reused instead of
-        // respawned, and the prompt-cache prefix is re-read instead of rewritten.
+        // byte-identical text was the whole point while the pack sat in the system prompt
+        // (an unchanged prompt kept the claude-cli worker and the cached prefix). Since
+        // 2026-10-10 it rides the turn, so reuse now saves the rebuild, not the cache.
         const nowMs = Date.now();
         const cached = packCache.get(sessionKey);
         if (cached && packIsStillFresh(cached, eventCount, ccCount, nowMs)) {
           // The WARM path, which is the common one and has never been timed. If the hook is
           // slow while this branch is taken, the cost is the store load above — nothing else
           // in this branch does work.
+          // FORK 2026-10-09 — `chars` and `placeholder` say WHAT was served: a seeded entry here is
+          // the cold placeholder (empty, or the shared-bank seed) whose rebuild has not landed yet.
           api.logger.info(
-            `[total-recall] pack served warm session=${sessionKey} storeLoadMs=${storeLoadMs}` +
+            `[total-recall] pack served warm session=${sessionKey} chars=${cached.pack.length}` +
+              `${cached.seeded ? " placeholder" : ""} storeLoadMs=${storeLoadMs}` +
               ` (ccReadMs=${ccLoadMs} sessionReadMs=${mainLoadMs})`,
           );
-          return cached.pack ? { prependSystemContext: cached.pack } : undefined;
+          return cached.pack ? { prependContext: cached.pack } : undefined;
         }
 
         // FORK 2026-08-15 — STALE-WHILE-REVALIDATE. See TINKER_UI_DESIGN_BIBLE/turn-latency.md.
@@ -1055,8 +1484,8 @@ export default definePluginEntry({
         // retrieves against the previous query. That is a real staleness increase — but the
         // design already tolerates PACK_REBUILD_EVENT_DELTA events / PACK_REBUILD_MAX_AGE_MS
         // of drift by construction, so one extra turn of lag is strictly fresher than the
-        // reuse path this function has always taken. A session with NO pack at all still
-        // builds synchronously, because serving nothing is worse than waiting once.
+        // reuse path this function has always taken. A session with NO pack at all takes the
+        // cold path below, which since 2026-09-03 never builds on the hook either.
         if (cached) {
           schedulePackRefresh({
             sessionKey,
@@ -1068,7 +1497,14 @@ export default definePluginEntry({
             budgetTokens,
             logger: api.logger,
           });
-          return cached.pack ? { prependSystemContext: cached.pack } : undefined;
+          // FORK 2026-10-09 — one line, like the warm and cold branches: this branch used to log
+          // nothing, so a turn served from a stale pack left no trace in the journal.
+          api.logger.info(
+            `[total-recall] pack served stale session=${sessionKey} chars=${cached.pack.length}` +
+              `${cached.seeded ? " placeholder" : ""} storeLoadMs=${storeLoadMs}` +
+              " rebuild=requested",
+          );
+          return cached.pack ? { prependContext: cached.pack } : undefined;
         }
 
         // FORK 2026-09-03 — A COLD SESSION NO LONGER BLOCKS THE PROMPT (OR THE GATEWAY).
@@ -1083,7 +1519,8 @@ export default definePluginEntry({
         //
         // The warm path above already has the right shape — serve what we hold, refresh off
         // the critical path. A cold session has nothing in memory to serve, so it serves the
-        // closest thing: the pack this session last persisted to disk, or nothing at all.
+        // closest thing: the pack this session last persisted to disk; failing that, the latest
+        // shared-bank section (FORK 2026-10-09); failing that, nothing at all.
         // Either way the hook returns in the SAME TICK and the rebuild is scheduled, so the
         // next turn gets the full pack. That is the identical one-turn lag the warm path has
         // accepted by design since 2026-08-15.
@@ -1095,13 +1532,32 @@ export default definePluginEntry({
             persistedRaw && nowMs - persistedRaw.builtAtMs <= PERSISTED_PACK_MAX_AGE_MS
               ? persistedRaw
               : undefined;
+          // FORK 2026-10-09 — no usable pack of its own (mostly: a brand-new session), so start
+          // from the latest shared-bank section instead of nothing (SharedBankSeed). Only while
+          // the bank has events NOW (no bank, no seed: nothing is invented), and under the same
+          // 24 h cap as a persisted pack.
+          const bankSeedRaw = !persisted && ccCount > 0 ? currentSharedBankSeed() : undefined;
+          const bankSeed =
+            bankSeedRaw && nowMs - bankSeedRaw.builtAtMs <= PERSISTED_PACK_MAX_AGE_MS
+              ? bankSeedRaw
+              : undefined;
           const seed: CachedPack = persisted ?? {
-            pack: "",
+            // Still the cold PLACEHOLDER when it carries the bank section, so the scheduler's cold
+            // exemption, packWriter's "any real pack replaces it" and a failed rebuild's drop all
+            // apply to it unchanged.
+            pack: bankSeed?.section ?? "",
             eventCount,
             ccEventCount: ccCount,
             builtAtMs: nowMs,
             seeded: true,
           };
+          const seedSource = persisted
+            ? "persisted"
+            : bankSeed
+              ? "shared-bank"
+              : persistedRaw
+                ? "expired"
+                : "empty";
 
           // Cache BEFORE scheduling. Two reasons: the refresh overwrites this entry when it
           // finishes (so it must not be able to land first and then be clobbered), and caching
@@ -1132,11 +1588,11 @@ export default definePluginEntry({
           api.logger.info(
             `[total-recall] pack cold-start session=${sessionKey} events=${eventCount} ` +
               `ccEvents=${ccCount} ` +
-              `source=${persisted ? "persisted" : persistedRaw ? "expired" : "empty"} ` +
+              `source=${seedSource} ` +
               `chars=${seed.pack.length} storeLoadMs=${storeLoadMs} coldMs=${coldMs} ` +
               `rebuild=scheduled`,
           );
-          return seed.pack ? { prependSystemContext: seed.pack } : undefined;
+          return seed.pack ? { prependContext: seed.pack } : undefined;
         } catch (err) {
           api.logger.warn(`[total-recall] cold-start seed failed: ${err}`);
           return;
@@ -1273,53 +1729,58 @@ export default definePluginEntry({
     // -------------------------------------------------------------------
     api.on("gateway_stop", async () => {
       await shutdownFtsWorker();
+      closeTranscriptIndexes();
     });
 
     // -------------------------------------------------------------------
-    // Tool: recall -- memory search
+    // Tool: recall -- search the session transcripts (FORK 2026-10-09, J1)
     // -------------------------------------------------------------------
+    // The factory receives the gateway's trusted context (session key, agent, owner flag);
+    // `execute`'s third argument is NOT a context object, which is why the old body always
+    // searched the "main" store. Optional: an agent sees it only when `tools.alsoAllow` (or
+    // `tools.allow`) names `recall` or `tinkerclaw-total-recall`.
     api.registerTool(
-      () => ({
+      (ctx: OpenClawPluginToolContext) => ({
         name: "recall",
         label: "Memory Recall",
         description:
-          "Search ENGRAM episodic memory for relevant past events, conversations, " +
-          "and tool results. Returns scored, deduplicated results within a token budget.",
+          "Search past conversations: what was said, decided, or printed by a tool, in this chat " +
+          "and (for the owner) every other chat, including turns compaction has dropped from " +
+          "context. Returns the matching passages with their chat's session key, role and time. " +
+          "For more of a passage, search again with its exact words. Pass id instead of query to " +
+          "get one item of this chat back whole: an evicted tool result by the toolCallId its " +
+          "[Evicted ...] marker names, or a transcript entry by its id (offset/length page " +
+          "through a long one).",
         parameters: RecallParams,
-        async execute(_toolCallId: string, params: RecallInput, context?: { sessionKey?: string }) {
-          const sessionKey = context?.sessionKey ?? "main";
-          const store = getOrCreateStore(sessionKey);
-          const limit = params.limit ?? 10;
-
-          const result = await recallSearch({ query: params.query, maxTokens: limit * 400 }, store);
-
-          const formatted = result.events.map((e) => ({
-            id: e.event.id,
-            timestamp: e.event.timestamp,
-            kind: e.event.kind,
-            content:
-              e.event.content.length > 500
-                ? e.event.content.slice(0, 500) + "..."
-                : e.event.content,
-            score: Math.round(e.score * 1000) / 1000,
-          }));
-
+        async execute(_toolCallId: string, params: RecallInput) {
+          const id = params.id?.trim();
+          const query = params.query?.trim();
+          if (id) {
+            const byId = runRecallById(ctx, { ...params, id });
+            api.logger.info(
+              `[total-recall] recall id=${id} found=${byId.found}` +
+                (byId.found ? ` chars=${byId.text.length}/${byId.totalChars}` : ""),
+            );
+            return {
+              content: [{ type: "text" as const, text: JSON.stringify(byId, null, 2) }],
+              details: byId,
+            };
+          }
+          if (!query) {
+            const missing = { error: "recall needs a query (words to search for) or an id" };
+            return {
+              content: [{ type: "text" as const, text: JSON.stringify(missing) }],
+              details: missing,
+            };
+          }
+          const out = await runTranscriptRecall(ctx, { ...params, query });
+          api.logger.info(
+            `[total-recall] recall scope=${out.scope} hits=${out.results.length} ` +
+              `tookMs=${out.tookMs} pending=${out.coverage.transcriptsPending}`,
+          );
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify(
-                  {
-                    results: formatted,
-                    totalTokens: result.totalTokens,
-                    truncated: result.truncated,
-                    queryCount: result.queryCount,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
+            content: [{ type: "text" as const, text: JSON.stringify(out, null, 2) }],
+            details: out,
           };
         },
       }),

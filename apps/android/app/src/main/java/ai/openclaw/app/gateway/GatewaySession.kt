@@ -90,6 +90,10 @@ class GatewaySession(
   private val onEvent: (event: String, payloadJson: String?) -> Unit,
   private val onInvoke: (suspend (InvokeRequest) -> InvokeResult)? = null,
   private val onTlsFingerprint: ((stableId: String, fingerprint: String) -> Unit)? = null,
+  // FORK 2026-10-19 (the architect: phone app) — extra headers on the WebSocket upgrade. The Jarvis build
+  // reaches the gateway through the phone door, which wants the device token (X-Jarvis-Device).
+  // Given the endpoint, so the caller can keep the token away from any other gateway.
+  private val requestHeaders: (GatewayEndpoint) -> Map<String, String> = { emptyMap() },
 ) {
   private companion object {
     // Keep connect timeout above observed gateway unauthorized close on lower-end devices.
@@ -353,7 +357,20 @@ class GatewaySession(
 
     suspend fun connect() {
       val url = buildGatewayWebSocketUrl(endpoint.host, endpoint.port, tls != null)
-      val request = Request.Builder().url(url).build()
+      val request =
+        Request
+          .Builder()
+          .url(url)
+          .apply {
+            requestHeaders(endpoint).forEach { (name, value) ->
+              // OkHttp's message would quote the value: report the header name only.
+              try {
+                header(name, value)
+              } catch (_: IllegalArgumentException) {
+                Log.w("OpenClawGateway", "dropped request header $name: invalid characters")
+              }
+            }
+          }.build()
       socket = client.newWebSocket(request, Listener())
       try {
         connectDeferred.await()

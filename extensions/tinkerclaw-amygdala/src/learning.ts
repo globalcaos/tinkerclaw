@@ -61,7 +61,13 @@ export interface Learning {
   questionRecord(questionId: string): Question | undefined;
   changes(sinceDays?: number): Change[];
   pendingCount(): number;
-  rewind(o: { sessionKey: string; turnId: string; undo?: boolean }): RewindMethodResult;
+  rewind(o: {
+    sessionKey: string;
+    turnId: string;
+    undo?: boolean;
+    /** The owner's words of the prompt to rewind to: that exchange and every one after it go (rewind level 3). */
+    fromPrompt?: string;
+  }): RewindMethodResult;
 }
 
 export function createLearning(o: LearningOptions): Learning {

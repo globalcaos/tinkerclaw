@@ -1,0 +1,22 @@
+{
+  "id": "wind-down",
+  "name": "Wind Down (Daily Reflection)",
+  "description": "Nightly reflection on the owner's day: what we worked on, what they were after and why, a theory ledger, bounded research, fixes for repeated corrections, and a short note with at most three questions for the morning.",
+  "enabled": true,
+  "schedule": {
+    "kind": "cron",
+    "expr": "0 3 * * *",
+    "tz": "UTC"
+  },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Wind Down (Daily Reflection)] Execute the routine bundled with this job exactly as written; it was passed to you in full. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "high",
+    "fallbacks": ["claude-code/claude-opus-5-5"]
+  },
+  "delivery": {
+    "mode": "none"
+  }
+}

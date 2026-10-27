@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHookRunner } from "./hooks.js";
 import { addStaticTestHooks } from "./hooks.test-helpers.js";
 import { createEmptyPluginRegistry, type PluginRegistry } from "./registry.js";
@@ -188,6 +188,48 @@ describe("before_tool_call terminal block semantics", () => {
     await expect(runner.runBeforeToolCall(toolEvent, toolCtx)).rejects.toThrow(
       "before_tool_call handler from failing failed: boom",
     );
+  });
+
+  describe("bounded waits (2026-10-22: a handler that never settled held a chat for three hours)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function failClosedRunner(handler: () => Promise<PluginHookBeforeToolCallResult>) {
+      addStaticTestHooks(registry, {
+        hookName: "before_tool_call",
+        hooks: [{ pluginId: "slow-gate", result: {}, priority: 100, handler }],
+      });
+      return createHookRunner(registry, {
+        catchErrors: true,
+        failurePolicyByHook: { before_tool_call: "fail-closed" },
+      });
+    }
+
+    it("fails closed after 10 minutes on a handler that never answers, naming the plugin", async () => {
+      vi.useFakeTimers();
+      const runner = failClosedRunner(() => new Promise(() => {}));
+
+      const settled = expect(runner.runBeforeToolCall(toolEvent, toolCtx)).rejects.toThrow(
+        "before_tool_call handler from slow-gate failed: timed out after 600000ms",
+      );
+      await vi.advanceTimersByTimeAsync(600_000);
+      await settled;
+    });
+
+    it("still lets a handler wait out a 5-minute hold for the owner's answer", async () => {
+      vi.useFakeTimers();
+      const runner = failClosedRunner(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve({ block: true, blockReason: "kept on hold" }), 300_000);
+          }),
+      );
+
+      const pending = runner.runBeforeToolCall(toolEvent, toolCtx);
+      await vi.advanceTimersByTimeAsync(300_000);
+      await expect(pending).resolves.toMatchObject({ block: true, blockReason: "kept on hold" });
+    });
   });
 
   it("sanitizes caught hook error logs", async () => {

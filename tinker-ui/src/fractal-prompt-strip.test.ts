@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
+  carriesFractalDoctrine,
   FRACTAL_DOCTRINE_MARKER,
+  FRACTAL_DOCTRINE_SEAM_MARKER,
   isGatewayRestartResume,
   stripInjectedFractalDoctrine,
 } from "./fractal-prompt-strip.js";
@@ -74,6 +76,34 @@ describe("stripInjectedFractalDoctrine", () => {
   test("cuts at the FIRST marker when the doctrine somehow appears twice", () => {
     const twice = `${REAL_DOCTRINE}\n\n${REAL_DOCTRINE}`;
     expect(stripInjectedFractalDoctrine(twice)).toBe(REAL_PROMPT);
+  });
+});
+
+// FORK 2026-10-09 (Fractal v2, charter C4/P4) — new Fractal prompts open the doctrine with the
+// neutral seam `\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n`; old transcripts keep the old literal.
+describe("the new doctrine seam", () => {
+  const NEW_PROMPT =
+    "⟦AGENT:🌿 Fractal · prompt 3⟧ The turn above is finished.\n\nWhat the page measured for the turn above:\n- 3 model calls\n\nTriggers: friction — 2 tool calls failed" +
+    "\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n## Core\n\nbody <slug>";
+
+  test("cuts at the new marker and drops the separator before it", () => {
+    const out = stripInjectedFractalDoctrine(NEW_PROMPT);
+    expect(out.endsWith("Triggers: friction — 2 tool calls failed")).toBe(true);
+    expect(out).not.toContain("## Core");
+    expect(out).not.toContain(FRACTAL_DOCTRINE_SEAM_MARKER);
+  });
+
+  test("cuts at whichever marker comes first", () => {
+    const both = `hello\n\n---\n\n${FRACTAL_DOCTRINE_SEAM_MARKER}\ncore ${FRACTAL_DOCTRINE_MARKER} x`;
+    expect(stripInjectedFractalDoctrine(both)).toBe("hello");
+  });
+
+  test("carriesFractalDoctrine knows both seams and nothing else", () => {
+    expect(carriesFractalDoctrine(NEW_PROMPT)).toBe(true);
+    expect(carriesFractalDoctrine(REAL_DOCTRINE)).toBe(true);
+    expect(carriesFractalDoctrine(REAL_PROMPT)).toBe(false);
+    expect(carriesFractalDoctrine("")).toBe(false);
+    expect(carriesFractalDoctrine(undefined)).toBe(false);
   });
 });
 

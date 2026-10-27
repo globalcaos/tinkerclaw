@@ -23,6 +23,7 @@ export async function setupJevToken(prompter: WizardPrompter): Promise<void> {
   const answer = await prompter.text({
     message: "Jev token (optional, press Enter to skip)",
     placeholder: "paste a token, or leave empty",
+    sensitive: true,
     validate: (value) =>
       value.trim() === "" || normalizeJevToken(value)
         ? undefined

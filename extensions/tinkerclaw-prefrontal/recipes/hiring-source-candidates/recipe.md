@@ -529,7 +529,7 @@ worse than no attachment, and the mismatch is invisible to whoever forwards it.
   had been in hand the whole time, mis-ranked by the old weights. Re-rank before
   re-searching.
 - **Newest CV is not first place (2026-09-16, 09-25, 09-28):** the architect had to say it three
-  times. For the ACME programmer role the summary PDF ranks **neural-net / computer-vision
+  times. For the ORBIS programmer role the summary PDF ranks **neural-net / computer-vision
   first**, then complementary profiles. Completeness, recency, or a tidy CV does not
   outrank the missing primary skill. Re-order the existing table before adding anyone new.
 - **Exclusion check as a silent drop:** An unresolved customer/supplier question against

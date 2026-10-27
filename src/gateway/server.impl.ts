@@ -1,6 +1,7 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { getActiveEmbeddedRunCount } from "../agents/embedded-agent-runner/run-state.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
+import { preReplyStageFor } from "../auto-reply/reply/pre-reply-stage.js";
 import type { CanvasHostServer } from "../canvas-host/server.js";
 import type { ChannelRuntimeSurface } from "../channels/plugins/channel-runtime-surface.types.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
@@ -28,6 +29,7 @@ import {
 import { isTruthyEnvValue, isVitestRuntimeEnv, logAcceptedEnvOption } from "../infra/env.js";
 import { startDiagnosticBusBridge } from "../infra/events/bridge-diagnostic-bus.js";
 import { startEventWriter, stopEventWriter } from "../infra/events/emit.js";
+import { startFractalRunTally, stopFractalRunTally } from "../infra/events/fractal-run-tally.js";
 import {
   emitGatewayBoot,
   startGatewayHealthSampler,
@@ -162,7 +164,10 @@ function resolveMediaCleanupTtlMs(ttlHoursRaw: number): number {
 export function createGatewayReplyPhaseProbe(
   getConfig: () => OpenClawConfig = getRuntimeConfig,
 ): DiagnosticReplyPhaseProbe {
-  return ({ sessionKey }) => findReplyOperation(sessionKey, getConfig)?.phase;
+  // FORK 2026-10-15 (bug-log `pre-reply-stall-invisible`): before its reply operation exists a prompt reports the
+  // step it is in (`pre:<step>:<s>s`), where this used to read `phase=none`.
+  return ({ sessionKey }) =>
+    findReplyOperation(sessionKey, getConfig)?.phase ?? preReplyStageFor(sessionKey);
 }
 
 /**
@@ -730,6 +735,9 @@ export async function startGatewayServer(
   // FORK 2026-09-24 (logging.md §9 step 3): start the structured-events writer. A no-op when
   // OPENCLAW_EVENTS_DB=0, and refused by paths.ts under a test runner; stopped in runClosePrelude.
   startEventWriter();
+  // FORK 2026-10-09 (J3): tally each background Fractal run's tools from the agent-events bus, so
+  // its `j.fractal.run` row (written beside run.done) carries files written and tool calls.
+  startFractalRunTally();
   // FORK 2026-09-25 (logging.md §4.9, §9 step 5): the per-worker memory and CPU trend sampler.
   // A no-op while the writer is disabled; stopped in runClosePrelude, before the writer.
   startWorkerResourceSampler();
@@ -773,6 +781,7 @@ export async function startGatewayServer(
     // taken after its stop would only be counted as dropped.
     stopWorkerResourceSampler();
     stopJevStatusFeed();
+    stopFractalRunTally();
     // FORK 2026-09-24 (logging.md §7.5 Shutdown): flush the events queue (2 s deadline) and stop
     // the writer thread; records still queued are counted in its final journal line.
     await stopEventWriter().catch((err) => log.warn(`events writer shutdown: ${String(err)}`));

@@ -149,7 +149,7 @@ export const FAMILY_RULES: readonly { family: string; re: RegExp }[] = [
   },
   {
     family: "work-systems",
-    re: /\b(factorial|planner|sharepoint|erp|business central|dades|copilot|m365|acme)\b/i,
+    re: /\b(factorial|planner|sharepoint|erp|business central|dades|copilot|m365|orbis)\b/i,
   },
 ];
 

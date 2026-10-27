@@ -66,6 +66,7 @@ import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
 import {
   analyzeBootstrapBudget,
+  analyzeMemoryIndexBudget,
   buildBootstrapPromptWarning,
   buildBootstrapTruncationReportMeta,
   buildBootstrapInjectionStats,
@@ -96,6 +97,8 @@ import {
   resolveBootstrapMaxChars,
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
+  resolveMemoryIndexMaxChars,
+  resolveMemoryIndexWarningMode,
 } from "../../embedded-agent-helpers.js";
 import { subscribeEmbeddedAgentSession } from "../../embedded-agent-subscribe.js";
 import { isTimeoutError } from "../../failover-error.js";
@@ -153,6 +156,7 @@ import {
   isSubagentEnvelopeSession,
   resolveSubagentCapabilityStore,
 } from "../../subagent-capabilities.js";
+import { systemPromptStableChars } from "../../system-prompt-cache-boundary.js";
 import {
   resolveSystemPromptIdentityLine,
   resolveSystemPromptOverride,
@@ -344,7 +348,7 @@ import {
   queueRuntimeContextForNextTurn,
   resolveRuntimeContextPromptParts,
 } from "./runtime-context-prompt.js";
-import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
+import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult, ThinkSource } from "./types.js";
 
 export {
   appendAttemptCacheTtlIfNeeded,
@@ -407,6 +411,28 @@ export function resolveUnknownToolGuardThreshold(loopDetection?: {
 
 export function isPrimaryBootstrapRun(sessionKey?: string): boolean {
   return !isSubagentSessionKey(sessionKey) && !isAcpSessionKey(sessionKey);
+}
+
+/**
+ * FORK 2026-10-09 (effort slider) — the effort half of the `__openclaw*` options smuggle that
+ * runEmbeddedAttempt wraps around every model call: the level, WHO chose it, and Thalamus's
+ * ultracode call. The tinker-bridge reads all three (extensions/tinkerclaw-tinker-bridge
+ * stream.ts), so a human's pin is applied as a pin and an Auto decision as Auto. A run built by a
+ * path that resolved no provenance reads "default", never "pin". Ultracode is a user-turn
+ * decision: a memory flush or heartbeat that inherits the turn's base params never fans out.
+ */
+export function buildEffortSmuggleOptions(
+  params: Pick<EmbeddedRunAttemptParams, "thinkLevel" | "thinkSource" | "ultracode" | "trigger">,
+): {
+  __openclawThinkLevel: EmbeddedRunAttemptParams["thinkLevel"];
+  __openclawThinkSource: ThinkSource;
+  __openclawUltracode: boolean;
+} {
+  return {
+    __openclawThinkLevel: params.thinkLevel,
+    __openclawThinkSource: params.thinkSource ?? "default",
+    __openclawUltracode: params.ultracode === true && params.trigger === "user",
+  };
 }
 
 export function remapInjectedContextFilesToWorkspace(params: {
@@ -888,11 +914,12 @@ export async function runEmbeddedAttempt(
       : hookAdjustedBootstrapFiles;
     const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
     const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
+    const bootstrapInjectionStats = buildBootstrapInjectionStats({
+      bootstrapFiles: bootstrapFilesForInjectionStats,
+      injectedFiles: contextFiles,
+    });
     const bootstrapAnalysis = analyzeBootstrapBudget({
-      files: buildBootstrapInjectionStats({
-        bootstrapFiles: bootstrapFilesForInjectionStats,
-        injectedFiles: contextFiles,
-      }),
+      files: bootstrapInjectionStats,
       bootstrapMaxChars,
       bootstrapTotalMaxChars,
     });
@@ -902,7 +929,17 @@ export async function runEmbeddedAttempt(
       mode: bootstrapPromptWarningMode,
       seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
       previousSignature: params.bootstrapPromptWarningSignature,
+      memoryIndex: {
+        budget: analyzeMemoryIndexBudget({
+          files: bootstrapInjectionStats,
+          maxChars: resolveMemoryIndexMaxChars(params.config),
+        }),
+        mode: resolveMemoryIndexWarningMode(params.config),
+      },
     });
+    if (bootstrapPromptWarning.memoryIndexLogLine) {
+      log.warn(bootstrapPromptWarning.memoryIndexLogLine);
+    }
     const workspaceNotes: string[] = [];
     if (
       hookAdjustedBootstrapFiles.some(
@@ -2111,10 +2148,16 @@ export async function runEmbeddedAttempt(
             __openclawRunId: pipedRunId,
             __openclawSessionKey: pipedSessionKey,
             __openclawSessionId: pipedSessionId,
-            __openclawThinkLevel: params.thinkLevel,
+            // FORK 2026-10-09 (effort slider): the level plus who chose it and Thalamus's
+            // ultracode call (__openclawThinkSource / __openclawUltracode).
+            ...buildEffortSmuggleOptions(params),
             // FORK 2026-10-02 (channel-reply): the bridge stamps a chat-channel run's final
             // message so the channel gets the answer without the tool narration.
             __openclawMessageChannel: runtimeChannel,
+            // FORK 2026-10-10 (per-turn blocks, J-series Phase 1.5): where the stable prefix ends. The provider
+            // transport below strips the boundary marker, so a bridge that keeps a warm worker cannot find it
+            // itself; tinker-bridge keys and writes its system prompt from this prefix and sends the rest per turn.
+            __openclawStablePromptChars: systemPromptStableChars(context.systemPrompt),
             ...(continuation ? { __openclawContinuation: continuation } : {}),
           } as typeof options;
           return piped(model, context, pipedOptions);
@@ -2629,6 +2672,7 @@ export async function runEmbeddedAttempt(
           bootstrapPromptWarning.lines,
           {
             preserveExactPrompt: heartbeatPrompt,
+            memoryIndexLines: bootstrapPromptWarning.memoryIndexLines,
           },
         );
         if (userPromptPrefixText) {
@@ -3201,6 +3245,22 @@ export async function runEmbeddedAttempt(
                 // Persona re-injection is meant to persist past this turn, so the
                 // restore baseline tracks it; the U10 deliberation below must NOT.
                 preDeliberationSystemPromptText = systemPromptText;
+
+                // FORK 2026-10-23: junk-first eviction — old tool output leaves the desk before
+                // anything is summarized (fork/attempt-hooks.ts evictOldToolResults).
+                {
+                  const ev = _forkAttemptHooks.evictOldToolResults(
+                    activeSession.messages as Array<{ role: string; content?: unknown }>,
+                    params.contextTokenBudget ?? DEFAULT_CONTEXT_TOKENS,
+                  );
+                  if (ev.messages) {
+                    activeSession.agent.state.messages =
+                      ev.messages as typeof activeSession.agent.state.messages;
+                    log.info(
+                      `engram: junk-first eviction — ${ev.evicted} tool outputs evicted, ~${ev.tokensFreed} tokens freed`,
+                    );
+                  }
+                }
 
                 // FORK U10: pre-prompt Tree-of-Thoughts deliberation. Runs AFTER
                 // the retrieval-pack/reinject augmentation so the search sees the

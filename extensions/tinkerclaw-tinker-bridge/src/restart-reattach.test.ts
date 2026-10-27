@@ -86,14 +86,41 @@ function leftover(unit: string, over: Partial<WorkerMeta> = {}, out = ""): strin
   return dir;
 }
 
+/**
+ * systemd that lost track of a unit's freezer (2026-10-18, bug-log `freeze-stuck-freezing`): every
+ * unit reads `FreezerState=freezing`, freeze and thaw are refused, and `ControlGroup` is
+ * `controlGroup` (none: a host where there is no cgroup file to fall back on).
+ */
+function systemdLostTrack(controlGroup: string | null) {
+  const calls: string[][] = [];
+  const run: UnitCommand = async (args) => {
+    calls.push(args);
+    if (args[0] === "show") {
+      if (args.includes("--value")) {
+        return { ok: true, stdout: `${controlGroup ?? ""}\n` };
+      }
+      const cg = controlGroup ? `ControlGroup=${controlGroup}\n` : "";
+      return { ok: true, stdout: `ActiveState=active\nFreezerState=freezing\n${cg}` };
+    }
+    return { ok: args[0] !== "freeze" && args[0] !== "thaw", stdout: "" };
+  };
+  return { calls, run };
+}
+
 let runtimeDir: string;
 let previousRuntime: string | undefined;
+let cgroupDir: string;
+let previousCgroupRoot: string | undefined;
 let pool: SessionWorkerPool;
 
 beforeEach(() => {
   runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "tc-reattach-"));
   previousRuntime = process.env.XDG_RUNTIME_DIR;
   process.env.XDG_RUNTIME_DIR = runtimeDir;
+  // Never the host's /sys/fs/cgroup: a test that wrote a real cgroup.freeze would freeze a real unit.
+  cgroupDir = fs.mkdtempSync(path.join(os.tmpdir(), "tc-reattach-cgroup-"));
+  previousCgroupRoot = process.env.TINKERCLAW_CGROUP_ROOT;
+  process.env.TINKERCLAW_CGROUP_ROOT = cgroupDir;
   reattachRegistry()?.pending.clear();
   pool = new SessionWorkerPool();
 });
@@ -105,7 +132,13 @@ afterEach(() => {
   } else {
     process.env.XDG_RUNTIME_DIR = previousRuntime;
   }
+  if (previousCgroupRoot === undefined) {
+    delete process.env.TINKERCLAW_CGROUP_ROOT;
+  } else {
+    process.env.TINKERCLAW_CGROUP_ROOT = previousCgroupRoot;
+  }
   fs.rmSync(runtimeDir, { recursive: true, force: true });
+  fs.rmSync(cgroupDir, { recursive: true, force: true });
 });
 
 describe("cc-bridge restart reattach", () => {
@@ -162,6 +195,45 @@ describe("cc-bridge restart reattach", () => {
     expect(seen).toEqual(["message_start", "message_delta", "result"]);
     expect(calls.some((c) => c[0] === "thaw" && c[1] === "tinkerclaw-worker-dd")).toBe(true);
     expect(worker.hasPendingTurn()).toBe(false);
+  });
+
+  // Live 2026-10-18 22:11:59, the humor/pitch tab: adopted `frozen=true`, `resuming … from byte 665`,
+  // then `claude silent … lines=0` until `LLM idle timeout (600s)`. systemd had refused the thaw.
+  it("thaws through its cgroup a turn systemd lost track of (left at freezing, thaw refused), and settles it", async () => {
+    const unit = "tinkerclaw-worker-pp";
+    const dir = leftover(
+      unit,
+      { turn: { startOffset: 0, startedAt: 1 } },
+      MESSAGE_START + MESSAGE_STOP_TOOL,
+    );
+    const cg = `/user.slice/app.slice/${unit}.service`;
+    const freezeFile = path.join(cgroupDir, cg, "cgroup.freeze");
+    fs.mkdirSync(path.dirname(freezeFile), { recursive: true });
+    fs.writeFileSync(freezeFile, "1");
+    const { run } = systemdLostTrack(cg);
+    await adoptLeftoverWorkers(pool, { run });
+    const worker = pool.get("tinker-sp-pp") as ClaudeCodeWorker;
+    expect(worker.isHeld()).toBe(true);
+
+    const result = worker.resumeTurn();
+    await waitFor(() => fs.readFileSync(freezeFile, "utf8").trim() === "0");
+    fs.appendFileSync(path.join(dir, "out"), RESULT);
+    await expect(result).resolves.toMatchObject({ type: "result", result: "done" });
+    expect(worker.isHeld()).toBe(false);
+  });
+
+  it("ends at once, naming the cause, a turn whose unit nothing can thaw (not at the 600 s idle timeout)", async () => {
+    const unit = "tinkerclaw-worker-qq";
+    const dir = leftover(unit, { turn: { startOffset: 0, startedAt: 1 } });
+    const { calls, run } = systemdLostTrack(null);
+    await adoptLeftoverWorkers(pool, { run });
+    const worker = pool.get("tinker-sp-qq") as ClaudeCodeWorker;
+
+    const result = worker.resumeTurn();
+    // SIGKILL, because a frozen cgroup holds every other signal until a thaw that will not come
+    await waitFor(() => calls.some((c) => c[0] === "kill" && c[1] === "--signal=SIGKILL"));
+    fs.writeFileSync(path.join(dir, "exit"), "137");
+    await expect(result).rejects.toThrow(/reason=\[frozen worker could not be thawed\]/);
   });
 
   it("holds a live turn at the end of the API call that is streaming, then releases it", async () => {

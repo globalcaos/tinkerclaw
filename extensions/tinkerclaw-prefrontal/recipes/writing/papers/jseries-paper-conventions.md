@@ -43,8 +43,8 @@ when you do. This is the reference card `write-paper` and `revise-paper` assume 
 - **A secret paper never goes in `Papers/`.** The publish and staleness workflows (`revise-publish-jseries`,
   `papers-staleness-audit`, `audit-paper-posts`) scan that folder, so a paper filed there can be revised and summarised
   for the public site. Company research the principal keeps secret lives in that product's own private repo
-  (AcmeVision: GitLab acmevision-vms, `documentation/vms/research/<slug>/`; principal 2026-10-03: "the paper should
-  live in the AcmeVision gitlab"). A staging folder under `~/Documents/ACME/` is fine while drafting, never the home.
+  (OrbisVision: GitLab orbisvision-vms, `documentation/vms/research/<slug>/`; principal 2026-10-03: "the paper should
+  live in the OrbisVision gitlab"). A staging folder under `~/Documents/ORBIS/` is fine while drafting, never the home.
 - The **canonical current manuscript** is usually the **undated `<slug>.md`** — not the highest-dated
   filename. Confirm by comparing version headers/footers across candidates; ignore supporting files
   (`*-review*`, `*-critique*`, `*-references*`, `sota-*`).

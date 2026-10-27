@@ -38,6 +38,13 @@ describe("taskText", () => {
     expect(taskText(raw)).toBe("In personality, I cannot find the curiosity one");
   });
 
+  // FORK 2026-10-09 (Fractal v2, charter C4) — new prompts open the doctrine with a neutral marker.
+  it("strips the reflection tail behind the new ⟦FRACTAL-DOCTRINE⟧ marker", () => {
+    const raw =
+      'Sender (untrusted metadata):\n```json\n{\n  "label": "Tinker UI"\n}\n```\n\n[Thu [number]:01 GMT+2] In personality, I cannot find the curiosity one\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n# 🌿 FRACTAL\n\nYou are the reflection layer.';
+    expect(taskText(raw)).toBe("In personality, I cannot find the curiosity one");
+  });
+
   it("strips the abort note that precedes the sender block", () => {
     const raw =
       "Note: The previous agent run was aborted by the user. Resume carefully or ask for clarification.\n\nSender (untrusted metadata):\n```json\n{}\n```\n\n[Tue [number]:05 GMT+2] go again";

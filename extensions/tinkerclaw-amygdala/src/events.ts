@@ -31,6 +31,11 @@ export interface DecisionEvent {
   degraded: boolean;
   /** The tool call this decision judged (a note rides on that tool row). */
   toolUseId?: string;
+  /**
+   * The decision reached the agent (2026-10-15). Shadow records stay out of the chat: the architect, "I don't want to see so
+   * many pink stuff"; the reviewer still judges them.
+   */
+  enforced?: boolean;
 }
 
 export interface InterventionEvent {
@@ -115,7 +120,8 @@ export function buildDecisionEvents(c: EventContext): DecisionEvent[] {
       stepLabel: stepLabel(c.situation),
       seam: c.situation.seam,
       questionId: v.questionId,
-      questionName: q?.name ?? v.questionId,
+      // A verdict on a retired wording keeps the question's name (2026-10-25: danger-level v1 → v2).
+      questionName: (q ?? c.book.get(v.questionId))?.name ?? v.questionId,
       version: v.questionVersion,
       answer: v.answer,
       prob: v.prob,
@@ -128,6 +134,7 @@ export function buildDecisionEvents(c: EventContext): DecisionEvent[] {
       ...(drivers.has(v.questionId) ? { decisionId: c.decisionId } : {}),
       degraded: c.decision.degraded,
       ...(c.toolUseId ? { toolUseId: c.toolUseId } : {}),
+      enforced: c.decision.enforced,
     });
   }
   return out;

@@ -1,0 +1,4 @@
+<resources>
+    <!-- FORK 2026-10-19 (the architect: phone app) — the thirdParty build ships as Jarvis; play keeps the stock name. -->
+    <string name="app_name">Jarvis</string>
+</resources>

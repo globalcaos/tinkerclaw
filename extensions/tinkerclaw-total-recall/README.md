@@ -21,6 +21,18 @@ Pull the embedding model: `ollama pull mxbai-embed-large`. Then enable in `openc
 }
 ```
 
+## Evicted tool output comes back with one call
+
+When the context passes 80% of the window, TinkerClaw takes old, large tool results (command logs, fetched pages, file reads) off the desk and leaves a marker in their place:
+
+```
+[Evicted exec output (50,028 chars, 2,502 lines), from "$ make build" to "BUILD OK in 41s". The whole result is kept in this chat's transcript; recall({"id":"call-1"}) brings it back.]
+```
+
+The quotes are exact lines from the result, so the agent can also search for them. `recall({ id })` returns the whole result from the chat's transcript, which eviction never edits. A long one comes back in pages of 20,000 characters: pass `offset` (the `nextOffset` of the last page) and, if you like, `length` (at most 100,000). The same call takes a transcript entry id. It reads only the calling chat's own transcript.
+
+Nothing to configure: eviction runs in the embedded agent runner and is on by default (`ENGRAM_TOOL_EVICTION=0` in the gateway's environment turns it off). The agent needs the `recall` tool, so add `recall` to `tools.alsoAllow`. Chats on a CLI lane (claude-code and other CLI backends) keep their own context, so eviction does not reach them.
+
 ## Pairs Well With
 
 - **[@globalcaos/openclaw-memory-enhancements](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-memory-enhancements)** — the hippocampus index makes ENGRAM lookups O(1) on known concepts. Big speedup once the corpus grows past a few thousand events.

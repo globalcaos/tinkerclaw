@@ -191,6 +191,29 @@ describe("endpoint token", () => {
     b.rt.start();
     expect(a.rt.token()).not.toBe(b.rt.token());
   });
+
+  // 2026-10-22: the hooks' prompt reached the first runtime and `agent_end` the second, so a provider safeguard
+  // block was filed under the second tracker's "#<epoch>.0" and the page drew no Rewind beside the blocked prompt.
+  it("a stop reaching a second runtime on the same data folder lands on the turn the first runtime's prompt opened", async () => {
+    const refuser: Family = {
+      id: "double-check",
+      questionsFor: () => [],
+      decide: (seam) =>
+        seam === "stop"
+          ? { response: { kind: "refusal" }, drivers: [], reasonCode: "provider-safeguard" }
+          : null,
+    };
+    const first = make({ families: [refuser] });
+    first.rt.start();
+    const second = make({ dataDir: first.dataDir, families: [refuser] });
+    second.rt.start();
+    await first.rt.decide("prompt", { session_id: "s", prompt: "hello" }, "k");
+    await second.rt.decide("stop", { session_id: "s", last_assistant_message: "x" }, "k");
+    const ivs = second.rt.feed({ sessionKey: "k", sinceTs: 0 }).interventions;
+    expect(ivs.map((i) => i.kind)).toEqual(["refusal"]);
+    // Turn 0 is "before any prompt": the refusal belongs to the turn the prompt opened.
+    expect(ivs[0]!.turnId).toMatch(/^k#[0-9a-z]+\.1$/);
+  });
 });
 
 describe("runtime start", () => {
@@ -238,8 +261,16 @@ describe("floorActive", () => {
     expect(readJson(join(dataDir, "policy.json")).floorActive).toBe(false);
   });
 
-  it("shadow + v3.1 off -> true", () => {
+  // 2026-10-15: hooks/hard-rules.mjs is the hard-rule layer whenever hooks are on, v3.1 or not.
+  it("shadow + v3.1 off -> false: the hard-rules hook owns the floor", () => {
     const { rt, dataDir } = make();
+    rt.start();
+    expect(rt.floorActive()).toBe(false);
+    expect(readJson(join(dataDir, "policy.json")).floorActive).toBe(false);
+  });
+
+  it("shadow + hooks disabled -> true: with no hook, the gateway holds the floor", () => {
+    const { rt, dataDir } = make({ hooks: false });
     rt.start();
     expect(rt.floorActive()).toBe(true);
     expect(readJson(join(dataDir, "policy.json")).floorActive).toBe(true);
@@ -251,45 +282,42 @@ describe("floorActive", () => {
     expect(rt.floorActive()).toBe(true);
   });
 
-  it("switches at a heartbeat when the probe changes: policy rewritten, status emitted", () => {
-    const { rt, dataDir, state, events } = make({ v31cfg: V31_ON, v31file: V31_FILE });
+  it("v3.1 going off at a heartbeat changes nothing: the floor stays with the hard-rules hook", () => {
+    const { rt, state } = make({ v31cfg: V31_ON, v31file: V31_FILE });
     rt.start();
-    expect(rt.floorActive()).toBe(false);
-    state.v31cfg = undefined; // v3.1 goes off
+    state.v31cfg = undefined;
     state.t += 60_000;
-    events.length = 0;
     rt.heartbeat();
-    expect(rt.floorActive()).toBe(true);
-    expect(readJson(join(dataDir, "policy.json")).floorActive).toBe(true);
-    const st = events.find((e) => e.event === "amygdala2.status");
-    expect(st).toBeDefined();
-    expect((st?.payload as { floorActive: boolean }).floorActive).toBe(true);
+    expect(rt.floorActive()).toBe(false);
   });
 });
 
 describe("refreshEffective", () => {
-  it("shadow + v3.1 file -> merged, v3.1 entries first and unchanged", () => {
+  it("shadow + v3.1 file -> ours alone, never merged: the hard rules run once, first", () => {
     const { rt, dataDir } = make({ v31file: V31_FILE });
     rt.start();
     const eff = readJson(join(dataDir, "cc-hook-settings.effective.json"));
     expect(eff.hooks.PreToolUse).toHaveLength(2);
-    expect(eff.hooks.PreToolUse[0]).toEqual(V31_FILE.hooks.PreToolUse[0]);
+    expect(eff.hooks.PreToolUse[0].hooks[0].command).toContain("hard-rules.mjs");
     expect(eff.hooks.PreToolUse[1].hooks[0].command).toContain("pre-tool.mjs");
+    expect(JSON.stringify(eff)).not.toContain(
+      JSON.stringify(V31_FILE.hooks.PreToolUse[0].hooks[0].command),
+    );
   });
 
   it("enforce -> ours alone", () => {
     const { rt, dataDir } = make({ mode: "enforce", v31file: V31_FILE });
     rt.start();
     const eff = readJson(join(dataDir, "cc-hook-settings.effective.json"));
-    expect(eff.hooks.PreToolUse).toHaveLength(1);
-    expect(eff.hooks.PreToolUse[0].hooks[0].command).toContain("pre-tool.mjs");
+    expect(eff.hooks.PreToolUse).toHaveLength(2);
+    expect(eff.hooks.PreToolUse[1].hooks[0].command).toContain("pre-tool.mjs");
   });
 
   it("v3.1 file absent -> ours alone", () => {
     const { rt, dataDir } = make();
     rt.start();
     const eff = readJson(join(dataDir, "cc-hook-settings.effective.json"));
-    expect(eff.hooks.PreToolUse).toHaveLength(1);
+    expect(eff.hooks.PreToolUse).toHaveLength(2);
   });
 
   it("is not rewritten when nothing changed, and is when the effective file is older than a source", () => {
@@ -322,7 +350,7 @@ describe("decide", () => {
   });
 
   it("a hard-rule command is denied when the floor is active", async () => {
-    const { rt, root } = make();
+    const { rt, root } = make({ hooks: false });
     rt.start();
     const r = await rt.decide("pre-tool", {
       session_id: "s1",
@@ -678,7 +706,7 @@ describe("usefulness review (2026-10-06)", () => {
     expect(report.recent).toHaveLength(1);
     expect(report.recent[0]).toMatchObject({
       status: "done",
-      model: "xai/grok-4.6",
+      model: "claude-code/claude-sonnet-5-5",
       review: { verdict: "noise", sawOutcome: true },
     });
     expect(report.rules).toEqual([

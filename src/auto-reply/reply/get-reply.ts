@@ -40,6 +40,7 @@ import { finalizeInboundContext } from "./inbound-context.js";
 import { hasInboundMedia } from "./inbound-media.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
 import { createFastTestModelSelectionState } from "./model-selection.js";
+import { clearPreReplyStage, notePreReplyStage } from "./pre-reply-stage.js";
 import { initSessionState } from "./session.js";
 import { resolveStoredModelOverride } from "./stored-model-override.js";
 import { createTypingController } from "./typing.js";
@@ -179,6 +180,22 @@ export async function getReplyFromConfig(
   opts?: GetReplyOptions,
   configOverride?: OpenClawConfig,
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
+  // FORK 2026-10-15 (bug-log `pre-reply-stall-invisible`): until its reply operation exists, the stuck-session
+  // line names the step this prompt is in (pre-reply-stage.ts). Cleared however the reply ends.
+  try {
+    return await buildReplyFromConfig(ctx, opts, configOverride);
+  } finally {
+    clearPreReplyStage(ctx.SessionKey);
+  }
+}
+
+async function buildReplyFromConfig(
+  ctx: MsgContext,
+  opts?: GetReplyOptions,
+  configOverride?: OpenClawConfig,
+): Promise<ReplyPayload | ReplyPayload[] | undefined> {
+  const stage = (name: string) => notePreReplyStage(ctx.SessionKey, name);
+  stage("config");
   const isFastTestEnv = process.env.OPENCLAW_TEST_FAST === "1";
   const cfg = resolveGetReplyConfig({
     getRuntimeConfig,
@@ -239,6 +256,7 @@ export async function getReplyFromConfig(
   }
 
   const workspaceDirRaw = resolveAgentWorkspaceDir(cfg, agentId) ?? DEFAULT_AGENT_WORKSPACE_DIR;
+  stage("workspace");
   const workspace = useFastTestBootstrap
     ? (await fs.mkdir(workspaceDirRaw, { recursive: true }), { dir: workspaceDirRaw })
     : await ensureAgentWorkspace({
@@ -264,12 +282,14 @@ export async function getReplyFromConfig(
   const finalized = finalizeInboundContext(ctx);
 
   if (!isFastTestEnv) {
+    stage("media-understanding");
     await applyMediaUnderstandingIfNeeded({
       ctx: finalized,
       cfg,
       agentDir,
       activeModel: { provider, model },
     });
+    stage("link-understanding");
     await applyLinkUnderstandingIfNeeded({
       ctx: finalized,
       cfg,
@@ -282,6 +302,7 @@ export async function getReplyFromConfig(
   });
 
   const commandAuthorized = finalized.CommandAuthorized;
+  stage("session-init");
   const sessionState = useFastTestBootstrap
     ? initFastReplySessionState({
         ctx: finalized,
@@ -314,6 +335,7 @@ export async function getReplyFromConfig(
     bodyStripped,
   } = sessionState;
   if (resetTriggered && normalizeOptionalString(bodyStripped)) {
+    stage("reset-model");
     const { applyResetModelOverride } = await loadSessionResetModelRuntime();
     await applyResetModelOverride({
       cfg,
@@ -399,6 +421,7 @@ export async function getReplyFromConfig(
       triggerBodyNormalized,
       commandAuthorized,
     });
+    stage("prepare-run");
     return runPreparedReply({
       ctx,
       sessionCtx,
@@ -455,6 +478,7 @@ export async function getReplyFromConfig(
     });
   }
 
+  stage("directives");
   const directiveResult = await resolveReplyDirectives({
     ctx: finalized,
     cfg,
@@ -500,6 +524,10 @@ export async function getReplyFromConfig(
     elevatedFailures,
     defaultActivation,
     resolvedThinkLevel,
+    // FORK 2026-10-09 (effort slider): who chose the level, and Thalamus's ultracode call. Named
+    // here AND in the runPreparedReply call below, or the run reads "default" and no ultracode.
+    thinkSource,
+    ultracode,
     resolvedVerboseLevel,
     resolvedReasoningLevel,
     resolvedElevatedLevel,
@@ -541,6 +569,7 @@ export async function getReplyFromConfig(
     });
   };
 
+  stage("inline-actions");
   const inlineActionResult = await handleInlineActions({
     ctx,
     sessionCtx,
@@ -592,6 +621,7 @@ export async function getReplyFromConfig(
 
   // Allow plugins to intercept and return a synthetic reply before the LLM runs.
   if (!useFastTestBootstrap) {
+    stage("before-agent-reply-hooks");
     const { getGlobalHookRunner } = await loadHookRunnerGlobal();
     const hookRunner = getGlobalHookRunner();
     if (hookRunner?.hasHooks("before_agent_reply")) {
@@ -623,6 +653,7 @@ export async function getReplyFromConfig(
   // staging a single-call contract instead of relying on relative-path no-op
   // semantics in stageSandboxMedia.
   if (!useFastTestBootstrap && sessionKey && !ctx.MediaStaged && hasInboundMedia(ctx)) {
+    stage("sandbox-media");
     const { stageSandboxMedia } = await loadStageSandboxMediaRuntime();
     await stageSandboxMedia({
       ctx,
@@ -636,6 +667,7 @@ export async function getReplyFromConfig(
   // Run the LLM reply, then clear session resume AFTER completion.
   // Clearing before runPreparedReply would lose the resume file during the
   // crash-prone LLM streaming phase, defeating restart recovery.
+  stage("prepare-run");
   const result = await runPreparedReply({
     ctx,
     sessionCtx,
@@ -651,6 +683,8 @@ export async function getReplyFromConfig(
     directives,
     defaultActivation,
     resolvedThinkLevel,
+    thinkSource,
+    ultracode,
     resolvedVerboseLevel,
     resolvedReasoningLevel,
     resolvedElevatedLevel,

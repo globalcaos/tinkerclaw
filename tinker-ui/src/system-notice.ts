@@ -50,6 +50,16 @@ export type SystemNotice = {
 const DELIVERY_STAMP = /^\s*\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{4}-\d{2}-\d{2} [^\]]*\]\s*/;
 const THALAMUS_ADVICE =
   /^\s*(These enhancements may fit this task[\s\S]*?None of these may fit; use your own judgment\.)\s*/;
+/**
+ * FORK 2026-10-13 — total-recall's retrieval pack (`## Retrieved Memory Context`, then the memory bank and the humour
+ * block) is stored in front of a turn that arrives through the `agent` RPC. The 15:36 restart report reached the architect's
+ * chat as ~9k characters of pack plus `[System] …`, drawn green as if he had typed it. The pack ends where the
+ * gateway's delivery stamp starts, so the cut goes to the first stamp at a line start.
+ */
+// Two heads (2026-10-13 census, 3 days of sessions): the pack starts with `## From the Shared Memory Bank` when the
+// session itself recalled nothing, and that one hid two `⟦AGENT⟧` prompts and four subagent briefs.
+const RECALL_PACK_HEAD = /^\s*## (?:Retrieved Memory Context|From the Shared Memory Bank)\b/;
+const STAMP_AT_LINE_START = /\n\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{4}-\d{2}-\d{2} [^\]]*\]\s*/;
 /** `[System]`, or `[System · name]` from a producer that names itself. */
 const SYSTEM_MARK = /^\[System(?:\s*[·:]\s*([^\]]+))?\]/;
 
@@ -65,8 +75,18 @@ const KNOWN_SENDERS: [RegExp, string][] = [
 ];
 
 /** The text after an optional delivery stamp and Thalamus advice, and the advice itself. */
+/**
+ * The stored text with a leading total-recall pack and the delivery stamp after it cut off; unchanged otherwise.
+ * chat.history already drops the stamp from typed turns, so a `⟦AGENT⟧` or `[System]` mark leads here as it does there.
+ */
+export function stripRecallPack(text: string): string {
+  if (!RECALL_PACK_HEAD.test(text)) return text;
+  const stamp = STAMP_AT_LINE_START.exec(text);
+  return stamp ? text.slice(stamp.index + stamp[0].length) : text;
+}
+
 function unwrap(text: string): { rest: string; advice?: string } {
-  let rest = text.replace(DELIVERY_STAMP, "").trimStart();
+  let rest = stripRecallPack(text).replace(DELIVERY_STAMP, "").trimStart();
   const a = THALAMUS_ADVICE.exec(rest);
   if (!a) return { rest };
   rest = rest.slice(a[0].length).replace(DELIVERY_STAMP, "").trimStart();

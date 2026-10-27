@@ -20,6 +20,13 @@
  * position, not a command that owns the turn, so the model directive is prepended in front of it.
  * The per-turn `thinking` param is NOT added then — the user's typed level is the explicit one and
  * two `/think`s in one body would leave the parser to pick.
+ *
+ * FORK 2026-10-09 (effort slider) — chat.send no longer passes `thinking` here. Every path that
+ * applies an inline `/think` stores it in `sessionEntry.thinkingLevel`, so the slider's per-send
+ * pin outlived the pin and later Auto turns skipped Thalamus. chat.send now hands the level to the
+ * reply pipeline as a this-turn pin (`resolveChatSendTurnThinking` below, read by
+ * get-reply-directives as `ctx.TurnThinkLevel`). The `thinking` option has no production caller
+ * left; it stays only while chat-command-body.test.ts still covers it, and both should go together.
  */
 export function buildChatSendCommandBody(params: {
   message: string;
@@ -43,4 +50,25 @@ export function buildChatSendCommandBody(params: {
     directives.push(`/think ${params.thinking}`);
   }
   return directives.length > 0 ? `${directives.join(" ")} ${params.message}` : params.message;
+}
+
+/**
+ * FORK 2026-10-09 (effort slider) — the chat.send `thinking` param as a pin for THIS TURN ONLY.
+ *
+ * Returns the level chat.send hands the reply pipeline as `ctx.TurnThinkLevel`, under the same
+ * rules that used to decide whether `/think <lvl>` was injected: nothing for an empty message, and
+ * nothing when the message leads with a slash. A user command owns its turn, and a `/think` the
+ * user typed is the explicit level: it stays a directive and keeps persisting as it always has.
+ * The level is returned raw; get-reply-directives normalizes it ("auto" normalizes to no pin).
+ */
+export function resolveChatSendTurnThinking(params: {
+  message: string;
+  thinking?: string;
+}): string | undefined {
+  const thinking = params.thinking?.trim();
+  const trimmed = params.message.trim();
+  if (!thinking || !trimmed || trimmed.startsWith("/")) {
+    return undefined;
+  }
+  return thinking;
 }

@@ -13,6 +13,7 @@ import type { WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { archiveOutboundSend } from "./history/outbound-archive.js";
+import { createWhatsmeowLidLookup, type WhatsmeowLidLookup } from "./lid-map-whatsmeow-db.js";
 
 const logger = getChildLogger({ module: "wm-adapter" });
 
@@ -202,6 +203,35 @@ class BaileysEventBridge extends EventEmitter {
 export interface BaileysAdapterOptions {
   wmClient: WhatsmeowClient;
   selfJid?: string;
+  /**
+   * Absolute path to the account's whatsmeow.db. When set, the adapter
+   * resolves peer LIDs from its `whatsmeow_lid_map` table. Optional and never
+   * defaulted: without it the adapter has no LID lookup, as before.
+   */
+  storePath?: string;
+  /** Test injection point; wins over storePath. */
+  lidLookup?: WhatsmeowLidLookup;
+}
+
+function resolveAdapterLidLookup(opts: BaileysAdapterOptions): WhatsmeowLidLookup | undefined {
+  if (opts.lidLookup) {
+    return opts.lidLookup;
+  }
+  if (!opts.storePath) {
+    return undefined;
+  }
+  const lookup = createWhatsmeowLidLookup(opts.storePath);
+  const probe = lookup.probe();
+  if (probe.ok) {
+    console.log(`[wm-adapter] lid map ready rows=${probe.rows}`);
+  } else {
+    // Still return the lookup: a store that is briefly busy at startup works
+    // on the next message, and every read failure is a miss, never a throw.
+    console.log(
+      `[wm-adapter] lid map not readable yet (${probe.reason}); LID DMs drop until it is`,
+    );
+  }
+  return lookup;
 }
 
 /**
@@ -210,6 +240,7 @@ export interface BaileysAdapterOptions {
 export function createBaileysAdapter(opts: BaileysAdapterOptions) {
   const { wmClient } = opts;
   const ev = new BaileysEventBridge(wmClient);
+  const lidLookup = resolveAdapterLidLookup(opts);
 
   // FORK 2026-05-03: deterministic selfJid seeding. The "connected" event
   // listener was racing — sometimes the event fired before the listener
@@ -249,8 +280,11 @@ export function createBaileysAdapter(opts: BaileysAdapterOptions) {
       },
     },
     signalRepository: {
-      // whatsmeow handles LID mapping internally
-      lidMapping: undefined,
+      // FORK 2026-10-13: whatsmeow keeps LID→phone pairs in its own store but
+      // the bridge exposes no lookup, so this reads whatsmeow_lid_map directly
+      // (lid-map-whatsmeow-db.ts). inbound/monitor.ts reads this field once,
+      // when it attaches, so it must be set here at construction.
+      lidMapping: lidLookup,
     },
 
     sendMessage: async (

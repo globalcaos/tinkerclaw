@@ -16,8 +16,11 @@
  *
  * WHERE IT CUTS. Before a `#` or `##` heading, so a part opens on a section; a section bigger than a
  * part at its blank lines, then at its lines, and only a single line longer than a part mid-line.
+ * FORK 2026-10-09: that cut-and-pack now lives in hook-common.mjs (splitIntoParts), moved unchanged
+ * so the harness-context hook cuts its parts the same way; this file keeps the moral code's wrapper.
  * No dependencies, by design: this runs on every new session and every compaction.
  */
+import { splitIntoParts } from "./hook-common.mjs";
 
 /** The pack's published opening marker (src/moral-code/contract.ts MORAL_CODE_MARKER). */
 export const MORAL_CODE_MARKER = '<moral_code source="tinkerclaw">';
@@ -38,60 +41,6 @@ export function wrapPart(i, n, body) {
   return `${MORAL_CODE_MARKER}\n${partLabel(i, n)}\n${body}${MORAL_CODE_CLOSE}`;
 }
 
-/** Cut `text` just before every match of `re` (a heading line), keeping every character. */
-function cutBefore(text, re) {
-  const out = [];
-  let from = 0;
-  for (const m of text.matchAll(re)) {
-    if (m.index > from) {
-      out.push(text.slice(from, m.index));
-      from = m.index;
-    }
-  }
-  out.push(text.slice(from));
-  return out;
-}
-
-/** Cut `text` just after every match of `re` (a blank-line run, a newline), keeping every character. */
-function cutAfter(text, re) {
-  const out = [];
-  let from = 0;
-  for (const m of text.matchAll(re)) {
-    const end = m.index + m[0].length;
-    if (end > from && end < text.length) {
-      out.push(text.slice(from, end));
-      from = end;
-    }
-  }
-  out.push(text.slice(from));
-  return out;
-}
-
-const CUTS = [
-  (t) => cutBefore(t, /^#{1,2} /gm),
-  (t) => cutAfter(t, /\n{2,}/g),
-  (t) => cutAfter(t, /\n/g),
-];
-
-/** `text` as pieces of at most `budget` chars, cut at the coarsest boundary that works. */
-function pieces(text, budget, level = 0) {
-  if (text.length <= budget) {
-    return [text];
-  }
-  if (level >= CUTS.length) {
-    const out = [];
-    for (let i = 0; i < text.length; i += budget) {
-      out.push(text.slice(i, i + budget));
-    }
-    return out;
-  }
-  const segs = CUTS[level](text).filter((s) => s.length > 0);
-  if (segs.length <= 1) {
-    return pieces(text, budget, level + 1);
-  }
-  return segs.flatMap((s) => pieces(s, budget, level + 1));
-}
-
 /**
  * The pack as delivery parts. Returns the parts as delivered and their bodies (bodies.join("") is the
  * pack's inner text exactly). A pack published without the wrapper is carried whole the same way.
@@ -103,32 +52,7 @@ export function splitMoralCode(pack, maxChars = PART_MAX_CHARS) {
     : pack;
   // The wrapper of a two-digit part number: every part below is measured against the worst case.
   const budget = maxChars - wrapPart(99, 99, "").length;
-  const atoms = pieces(inner, budget);
-  const bodies = [];
-  let cur = [];
-  let len = 0;
-  for (const atom of atoms) {
-    if (len + atom.length > budget && cur.length > 0) {
-      // A `#` heading with nothing of its section after it moves on with its section, when it fits.
-      let carry = [];
-      while (cur.length > 1 && /^# [^\n]*\n+$/.test(cur[cur.length - 1])) {
-        carry.unshift(cur.pop());
-      }
-      const carried = carry.reduce((a, s) => a + s.length, 0);
-      if (carried + atom.length > budget) {
-        cur.push(...carry);
-        carry = [];
-      }
-      bodies.push(cur.join(""));
-      cur = carry;
-      len = carry.reduce((a, s) => a + s.length, 0);
-    }
-    cur.push(atom);
-    len += atom.length;
-  }
-  if (cur.length > 0) {
-    bodies.push(cur.join(""));
-  }
+  const bodies = splitIntoParts(inner, budget);
   const n = bodies.length;
   return { bodies, parts: bodies.map((b, i) => wrapPart(i + 1, n, b)) };
 }

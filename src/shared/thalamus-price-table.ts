@@ -177,6 +177,7 @@ export const PRICE_TABLE: readonly ModelPrice[] = [
   anthropic("claude-sonnet-5", /^claude-sonnet-5$/, 2, 10, 0.1),
   anthropic("claude-sonnet-4-6", /^claude-sonnet-4-6$/, 3, 15, 0.1),
   anthropic("claude-sonnet-4-5", /^claude-sonnet-4-5$/, 3, 15, 0.1),
+  anthropic("claude-haiku-5-5", /^claude-haiku-5-5$/, 0.1, 0.5, 0.1), // up to 100k prompt; $0.50/$2.50 above
   anthropic("claude-haiku-4-5", /^claude-haiku-4-5(-\d+)?$/, 1, 5, 0.1),
 
   // xAI. Cached input: $0.50 on grok-4.7 and 4.6, $0.30 on grok-4.5, both doubling above 200k.

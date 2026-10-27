@@ -323,10 +323,24 @@ describe("shadow mode (C20)", () => {
     expect(s.notesBodies).toHaveLength(1);
   });
 
-  it("never denies from the gateway's action", async () => {
-    const s = await stub({ hook: { kind: "block", reason: "no" } });
+  it("never denies a step from the gateway's action", async () => {
+    const s = await stub({ hook: { kind: "deny", reason: "no" } });
+    const r = await run("pre-tool", setup({ port: s.port }), payload(), { AMYGDALA2_SHADOW: "1" });
+    expect(r.out).toBe("");
+  });
+
+  // 2026-10-15, progressive activation: the gateway answers "block" in shadow only for a send-back whose rule earned it.
+  it("sends a reply back when the gateway says the send-back earned it", async () => {
+    const s = await stub({ hook: { kind: "block", reason: "finish the claim" } });
+    const r = await run("stop", setup({ port: s.port }), payload(), { AMYGDALA2_SHADOW: "1" });
+    expect(JSON.parse(r.out)).toEqual({ decision: "block", reason: "finish the claim" });
+  });
+
+  it("lets the turn end when the gateway answers the Stop hook after 1.2 s", async () => {
+    const s = await stub({ hook: { kind: "block", reason: "late" }, delayMs: 2000 });
     const r = await run("stop", setup({ port: s.port }), payload(), { AMYGDALA2_SHADOW: "1" });
     expect(r.out).toBe("");
+    expect(r.ms).toBeLessThan(1900);
   });
 
   it("still denies a floor match when floorActive", async () => {

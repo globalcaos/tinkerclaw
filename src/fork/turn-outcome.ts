@@ -318,6 +318,7 @@ const CATEGORY_TO_KIND: Record<ErrorCategory, TurnOutcomeKind> = {
   compaction: "error",
   busy: "error",
   interrupted: "aborted",
+  safeguard: "refusal",
   generic: "error",
 };
 

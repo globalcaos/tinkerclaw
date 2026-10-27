@@ -19,6 +19,9 @@ const T = {
   "send-back-claim":
     "Your reply says {claim}; the tool record for this task shows {missing}. Correct, complete or withdraw it.",
   "send-back-dodged": "Your reply {problem}. Complete it, or say plainly what blocks it.",
+  // 2026-10-24: "say plainly what blocks it" let a false "it is encrypted, I can't" pass. The user's own device did it.
+  "send-back-blocker":
+    "Your reply says this can't be done, yet the user does it with the same account, data or device, so a way exists. Find how the tool that already does it works (its own code, an open-source client, the official docs) and do the same. A blocker is real only when the user can't get past it either.",
   surprise:
     "You expected {expected}; the result was {observed}. Look at that before the next step.",
   futility:

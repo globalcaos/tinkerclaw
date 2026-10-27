@@ -118,7 +118,9 @@ describe("Learned Intuition registration", () => {
     expect(existsSync(join(dataDir, "cc-hook-settings.json"))).toBe(false);
   });
 
-  it("writes the enforcement settings only when hookEnforcement is opted in", async () => {
+  // 2026-10-15, one amygdala: the pre-execution hook ships with tinkerclaw-amygdala (hooks/hard-rules.mjs). This
+  // plugin never installs its own, even with hookEnforcement on, or the hard rules would run twice.
+  it("never writes hook settings, even when hookEnforcement is on", async () => {
     const { api } = createMockApi();
     (api as { pluginConfig: Record<string, unknown> }).pluginConfig = { hookEnforcement: true };
 
@@ -126,7 +128,8 @@ describe("Learned Intuition registration", () => {
     mod.default.register(api as any);
 
     const dataDir = join(home, ".openclaw", "data", "amygdala");
-    expect(existsSync(join(dataDir, "cc-hook-settings.json"))).toBe(true);
+    expect(existsSync(join(dataDir, "cc-hook-settings.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "policy.json"))).toBe(true);
   });
 
   it("shouldEnforce: observeOnly blocks nothing, AEGIS included", async () => {

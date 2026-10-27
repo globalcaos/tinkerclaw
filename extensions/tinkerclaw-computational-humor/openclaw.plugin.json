@@ -11,7 +11,7 @@
     "properties": {
       "frequency": {
         "type": "string",
-        "enum": ["off", "low", "medium", "high"],
+        "enum": ["off", "low", "medium", "high", "max"],
         "default": "low"
       },
       "sensitivityThreshold": {

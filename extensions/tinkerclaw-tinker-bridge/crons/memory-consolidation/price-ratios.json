@@ -1,0 +1,11 @@
+{
+  "_for": "Price ratios memory-breakeven.mjs uses to decide what memory stays always loaded and what is fetched when needed. Every price is relative to one uncached input token of the model your chats mostly run on.",
+  "_from": "Anthropic's published prices for Claude Opus 5.5 (checked 2026-10-27): input $4 and output $20 per million tokens, cache reads $0.20, cache writes 1.25x input for the 5-minute lifetime and 2x for the 1-hour one.",
+  "_change": "Edit a copy, not this file: put it at <workspace>/memory/co-access/price-ratios.json and the script reads that one instead. Change it when your main chat model or its provider changes, or when the provider changes cache or output pricing. The memory-consolidation routine compares r_cache_read with the model the script reports as most used.",
+  "_other_models": "Cache read ratio on other Claude models, same date: Claude Sonnet 5.5 and most others 0.1, Claude Fable 5.1 0.025. Write and output ratios are the same (1.25, 2, 5).",
+  "updated": "2026-10-27",
+  "r_cache_read": 0.05,
+  "w_cache_write_5m": 1.25,
+  "w_cache_write_1h": 2.0,
+  "g_output": 5.0
+}

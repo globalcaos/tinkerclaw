@@ -34,25 +34,28 @@ Do not manually reread startup files unless:
 You wake up fresh each session. These files are your continuity:
 
 - **Daily notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — raw logs of what happened
-- **Long-term:** `MEMORY.md` — your curated memories, like a human's long-term memory
+- **Topic files:** `memory/<topic>.md` — what you know about one subject (a person, a project, the house), in `##` sections
+- **Index:** `MEMORY.md` — one line per topic file, loaded every session
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
 
-### 🧠 MEMORY.md - Your Long-Term Memory
+### 🧠 MEMORY.md - The Index of Your Long-Term Memory
 
 - **ONLY load in main session** (direct chats with your human)
 - **DO NOT load in shared contexts** (Discord, group chats, sessions with other people)
 - This is for **security** — contains personal context that shouldn't leak to strangers
 - You can **read, edit, and update** MEMORY.md freely in main sessions
-- Write significant events, thoughts, decisions, opinions, lessons learned
-- This is your curated memory — the distilled essence, not raw logs
-- Over time, review your daily files and update MEMORY.md with what's worth keeping
+- **It is an index, not the memory itself.** One short line per topic: `- [People](memory/people.md) — who is who, birthdays, allergies`. The line says what the file holds and when to open it; the detail lives in the file.
+- **Walk down, don't load everything.** Read the index, then open the one topic file (or section) the task needs with `memory_get`. If no line fits, `memory_search` finds notes by meaning.
+- **Keep it small.** It loads on every turn, so every line costs something every turn. Stay under about 8,000 characters (`agents.defaults.memoryIndexMaxChars`); past that, move detail into topic files, merge near-duplicate lines, and drop what is no longer true.
+- **Few, large topic files.** Every file you open costs a round. Add a section to an existing topic before you create a new file.
+- Over time, review your daily files and move what's worth keeping into the topic it belongs to; add an index line only for a new topic.
 
 ### 📝 Write It Down - No "Mental Notes"!
 
 - **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
 - "Mental notes" don't survive session restarts. Files do.
-- When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
+- When someone says "remember this" → write it into the topic file it belongs to (or today's `memory/YYYY-MM-DD.md`), and give a new topic its line in `MEMORY.md`
 - When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Text > Brain** 📝

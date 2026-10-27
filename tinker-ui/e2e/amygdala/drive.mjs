@@ -271,11 +271,11 @@ check(
 
 // ── 3 ask: which reading ─────────────────────────────────────────────────────────────────────────────────────────────
 await scenario({
-  history: basicChat("Send the quote to Jordi."),
+  history: basicChat("Send the quote to Sam."),
   feed: {
     decisionEvents: [
       dec("d1", 1, {
-        stepLabel: "Send the quote to Jordi",
+        stepLabel: "Send the quote to Sam",
         seam: "prompt",
         questionId: "which-reading",
         questionName: "Which reading",
@@ -286,24 +286,24 @@ await scenario({
     ],
     interventions: [
       iv("iv1", "d1", "ask", {
-        title: "Which Jordi?",
+        title: "Which Sam?",
         chips: [],
         options: [
-          { id: "jordi-a", label: "Jordi Puig (supplier)", hint: "wrote to you last week" },
-          { id: "sam-b", label: "Sam Doe (family)" },
+          { id: "jordi-a", label: "Sam Roe (supplier)", hint: "wrote to you last week" },
+          { id: "jordi-b", label: "Sam Doe (family)" },
         ],
       }),
     ],
   },
 });
 await shot("03-ask", "#messages");
-await click("[data-amy-act=ask-select][data-option=sam-b]");
+await click("[data-amy-act=ask-select][data-option=jordi-b]");
 await click("[data-amy-act=ask-confirm]");
 check(
   (await amyCalls()).some(
-    (c) => c.method === "amygdala2.answer" && c.params?.answer === "option:sam-b",
+    (c) => c.method === "amygdala2.answer" && c.params?.answer === "option:jordi-b",
   ),
-  "3 ask: select + confirm sends option:sam-b",
+  "3 ask: select + confirm sends option:jordi-b",
 );
 
 // ── 4 sent back ──────────────────────────────────────────────────────────────────────────────────────────────────────

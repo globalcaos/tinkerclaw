@@ -4,6 +4,8 @@
  */
 
 export type Seam = "prompt" | "pre-tool" | "post-tool" | "stop";
+/** Who started the turn (2026-10-25): the owner, an agent or a job (`⟦AGENT:…⟧`), or the background Fractal reflection. */
+export type TurnKind = "owner" | "agent" | "reflection";
 export type Origin = "observed" | "derived" | "inferred" | "missing";
 export type EffectClass =
   | "read"
@@ -153,6 +155,16 @@ export interface TargetHistory {
   lastMentionedByUser: number | null;
 }
 
+/**
+ * A target of this step that is the agent's own, familiar to it, or the owner's choice (2026-10-25): the agent created
+ * it earlier in the session (`created`), it sits in a scratch folder (`scratch`), the owner's request names it
+ * (`named`), or it existed and the agent changed it earlier in the session (`edited`: still the owner's data).
+ */
+export interface OwnedTarget {
+  path: string;
+  why: "created" | "scratch" | "named" | "edited";
+}
+
 /** The record of §7.1 / Appendix B. Every field carries its origin. */
 export interface Situation {
   id: string;
@@ -190,6 +202,10 @@ export interface Situation {
   scheduledJobs: Field<string[]>;
   /** How often this kind of target/step has been seen (drives novelty habituation). */
   contextCounts: Field<{ seen: number; alarms: number }>;
+  /** Who started the turn; a reflection turn answers nobody, so the stop questions about the owner's answer skip it. */
+  turnKind: Field<TurnKind>;
+  /** The targets of this step the agent created, keeps in scratch, edited before, or the owner named; [] when none. */
+  ownedTargets: Field<OwnedTarget[]>;
 }
 
 /** Names of the fields a question may read. */
@@ -222,6 +238,8 @@ export const SITUATION_FIELD_NAMES: readonly SituationFieldName[] = [
   "candidates",
   "scheduledJobs",
   "contextCounts",
+  "turnKind",
+  "ownedTargets",
 ];
 
 /**

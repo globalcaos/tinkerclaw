@@ -1,7 +1,7 @@
 {
   "name": "tinkerclaw-core",
-  "description": "The TinkerClaw moral code (ethical rules, objectives, starter kit), delivered once at session start and again after compaction",
-  "version": "0.2.0",
+  "description": "The TinkerClaw moral code (ethical rules, objectives, starter kit) at session start and after compaction; a harness card telling plain Claude Code and the TinkerClaw chat worker which side they are on and what they share, plus the workspace persona files on the Claude Code side; saved-recipe hints per prompt in plain Claude Code; and a PreToolUse guard that turns a background Fractal reflection's sends, deletes, publishes, spends and restarts into proposals (armed only on the workers the Tinker bridge starts for Fractal sessions)",
+  "version": "0.4.0",
   "author": { "name": "TinkerClaw" },
   "license": "MIT"
 }

@@ -11,6 +11,7 @@
 // build with the plugin off) never loads the model catalog, the session store or the plugin registry.
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   announceJev,
@@ -54,20 +55,32 @@ import {
   type WorkerSpawnExtras,
   type WorkerSpawnInfo,
 } from "openclaw/plugin-sdk/fork-thalamus";
+import { anticipateReport } from "./anticipate-report.js";
 import { createCacheFeed, newLedgerHolder, type AgentEventLike } from "./cache-feed.js";
 import { createCardLoop, type CardLoop } from "./card-loop.js";
 import { createModelCardWriter } from "./card-writer.js";
+import { createCatalogRefresh, type CatalogRefresh } from "./catalog-refresh.js";
 import { createCheckService, type CheckService } from "./check.js";
-import type { ThalamusConfig, ThalamusMode } from "./config.js";
+import {
+  askSessionStateDir,
+  defaultChatCatalog,
+  type AnticipateMode,
+  type ThalamusConfig,
+  type ThalamusMode,
+  type WakeMode,
+} from "./config.js";
 import { sourceOfSessionKey } from "./context-view.js";
+import { createCorrectionCapture } from "./correction-capture.js";
 import { createDigestService, type DigestService } from "./digest.js";
 import { createFinishService, type FinishService } from "./finish.js";
 import { createFreshRecorder } from "./fresh-record.js";
 import { newToken } from "./http.js";
 import { createLeafResolver } from "./leaf-resolver.js";
 import { createLearning, type Learning } from "./learning-run.js";
+import { createLessonSleep, LESSON_WORDS_MAX, type LessonSleep } from "./lesson-sleep.js";
 import { createSdkModelCaller, type ModelCaller } from "./model-caller.js";
 import { parsePlanRequest } from "./plan-input.js";
+import { createPointerSources, type PointerSources } from "./pointer-sources.js";
 import { createRawStore } from "./raw-store.js";
 import { createRoutingProvider } from "./reads/provider.js";
 import { loadQuestions } from "./reads/questions.js";
@@ -83,10 +96,18 @@ import { seedFromRegistry, type RegistryListing } from "./reads/seed.js";
 import { createRefusalWatcher, type RefusalWatcher } from "./refusal.js";
 import { createRunStates } from "./run-state.js";
 import { createScheduler, type PlanDecision, type Scheduler } from "./scheduler.js";
+import { createSessionWaker, resolveAskSessionScript, type SessionWaker } from "./session-wake.js";
 import { createShadowRouter, type ShadowStats } from "./shadow.js";
-import { createShortlistSeam } from "./shortlist-seam.js";
-import { ThalamusStore, type SubagentCallRow } from "./store.js";
+import { createShortlistSeam, type PrepareInput } from "./shortlist-seam.js";
+import { ThalamusStore, type SubagentCallRow, type UseRow } from "./store.js";
 import { createTaskRanker } from "./task-ranker.js";
+import {
+  createTutor,
+  type EnhSnapshot,
+  type RoutingSnapshot,
+  type Tutor,
+  type TutorRun,
+} from "./tutor.js";
 import { createUseTracker } from "./use-tracker.js";
 
 export type Logger = {
@@ -132,6 +153,18 @@ export type RuntimeDeps = {
   workerExtras?: (info: WorkerSpawnInfo) => WorkerSpawnExtras | undefined;
   /** Reads a card's text; defaults to the head of the file. */
   readText?: (path: string) => string | undefined;
+  /** The tutors' model call (2026-10-25, `src/tutor.ts`); absent = no tutor. */
+  tutorRun?: TutorRun;
+  /** The note folders when `anticipate.noteDirs` is empty: the agent workspace's `memory` folder. Absent: none. */
+  defaultNoteDirs?: () => string[];
+  /** The agent workspace, for the lesson pass's default files (`lesson-sleep.ts`). Absent: only configured paths. */
+  workspaceDir?: () => string | undefined;
+  /** The note and past-chat sources; injectable for tests. Default: read from disk per `anticipate`. */
+  pointerSources?: PointerSources;
+  /** The harness wake of a matching past chat; injectable for tests. Default: per `anticipate.wake`. */
+  waker?: SessionWaker;
+  /** The nightly catalogue refresh; injectable for tests. Default: per `anticipate.refreshCatalog`. */
+  catalogRefresh?: CatalogRefresh;
 };
 
 export type RuntimeStatus = {
@@ -148,7 +181,22 @@ export type RuntimeStatus = {
   /** Refusals announced as `thalamus.refusal` since start. Detected only: nothing is re-routed or retried for them. */
   refusals?: { refusals: number; lastAt?: number };
   lastDecisionAt?: number;
+  /** The memory pointers: the mode and how many notes and past chats are indexed. */
+  anticipate: {
+    mode: AnticipateMode;
+    notes: number;
+    chats: number;
+    builtAt?: number;
+    /** The harness wake: its mode, wakes started today (on disk) and answers still pending in this process. */
+    wake: { mode: WakeMode; today: number; pending: number };
+    /** The nightly catalogue refresh: whether one is running and how the last one ended. */
+    catalog?: ReturnType<CatalogRefresh["stats"]>;
+  };
 };
+
+/** How often the gateway looks whether the past-chat catalogue is due a refresh, and the first look after start. */
+const CATALOG_TICK_MS = 10 * 60_000;
+const CATALOG_FIRST_TICK_MS = 5 * 60_000;
 
 const CARD_REFRESH_MS = 10 * 60 * 1000;
 
@@ -224,7 +272,12 @@ export function createRuntime(deps: RuntimeDeps) {
   let runStates: ReturnType<typeof createRunStates> | undefined;
   let scheduler: Scheduler | undefined;
   let refusals: RefusalWatcher | undefined;
+  let tutor: Tutor | undefined;
   let learning: Learning | undefined;
+  let lessons: LessonSleep | undefined;
+  let pointerSources: PointerSources | undefined;
+  let waker: SessionWaker | undefined;
+  let catalogRefresh: CatalogRefresh | undefined;
   // What the nightly run taught the router (phase F). Empty until a run, or a store that holds an earlier one.
   let learnedStrength: ReturnType<typeof learnedStrengthFor> | undefined;
   let learnedRefusals: RefusalRecord[] = [];
@@ -414,9 +467,120 @@ export function createRuntime(deps: RuntimeDeps) {
         });
         cleanups.push(registerTaskRanker(ranker));
       }
+      // Phase 1.3: the owner's corrections become labels (`enh_pins`, `j.correction`). Jev only for the ambiguous ones,
+      // through the same client and the same privacy gate as the task read.
+      const corrections = createCorrectionCapture<PrepareInput>({
+        store: () => store,
+        cards,
+        now,
+        jev: {
+          ask,
+          question: questions.correction[0],
+          allowed: (i) => reader.gate(i).allowed,
+          budgetMs: () => cfg.jev.timeoutMs,
+        },
+        // The nightly lesson pass reads these. His words stay local, redacted and capped; `lessons.mode: off` keeps none.
+        keep: (c) => {
+          if (cfg.lessons.mode === "off") return;
+          store?.addCorrection({
+            ts: now(),
+            session: c.input.sessionKey,
+            runId: c.input.runId,
+            cls: c.cls,
+            via: c.via,
+            cards: c.cards.map((x) => ({ id: x.id, name: x.name, kind: x.kind })),
+            words: redactForRouting(c.words).slice(0, LESSON_WORDS_MAX),
+          });
+        },
+      });
+      lessons = createLessonSleep({
+        store: () => store,
+        config: () => cfg.lessons,
+        dataDir: cfg.dataDir,
+        workspaceDir: () => deps.workspaceDir?.(),
+        noteDirs: () =>
+          cfg.anticipate.noteDirs.length > 0
+            ? cfg.anticipate.noteDirs
+            : (deps.defaultNoteDirs?.() ?? []),
+        cards,
+        now,
+      });
+      // The note and past-chat legs (2026-10-25). Built in the background; a prompt never waits for it.
+      if (cfg.anticipate.mode !== "off") {
+        pointerSources =
+          deps.pointerSources ??
+          createPointerSources({
+            noteDirs: () =>
+              cfg.anticipate.noteDirs.length > 0
+                ? cfg.anticipate.noteDirs
+                : (deps.defaultNoteDirs?.() ?? []),
+            chatCatalog: () => cfg.anticipate.chatCatalog,
+            now,
+            onError: (err) => deps.logger.warn(`[thalamus] pointer index: ${String(err)}`),
+          });
+        void pointerSources.warm();
+      }
+      // The skill's script, found once: the wake and the catalogue refresh both run it.
+      const askScript = resolveAskSessionScript(deps.extensionRoot);
+      // The harness wake (2026-10-25): a strong past-chat match is asked by the harness itself, only in `on`.
+      if (pointerSources && cfg.anticipate.wake.mode !== "off") {
+        waker =
+          deps.waker ??
+          createSessionWaker({
+            config: () => cfg.anticipate.wake,
+            script: () => askScript,
+            wakesDir: () => join(askSessionStateDir(), "wakes"),
+            now,
+            onExit: (e) => {
+              const last = e.out.trim().split("\n").at(-1) ?? "";
+              deps.logger.info(
+                `[thalamus] wake ${e.wakeId}: exit ${e.code}${e.code === 0 ? "" : ` (${last.slice(0, 200)})`}`,
+              );
+            },
+          });
+        const w = waker;
+        cleanups.push(() => w.stop());
+      }
+      // The past-chat catalogue keeps itself: the skill's incremental scan once a night, and once at first start.
+      if (cfg.anticipate.refreshCatalog) {
+        const refresh =
+          deps.catalogRefresh ??
+          createCatalogRefresh({
+            enabled: () => cfg.anticipate.refreshCatalog,
+            script: () => askScript,
+            catalogPath: () => cfg.anticipate.chatCatalog,
+            defaultPath: () => defaultChatCatalog(),
+            now,
+            logger: deps.logger,
+          });
+        catalogRefresh = refresh;
+        const first = setTimeout(() => void refresh.tick(), CATALOG_FIRST_TICK_MS);
+        const every = setInterval(() => void refresh.tick(), CATALOG_TICK_MS);
+        first.unref?.();
+        every.unref?.();
+        cleanups.push(() => {
+          clearTimeout(first);
+          clearInterval(every);
+        });
+      }
+      const sources = pointerSources;
       seam = createShortlistSeam({
         reader,
         cards,
+        corrections,
+        ...(waker ? { wake: waker } : {}),
+        ...(sources
+          ? {
+              pointers: {
+                mode: () => cfg.anticipate.mode,
+                find: (text: string) =>
+                  sources.find(text, {
+                    maxNotes: cfg.anticipate.maxNotes,
+                    maxChats: cfg.anticipate.maxChats,
+                  }),
+              },
+            }
+          : {}),
         ...(cfg.shortlist.rank ? { ranking: requestTaskRanking } : {}),
         mode: () => cfg.mode,
         inject: () => cfg.enforce.shortlist,
@@ -471,6 +635,90 @@ export function createRuntime(deps: RuntimeDeps) {
       const defer = deps.defer ?? ((fn: () => void) => void setImmediate(fn));
       const onError = (err: unknown) => deps.logger.warn(`[thalamus] ${String(err)}`);
       const runs = createRunStates();
+
+      // The tutors (2026-10-25): a sample of finished runs judged after the fact; records only, never routes.
+      if (cfg.tutor.enabled && deps.tutorRun && cfg.tutor.ladder.length > 0) {
+        const st = () => store;
+        tutor = createTutor({
+          run: deps.tutorRun,
+          ladder: cfg.tutor.ladder,
+          timeoutMs: cfg.tutor.timeoutMs,
+          dailyCap: { routing: cfg.tutor.routingDailyCap, enh: cfg.tutor.enhDailyCap },
+          sampleRate: cfg.tutor.sampleRate,
+          followUpMs: cfg.tutor.followUpMs,
+          save: {
+            routing: (r) => st()?.insertRoutingReview(r),
+            enh: (r) => st()?.insertEnhReview(r),
+          },
+          now,
+          homeDir: homedir(),
+          logger: deps.logger,
+        });
+      }
+      /** A run a tutor may see: not a one-shot (`temp:*`), not from a private source. */
+      const tutorMaySee = (sessionKey: string | undefined): sessionKey is string =>
+        !!sessionKey &&
+        !sessionKey.startsWith("temp:") &&
+        !isPrivateSource(sourceOfSessionKey(sessionKey), cfg.privacy.privateSources);
+      const routingSnapshotOf = (
+        runId: string,
+        ended: "end" | "error",
+      ): RoutingSnapshot | undefined => {
+        const decisions = store?.decisionsForRun(runId) ?? [];
+        const first = decisions[0];
+        const state = runs.get(runId);
+        const sessionKey = state?.sessionKey ?? first?.session ?? undefined;
+        if (!first || !tutorMaySee(sessionKey)) return undefined;
+        const ran = new Set<string>();
+        const stops: string[] = [];
+        let output = 0;
+        for (const d of decisions) {
+          const o = store?.getOutcome(d.id);
+          ran.add(
+            typeof o?.actual_model === "string" && o.actual_model ? o.actual_model : d.incumbent,
+          );
+          if (typeof o?.stop_reason === "string" && o.stop_reason) stops.push(o.stop_reason);
+          if (typeof o?.output === "number") output += o.output;
+        }
+        const work = state?.work ?? [];
+        return {
+          runId,
+          sessionKey,
+          ts: now(),
+          ...(state?.aim ? { aim: state.aim } : {}),
+          ran: [...ran],
+          ...(first.chosenEffort ? { effort: first.chosenEffort } : {}),
+          pick: {
+            model: first.pick,
+            ...(first.pickEffort ? { effort: first.pickEffort } : {}),
+            applied: first.applied,
+          },
+          calls: decisions.length,
+          toolCalls: work.length,
+          toolErrors: work.filter((w) => w.isError).length,
+          ended,
+          stopReasons: stops,
+          outputTokens: output,
+          refused: false,
+        };
+      };
+      const enhSnapshotOf = (use: UseRow, runId: string): EnhSnapshot | undefined => {
+        if (use.private || !tutorMaySee(use.session)) return undefined;
+        const brief = (cardId: string) => {
+          const c = cardMap.get(cardId);
+          return { cardId, name: c?.name ?? cardId, purpose: c?.purpose ?? "" };
+        };
+        const aim = runs.get(runId)?.aim;
+        return {
+          taskId: use.taskId,
+          sessionKey: use.session,
+          ts: now(),
+          ...(aim ? { aim } : {}),
+          shown: use.shown.map((e) => brief(e.cardId)),
+          used: use.used.map((u) => ({ ...brief(u.cardId), onList: u.onList })),
+          outcome: use.outcome,
+        };
+      };
       const stuck = createStuckTracker();
       const caller: ModelCaller = deps.caller ?? createSdkModelCaller({ cfg: deps.gatewayCfg });
       const record = createFreshRecorder({
@@ -696,7 +944,9 @@ export function createRuntime(deps: RuntimeDeps) {
           try {
             feed.handle(evt);
             refusals?.noteEvent(evt as never);
-            if (evt.stream === "tool" && evt.data.phase === "start") {
+            if (evt.stream === "call") {
+              tracker.onCall(evt.runId, evt.data);
+            } else if (evt.stream === "tool" && evt.data.phase === "start") {
               tracker.onToolStart(evt.runId, evt.data);
               runs.toolStart(
                 evt.runId,
@@ -718,12 +968,28 @@ export function createRuntime(deps: RuntimeDeps) {
               if (!svc.digest.acts())
                 svc.digest.observe({ runId: evt.runId, toolCallId, toolName, text });
             } else if (evt.stream === "lifecycle") {
-              if (evt.data.phase === "end" || evt.data.phase === "error") {
+              const ended = evt.data.phase === "end" || evt.data.phase === "error";
+              if (ended) {
                 if (!svc.check.acts()) svc.check.observeEnd(evt.runId);
                 if (!svc.finish.acts()) svc.finish.observeEnd(evt.runId);
               }
-              if (evt.data.phase === "end") tracker.finish(evt.runId, "done");
-              else if (evt.data.phase === "error") tracker.finish(evt.runId, "retried");
+              let use: UseRow | undefined;
+              if (evt.data.phase === "end") use = tracker.finish(evt.runId, "done");
+              else if (evt.data.phase === "error") use = tracker.finish(evt.runId, "retried");
+              if (ended && tutor) {
+                const phase = evt.data.phase === "end" ? "end" : "error";
+                const runId = evt.runId;
+                defer(() => {
+                  try {
+                    tutor?.afterRun(
+                      () => routingSnapshotOf(runId, phase),
+                      () => (use ? enhSnapshotOf(use, runId) : undefined),
+                    );
+                  } catch (err) {
+                    onError(err);
+                  }
+                });
+              }
             }
           } catch {
             /* observing never breaks the bus */
@@ -748,7 +1014,10 @@ export function createRuntime(deps: RuntimeDeps) {
               onRead: (r) => {
                 providerReads += 1;
                 providerReadsByKind[r.kind] += 1;
-                if (r.kind === "outcome") refusals?.observeOutcome(r);
+                if (r.kind === "outcome") {
+                  refusals?.observeOutcome(r);
+                  if (r.outcome.state.value === "refused") tutor?.noteRefusal(r.sessionKey);
+                }
               },
               now,
             }),
@@ -791,11 +1060,16 @@ export function createRuntime(deps: RuntimeDeps) {
       }
       store = undefined;
       seam = undefined;
+      pointerSources = undefined;
+      waker = undefined;
+      catalogRefresh = undefined;
       services = undefined;
       runStates = undefined;
       scheduler = undefined;
       refusals = undefined;
+      tutor = undefined;
       learning = undefined;
+      lessons = undefined;
       learnedStrength = undefined;
       learnedRefusals = [];
       learnedTimes = new Map();
@@ -813,6 +1087,11 @@ export function createRuntime(deps: RuntimeDeps) {
 
     /** The seam the prompt hook and the HTTP route both call. Undefined when nothing is running. */
     shortlist: () => seam,
+
+    /** A prompt arrived in a chat: a routing review waiting on that chat's last run reads it (2026-10-25). */
+    notePrompt(sessionKey: string | undefined, prompt: string | undefined): void {
+      if (sessionKey && prompt) tutor?.notePrompt(sessionKey, prompt);
+    },
 
     /**
      * `thalamus.plan.preview`: the plan a caller describes, on a virtual clock. Nothing is started, recorded or spent.
@@ -842,6 +1121,16 @@ export function createRuntime(deps: RuntimeDeps) {
     async learningRun(o: { dry: boolean }) {
       if (!learning) return { ok: false as const, error: "not-running" };
       return learning.run(o);
+    },
+
+    /**
+     * `thalamus.lessons.run`: the nightly lesson pass (`lesson-sleep.ts`). A dry run writes nothing and returns the report
+     * a real run would write. The bundled sleep routine calls it; nothing here schedules it.
+     */
+    async lessonsRun(o: { dry: boolean }) {
+      if (cfg.lessons.mode === "off") return { ok: false as const, error: "lessons-off" };
+      if (!lessons) return { ok: false as const, error: "not-running" };
+      return lessons.run(o);
     },
 
     /**
@@ -1017,6 +1306,24 @@ export function createRuntime(deps: RuntimeDeps) {
         providerReadsByKind: { ...providerReadsByKind },
         ...(refusals ? { refusals: refusals.stats() } : {}),
         ...(lastDecision ? { lastDecisionAt: lastDecision } : {}),
+        anticipate: {
+          mode: cfg.anticipate.mode,
+          notes: pointerSources?.stats().notes ?? 0,
+          chats: pointerSources?.stats().chats ?? 0,
+          ...(pointerSources?.stats().builtAt ? { builtAt: pointerSources.stats().builtAt } : {}),
+          wake: { mode: cfg.anticipate.wake.mode, ...(waker?.stats() ?? { today: 0, pending: 0 }) },
+          ...(catalogRefresh ? { catalog: catalogRefresh.stats() } : {}),
+        },
+      };
+    },
+
+    /** Do pointers on the desk save rounds? The ledger's owner tasks since `sinceTs` (default: the last 7 days). */
+    anticipateReport(o: { sinceTs?: number } = {}) {
+      const sinceTs = o.sinceTs ?? now() - 7 * 86_400_000;
+      return {
+        ok: true as const,
+        mode: cfg.anticipate.mode,
+        report: anticipateReport(store?.listUses({ sinceTs }) ?? [], sinceTs),
       };
     },
 

@@ -809,6 +809,7 @@ export const SC_FACTS: { match: RegExp; facts: ModelFacts }[] = [
       ctx: 1_000_000,
     },
   },
+  { match: /haiku-5[.-]5/i, facts: { price: [0.1, 0.5], ctx: 1_000_000 } },
   { match: /haiku/i, facts: { price: [1, 5], ctx: 200_000 } },
   {
     match: /5\.6-sol/i,
@@ -839,12 +840,21 @@ export const SC_FACTS: { match: RegExp; facts: ModelFacts }[] = [
     },
   },
   {
-    match: /gpt-6-sol/i,
+    match: /gpt-6(?:\.1)?-sol/i,
     facts: {
       refusal: [17.67, "GPT-4o, same policy family"],
       price: [2, 10],
       ctx: 1_050_000,
       as: "price per OpenAI's 2026-09-22 launch post; 922K of the window is input, 128K max output",
+    },
+  },
+  {
+    match: /gpt-6\.1-terra/i,
+    facts: {
+      refusal: [17.67, "GPT-4o, same policy family"],
+      price: [1, 5],
+      ctx: 1_050_000,
+      as: "price per the OpenRouter catalog, 2026-10-27; shipped 2026-10-26",
     },
   },
   {
@@ -3087,6 +3097,41 @@ const GPT6_SOL_SKILLS: CoreSkills = {
   ),
 };
 
+const GPT6_TERRA_SKILLS: CoreSkills = {
+  code: sk(
+    "ok",
+    "Judged from its Artificial Analysis index (48.1, between GPT-6.1 Sol at 51.8 and GPT-6 Sol at 47.6). No coding board has a GPT-6.1 Terra row yet; it shipped on 2026-10-26.",
+  ),
+  frontend: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  agentic: sk(
+    "ok",
+    "OpenAI positions it for everyday agentic, coding and writing work. No independent agent benchmark has published a row yet.",
+  ),
+  data: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  maths: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  science: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  reason: sk(
+    "ok",
+    "Artificial Analysis index 48.1 at max effort, 45.4 at xhigh and 36.2 at low. Mid-board for this tier.",
+  ),
+  write: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  languages: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  psych: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  instruct: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  context: sk("strong", "The same 1.05M-token window as the other GPT-6.1 and GPT-6 tiers."),
+  vision: sk(
+    "ok",
+    "OpenAI describes it as particularly strong at understanding screenshots. That is a vendor claim; no independent vision row yet.",
+  ),
+  factual: sk("none", "No independent board row yet; it shipped on 2026-10-26."),
+  world: sk("ok", "No live source of its own."),
+  speed: sk("none", "No throughput measurement yet."),
+  cost: sk(
+    "strong",
+    "$1 in / $5 out per million on the OpenRouter list (2026-10-27), half the price of GPT-6.1 Sol. Free at the margin on the ChatGPT seat.",
+  ),
+};
+
 const GPT6_LUNA_SKILLS: CoreSkills = {
   code: sk(
     "ok",
@@ -3432,6 +3477,7 @@ type VerticalFamily =
   | "gpt6astra"
   | "gpt6sol"
   | "gpt6luna"
+  | "gpt6terra"
   | "copilot"
   | "muse"
   | "codex"
@@ -3487,6 +3533,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
     gpt6sol: sk(
       "strong",
       "GPT-6.1 Sol scored 55.1% on the Vals Terminal-Bench 4.0 run and 56.1% at Artificial Analysis (late Sep 2026), fifth or sixth place. The earlier GPT-6 Sol sits around 44%.",
+    ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
     ),
     gpt6luna: sk(
       "weak",
@@ -3602,6 +3652,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
       "top",
       "GPT-6.1 Sol is second on WeirdML v3 at 35.5% (2026-10-02) and costs about $5 a task against $28 for GPT-6 Astra. The older GPT-6 Sol sits lower at 19.7%, so pick the 6.1 version for training work.",
     ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
+    ),
     gpt6luna: sk(
       "ok",
       "7.9% on WeirdML v3 (2026-10-02) at about $0.32 a task — the cheapest model on that board, and still ahead of Grok 4.7 which costs eighty times more. Good value for a first pass, far from the 42.2% top score.",
@@ -3715,6 +3769,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
     gpt6sol: sk(
       "strong",
       "Seventh on Blueprint-Bench 2 at 36.9% (30 Sep 2026), ahead of GPT-5.5 and every GPT-5.6 tier. No CAD-code number found for it; the grade leans on that spatial result plus Astra's lead in the same family.",
+    ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
     ),
     gpt6luna: sk(
       "ok",
@@ -3830,6 +3888,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
       "strong",
       "No BrowseComp or HLE-with-tools score published; graded from its own lab's siblings, GPT-6 Astra at 91.5% and GPT-5.6 Sol at 90.4%. Its own numbers show long-context reasoning at 83.7% (AA-LCR) but a 60.1% hallucination rate on AA-Omniscience, so check its citations.",
     ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
+    ),
     gpt6luna: sk(
       "ok",
       "No research or browsing score found for it. Graded from the same lab's previous cheap tier, GPT-5.6 Luna at 83.3% BrowseComp — useful for small look-ups, not the one for a sourced report.",
@@ -3943,6 +4005,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
     gpt6sol: sk(
       "strong",
       "GPT-6.1 Sol scores 53.8% and GPT-6 Sol 49.3% on GDPval-AA, eighteenth and twenty-second of 117, 1 October 2026. The newer 6.1 version is the one to pick for document work.",
+    ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
     ),
     gpt6luna: sk(
       "ok",
@@ -4058,6 +4124,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
       "strong",
       "No separate public cyber score; OpenAI ships GPT-6.1 Sol under its trusted-access-for-cyber programme (system card addendum, Sep 2026). Graded below Astra by inference.",
     ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
+    ),
     gpt6luna: sk(
       "ok",
       "No published cyber figure. Graded from the cheaper tiers of earlier GPT generations, which trail their flagships by a wide margin on every cyber table.",
@@ -4168,6 +4238,10 @@ export const SC_VERTICAL_CELLS: Record<VerticalKey, Record<VerticalFamily, Skill
     gpt6sol: sk(
       "strong",
       "The two Sol versions split badly: GPT-6.1 Sol scored 56.7% raw HealthBench and 36.2% on Hard (second place there), while plain GPT-6 Sol managed 47.1% raw and 30.1% Hard — the weakest of the GPT-6 line (benchlm.ai and llm-stats, 1-2 Oct 2026). Use 6.1 if you have the choice.",
+    ),
+    gpt6terra: sk(
+      "none",
+      "No result is published for GPT-6.1 Terra on this column yet; it shipped on 2026-10-26.",
     ),
     gpt6luna: sk(
       "ok",
@@ -4374,11 +4448,20 @@ export const SC_DOSSIER_RULES: { match: RegExp; entry: DossierEntry }[] = [
     },
   },
   {
-    match: /gpt-6-sol/i,
+    match: /gpt-6(?:\.1)?-sol/i,
     entry: {
       bloc: "US",
       best: "Agents' Last Exam 56.4% at max — ahead of Opus 5's best recorded score at 60% lower cost per task",
       skills: withVerticals(GPT6_SOL_SKILLS, "gpt6sol"),
+      topics: OPENAI_TOPICS,
+    },
+  },
+  {
+    match: /gpt-6\.1-terra/i,
+    entry: {
+      bloc: "US",
+      best: "Mid tier of OpenAI's GPT-6.1 line at $1/$5 per million with the full 1.05M window; shipped 2026-10-26, so most columns still wait for third-party results",
+      skills: withVerticals(GPT6_TERRA_SKILLS, "gpt6terra"),
       topics: OPENAI_TOPICS,
     },
   },

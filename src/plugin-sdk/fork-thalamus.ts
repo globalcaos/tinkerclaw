@@ -13,6 +13,8 @@ export * from "../shared/thalamus-reads.js";
 export * from "../shared/thalamus-enhancements.js";
 export * from "../shared/thalamus-ladder.js";
 export * from "../shared/thalamus-shortlist-text.js";
+// 2026-10-25: the note and past-chat pointers the short list may carry (the anticipation note).
+export * from "../shared/thalamus-pointers.js";
 export * from "../shared/thalamus-cache-ledger.js";
 export * from "../shared/thalamus-digest.js";
 export * from "../shared/thalamus-fresh-points.js";

@@ -122,6 +122,125 @@
           }
         }
       },
+      "anticipate": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The note and past-chat pointers of the anticipation note: for an owner's prompt in a Tinker tab or the main chat, one line each to a note file or an earlier session that may already hold what the task needs. Local word matching only; nothing is sent to any model.",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["off", "watch", "inject"],
+            "default": "watch",
+            "description": "off = find nothing; watch = find the pointers and record them in the ledger (enh_uses.pointers_json), show the agent nothing; inject = also add them to the short list's note, which only happens when mode is enforce and enforce.shortlist is on. A misspelt value is off."
+          },
+          "noteDirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Folders of Markdown note files, read two levels deep; a frontmatter description is the note's use key. Empty: the agent workspace's memory folder. MEMORY.md and dated daily logs are never pointed at."
+          },
+          "chatCatalog": {
+            "type": "string",
+            "description": "The chat catalogue the ask-session skill builds (SQLite). Default $OPENCLAW_STATE_DIR/ask-session/catalog.sqlite. An empty string switches the past-chat leg off; a missing file is silent."
+          },
+          "maxNotes": {
+            "type": "number",
+            "default": 2,
+            "description": "Note pointers per prompt, 0 to 3."
+          },
+          "maxChats": {
+            "type": "number",
+            "default": 1,
+            "description": "Past-chat pointers per prompt, 0 to 3. The note never carries more than 3 pointers in 600 characters in all."
+          },
+          "wake": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "The harness asks a strongly matching past chat itself: it runs the ask-session skill's `sessions.py ask <id> \"<prompt>\" --wake-id` in the background (read-only wake, dated wake-up note, refused when a live tab holds the session), puts one line with the command that prints the answer on the desk, and hands an answer the agent never read over at the start of that chat's next turn, once, as testimony with the files it names checked against the disk. A wake costs about 1.25x the woken session's context on the owner's subscription.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["off", "watch", "on"],
+                "default": "watch",
+                "description": "off = never; watch = decide as on would and record it on the pointer's ledger row (enh_uses.pointers_json, field wake), start nothing; on = also wake, only when the pointer is shown (mode enforce, enforce.shortlist, anticipate.mode inject). A misspelt value is off."
+              },
+              "minCover": {
+                "type": "number",
+                "default": 0.65,
+                "description": "Share of the prompt's information the past chat must cover to be woken, 0.45 to 1 (a pointer needs 0.45)."
+              },
+              "minTerms": {
+                "type": "number",
+                "default": 5,
+                "description": "Distinct rare words the prompt and the past chat must share to wake it, 3 to 8 (a pointer needs 3)."
+              },
+              "dailyCap": {
+                "type": "number",
+                "default": 5,
+                "description": "Wakes the harness starts per local day, 0 to 50, counted from the result files on disk so a restart does not reset it."
+              },
+              "timeoutS": {
+                "type": "number",
+                "default": 110,
+                "description": "Seconds before the skill stops a wake, 20 to 300."
+              }
+            }
+          },
+          "refreshCatalog": {
+            "type": "boolean",
+            "default": true,
+            "description": "The gateway keeps the default past-chat catalogue fresh with the ask-session skill's own incremental scan: once a night (02:00-06:00) when the last run is over 20 h old, at any hour past 48 h, and once a few minutes after start when there is no catalogue yet. No model, no wake. A custom chatCatalog is never refreshed."
+          }
+        }
+      },
+      "lessons": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The nightly lesson pass (thalamus.lessons.run, called by the bundled sleep routine): the owner's repeated corrections are grouped into lessons, each lesson's rule is found on disk (saved note, task notes, a file read every turn), the cause of the slip is sorted into not loaded, contradicted or vague, and a repair is drafted. Only a rule that was in view, clear and unopposed, and still broken moves up, to a drafted check that starts watch-only. Writes under <dataDir>/lessons/.",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["off", "watch", "apply"],
+            "default": "watch",
+            "description": "off = keep no corrections and run no pass; watch = keep the corrections (redacted, local), draft the repairs and write the ledger and the report, change no rule file; apply = also add the concrete rule line to target when the repair can only tighten. A repair that strikes or scopes an existing line always waits for the owner. A misspelt value is off."
+          },
+          "minSlips": {
+            "type": "number",
+            "default": 2,
+            "minimum": 2,
+            "description": "Corrections of the same thing that make a lesson. The second correction means the first lesson failed."
+          },
+          "windowHours": {
+            "type": "number",
+            "default": 24,
+            "description": "How far back the first pass reads corrections. Later passes read from the previous pass."
+          },
+          "alwaysRead": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Files read with every turn (rung 3). Empty: the workspace's AGENTS.md, SOUL.md, TOOLS.md, USER.md, IDENTITY.md and MEMORY.md."
+          },
+          "taskDirs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Folders of task notes, skills and recipes (rung 2), read two levels deep. Empty: the workspace's skills folder."
+          },
+          "noteDirs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Folders of saved notes (rung 1), read two levels deep. Empty: the anticipation note's note folders."
+          },
+          "target": {
+            "type": "string",
+            "description": "The always-read file apply adds a rule line to, under '## Lessons from the nightly pass'. Default: the workspace's AGENTS.md."
+          }
+        }
+      },
       "dataDir": {
         "type": "string",
         "description": "Defaults to ~/.openclaw/data/thalamus-v4"
@@ -348,6 +467,56 @@
             "minimum": 200,
             "maximum": 8000,
             "description": "Characters of a redacted task kept for replay."
+          }
+        }
+      },
+      "tutor": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The tutors (2026-10-25): after a run, a second model judges whether the model that ran fit the task (table routing_reviews) and whether the enhancement list fit it (enh_reviews). Records only; nothing routes or ranks differently. A private source is never sent.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Off: no review runs."
+          },
+          "ladder": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "provider/model rungs, tried in order. Default: claude-code/claude-sonnet-5-5, then claude-code/claude-haiku-4-5."
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "default": 180000,
+            "description": "Time limit of one rung."
+          },
+          "routingDailyCap": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 30,
+            "description": "Routing reviews a day."
+          },
+          "enhDailyCap": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 30,
+            "description": "Enhancement-list reviews a day."
+          },
+          "sampleRate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.25,
+            "description": "Share of eligible runs taken, so each day's cap spreads over the day."
+          },
+          "followUpMs": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 600000,
+            "description": "How long a routing review waits for the owner's next prompt, which shows a correction."
           }
         }
       }

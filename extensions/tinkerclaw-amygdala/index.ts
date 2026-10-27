@@ -13,6 +13,7 @@ import {
   resolveGatewayPort,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
+import { captureBroadcast, currentBroadcast } from "./src/broadcast.js";
 import { parseConfig } from "./src/config.js";
 import { embeddedExplainRun } from "./src/explain-run.js";
 import { createHttpHandlers, DECIDE_PATH, NOTES_PATH, WAIT_PATH } from "./src/http.js";
@@ -68,16 +69,23 @@ export default definePluginEntry({
       port = 0;
     }
 
+    // Live events to the pages, through the broadcast a method call handed over (src/broadcast.ts).
     const broadcast = (name: string, payload: unknown): void => {
       try {
-        (api as unknown as { broadcast?: (e: string, p: unknown) => void }).broadcast?.(
-          name,
-          payload,
-        );
-      } catch {
-        /* broadcast is best-effort */
+        currentBroadcast(api)?.(name, payload);
+      } catch (err) {
+        console.error(`[amygdala] broadcast of ${name} failed`, err);
       }
     };
+    const registerMethod: typeof api.registerGatewayMethod = (name, handler, opts) =>
+      api.registerGatewayMethod(
+        name,
+        (o) => {
+          captureBroadcast((o as { context?: unknown }).context);
+          return handler(o);
+        },
+        opts,
+      );
 
     // The shared Jev source: where it logs and the owner's pointer. Nothing here starts any asking.
     configureJev({
@@ -145,14 +153,14 @@ export default definePluginEntry({
       handler: handlers.notes,
     });
 
-    api.registerGatewayMethod("amygdala2.status", ({ respond }) => {
+    registerMethod("amygdala2.status", ({ respond }) => {
       try {
         respond(true, runtime.status());
       } catch (err) {
         respond(true, { ok: false, error: String(err) });
       }
     });
-    api.registerGatewayMethod("amygdala2.feed", ({ params, respond }) => {
+    registerMethod("amygdala2.feed", ({ params, respond }) => {
       try {
         const p = params as { sessionKey?: unknown; sinceTs?: unknown; limit?: unknown };
         respond(
@@ -167,7 +175,7 @@ export default definePluginEntry({
         respond(true, { ok: false, error: String(err) });
       }
     });
-    api.registerGatewayMethod("amygdala2.reviews", ({ params, respond }) => {
+    registerMethod("amygdala2.reviews", ({ params, respond }) => {
       try {
         const p = (params ?? {}) as { sinceTs?: unknown };
         respond(true, runtime.reviewReport(typeof p.sinceTs === "number" ? p.sinceTs : undefined));
@@ -175,7 +183,7 @@ export default definePluginEntry({
         respond(true, { ok: false, error: String(err) });
       }
     });
-    api.registerGatewayMethod("amygdala2.answer", ({ params, respond }) => {
+    registerMethod("amygdala2.answer", ({ params, respond }) => {
       const p = params as { interventionId?: unknown; answer?: unknown };
       const ok =
         typeof p.interventionId === "string" &&
@@ -189,7 +197,7 @@ export default definePluginEntry({
       name: string,
       fn: (p: Record<string, unknown>) => unknown | Promise<unknown>,
     ): void => {
-      api.registerGatewayMethod(name, async ({ params, respond }) => {
+      registerMethod(name, async ({ params, respond }) => {
         try {
           respond(true, await fn((params ?? {}) as Record<string, unknown>));
         } catch (err) {
@@ -272,6 +280,9 @@ export default definePluginEntry({
         sessionKey: text(p.sessionKey, "sessionKey"),
         turnId: typeof p.turnId === "string" ? p.turnId : "",
         undo: p.undo === true,
+        ...(typeof p.fromPrompt === "string" && p.fromPrompt.trim()
+          ? { fromPrompt: p.fromPrompt }
+          : {}),
       }),
     );
 

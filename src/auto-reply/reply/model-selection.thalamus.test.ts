@@ -369,3 +369,67 @@ describe("createModelSelectionState THALAMUS suggestions and cooling", () => {
     expect(supplyOfKey(routedKey(after))).not.toBe(supplyOfKey(open));
   });
 });
+
+// FORK 2026-10-09 — the TASK chooses the effort (src/shared/thalamus-effort.ts); the dial and the
+// domain still choose the model. The stop's effort is the ceiling.
+describe("createModelSelectionState THALAMUS task effort", () => {
+  const CODING = [
+    "Refactor the retry handling across src/infra/retry.ts and src/agents/runner.ts, then debug the",
+    "flaky unit test in src/infra/retry.test.ts and fix the typescript compile error.",
+    "```ts",
+    "export async function withRetry() {}",
+    "```",
+  ].join("\n");
+
+  afterEach(() => {
+    delete process.env.OPENCLAW_THALAMUS_TASK_EFFORT;
+  });
+
+  it("a hello on the smart stop runs at low, on the model the dial chose", async () => {
+    writeBias(6);
+    const want = expectedRoute(6, "hello");
+    expect(want?.rung.effort).toBe("max");
+
+    const route = (await createState({ promptText: "hello" })).thalamusRoute;
+
+    expect(`${route?.provider}/${route?.model}`).toBe(want?.rung.key);
+    expect(route?.effort).toBe("low");
+    expect(route?.ultracode).toBe(false);
+    expect(route?.effortWhy).toBe("low: greeting");
+    expect(route?.notice).toContain("@low");
+  });
+
+  it("a multi-file refactor and debug on the smart stop runs at max with the fan-out", async () => {
+    writeBias(6);
+    expect(expectedRoute(6, CODING)?.rung.effort).toBe("max");
+
+    const route = (await createState({ promptText: CODING })).thalamusRoute;
+
+    expect(route?.domain).toBe("code");
+    expect(route?.effort).toBe("max");
+    expect(route?.ultracode).toBe(true);
+    expect(route?.effortWhy.startsWith("max + ultracode: ")).toBe(true);
+  });
+
+  it("OPENCLAW_THALAMUS_TASK_EFFORT=off keeps the stop's effort and never asks for the fan-out", async () => {
+    writeBias(6);
+    process.env.OPENCLAW_THALAMUS_TASK_EFFORT = "off";
+    const want = expectedRoute(6, "hello");
+
+    const route = (await createState({ promptText: "hello" })).thalamusRoute;
+
+    expect(route?.effort).toBe(want?.rung.effort);
+    expect(route?.ultracode).toBe(false);
+    expect(route?.effortWhy).toBe("");
+  });
+
+  it("with no words to read, the stop's effort stands", async () => {
+    writeBias(6);
+    const want = expectedRoute(6);
+
+    const route = (await createState({})).thalamusRoute;
+
+    expect(route?.effort).toBe(want?.rung.effort);
+    expect(route?.effortWhy).toBe("");
+  });
+});

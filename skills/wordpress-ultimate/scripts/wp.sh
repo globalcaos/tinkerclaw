@@ -50,6 +50,12 @@ wp_resolve_password
 METHOD="${1:?Usage: wp.sh <GET|POST|PUT|PATCH|DELETE> <endpoint> [json_body]}"
 ENDPOINT="${2:?Missing endpoint}"
 BODY="${3:-}"
+# An extra or flag-like argument is refused, never ignored: a "--dry" on a POST was dropped
+# silently and the write went LIVE (2026-10-25, post 1009 titled "x" for 25 s). There is no dry run.
+if [[ $# -gt 3 || "$BODY" == --* ]]; then
+  echo "wp.sh: unexpected argument(s) after the body: ${*:3} (wp.sh has no flags such as --dry; nothing was sent)" >&2
+  exit 2
+fi
 
 METHOD=$(printf '%s' "$METHOD" | tr '[:lower:]' '[:upper:]')
 case "$METHOD" in

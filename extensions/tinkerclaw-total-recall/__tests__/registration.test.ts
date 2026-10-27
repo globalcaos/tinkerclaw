@@ -115,7 +115,12 @@ describe("Total Recall registration", () => {
 
     const tool = toolFactory({});
     expect(tool.name).toBe("recall");
-    expect(tool.parameters.required).toContain("query");
+    // FORK 2026-10-25 — a query OR an id (an evicted tool result's toolCallId): neither is
+    // required on its own, and execute() asks for one when it gets neither.
+    expect(Object.keys(tool.parameters.properties)).toEqual(
+      expect.arrayContaining(["query", "id", "offset", "length"]),
+    );
+    expect(tool.parameters.required ?? []).not.toContain("query");
     expect(typeof tool.execute).toBe("function");
   });
 

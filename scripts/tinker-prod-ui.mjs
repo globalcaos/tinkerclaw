@@ -834,10 +834,14 @@ function startRebuild(kind, opts = {}) {
   // restarts through the gateway-restart skill, which drains live turns and continues them after.
   // Its arguments ride as argv ("$@"), never pasted into the command string.
   const restartScript = JSON.stringify(path.join(ROOT, "scripts", "rebuild-and-restart.sh"));
+  // FORK 2026-10-19: `bash -lc` runs /etc/profile, which on Raspberry Pi OS (Debian) sets PATH
+  // outright and drops the env PATH above, so `npx` was "command not found" (exit 127) on the Pi.
+  // Re-add this node's bin dir inside the script, after the login files have run.
+  const nodePath = `export PATH=${JSON.stringify(NODE_BIN_DIR)}:"$PATH"; `;
   const script =
     kind === "fe"
-      ? `set -euo pipefail; cd ${feDir}; npx vite build`
-      : `set -uo pipefail; cd ${repoDir}; bash ${restartScript} "$@"`;
+      ? `${nodePath}set -euo pipefail; cd ${feDir}; npx vite build`
+      : `${nodePath}set -uo pipefail; cd ${repoDir}; bash ${restartScript} "$@"`;
   const args =
     kind === "fe"
       ? []
@@ -1426,9 +1430,161 @@ function proxyToGateway(req, res, rewritePath) {
   req.pipe(pReq);
 }
 
+// FORK 2026-10-21 (the architect: "when I click on a pdf link from the phone I want the capabilities we have
+// on desktop to work"). The pdf-review viewer (~/src/pdf-review, loopback :18820) under /pdf/, so the
+// phone reaches it through the phone door like the rest of Tinker: same device token, same origin.
+// The viewer finds its own base from its URL (viewer/web/base.js), so no path inside it is rewritten.
+const PDF_REVIEW_PORT = Number(process.env.PDF_REVIEW_PORT || 18820);
+
+function proxyToPdfReview(req, res, url) {
+  const headers = { ...req.headers, host: `127.0.0.1:${PDF_REVIEW_PORT}` };
+  delete headers.authorization;
+  const pReq = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: PDF_REVIEW_PORT,
+      path: (url.pathname.slice("/pdf".length) || "/") + url.search,
+      method: req.method,
+      headers,
+    },
+    (pRes) => {
+      res.writeHead(pRes.statusCode ?? 502, pRes.headers);
+      pRes.pipe(res);
+    },
+  );
+  pReq.on("error", (err) => {
+    console.error("[tinker-prod-ui] pdf-review proxy failed", err);
+    if (res.writableEnded) return;
+    if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(`pdf-review is not answering on 127.0.0.1:${PDF_REVIEW_PORT}: ${err.message}`);
+  });
+  req.pipe(pReq);
+}
+
+// FORK 2026-10-21 (the architect: "Same as how we've added the pdf reader into the phone app, I want you to do the
+// same with the zen mail"). Zen Mail (apps/zen-mail, loopback :18804) under /zen/, reached through the phone
+// door like /pdf/. Its page finds its own base from its URL. It answers button presses only from its own
+// origin, so the Origin header is rewritten to it: the door and Tinker have already admitted the caller.
+const ZEN_MAIL_PORT = Number(process.env.ZEN_MAIL_PORT || 18804);
+
+function proxyToZenMail(req, res, url) {
+  const headers = { ...req.headers, host: `127.0.0.1:${ZEN_MAIL_PORT}` };
+  delete headers.authorization;
+  delete headers.cookie;
+  if (headers.origin) headers.origin = `http://127.0.0.1:${ZEN_MAIL_PORT}`;
+  delete headers.referer;
+  const pReq = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: ZEN_MAIL_PORT,
+      path: (url.pathname.slice("/zen".length) || "/") + url.search,
+      method: req.method,
+      headers,
+    },
+    (pRes) => {
+      res.writeHead(pRes.statusCode ?? 502, pRes.headers);
+      pRes.pipe(res);
+    },
+  );
+  pReq.on("error", (err) => {
+    console.error("[tinker-prod-ui] zen-mail proxy failed", err);
+    if (res.writableEnded) return;
+    if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(`Zen Mail is not answering on 127.0.0.1:${ZEN_MAIL_PORT}: ${err.message}`);
+  });
+  req.pipe(pReq);
+}
+
+// FORK 2026-10-25 (the architect: a running long job is a row in the chat, where the thinking indicator is, not a
+// card pasted into a reply). The page asks for THIS chat's running jobs and draws them itself. Read-only;
+// only `lj-<id>` dirs whose state.json moved in the last 6 h are opened (a worker writes every few seconds,
+// so a dead one drops off), and only jobs whose `session` is the asking chat's come back. Same-origin only:
+// no CORS header, unlike the per-id route below, which a sandboxed card frame has to reach.
+const LONGJOB_ROOT = path.join(HOME, ".openclaw", "canvas", "documents");
+const LONGJOB_LIST_MAX_AGE_MS = 6 * 3600_000;
+
+/** The page's session key and a worker's TC_SESSION_KEY can differ by an `agent:main:` style prefix. */
+function longjobSessionMatches(jobSession, asked) {
+  if (typeof jobSession !== "string" || !jobSession || !asked) {
+    return false;
+  }
+  return (
+    jobSession === asked || jobSession.endsWith(":" + asked) || asked.endsWith(":" + jobSession)
+  );
+}
+
+async function handleLongjobList(url, res) {
+  const session = url.searchParams.get("session") || "";
+  if (!session) {
+    json(res, 400, { error: "session required" });
+    return;
+  }
+  const now = Date.now();
+  let names = [];
+  try {
+    names = await fs.promises.readdir(LONGJOB_ROOT);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.error("[tinker-prod-ui] longjob list: readdir failed", err);
+    }
+  }
+  const jobs = [];
+  for (const name of names) {
+    if (!/^lj-[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+      continue;
+    }
+    const file = path.join(LONGJOB_ROOT, name, "state.json");
+    try {
+      const st = await fs.promises.stat(file);
+      if (now - st.mtimeMs > LONGJOB_LIST_MAX_AGE_MS) {
+        continue;
+      }
+      const job = JSON.parse(await fs.promises.readFile(file, "utf8"));
+      if (job?.status === "running" && longjobSessionMatches(job.session, session)) {
+        jobs.push(job);
+      }
+    } catch {
+      // missing or mid-rename state file: it is read again on the next poll
+    }
+  }
+  jobs.sort(
+    (a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || String(a.id).localeCompare(String(b.id)),
+  );
+  json(res, 200, { jobs });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   const pathname = url.pathname;
+  if (pathname === "/api/longjob/list") {
+    void handleLongjobList(url, res);
+    return;
+  }
+  // FORK 2026-10-21 (the architect, on his phone: "The progress bar says progress server not reachable"). A
+  // longjob card polled http://127.0.0.1:18931, which only works on the machine running the job. The
+  // card now polls this page's own server, so it works wherever Tinker is open. Read-only, one JSON
+  // file per job id; the id is validated before it touches a path. CORS: the card is a sandboxed
+  // srcdoc frame (origin "null").
+  const lj = /^\/api\/longjob\/([a-z0-9][a-z0-9-]{0,63})\/state\.json$/.exec(pathname);
+  if (lj) {
+    const file = path.join(
+      os.homedir(),
+      ".openclaw",
+      "canvas",
+      "documents",
+      `lj-${lj[1]}`,
+      "state.json",
+    );
+    fs.readFile(file, (err, buf) => {
+      res.writeHead(err ? 404 : 200, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+        "access-control-allow-origin": "*",
+      });
+      res.end(err ? '{"error":"no such job"}' : buf);
+    });
+    return;
+  }
   if (pathname === "/api/ui-state") {
     void handleUiState(req, res);
     return;
@@ -1483,6 +1639,19 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === "/api/save-file") {
     proxyToGateway(req, res, `/tinker/api/save-file${url.search}`);
+    return;
+  }
+  if (pathname === "/pdf" || pathname.startsWith("/pdf/")) {
+    proxyToPdfReview(req, res, url);
+    return;
+  }
+  if (pathname === "/zen") {
+    res.writeHead(302, { Location: "/zen/" + url.search });
+    res.end();
+    return;
+  }
+  if (pathname.startsWith("/zen/")) {
+    proxyToZenMail(req, res, url);
     return;
   }
   if (pathname === "/") {

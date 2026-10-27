@@ -307,7 +307,7 @@ export async function ftsSearchChunked(
  *
  * INVARIANT. `assembleRetrievalPackAsync(q, s, o)` resolves to the same string
  * `assembleRetrievalPack(q, s, o)` returns, for every input. Pinned by a test rather than
- * by this sentence (extensions/tinkerclaw-total-recall/index.cold-pack.test.ts).
+ * by this sentence (extensions/tinkerclaw-total-recall/__tests__/cold-pack.test.ts).
  *
  * FORK 2026-09-23 (plan task 16) — THE FTS NOW RUNS IN A WORKER THREAD when it can, via
  * `ftsSearchOffThread` (fts-worker-client.ts): the worker reads the store's own file and keeps it

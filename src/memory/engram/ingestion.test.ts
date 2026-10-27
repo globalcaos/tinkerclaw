@@ -30,6 +30,65 @@ function makePipeline(overrides?: { artifactThresholdBytes?: number }) {
 }
 
 // ============================================================
+// FORK 2026-10-10 — idempotent by content (the duplicate-event trace)
+// ============================================================
+// Measured: up to 75% of a chat store and 40% of `compaction` were exact copies, written in bursts
+// by fresh pipelines re-ingesting a whole snapshot. These pin the fix at the source.
+describe("ingestion never stores the same event twice", () => {
+  const snapshot = [
+    { role: "user", content: "open the restart log" },
+    { role: "assistant", content: "Here is the restart log." },
+    { role: "user", content: "and the drain line?" },
+  ];
+
+  it("a fresh pipeline over the same store does not re-store a snapshot (a gateway restart)", async () => {
+    await makePipeline().ingest(snapshot);
+    const second = makePipeline();
+    await second.ingest(snapshot);
+    expect(second.eventStore.count()).toBe(3);
+  });
+
+  it("after compaction shrinks the snapshot, kept messages stay single and new ones are stored", async () => {
+    const p = makePipeline();
+    await p.ingest(snapshot);
+    // Compaction keeps the tail and the conversation goes on; a new runtime sees the new array.
+    const afterCompaction = [
+      { role: "assistant", content: "Here is the restart log." },
+      { role: "user", content: "and the drain line?" },
+      { role: "assistant", content: "drain: held=0 in 2 ms" },
+    ];
+    await makePipeline().ingest(afterCompaction);
+    const store = makePipeline().eventStore;
+    expect(store.count()).toBe(4);
+    expect(store.readAll().filter((e) => e.content === "drain: held=0 in 2 ms")).toHaveLength(1);
+  });
+
+  it("an assistant reply recorded per turn and again in the snapshot is stored once", async () => {
+    const p = makePipeline();
+    const first = p.ingestAssistantMessage("Here is the restart log.", 1);
+    await makePipeline().ingest(snapshot);
+    const store = makePipeline().eventStore;
+    expect(store.readAll().filter((e) => e.kind === "agent_message")).toHaveLength(1);
+    expect(store.readAll().find((e) => e.kind === "agent_message")?.id).toBe(first.id);
+  });
+
+  it("a large tool output is externalised once, even across pipelines", () => {
+    const big = "x".repeat(DEFAULT_ARTIFACT_THRESHOLD_BYTES + 10);
+    const a = makePipeline().ingestToolResult("Bash", big, 1);
+    const b = makePipeline().ingestToolResult("Bash", big, 2);
+    expect(b.id).toBe(a.id);
+    expect(makePipeline().eventStore.readByKind("artifact_reference")).toHaveLength(1);
+  });
+
+  it("different content is still stored", () => {
+    const p = makePipeline();
+    p.ingestUserMessage("one", 1);
+    p.ingestUserMessage("two", 2);
+    expect(p.eventStore.count()).toBe(2);
+  });
+});
+
+// ============================================================
 // Event kind correctness
 // ============================================================
 describe("ingestUserMessage", () => {

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { classifyEffect, resolveTargets } from "../src/effect-class.js";
+import { classifyEffect, resolveTargets, writtenByCommand } from "../src/effect-class.js";
 import type { EffectClass } from "../src/types.js";
 
 const table: [string, EffectClass][] = [
@@ -172,5 +172,27 @@ describe("resolveTargets", () => {
 
   it("is missing with neither command nor args", () => {
     expect(resolveTargets(null, undefined, cwd, home).origin).toBe("missing");
+  });
+});
+
+describe("writtenByCommand (2026-10-25)", () => {
+  const w = (cmd: string) => writtenByCommand(cmd, "/work/p", "/home/u");
+  it("redirects, tee/touch/mkdir operands and the cp/mv destination", () => {
+    expect(w("node run.mjs > out.log 2>&1")).toEqual(["/work/p/out.log"]);
+    expect(w("echo hi >> ~/notes.md")).toEqual(["/home/u/notes.md"]);
+    expect(w("ls | tee -a /tmp/jarvis/x/list.txt")).toEqual(["/tmp/jarvis/x/list.txt"]);
+    expect(w("mkdir -p build/out && touch build/out/.keep")).toEqual([
+      "/work/p/build/out",
+      "/work/p/build/out/.keep",
+    ]);
+    expect(w("cp src/a.ts src/b.ts")).toEqual(["/work/p/src/b.ts"]);
+    expect(w("cd /srv && mv a.txt b.txt")).toEqual(["/srv/b.txt"]);
+  });
+  it("reads write nothing; a heredoc body is not a command; /dev/null is not a file", () => {
+    expect(w("cat a.txt && grep x b.txt")).toEqual([]);
+    expect(w("cat > /work/p/f.txt <<'EOF'\nrm -rf /\n> /etc/passwd\nEOF")).toEqual([
+      "/work/p/f.txt",
+    ]);
+    expect(w("make > /dev/null")).toEqual([]);
   });
 });

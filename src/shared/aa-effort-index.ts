@@ -4,7 +4,7 @@
 // Artificial Analysis Intelligence Index per (model family, thinking effort).
 //
 // Source: https://artificialanalysis.ai/leaderboards/models
-// Retrieved: 2026-10-03T03:45:22+00:00 (689 rows; 2026-10-03 re-scored claude-sonnet-5-5, kimi-k3 low, deepseek-v4-flash-0420 high, added grok-4-7 low; earlier 2026-09-29: 679 slugs, 670 scored). Effort recovered from AA's structured effort.slug. Headline scores of already-plotted families unchanged vs 09-28. New family: claude-sonnet-5-5 (AA 55.978). GLM 5.3 Flash / MiMo-V2.6-Pro still have no effort tag; their existing max cells are kept (same headline number).
+// Retrieved: 2026-10-08T03:49:28+00:00 (696 rows; 2026-10-08 added claude-haiku-5-5, all other cells unchanged; earlier 2026-10-03: 689 rows; 2026-10-03 re-scored claude-sonnet-5-5, kimi-k3 low, deepseek-v4-flash-0420 high, added grok-4-7 low; earlier 2026-09-29: 679 slugs, 670 scored). Effort recovered from AA's structured effort.slug. Headline scores of already-plotted families unchanged vs 09-28. New family: claude-sonnet-5-5 (AA 55.978). GLM 5.3 Flash / MiMo-V2.6-Pro still have no effort tag; their existing max cells are kept (same headline number).
 //
 // HONESTY (the architect 2026-08-27): a number is here because AA published it against a
 // named effort — read from the payload's `effort.slug`, NOT from a parenthetical in
@@ -92,6 +92,7 @@ export const AA_EFFORT_INDEX: Record<string, Partial<Record<AaEffort, number>>> 
   "claude-opus-4-8": { max: 41.7899 },
   "claude-opus-5": { low: 39.3543, medium: 44.8253, high: 48.1219, xhigh: 49.6774, max: 50.7771 },
   "claude-opus-5-5": { low: 42.3078, medium: 51.2435, high: 53.5832, xhigh: 55.9874, max: 57.6224 },
+  "claude-haiku-5-5": { low: 29.4495, medium: 34.4647, high: 37.824, xhigh: 41.2489, max: 43.395 }, // AA 2026-10-08, headline untagged row = max
   "claude-sonnet-4-6-adaptive": { max: 30.0576 },
   "claude-sonnet-5": { low: 24.2638, medium: 28.0531, high: 31.6623, xhigh: 34.3842, max: 38.1639 },
   "claude-sonnet-5-5": {
@@ -114,6 +115,9 @@ export const AA_EFFORT_INDEX: Record<string, Partial<Record<AaEffort, number>>> 
   "gemini-3-6-flash": { high: 33.9786 },
   "gemini-3-7-flash": { low: 36.9459, medium: 39.6178, high: 39.0595 },
   "gemini-3-8-flash": { low: 33.4548, medium: 39.774, high: 40.9262 },
+  // 2026-10-10: AA scores Argon ONLY at high ("Gemini 4 Argon (high)" on its model page; its leaderboard row
+  // carries no effort tag). Until today 52.56 was read as an effortless headline and drawn flat across every rung.
+  "gemini-4-argon": { high: 52.5606 },
   "gemini-3-pro": { low: 22.3196, high: 27.958 },
   "glm-5-2": { max: 33.7055 },
   "glm-5-3": { low: 34.299, max: 44.7774 },
@@ -150,6 +154,8 @@ export const AA_EFFORT_INDEX: Record<string, Partial<Record<AaEffort, number>>> 
   "gpt-6-luna": { low: 21.5262, medium: 29.9252, high: 32.9282, xhigh: 34.5587, max: 38.1245 },
   // FORK 2026-09-30: gpt-6.1-sol, AA fetched 2026-09-30 03:57Z. Seat id openai-codex/gpt-6.1-sol.
   "gpt-6-1-sol": { low: 42.0836, medium: 47.7833, high: 50.2378, xhigh: 51.0378, max: 51.8333 },
+  // FORK 2026-10-27: gpt-6.1-terra, AA fetched 2026-10-27 04:45Z. Seat id openai-codex/gpt-6.1-terra.
+  "gpt-6-1-terra": { low: 36.2133, medium: 41.3188, high: 43.8689, xhigh: 45.3641, max: 48.1062 },
   "gpt-5-codex": { high: 24.8819 },
   "gpt-5-mini": { minimal: 9.9062, medium: 20.5992, high: 16.7731 },
   "gpt-5-nano": { minimal: 7.0888, medium: 12.4803, high: 12.9922 },
@@ -173,7 +179,7 @@ export const AA_EFFORT_INDEX: Record<string, Partial<Record<AaEffort, number>>> 
   "nova-2-0-pro-reasoning": { low: 12.7755, medium: 14.1555 },
   "o3-mini": { high: 10.9644 },
   "o4-mini": { high: 16.6531 },
-  "qwen3-8-27b": { low: 26.2048, medium: 27.5508, xhigh: 33.6963 },
+  "qwen3-8-27b": { low: 26.2048, medium: 27.5508, xhigh: 33.6763 },
   "quasar-438b": { max: 26.7373 }, // AA-only 2026-09-19; not on OpenRouter
   "ring-2-6-1t": { xhigh: 16.6172 },
   "sarvam-105b": { high: 8.7906 },

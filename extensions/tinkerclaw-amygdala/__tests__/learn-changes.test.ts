@@ -151,6 +151,7 @@ const activeOf = (s: { book: QuestionBook; store: AmygdalaStore }) => ({
 describe("two-sided replay on the real corpus", () => {
   it("a tightening that would hold three controls is rejected and nothing is applied", async () => {
     const t = setup(casesRoot);
+    const before = t.book.activeVersion("dodged-work");
     const o = expectKind(
       await t.engine.propose({
         kind: "cutoff",
@@ -163,7 +164,7 @@ describe("two-sided replay on the real corpus", () => {
     expect(o.reason).toBe("controls-held");
     expect(o.change?.status).toBe("rejected");
     expect(o.change?.replay.controlsNewlyHeld).toBeGreaterThanOrEqual(3);
-    expect(t.book.activeVersion("dodged-work")).toBe(1);
+    expect(t.book.activeVersion("dodged-work")).toBe(before);
     expect(t.store.activeVersion("dodged-work")).toBeUndefined();
     expect(t.store.listChanges({ status: "applied" })).toHaveLength(0);
     expect(changeEvents(t.events)).toHaveLength(0);
@@ -244,6 +245,16 @@ describe("always-trust policy", () => {
     const ev = changeEvents(t.events);
     expect(ev).toHaveLength(1);
     expect(ev[0]?.payload).toMatchObject({ kind: "loosen", exceptional: false, status: "applied" });
+  });
+
+  it("a clean loosening proposed ownerOnly waits as a pending card and changes nothing (2026-10-25)", async () => {
+    const root = corpusWith([novelCtl("ctl-test-mid", 0.75, "note", "local-write")]);
+    const t = setup(root);
+    const before = t.book.get("novelty")?.cutoff;
+    const o = expectKind(await t.engine.propose(cut(0.8), { ownerOnly: true }), "pending");
+    expect(o.change).toMatchObject({ status: "pending", exceptional: true });
+    expect(t.book.get("novelty")?.cutoff).toEqual(before);
+    expect(t.engine.pending()).toHaveLength(1);
   });
 
   it("a scratch-folder cleanup at danger 1 in the stored history is clean", async () => {
@@ -377,12 +388,21 @@ describe("always-trust policy", () => {
     expectKind(await t.engine.propose(cut(0.8)), "pending");
   });
 
-  it("autoLoosen off defers a clean loosening; a tightening still applies", async () => {
+  it("autoLoosen off makes a clean loosening the owner's card, one per scope; a tightening still applies", async () => {
+    // 2026-10-25: only the owner loosens a rule. Before, autoLoosen off dropped the loosening ("deferred") and no card
+    // ever reached him; on (the old default) it applied itself.
     const root = corpusWith([novelCtl("ctl-a", 0.75), novelCtl("ctl-t", 0.65)]);
     const t = setup(root, { autoLoosen: false });
-    expect(expectKind(await t.engine.propose(cut(0.8)), "deferred").reason).toBe("auto-loosen-off");
-    expect(t.store.listChanges()).toHaveLength(0);
+    const card = expectKind(await t.engine.propose(cut(0.8)), "pending");
+    expect(card.change).toMatchObject({ status: "pending", exceptional: true });
     expect(t.book.activeVersion("novelty")).toBe(1);
+    // The next night proposes it again: the same card, not a second one.
+    const again = expectKind(await t.engine.propose(cut(0.85)), "pending");
+    expect(again.change.id).toBe(card.change.id);
+    expect(t.engine.pending()).toHaveLength(1);
+    // His yes applies it.
+    expectKind(await t.engine.approve(card.change.id, true), "applied");
+    expect(t.book.activeVersion("novelty")).toBe(2);
     const tight = expectKind(await t.engine.propose(cut(0.6)), "applied");
     expect(tight.change.kind).toBe("tighten");
   });
@@ -752,9 +772,9 @@ describe("direction and reword", () => {
         : c.id === tightens.id
           ? { answer: 0.95, prob: 0.95 }
           : null;
-    // autoLoosen off would defer a loosening but never a tightening: it defers, so mixed counted as loosening
+    // autoLoosen off sends a loosening to the owner but never a tightening: it waits, so mixed counted as loosening
     const off = setup(corpusWith([relaxes, tightens]), { autoLoosen: false, live });
-    expect(expectKind(await off.engine.propose(reword), "deferred").reason).toBe("auto-loosen-off");
+    expectKind(await off.engine.propose(reword), "pending");
     const on = setup(corpusWith([relaxes, tightens]), { live });
     const o = expectKind(await on.engine.propose(reword), "applied");
     expect(o.change.replay).toMatchObject({ relaxed: 1, tightened: 1 });

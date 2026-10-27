@@ -803,6 +803,10 @@ export function __resetUiStateHydrationForTests(): void {
   mirrorFailures = 0;
   mirrorsInFlight = 0;
   lastMirrorStore = null;
+  fileTabsCanon = null;
+  fileTabs = null;
+  tabsStaleSince = null;
+  visibleAgainAt = null;
   if (mirrorRetryTimer !== null) {
     clearTimeout(mirrorRetryTimer);
     mirrorRetryTimer = null;
@@ -943,7 +947,10 @@ function tabIds(tabs: readonly TabRecord[] | undefined): string {
  * `hydrating` is held across the await so a mirror armed meanwhile cannot POST the
  * pre-hydrate cache over the very file it is being seeded from.
  */
-async function fetchUiStateSnapshot(timeoutMs: number): Promise<UiStateSnapshot | null> {
+async function fetchUiStateSnapshot(
+  timeoutMs: number,
+  holdMirror = true,
+): Promise<UiStateSnapshot | null> {
   if (typeof fetch !== "function" || typeof AbortController !== "function") {
     return null;
   }
@@ -952,7 +959,8 @@ async function fetchUiStateSnapshot(timeoutMs: number): Promise<UiStateSnapshot 
     controller.abort();
   }, timeoutMs);
   unrefTimer(timer);
-  hydrating = true;
+  // FORK 2026-10-19 — a re-sync PEEK replaces nothing, so it must not hold a mirror back.
+  if (holdMirror) hydrating = true;
   try {
     const seat = seatHeaders();
     const get = (url: string) =>
@@ -980,7 +988,7 @@ async function fetchUiStateSnapshot(timeoutMs: number): Promise<UiStateSnapshot 
     return null;
   } finally {
     clearTimeout(timer);
-    hydrating = false;
+    if (holdMirror) hydrating = false;
   }
 }
 
@@ -994,6 +1002,7 @@ export async function hydrateUiState(
       return false;
     }
     writeUiStateSnapshot(snap, store);
+    noteFileTabs(snap.tabs, store); // FORK 2026-10-19 — the list the file holds, see fileTabsCanon
     console.info(
       `[tabs] boot hydrate (build ${uiBuild()}): file tabs [${tabIds(snap.tabs)}] · ` +
         `tombstones ${Object.keys(snap.closedTabs ?? {}).length} · restored [${tabIds(loadTabList(store))}]`,
@@ -1022,6 +1031,152 @@ export async function hydrateUiState(
 /** Which way the boot hydrate went. `app.ts` consults it on every WebSocket handshake. */
 export function uiStateHydrateOutcome(): HydrateOutcome {
   return hydrateOutcome;
+}
+
+// --- live tab re-sync --------------------------------------------------------
+// FORK 2026-10-19 (the architect: phone app) — the phone and the laptop open the SAME desk, so a tab
+// opened, closed or renamed on one has to show up on the other without a reload. Until now the
+// file was read once at boot ("the file wins") and only ever WRITTEN after that, so two live pages
+// drifted apart until one of them reloaded. These three pieces let app.ts re-read it safely; the
+// adopt-or-not rule itself is pure and lives in tab-resync.ts.
+
+/** The server's tab list and tombstones, as one GET saw them. */
+export type ServerTabs = { tabs: TabRecord[]; closedTabs: ClosedTabs };
+
+/**
+ * One GET of the durable file, NOT applied: same endpoint, seat header, timeout and defensive
+ * parsing as the boot hydrate (it is the same fetch). `null` for every failure, and also for a
+ * store with no `tabs` key, which is "no answer about tabs", never "no tabs".
+ */
+export async function peekUiStateTabs(
+  timeoutMs: number = HYDRATE_TIMEOUT_MS,
+): Promise<ServerTabs | null> {
+  try {
+    const snap = await fetchUiStateSnapshot(timeoutMs, false);
+    if (snap === null || snap.tabs === undefined) {
+      return null;
+    }
+    return { tabs: snap.tabs, closedTabs: snap.closedTabs ?? {} };
+  } catch {
+    return null;
+  }
+}
+
+/** Bumped by every scheduled mirror, so a re-sync can tell a local write landed mid-GET. */
+let mirrorEpoch = 0;
+export function uiStateMirrorEpoch(): number {
+  return mirrorEpoch;
+}
+
+/**
+ * Is a local write still on its way to the file? A debounce armed, a POST unanswered, or a
+ * failure streak waiting to retry all mean the file is BEHIND this page, so the page must not
+ * take the file's word over its own.
+ */
+export function uiStateMirrorPending(): boolean {
+  return mirrorTimer !== null || mirrorsInFlight > 0 || mirrorRetryTimer !== null || hydrating;
+}
+
+/**
+ * Put a re-synced tab list into the local cache WITHOUT scheduling a mirror: the list came from
+ * the file, so posting it back would only be the echo that starts a ping-pong between pages.
+ * Tombstones union first, exactly as on hydrate, so the write below filters through them.
+ */
+export function adoptServerTabList(
+  tabs: TabRecord[],
+  closedTabs: ClosedTabs | undefined,
+  store: Storage = globalThis.localStorage,
+  /** What the file held, when the adopted list is a merge that keeps local edits on top. */
+  fileList: TabRecord[] = tabs,
+): void {
+  writeMap(CLOSED_TABS_KEY, unionClosedTabs(loadClosedTabs(store), closedTabs), store);
+  writeTabList(coerceTabs(tabs), store);
+  noteServerTabList(fileList, store);
+}
+
+// FORK 2026-10-19 (review: "a stale page spreads its old tab list") — the mirror POSTs the WHOLE
+// snapshot, tabs included, on every setter and every saveTabs(), and loadSessions() calls
+// saveTabs() at each turn end whether or not a tab changed. A page left open in the background
+// (the laptop while the architect uses the phone, or the other way round) kept posting the list it had
+// when it went hidden, and the server replaces the file's list wholesale: a chat attached on the
+// phone jumped back to the old session on the next laptop turn end. Two rules close it, on the
+// WRITER side, where the stale knowledge is:
+//   1. A POST carries `tabs` only when the page's list differs from what the file is known to
+//      hold (read at hydrate, re-sync or adopt; written by a landed POST). Without `tabs` the
+//      server keeps the file's list (scripts/tinker-prod-ui.mjs), so a no-op save changes nothing.
+//   2. A page hidden longer than TAB_STALE_GRACE_MS holds back even a real change until a
+//      re-sync has read the file again (noteServerTabList). The re-sync merges three ways
+//      (tab-resync.ts), so the held-back edit survives and is pushed then, on top of the file.
+//      Tombstones are always posted, so a close never waits.
+
+/** The file's tab list as this page last knew it (canonical text), or null when unknown. */
+let fileTabsCanon: string | null = null;
+let fileTabs: TabRecord[] | null = null;
+/** When the page went hidden; cleared once a re-sync has read the file again. */
+let tabsStaleSince: number | null = null;
+/** When a stale page became visible again; the hold gives up TAB_STALE_GIVE_UP_MS later. */
+let visibleAgainAt: number | null = null;
+/** A hide shorter than this (a reload, a quick app switch) is not "stale". */
+export const TAB_STALE_GRACE_MS = 1_500;
+/** A page visible this long without a successful re-sync posts its list again anyway. */
+export const TAB_STALE_GIVE_UP_MS = 60_000;
+
+/** Text of a tab list for "did it change?": key order and the transient titleGenerating do not count. */
+export function tabListCanon(tabs: readonly TabRecord[]): string {
+  return JSON.stringify(
+    tabs.map((t) =>
+      Object.keys(t)
+        .filter((k) => k !== "titleGenerating" && t[k] !== undefined)
+        .toSorted()
+        .map((k) => [k, t[k]]),
+    ),
+  );
+}
+
+function noteFileTabs(tabs: TabRecord[] | undefined, store: Storage): void {
+  if (tabs === undefined) return;
+  const list = withoutClosedTabs(coerceTabs(tabs), loadClosedTabs(store));
+  fileTabs = list;
+  fileTabsCanon = tabListCanon(list);
+}
+
+/**
+ * A re-sync read the file: remember its list as the baseline and end the hidden-page hold.
+ * app.ts calls it for every peek it acted on (adopted, or found nothing to take).
+ */
+export function noteServerTabList(
+  tabs: TabRecord[],
+  store: Storage = globalThis.localStorage,
+): void {
+  noteFileTabs(tabs, store);
+  tabsStaleSince = null;
+  visibleAgainAt = null;
+}
+
+/** The file's tab list as last known: the base of the three-way merge in tab-resync.ts. */
+export function uiStateFileTabs(): TabRecord[] | null {
+  return fileTabs;
+}
+
+/** Is this page's tab list possibly older than the file (hidden a while, not re-synced since)? */
+export function uiStateTabsMayBeStale(now: number = Date.now()): boolean {
+  if (tabsStaleSince === null || fileTabsCanon === null) return false;
+  if (now - tabsStaleSince < TAB_STALE_GRACE_MS) return false;
+  if (visibleAgainAt !== null && now - visibleAgainAt > TAB_STALE_GIVE_UP_MS) return false;
+  return true;
+}
+
+/** Track page visibility for the hold above. app.ts calls it once, next to the re-sync listeners. */
+export function watchTabStaleness(doc: Document = globalThis.document): void {
+  if (!doc || typeof doc.addEventListener !== "function") return;
+  doc.addEventListener("visibilitychange", () => {
+    if (doc.visibilityState === "hidden") {
+      if (tabsStaleSince === null) tabsStaleSince = Date.now();
+      visibleAgainAt = null;
+    } else if (tabsStaleSince !== null && visibleAgainAt === null) {
+      visibleAgainAt = Date.now();
+    }
+  });
 }
 
 /**
@@ -1099,6 +1254,7 @@ export async function rehydrateUiState(
   }
   rehydrateFailures = 0;
   mergeUiStateSnapshot(snap, store);
+  noteFileTabs(snap.tabs, store); // FORK 2026-10-19 — the merge may differ: the mirror below posts it
   console.info(
     `[tabs] re-hydrate MERGE, local wins (build ${uiBuild()}): file tabs [${tabIds(snap.tabs)}] · ` +
       `restored [${tabIds(loadTabList(store))}]`,
@@ -1207,6 +1363,17 @@ function flushUiStateMirror(finalFlush = false): void {
     // or without keepalive, 36/36. So: routine mirrors are ordinary requests whose body is always
     // read; keepalive is reserved for the pagehide flush, the one POST that must outlive the page.
     const failures = mirrorFailures;
+    // FORK 2026-10-19 — `tabs` only when this page has something new to say (see fileTabsCanon).
+    const body = readUiStateSnapshot(store);
+    let postedTabs: TabRecord[] | undefined = body.tabs;
+    if (
+      body.tabs !== undefined &&
+      fileTabsCanon !== null &&
+      (tabListCanon(body.tabs) === fileTabsCanon || uiStateTabsMayBeStale())
+    ) {
+      delete body.tabs;
+      postedTabs = undefined;
+    }
     if (!finalFlush) {
       mirrorsInFlight += 1;
     }
@@ -1219,7 +1386,7 @@ function flushUiStateMirror(finalFlush = false): void {
         ...(failures > 0 ? { "X-Tinker-Mirror-Failures": String(failures) } : {}),
         ...seatHeaders(),
       },
-      body: JSON.stringify(readUiStateSnapshot(store)),
+      body: JSON.stringify(body),
       keepalive: finalFlush,
     }).then(
       (res) => {
@@ -1228,6 +1395,7 @@ function flushUiStateMirror(finalFlush = false): void {
         }
         drainResponse(res);
         if (res.ok) {
+          if (postedTabs !== undefined) noteFileTabs(postedTabs, store);
           mirrorLanded();
         } else if (!finalFlush) {
           mirrorFailed(store, `HTTP ${res.status}`);
@@ -1258,6 +1426,7 @@ export function scheduleUiStateMirror(store: Storage = globalThis.localStorage):
   // are the only callers that pass a different one, and they pass it consistently.
   mirrorStore = store;
   lastMirrorStore = store;
+  mirrorEpoch += 1;
   if (mirrorTimer !== null) {
     clearTimeout(mirrorTimer);
   }

@@ -19,6 +19,7 @@ import {
 } from "./rpc-observability.js";
 import { agentHandlers } from "./server-methods/agent.js";
 import { agentsHandlers } from "./server-methods/agents.js";
+import { askSessionHandlers } from "./server-methods/ask-session.js";
 import { briefingHandlers } from "./server-methods/briefing.js";
 import { channelsHandlers } from "./server-methods/channels.js";
 import { chatHandlers } from "./server-methods/chat.js";
@@ -40,6 +41,7 @@ import { forkStrategyHandlers } from "./server-methods/engram-strategy.js";
 import { execApprovalsHandlers } from "./server-methods/exec-approvals.js";
 import { filesResolveBareHandlers } from "./server-methods/files-resolve-bare.js";
 import { forensicHandlers } from "./server-methods/forensic.js";
+import { fractalHandlers } from "./server-methods/fractal.js";
 import { gatewayDrainHandlers } from "./server-methods/gateway-drain.js";
 import { gatewayProbesHandlers } from "./server-methods/gateway-probes.js";
 import { healthHandlers } from "./server-methods/health.js";
@@ -111,6 +113,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...healthHandlers,
   ...briefingHandlers,
   ...jevHandlers,
+  // FORK 2026-10-09: fractal.gate / fractal.ledger — Fractal v2 trigger gate and run ledger (charter C1/C3).
+  ...fractalHandlers,
   ...channelsHandlers,
   ...chatHandlers,
   ...commandsHandlers,
@@ -141,6 +145,9 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // resolver that walks an allowlist of project roots so the click handler can
   // open files referenced as just `BRIEFING.md` (no leading path) via xdg-open.
   ...filesResolveBareHandlers,
+  // FORK 2026-10-21: askSession.slice — the byte range a woken session appended to its own
+  // transcript, for the Tinker UI's purple ask-session card. Read-only, ~/.claude/projects only.
+  ...askSessionHandlers,
   // FORK 2026-05-11: J15 RSC probes — debug.session.config, debug.session.state,
   // debug.tail.lastN, cron.lastRun, cron.listJobs, wa.lastOutbound, wa.recentOutbound.
   // See bible/probes.md.

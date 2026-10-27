@@ -1,8 +1,8 @@
 # Structural crons — the habits that ship with the repo
 
 An agent runtime is an engine. What makes this fork feel _alive_ is not the engine, it is
-the handful of jobs that run every night while nobody is watching: it consolidates what it
-learned that day, tidies its own workspace, checks itself for security updates, refreshes
+the handful of jobs that run every night while nobody is watching: it reflects on the day it
+spent with you, consolidates what it learned, tidies its own workspace, checks itself for security updates, refreshes
 which models are worth using, and reads up on what the rest of the field shipped.
 
 For a long time none of that travelled with a `git clone`. The engine did; the habits lived
@@ -18,15 +18,23 @@ One directory per job:
 | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `<id>/routine.md` | The full brief the agent executes. Self-contained, plain language, meant to be read before you switch the job on. |
 | `<id>/job.json`   | The schedule and payload skeleton the seeder installs.                                                            |
+| `<id>/*.mjs`      | Helper scripts a routine calls by path. They need only Node, which the repo already requires.                     |
 
-| job                      | when (UTC) | what it does                                                                                                           |
-| ------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `memory-consolidation`   | 04:15      | Reads the day's notes and log, files what is worth keeping into long-term notes, writes a reflection.                  |
-| `self-evolution`         | 04:30      | Scans vendor blogs, model releases and agent techniques; updates a running picture of the field.                       |
-| `security-updates-check` | 05:00      | Read-only sweep: pending OS updates, dependency advisories, open ports, plaintext credentials. Reports; never patches. |
-| `fork-scanner`           | 05:15      | Surveys OpenClaw forks and open-source agent projects; extracts techniques worth adopting.                             |
-| `cleaning-lady`          | 05:30      | Workspace hygiene. Archives stale material. Never deletes.                                                             |
-| `model-rank-refresh`     | 05:45      | Refreshes model scores and rank order so the model picker and router stay current.                                     |
+| job                      | when  | what it does                                                                                                                                                                                                                                           |
+| ------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `wind-down`              | 03:00 | Reflects on your day from your own prompts: what you worked on, what you were after and why, how it went. Keeps a theory ledger, researches a few, fixes repeated corrections, leaves a note with at most three questions.                             |
+| `memory-consolidation`   | 04:15 | Reads the day's notes, log and reflection, runs ENGRAM's sleep pass, files what is worth keeping into long-term notes, sizes the always-loaded files from their measured cost, checks that memory can be found again, and runs Thalamus's lesson pass. |
+| `self-evolution`         | 04:30 | Scans vendor blogs, model releases and agent techniques; updates a running picture of the field.                                                                                                                                                       |
+| `security-updates-check` | 05:00 | Read-only sweep: pending OS updates, dependency advisories, open ports, plaintext credentials. Reports; never patches.                                                                                                                                 |
+| `fork-scanner`           | 05:15 | Surveys OpenClaw forks and open-source agent projects; extracts techniques worth adopting.                                                                                                                                                             |
+| `cleaning-lady`          | 05:30 | Workspace hygiene. Archives stale material. Never deletes.                                                                                                                                                                                             |
+| `model-rank-refresh`     | 05:45 | Refreshes model scores and rank order so the model picker and router stay current.                                                                                                                                                                     |
+
+The times are in the gateway host's local time zone: the seeder installs each schedule with
+`openclaw cron add --cron`, which uses that zone when no `--tz` is given, and does not pass the
+`tz` field in `job.json`. The order matters more than the hour. `wind-down` runs after your
+evening and before `memory-consolidation`, which reads its reflection. If you move one, keep that
+order and the gap between them (`openclaw cron edit <id> --cron "<expr>"`).
 
 ## Installing them
 
@@ -50,10 +58,11 @@ They arrive **on**, because a self-maintaining fork whose self-maintenance ships
 one whose best feature nobody ever meets — you would have to already know the jobs existed to go
 looking for them.
 
-The cost is real and worth stating plainly rather than hiding behind a safe default: each job
-wakes an agent on a schedule and spends model tokens on **your** account. The whole nightly cycle
-runs to roughly one euro a night on a typical setup. Every routine is written to be read, and
-switching any of them off is one command:
+The cost is real, so here it is instead of a safe default: each job wakes an agent on a schedule
+and spends model tokens on **your** account. The six original jobs ran to roughly one euro a night
+on a typical setup. `wind-down` adds one more agent turn a night, at high thinking effort, because
+the reflection is the whole of its output. Every routine is written to be read, and switching any
+of them off is one command:
 
 ```bash
 openclaw cron list --all          # find the id (--all, or disabled jobs are hidden)
@@ -77,10 +86,22 @@ git-pull contract applies here as to `SOUL.md` and `BRIEFING.md` (see `FORK_SETU
 
 - **Read-only means read-only.** The security sweep reports; it does not apply updates.
 - **Archive, never delete.** Hygiene moves things aside; nothing is destroyed.
-- **No outbound.** These jobs do not send, publish, or message anyone.
+- **No outbound.** These jobs do not send, publish, or message anyone. Web research reads; it
+  never posts, and a search never carries your private details.
+- **Act, don't defer.** Inside those limits, a job fixes what it finds broken, stale or
+  unreachable on your machine (a stale index, a stopped local embedder, a routine that keeps
+  failing) and reports what it did and how to undo it. Waiting for your approval is not a reason
+  to leave internal work undone. What still waits for you: anything another person would see,
+  money, anything that cannot be undone, loosening a safety rule, and what only you can do (an
+  API key, a password).
+- **Thresholds carry their reason.** A number that gates an action (a size, a count, an age) says
+  what it is for, where it came from, and what would change it. Memory sizes are measured each
+  night from what your chats cost, not fixed in the routine.
 - **Degrade quietly.** A fresh install has almost nothing to work on. Missing inputs are a
   normal first-run outcome: the job says so in its report and exits cleanly.
 - **Never a silent night.** A dying or partial run still leaves a stub report with a status
   line, because a partial report beats no report.
 
-Reports land in `~/.openclaw/cron/reports/<YYYY-MM-DD>/<id>.md`.
+Reports land in `~/.openclaw/cron/reports/<YYYY-MM-DD>/<id>.md`. What `wind-down` writes about
+your day (`memory/reflections/` in your workspace) stays on your machine: it is never sent,
+published or committed.

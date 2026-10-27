@@ -23,3 +23,13 @@ export function openExternalLinksInNewTab(md: MarkdownIt): void {
     return defaultRender(tokens, idx, options, env, self);
   };
 }
+
+/** A rendered <code> holding a local path (`~/…` or an absolute path under a
+ *  known root) that the `.fs-link` post-processor in app.ts makes clickable.
+ *  FORK 2026-10-18 (the architect: "You failed to provide me with an easy-to-click
+ *  link"): `&` reaches this regex as `&amp;` and was not in the class, so
+ *  `~/Documents/Malleable Software - Ink & Switch.pdf` stayed dead text. The
+ *  browser decodes `&amp;` back to `&` in data-path, so the opener gets the
+ *  real name. Shared global regex: callers use it only through String.replace. */
+export const FS_PATH_CODE_RE =
+  /<code(\s[^>]*)?>(~\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]|&amp;| (?!-\S|\s))*(?:[\p{L}\p{M}\p{N}·/_()+,'@#~-]|&amp;)|\/(?:home|usr|tmp|var|opt|etc|mnt|media|data|srv)\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]|&amp;| (?!-\S|\s))*(?:[\p{L}\p{M}\p{N}·/_()+,'@#~-]|&amp;))<\/code>/gu;

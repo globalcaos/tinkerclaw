@@ -1568,6 +1568,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/tinkerclaw-forget:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
+
   extensions/tinkerclaw-fractal-reflection:
     dependencies:
       openclaw:

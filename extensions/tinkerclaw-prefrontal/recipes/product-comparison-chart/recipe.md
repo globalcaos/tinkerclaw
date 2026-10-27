@@ -56,13 +56,15 @@ followed by one named recommendation and its runners-up.
 - The candidates differ on a dimension that makes sticker price misleading — pack size,
   concentration, capacity, active fraction.
 - Any vendor. Amazon is the common case, not the requirement.
+- Written comparisons too: a post, reply or message that weighs options for someone (buy vs rent vs
+  per-token vs subscribe). Every option gets the SAME unit before any prose is drafted.
 
 ## Composition
 
 This recipe is a middle layer and is meant to be called with others in the same turn.
 
 - **Upstream (data in):** the source's own skill supplies rows — `amazon-shopper` for
-  amazon.es, `obramat` for Obramat, `pamies-vitae` for Pàmies, a plain web fetch otherwise.
+  amazon.es, `obramat` for Obramat, `pamies-vitae` for Pàmies, `pccomponentes` for PcComponentes, a plain web fetch otherwise.
   Vendor DOM selectors, session handling, rate limits and stock markers live THERE, never here.
   The seam is the row contract in Step 3: any source that can fill those fields can drive this.
 - **Downstream (pixels out):** image sourcing and click-through obey `visual-answer`'s rules —
@@ -90,6 +92,8 @@ if the axis is genuinely ambiguous; do not interrogate the requester about prefe
 change the ranking.
 
 Some products have no honest per-unit price: laptops, appliances, anything bought as one configured unit. There, turn the requester's hard needs into gates (a slot count, a port, a charging standard), price every row for HIS configuration rather than the base model, and rank by the one characteristic he named (weight, size, noise). Say which characteristic sorts the chart, so the order is not mistaken for a value ranking.
+
+When the ask names a reference item ("comparable to this one", "like the one I have"), the gates are "near the reference" on each line it cares about, and the chart sorts by price inside them. A pick that matches or beats the reference on every line answers a different, dearer question; if one line falls short (less graphics memory, a smaller disk), name it in the row instead of buying past it.
 
 ### 2. Sweep several phrasings, not one keyword
 
@@ -176,3 +180,13 @@ and state anything the chart could not verify.
 - A generic out-of-stock string matched inline scripting on every page and marked eleven live candidates dead in one sweep. A probe returning the same verdict for every input is broken; scan the result column before trusting it.
 - An adapter that merely _supported_ 256 GB scored best on euros per GB and topped a storage board. The outlier was the tell.
 - A web-search summary priced a 4 TB SSD at €334; its product page said €837 the same evening (2026-10-01). In the same session a page summarizer reported one laptop as both "delivered tomorrow" and "no restock date", with two different screens. A price, stock state or spec from a search snippet or a summarizer is a lead, never a quote: open the product page before the number enters the answer. When the vendor walls off fetchers, a headless browser render (`--dump-dom`) usually exposes the configurator's own per-SKU data (price, availability, ship batch); read that, not a paraphrase of it.
+- A configurator rendered headless priced every option with the vendor's home VAT (the page said "incl. 19 % Tax") while the buyer pays 21%; the figures matched the buyer's earlier quote only after multiplying by 1.21/1.19 (2026-10-09). Find the page's own VAT line and convert to the buyer's rate before a price enters the chart; a price with no stated VAT basis is not a quote. The same page's "pre-installation as dual boot is technically not possible" applied only to an encrypted install, and had been repeated for two days as a flat no: quote a vendor's "not possible" with its condition, or not at all.
+- A listing's cheapest candidate met every gate on its title (memory size, graphics card, price) and failed the hard one on its spec sheet: "32 GB LPDDR5X" is soldered, so it can never reach the 64 GB the requester needed (2026-10-09). For a gate about upgrading, read the memory type, not the size.
+- A shopping list linked its licence row to a different edition of the same product than the one it priced (2026-10-09): the link opened a €109.99 OEM key from a marketplace seller, the price beside it was the €259 retail licence the shop sells itself. One product name can cover several editions, each at its own URL and price, so the link is part of the quote: fetch the linked URL and check that its title, price and seller match the row.
+- A laptop whose title promised "32 GB" nearly passed a "can reach 64 GB later" gate; its memory was LPDDR5X, soldered (2026-10-09). When a gate is about upgrading later, read the memory type, not the size: LPDDR is soldered.
+- Asked for a laptop "comparable with this present one" for a new hire, a turn gated on matching or beating the reference on every line and picked a €3,892 machine, within €121 of the owner's own (2026-10-09). The owner: "the laptop for the new hire has to be around the same specs as this computer, way cheaper than mine." Sorted by price inside "near the reference" gates, a €2,581 machine won, with one line (graphics memory) named as short. Hence the reference-item paragraph in Step 1.
+- 2026-10-12: a Slack reply weighed four ways to spend $10k on a local model and gave each in its own
+  unit (hardware dollars, rental days, billions of tokens, months of subscription). The owner: "You
+  should make the numbers directly comparable to each other." Redone as dollars per year for one heavy
+  user, with the volume-dependent option given at stated volumes plus its break-even. Pick the common
+  unit in Step 1, even when the deliverable is prose and not a chart.

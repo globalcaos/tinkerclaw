@@ -115,6 +115,9 @@ export const SessionsSendParamsSchema = Type.Object(
     attachments: Type.Optional(Type.Array(Type.Unknown())),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
     idempotencyKey: Type.Optional(NonEmptyString),
+    // FORK 2026-10-15: who is speaking. An `⟦AGENT…⟧` message into a chat must name its sender;
+    // the gateway lets it in only across a master-slave chain (tab-chain-contract.ts).
+    fromSessionKey: Type.Optional(NonEmptyString),
   },
   { additionalProperties: false },
 );

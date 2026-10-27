@@ -203,6 +203,25 @@ describe("personality: questionsFor", () => {
     expect(some).toContain("surprise");
   });
 
+  it("novelty is not asked when every target is the agent's own, edited, scratch or named (2026-10-25)", () => {
+    const ask = (why: "created" | "edited" | "scratch" | "named" | null) =>
+      fam.questionsFor(
+        "post-tool",
+        sit({
+          targets: target("/work/demo/logs/a.log"),
+          ownedTargets: {
+            value: why ? [{ path: "/work/demo/logs/a.log", why }] : [],
+            origin: "derived",
+          },
+        }),
+        state(),
+      );
+    expect(ask(null)).toContain("novelty");
+    for (const why of ["created", "edited", "scratch", "named"] as const) {
+      expect(ask(why)).not.toContain("novelty");
+    }
+  });
+
   it("habituation: seen 2 asks novelty, seen 3 does not", () => {
     const at = (seen: number) =>
       fam.questionsFor(

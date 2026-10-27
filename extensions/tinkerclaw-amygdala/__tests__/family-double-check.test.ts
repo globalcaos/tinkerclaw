@@ -117,6 +117,21 @@ describe("double-check decision table (design 5.2)", () => {
     });
   }
 
+  it("dodged-work false-blocker -> send-back-blocker, which names the way through", () => {
+    const r = result(fam, "stop", stop({ reply: F("It is encrypted, I can't open it.") }), [
+      dodge("false-blocker"),
+    ]);
+    expect(r?.response).toEqual({
+      kind: "send-back",
+      templateId: "send-back-blocker",
+      slots: {},
+      attempt: 1,
+    });
+    expect(r?.reasonCode).toBe("false-blocker");
+    expect(renderTemplate("send-back-blocker")).toMatch(/same account, data or device/);
+    renders(r!.response);
+  });
+
   it("promise-later is ignored when a job is scheduled, other dodges still act", () => {
     const s = stop({ reply: F("I will report."), scheduledJobs: F(["job-1"]) });
     expect(respond(fam, "stop", s, [dodge("promise-later")]).kind).toBe("proceed");
@@ -241,6 +256,44 @@ describe("questionsFor", () => {
       "dodged-work",
       "stale-state-claim",
     ]);
+  });
+
+  // 2026-10-25: 458 dodged-work flags on reflection turns were reviewed, 395 noise or harmful. A reflection leaves notes
+  // for later; an open question in it is the point. Its done claims are still checked.
+  it("stop: a reflection turn skips dodged-work and stale-state-claim, keeps the claim questions", () => {
+    const reflection = { turnKind: F<"reflection">("reflection", "derived") };
+    expect(q("stop", stop({ reply: F("The answer is 4."), ...reflection }))).toEqual(["refusal"]);
+    expect(q("stop", stop({ reply: F("The site is live."), ...reflection }))).toEqual(["refusal"]);
+    expect(q("stop", stop({ reply: F("I uploaded the PDF."), ...reflection }))).toEqual([
+      "refusal",
+      "claim-record",
+      "claim-support",
+      "claim-source",
+    ]);
+    const agent = { turnKind: F<"agent">("agent", "derived") };
+    expect(q("stop", stop({ reply: F("The answer is 4."), ...agent }))).toEqual([
+      "refusal",
+      "dodged-work",
+    ]);
+  });
+
+  it("stop: a provider error in the reply slot is not agent prose, so nothing is asked", () => {
+    const raw =
+      "API Error: Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup). This sometimes happens with safe, normal conversations.";
+    expect(q("stop", stop({ reply: F(raw) }))).toEqual([]);
+    expect(q("stop", stop({ reply: F('__ERR_ENV__:{"kind":"error"}') }))).toEqual([]);
+  });
+
+  it("stop: Anthropic's safeguard refusal is a refusal (Rewind strip) with no Jev call; other provider errors are not", () => {
+    const raw =
+      "API Error: Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup). This sometimes happens with safe, normal conversations.";
+    const r = result(fam, "stop", stop({ reply: F(raw) }), []);
+    expect(r?.response.kind).toBe("refusal");
+    expect(r?.reasonCode).toBe("provider-safeguard");
+    const env =
+      '__ERR_ENV__:{"kind":"error","category":"safeguard","raw":"API Error: Opus 5.5\'s safeguards flagged this message"}';
+    expect(respond(fam, "stop", stop({ reply: F(env) }), []).kind).toBe("refusal");
+    expect(result(fam, "stop", stop({ reply: F("API Error: 429 rate limited") }), [])).toBeNull();
   });
 
   it("pre-tool: only a write-ish step that touches a check", () => {

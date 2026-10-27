@@ -102,6 +102,63 @@ describe("forkTruncatedTranscript", () => {
     expect(readFileSync(src, "utf-8")).toBe(before);
   });
 
+  it("a Tinker prompt comes back as the owner's words only, and the whole refused exchange leaves the copy (2026-10-22)", () => {
+    const d = tmp();
+    const src = join(d, "orig.jsonl");
+    const words = "Bring forks an extra 20% down in volume";
+    // The real shape of a stored Tinker prompt (measured 2026-10-22): the bridge's header, the date stamp, the words, the contract.
+    const stored =
+      `<turn_context>\nThe per-turn section of your system prompt.\n${"x".repeat(11_000)}\n</turn_context>\n\n` +
+      `[Thu 2026-10-22 15:01 GMT+2] ${words}\n\n<!-- TINKERCLAW chat-row contract -->\nBefore EVERY tool call, narrate.`;
+    writeFileSync(
+      src,
+      [
+        prompt("remember ALPHA", "u1"),
+        reply("OK", "r1"),
+        prompt(stored, "u2"),
+        // Claude Code's own note about the stop, then the provider's refusal as an API-error assistant entry.
+        line({
+          type: "user",
+          uuid: "m1",
+          isMeta: true,
+          message: { content: "Your response above was stopped by a safety classifier." },
+        }),
+        line({
+          type: "assistant",
+          uuid: "e1",
+          isApiErrorMessage: true,
+          message: {
+            content: [
+              { type: "text", text: "API Error: Opus 5.5's safeguards flagged this message" },
+            ],
+          },
+        }),
+      ].join("\n") + "\n",
+    );
+    const r = forkTruncatedTranscript(src, { newId: "sess-fork" });
+    expect(r.ok).toBe(true);
+    expect(r.restoredPrompt).toBe(words);
+    const forked = readFileSync(r.forkPath as string, "utf-8");
+    expect(forked).toContain("ALPHA");
+    for (const gone of [words, "safety classifier", "safeguards flagged", "turn_context"]) {
+      expect(forked).not.toContain(gone);
+    }
+  });
+
+  it("a prompt an agent wrote has no owner words to hand back", () => {
+    const d = tmp();
+    const src = join(d, "orig.jsonl");
+    writeFileSync(
+      src,
+      [prompt("first", "u1"), reply("ok", "r1"), prompt("[System] a gateway notice", "u2")].join(
+        "\n",
+      ) + "\n",
+    );
+    const r = forkTruncatedTranscript(src, { newId: "f" });
+    expect(r.ok).toBe(true);
+    expect(r.restoredPrompt).toBe("");
+  });
+
   it("writes into destDir when given, mode 0600", () => {
     const d = tmp();
     const src = join(d, "o.jsonl");

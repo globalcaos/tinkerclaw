@@ -6,6 +6,7 @@ import {
   applyOlderReply,
   applyResetArchivePage,
   archiveOf,
+  archiveRowsAfterClear,
   backgroundTrimDue,
   foldTailReply,
   HOLE_FILL_MAX_PAGES,
@@ -846,7 +847,7 @@ describe("turn numbering on a partial page (R36)", () => {
   });
 });
 
-// FORK 2026-10-02 (the architect: "When switching from Acmevision to its slave, parallel worker, the chat
+// FORK 2026-10-02 (the architect: "When switching from Orbisvision to its slave, parallel worker, the chat
 // history does not load at all") — after a reload, a tab whose session never stops running held
 // only the live bubbles it had watched since: the tail merge waits for a quiet session (a fresh
 // write would drop the live bubble) and the background prefetch skipped any page with rows. The
@@ -967,7 +968,7 @@ describe("app.ts: a tab holding only live rows still gets its history", () => {
   });
 
   // FORK 2026-10-05 (bug-log busy-tab-history-and-eeg) — a scroll to the top pages back while the
-  // session runs: the live-run gate silently refused it, and AcmeVision's turns run 30-45 min.
+  // session runs: the live-run gate silently refused it, and OrbisVision's turns run 30-45 min.
   it("a scroll-back older page is not gated on a live run; only a hole fill is", () => {
     const older = body("async function loadOlderPage(");
     expect(older).toContain("const liveRunGate = fill !== undefined;");
@@ -1252,5 +1253,126 @@ describe("reset archives — paging past the start of the live transcript", () =
     expect(again.divider).toBeNull();
     applyResetArchivePage(page, again);
     expect(order(page)).toEqual(["a1", `divider@${T0 + 50_000}`, "n1"]);
+  });
+});
+
+describe("/clear is a floor for reset-archive paging (2026-10-18)", () => {
+  // the architect: "when I type /clear the chat does not reset". Main keeps its key across /clear, so the
+  // empty pane, already at the top, paged the cleared turns and weeks more straight back in.
+  const CLEAR = T0 + 600_000;
+  const row = (id: string, at: number | undefined) => ({
+    role: "assistant",
+    content: [{ type: "text", text: id }],
+    ...(at === undefined ? {} : { timestamp: at }),
+    __openclaw: { externalId: id },
+  });
+  const ids = (rows: unknown[]) =>
+    rows.map((m) => (m as { __openclaw: { externalId: string } }).__openclaw.externalId);
+
+  it("a tab never cleared gets every row, and paging goes on", () => {
+    const rows = [row("a", T0), row("b", T0 + 1_000)];
+    const out = archiveRowsAfterClear(
+      rows,
+      { resetAt: T0 + 5_000, olderCount: 3, rowsBefore: 0 },
+      null,
+    );
+    expect(ids(out.rows)).toEqual(["a", "b"]);
+    expect(out.done).toBe(false);
+  });
+
+  it("an archive reset before the clear is the cleared past: nothing, and paging is over", () => {
+    const rows = [row("a", T0), row("b", T0 + 1_000)];
+    const out = archiveRowsAfterClear(
+      rows,
+      { resetAt: CLEAR - 1, olderCount: 4, rowsBefore: 0 },
+      CLEAR,
+    );
+    expect(out).toEqual({ rows: [], done: true });
+  });
+
+  it("the clear's own archive (reset a moment after the click) gives back none of its rows", () => {
+    const rows = [row("old1", CLEAR - 60_000), row("old2", CLEAR - 1)];
+    const out = archiveRowsAfterClear(
+      rows,
+      { resetAt: CLEAR + 400, olderCount: 4, rowsBefore: 0 },
+      CLEAR,
+    );
+    expect(out).toEqual({ rows: [], done: true });
+  });
+
+  it("a later reset's archive comes back whole; a row with no time cannot prove it is newer", () => {
+    const rows = [row("n1", CLEAR + 1_000), row("n2", CLEAR + 2_000), row("nt", undefined)];
+    const out = archiveRowsAfterClear(
+      rows,
+      { resetAt: CLEAR + 9_000, olderCount: 1, rowsBefore: 0 },
+      CLEAR,
+    );
+    expect(ids(out.rows)).toEqual(["n1", "n2"]);
+    expect(out.done).toBe(false);
+  });
+
+  it("an archive straddling the clear keeps what is after it and ends the paging", () => {
+    const rows = [row("old", CLEAR - 5), row("new", CLEAR + 5)];
+    const out = archiveRowsAfterClear(
+      rows,
+      { resetAt: CLEAR + 9_000, olderCount: 2, rowsBefore: 0 },
+      CLEAR,
+    );
+    expect(ids(out.rows)).toEqual(["new"]);
+    expect(out.done).toBe(true);
+  });
+
+  describe("app.ts wiring", () => {
+    const app = (() => {
+      let dir = process.cwd();
+      for (let i = 0; i < 6; i++) {
+        const candidate = path.join(dir, "tinker-ui", "src", "app.ts");
+        if (existsSync(candidate)) {
+          return readFileSync(candidate, "utf8");
+        }
+        dir = path.dirname(dir);
+      }
+      throw new Error(`could not locate tinker-ui/src/app.ts from ${process.cwd()}`);
+    })();
+    const body = (decl: string): string => {
+      const at = app.indexOf(decl);
+      expect(at, `${decl} moved or was renamed`).toBeGreaterThan(-1);
+      return app.slice(at, app.indexOf("\n}\n", at));
+    };
+    const clearBranch = (): string => {
+      const at = app.indexOf('if (text.trim() === "/clear") {');
+      expect(at).toBeGreaterThan(-1);
+      return app.slice(at, app.indexOf("\n    return;\n  }\n", at));
+    };
+
+    it("/clear stamps the tab before it asks for the reset, and refines it from the reply", () => {
+      const b = clearBranch();
+      const stamp = b.indexOf("clearTab.cleared = clearStamp");
+      const reset = b.indexOf('"sessions.reset"');
+      expect(stamp).toBeGreaterThan(-1);
+      expect(reset).toBeGreaterThan(stamp);
+      expect(b.slice(reset)).toMatch(/updatedAt[\s\S]{0,400}clearStamp\.at = at/);
+    });
+
+    it("both archive readers apply the floor before they plan a page", () => {
+      for (const decl of ["async function loadResetArchivePage(", "async function fillResetGap("]) {
+        const f = body(decl);
+        const floor = f.indexOf("archiveRowsAfterClear(rows, meta, clearedAtFor(tabId, key))");
+        expect(floor, decl).toBeGreaterThan(-1);
+        expect(f.indexOf("planResetArchivePage(", floor), decl).toBeGreaterThan(floor);
+        expect(f.slice(floor), decl).toMatch(
+          /planResetArchivePage\(\s*messages,\s*sinceClear\.rows,/,
+        );
+      }
+    });
+
+    it("plan.close is sent in the shape its schema accepts (done | aborted, no note)", () => {
+      const calls = app.match(/req\("prefrontal\.plan\.close",[^)]*\)/g) ?? [];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const c of calls) {
+        expect(c).toMatch(/status: "(done|aborted)"/);
+        expect(c).not.toMatch(/note:|abandoned/);
+      }
+    });
   });
 });

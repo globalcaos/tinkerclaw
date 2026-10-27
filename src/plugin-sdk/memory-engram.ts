@@ -79,6 +79,31 @@ export {
   type ScoredRecallEvent,
 } from "../memory/engram/recall-tool.js";
 
+// FORK 2026-10-09 (J1): the `recall` tool searches the session transcripts, not the
+// assistant-only event store. The index is engram's; the tool that calls it is the plugin's.
+export {
+  createTranscriptCatchUp,
+  openTranscriptIndex,
+  recallTranscripts,
+  transcriptIndexPath,
+  transcriptSessionId,
+  type TranscriptCatchUp,
+  type TranscriptHit,
+  type TranscriptIndex,
+  type TranscriptRecallResult,
+} from "../memory/engram/transcript-index.js";
+
+// FORK 2026-10-25: `recall({ id })` returns one evicted tool result (or entry) of the caller's own
+// transcript, whole or a page of it. The lookup is engram's; the tool and its scope are the plugin's.
+export {
+  findTranscriptItem,
+  RECALL_BY_ID_DEFAULT_LENGTH,
+  RECALL_BY_ID_MAX_LENGTH,
+  sliceTranscriptItem,
+  type RecallByIdOutput,
+  type TranscriptItem,
+} from "../memory/engram/transcript-item.js";
+
 export {
   assembleRetrievalPack,
   // FORK 2026-09-03: the yielding twin. Anything running INSIDE the gateway must use
@@ -99,3 +124,20 @@ export {
   type EventMetadata,
   type MemoryEvent,
 } from "../memory/engram/event-types.js";
+
+// FORK 2026-10-25: the memory write gate. The gate is engram's (one implementation, also run by the
+// tinkerclaw-core Claude Code hook); the before_tool_call door and its config are the plugin's.
+export {
+  claudeAutoMemoryDir,
+  MEMORY_GATE_DEFAULT_EXCLUDE_DIRS,
+  publishMemoryGateConfig,
+  runMemoryGate,
+  type MemoryGateConfig,
+  type MemoryGateDecision,
+  type MemoryGateLabel,
+  type MemoryGateMode,
+  type MemoryGateOutcome,
+  type MemoryGateResult,
+  type MemorySource,
+  type RunMemoryGateArgs,
+} from "../memory/engram/write-gate.js";

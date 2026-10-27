@@ -51,10 +51,20 @@
         "type": "string",
         "enum": ["pipe", "file"],
         "description": "How the gateway talks to each claude worker. \"pipe\" (default): systemd-run --pipe; a gateway restart cuts the turn. \"file\": a FIFO and output files the worker owns; a restart freezes the worker at an API-call boundary and the next gateway resumes the turn. The env var TINKERCLAW_BRIDGE_TRANSPORT overrides it."
+      },
+      "fractalGuard": {
+        "type": "string",
+        "enum": ["enforce", "watch", "off"],
+        "default": "enforce",
+        "description": "What a background Fractal reflection (session agent:<id>:fractal:<P>) may do on its own. \"enforce\" (default): its sends, deletes, publishes, spends and restarts are denied by the tinkerclaw-core PreToolUse hook and come back as `Proposed:` lines on its card; its own scratch, files it made this turn, commits and merges into develop still run. \"watch\": nothing is denied, every match is logged to <state dir>/data/fractal/guard.jsonl. \"off\": no guard. Other sessions are never affected."
       }
     }
   },
   "uiHints": {
+    "fractalGuard": {
+      "label": "Fractal guard",
+      "help": "Background Fractal reflections propose sends, deletes, publishes, spends and restarts instead of running them. watch = log only; off = no guard."
+    },
     "binary": {
       "label": "Claude binary",
       "help": "Absolute path to the claude CLI. Falls back to PATH lookup if blank."

@@ -44,6 +44,46 @@ cd apps/android
 ./gradlew :app:testThirdPartyDebugUnitTest
 ```
 
+<!-- FORK 2026-10-19 (the architect: phone app) -->
+In TinkerClaw the thirdParty flavor is **Jarvis**: applicationId `ai.tinkerclaw.jarvis`, name and icon in
+`app/src/thirdParty/res`, versionName `<base>-jarvis`. Its versionCode is `JARVIS_VERSION_CODE` when set, else
+minutes since 2026-01-01 UTC, so every build installs over the last one. All thirdParty variants (debug and
+release) are signed with the key named in `~/.config/jarvis/android-signing.properties` (or the file in
+`JARVIS_SIGNING_PROPERTIES`); create it once with `scripts/jarvis-signing-init.sh` and copy both files to any
+other build machine. Without that file the build signs the stock way. The play flavor is unchanged.
+
+What the Jarvis app does (code in `app/src/main/java/ai/openclaw/app/jarvis`, `ui/TinkerScreen.kt`,
+`ui/TripScreen.kt`, `ui/JarvisHome.kt`, `update/AppUpdater.kt`, gated by `BuildConfig.JARVIS_APP`):
+
+- Pairs from the phone door's pair page (`jarvis://pair?door=&device=&gw=`, asks once before accepting) or by
+  pasting / scanning that link. It keeps the door list and both tokens, then points the node at the door
+  (plain `ws://` on the tailnet, header `X-Jarvis-Device`), and runs the stock permission steps once.
+- Home is one WebView on `<door>/tinker/`, the same page and tabs as the laptop. Doors are tried in order through
+  `/door/health` (Pi `100.64.0.10`, then laptop `100.64.0.20`, editable in Settings). The page gets
+  `window.JarvisNative` and `html.jarvis-app`. Back goes to `window.__jarvisBack()` first.
+- The round trip button (top left) opens `<door>/trip/` and keeps the last good copy for when the door is unreachable.
+- Updates itself from `<door>/door/app/latest.json` (`{versionCode, versionName, file, sha256, notes}`, APK next
+  to it in the door's `app/` folder) at start and every six hours.
+- Phone verbs (2026-10-23, `jarvis/JarvisVerbs.kt`): `buzz {pattern}`, `say {text, voice}`, `play {url}`,
+  `notify {title, body, tap}`, `open {target}` (a screen name or a URL) and `keepAwake {minutes}`. The same code
+  answers the page (`JarvisNative.buzz(...)` etc., result as a `jarvis-native` event `{ev:"verb", id, ok}`), the Pi
+  (node commands `jarvis.<verb>`, app open or closed) and content-pack scripts. A new phone feature built from
+  these needs no APK.
+- Content pack (`jarvis/JarvisPack*.kt`, `JarvisScript.kt`): a signed zip from `<door>/door/app/pack.json`, taken at
+  start and on every Firebase wake; see `scripts/phone-door/README.md`. The factory pack is
+  `app/src/thirdParty/assets/pack/`. Its `voice-fx.json` holds every number of Jarvis's phone voice, read by the
+  page and by `JarvisVoiceFx.kt` alike; `scripts/voice-parity.sh` checks both read all of it and that the published
+  pack carries the same file. Pack scripts run in androidx `javascriptengine` (the WebView's sandbox) and see only
+  the APK's `assets/jarvis-script/prelude.js`. Node commands: `jarvis.pack.status`, `jarvis.pack.update`,
+  `jarvis.pack.run {event, data}`.
+
+Cleartext is allowed only to the hosts in `app/src/thirdParty/res/xml/network_security_config.xml`; a door on
+a new address needs its IP there or a `*.ts.net` name. A pair link from outside the app is taken only for a door
+already in the list, a `100.64.0.0/10` address, or a name under `JARVIS_TAILNET_SUFFIX` (set at build time).
+
+`JARVIS_DEV=1` makes a test build: loopback doors (emulator plus `adb reverse`) and WebView remote debugging.
+Never install a `JARVIS_DEV` build on the real phone.
+
 `bun run android:bundle:release` auto-bumps Android `versionName`/`versionCode` in `apps/android/app/build.gradle.kts`, then builds two signed release bundles:
 
 - Play build: `apps/android/build/release-bundles/openclaw-<version>-play-release.aab`

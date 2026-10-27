@@ -23,6 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { ownerWords, withoutLeadingPromptBlocks } from "openclaw/plugin-sdk/fork-prompt-envelope";
 
 export type RewindCapability = "claude-fork" | "unsupported";
 
@@ -82,13 +83,39 @@ export function lastPromptIndex(lines: string[]): number {
   return -1;
 }
 
+const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/** The owner's words of a prompt entry (the bridge's header, date stamp and contract stripped), or "" for none. */
+function ownerWordsOf(line: string): string {
+  try {
+    const t = promptText(JSON.parse(line) as Entry);
+    return t === null ? "" : (ownerWords(withoutLeadingPromptBlocks(t)) ?? "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Index of the last real user prompt whose owner's words are `words`, or -1. The page names the exchange by the words it
+ * shows, so a row and a transcript line are matched by content, never by counting prompts (agent-written prompts and
+ * injected notes would shift a count).
+ */
+export function promptIndexByWords(lines: string[], words: string): number {
+  const want = norm(words);
+  if (!want) return -1;
+  for (let i = lines.length - 1; i >= 0; i--) if (norm(ownerWordsOf(lines[i])) === want) return i;
+  return -1;
+}
+
 /**
  * Write a copy of the transcript truncated before its last user prompt, under a new session id, next to the source
- * (or in `destDir`). Never modifies the source. `newId` is injectable for tests.
+ * (or in `destDir`). With `fromPrompt`, truncated before the last prompt carrying those owner's words instead, so that
+ * exchange and every later one go (2026-10-22, the architect: "so I can remove from history more than one turn"). Never
+ * modifies the source. `newId` is injectable for tests.
  */
 export function forkTruncatedTranscript(
   srcPath: string,
-  o: { destDir?: string; newId?: string } = {},
+  o: { destDir?: string; newId?: string; fromPrompt?: string } = {},
 ): ForkResult {
   try {
     const size = statSync(srcPath).size;
@@ -96,13 +123,23 @@ export function forkTruncatedTranscript(
     const lines = readFileSync(srcPath, "utf-8")
       .split("\n")
       .filter((l) => l.length > 0);
-    const at = lastPromptIndex(lines);
-    if (at < 0) return { ok: false, reason: "no user prompt found in the transcript" };
+    const at = o.fromPrompt ? promptIndexByWords(lines, o.fromPrompt) : lastPromptIndex(lines);
+    if (at < 0) {
+      return {
+        ok: false,
+        reason: o.fromPrompt
+          ? "that prompt is not in the model's transcript"
+          : "no user prompt found in the transcript",
+      };
+    }
     if (at === 0 || !lines.slice(0, at).some((l) => /"(user|assistant)"/.test(l))) {
       // Nothing before the prompt: rewinding would leave an empty conversation, which is a reset, not a rewind.
       return { ok: false, reason: "the removed exchange is the whole conversation" };
     }
-    const prompt = promptText(JSON.parse(lines[at]) as Entry) as string;
+    // What goes back to the composer is the owner's words. The transcript copy of a Tinker prompt also carries the
+    // bridge's `<turn_context>` header, the date stamp and the chat-row contract (11.5 KB around a 60-character
+    // prompt, measured 2026-10-22); an agent-written prompt has no owner words, so nothing is returned for it.
+    const prompt = ownerWordsOf(lines[at]);
     let originalId: string | undefined;
     for (const l of lines) {
       try {
@@ -159,6 +196,8 @@ export interface SessionMap {
   currentSessionId(sessionKey: string): string | null;
   /** Re-point a tab at another session id (the fork, or the original for Undo). True when applied. */
   point(sessionKey: string, sessionId: string): boolean;
+  /** True while a reply runs in the tab: a rewind then would cut the transcript under a live worker. */
+  busy?(sessionKey: string): boolean;
 }
 
 export interface RewindRecord {
@@ -249,6 +288,8 @@ export function rewindTurn(o: {
    * on an older turn would silently drop a newer one (2026-09-30, two refusals in a row): refuse it instead.
    */
   newestTurnId?: string;
+  /** Rewind to this prompt (owner's words): it and every later exchange go. Lifts the newest-only rule. */
+  fromPrompt?: string;
   now: number;
 }): RewindMethodResult {
   const map = o.sessionMap;
@@ -261,6 +302,9 @@ export function rewindTurn(o: {
   const capability = rewindCapability(map.runnerFor(o.sessionKey));
   if (capability === "unsupported") {
     return { ok: false, capability, reason: "this runner cannot rewind" };
+  }
+  if (map.busy?.(o.sessionKey)) {
+    return { ok: false, capability, reason: "a reply is still running in this tab" };
   }
 
   if (o.undo) {
@@ -282,7 +326,7 @@ export function rewindTurn(o: {
     };
   }
 
-  if (o.turnId && o.newestTurnId && o.turnId !== o.newestTurnId) {
+  if (!o.fromPrompt && o.turnId && o.newestTurnId && o.turnId !== o.newestTurnId) {
     return {
       ok: false,
       capability,
@@ -291,7 +335,7 @@ export function rewindTurn(o: {
   }
   const path = map.transcriptPathFor(o.sessionKey);
   if (!path) return { ok: false, capability, reason: "no transcript for this tab" };
-  const fork = forkTruncatedTranscript(path);
+  const fork = forkTruncatedTranscript(path, o.fromPrompt ? { fromPrompt: o.fromPrompt } : {});
   if (!fork.ok || !fork.forkPath || !fork.forkSessionId) {
     return { ok: false, capability, reason: fork.reason ?? "could not fork the transcript" };
   }

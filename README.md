@@ -408,7 +408,7 @@ Visit **`http://localhost:18789/tinker/`** for the command center. Click the **T
 - **Budget panel** — token cost tracking so you know what each session costs
 - **Tinker UI** — real-time context treemaps, session management, cost dashboard
 - **116 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
-- **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer, so a fresh clone maintains itself from night one
+- **Seven structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer, so a fresh clone maintains itself from night one
 
 ### Jev, the optional judge
 
@@ -449,10 +449,11 @@ genuinely personal (your morning briefing, your marketplace hunter) _are_ yours 
 **structural** ones — the agent maintaining itself — are not personal at all, and they were the
 reason a fresh clone felt like a different piece of software from the one in the demos.
 
-Six of them now ship in `extensions/tinkerclaw-tinker-bridge/crons/`, each a readable brief:
+Seven of them now ship in `extensions/tinkerclaw-tinker-bridge/crons/`, each a readable brief:
 
 | job                      | what it does                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------- |
+| `wind-down`              | Reflects on your day from your own prompts and leaves a note for the morning    |
 | `memory-consolidation`   | Reads the day's notes and files what is worth keeping into long-term memory     |
 | `self-evolution`         | Scans vendor blogs, model releases and agent techniques                         |
 | `security-updates-check` | Read-only sweep: pending updates, advisories, open ports, plaintext credentials |

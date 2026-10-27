@@ -153,7 +153,7 @@ The master owns it.
   `auto_tasks`: `build B3 recorder` and `review B3 recorder` become lane `B3 recorder` with
   two segments, at their real times. An agent that started, never returned a result and has
   been quiet for 10 minutes is marked cut. Lanes you write by hand stay in `tasks`.
-- `worker_prompt_has` (top level) lists strings every worker prompt carries (AcmeVision 2.0:
+- `worker_prompt_has` (top level) lists strings every worker prompt carries (OrbisVision 2.0:
   `"You are the WORKER"` and `"sv2-build/charter.md"`). A workflow the plan does not list, newer
   than the newest one it does, whose Claude Code session opened with a prompt holding all of them,
   joins the phase marked `"status": "next"` (or `"next": true`). `live` adds it in memory, `derive`
@@ -241,7 +241,7 @@ board), or the principal asks to see it in the chat. Before sending, the actual 
 
 - 2026-10-04, the architect: "You failed to show me the gantt chart." The SV2 status reply replaced the required chart block with `[embed ref="sv2-status-30" ...]`. The standalone screenshot had been inspected, but the inline-diagram procedure already forbade that delivery form. The delivery check now rejects the exact embed-only reply and requires the native chart block or served markdown image.
 
-- 2026-10-01 22:34, AcmeVision 2.0 build: two planned lanes of a new phase, "I1 overview…" and "I2 a chapter…",
+- 2026-10-01 22:34, OrbisVision 2.0 build: two planned lanes of a new phase, "I1 overview…" and "I2 a chapter…",
   vanished from the chart. A label's first token is read as a unit id, and Phase B already had real units I1 and
   I2, so the planned lanes counted as done. Give planned lanes of a new phase plain names, or ids no earlier phase
   used. In the same render, `after_phase` on a lane of a phase that is already running was ignored (a running

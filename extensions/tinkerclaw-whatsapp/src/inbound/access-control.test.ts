@@ -261,4 +261,59 @@ describe("WhatsApp dmPolicy precedence", () => {
     expect(result.allowed).toBe(true);
     expect(result.isSelfChat).toBe(true);
   });
+
+  describe("DM delivered on a LID (2026-10-13)", () => {
+    const LID_CHAT = "100000000000001@lid";
+    const checkLidDm = async (allowFrom: string[], from = "+15550001111") => {
+      setAccessControlTestConfig({
+        channels: { whatsapp: { dmPolicy: "allowlist", allowFrom } },
+      });
+      return await checkInboundAccessControl({
+        cfg: getAccessControlTestConfig() as never,
+        accountId: "default",
+        from,
+        selfE164: "+15550009999",
+        senderE164: from,
+        group: false,
+        pushName: "Peer",
+        isFromMe: false,
+        sock: { sendMessage: sendMessageMock },
+        remoteJid: LID_CHAT,
+      });
+    };
+
+    it("allows a sender listed by the E.164 their LID resolved to", async () => {
+      const result = await checkLidDm(["+15550009999", "+15550001111"]);
+      expect(result.allowed).toBe(true);
+      expect(sendMessageMock).not.toHaveBeenCalled();
+    });
+
+    it("allows a sender listed only by their LID, device suffix ignored", async () => {
+      expect((await checkLidDm(["+15550009999", "100000000000001@lid"])).allowed).toBe(true);
+      expect((await checkLidDm(["+15550009999", "100000000000001:3@lid"])).allowed).toBe(true);
+    });
+
+    it("silently blocks a resolved LID sender who is not listed, with no pairing reply", async () => {
+      const result = await checkLidDm(["+15550009999", "100000000000002@lid", "+15550002222"]);
+      expectSilentlyBlocked(result);
+    });
+
+    it("never matches a LID entry against a phone-number chat", async () => {
+      setAccessControlTestConfig({
+        channels: { whatsapp: { dmPolicy: "allowlist", allowFrom: ["15550001111@lid"] } },
+      });
+      const result = await checkInboundAccessControl({
+        cfg: getAccessControlTestConfig() as never,
+        accountId: "default",
+        from: "+15550003333",
+        selfE164: "+15550009999",
+        senderE164: "+15550003333",
+        group: false,
+        isFromMe: false,
+        sock: { sendMessage: sendMessageMock },
+        remoteJid: "15550003333@s.whatsapp.net",
+      });
+      expectSilentlyBlocked(result);
+    });
+  });
 });

@@ -47,6 +47,11 @@ export type ErrorCategory =
   // no exhaustive switch and no CSS keyed on its value, so a new member is
   // purely additive.
   | "interrupted"
+  // FORK 2026-10-16: the provider's own safety classifier refused the turn
+  // ("Opus 5.5's safeguards flagged this message"). Filed as provider_error it
+  // read "Provider error … I'm retrying": nothing retried, and the owner took it
+  // for an Amygdala block.
+  | "safeguard"
   | "generic";
 
 export interface LlmCallMeta {
@@ -240,6 +245,19 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     suggestedActions: [],
     // ⚠️ warning — generic unclassified fault
     icon: "⚠️",
+  },
+  provider_safeguard: {
+    category: "safeguard",
+    fatal: true,
+    headline: "Anthropic's safety filter stopped this turn",
+    explanation:
+      "This was not Amygdala or anything else in TinkerClaw. Anthropic's servers flagged the turn for this model and sent back no answer, so nothing ran and nothing is retrying. Anthropic says this sometimes happens with safe, normal conversations; the flag applies to this model only.",
+    suggestedActions: [
+      "Send it again on another model from the model menu",
+      "Rephrase the request, or start a new chat",
+    ],
+    // 🛡️ shield — the provider's filter, not ours
+    icon: "🛡️",
   },
   lane_busy: {
     category: "busy",
@@ -593,6 +611,11 @@ export function classifyRawErrorMessage(raw: string): string {
   }
   if (/claude silent for \d+s|watchdog.*claude/.test(s)) {
     return "tinker_bridge_silent";
+  }
+  // Real producer string (gateway journal 2026-10-16 10:39): "API Error: Opus 5.5's
+  // safeguards flagged this message (https://www.anthropic.com/legal/aup). …"
+  if (/safeguards flagged|anthropic\.com\/legal\/aup/.test(s)) {
+    return "provider_safeguard";
   }
   if (/401|authentication_error|invalid authentication credentials/.test(s)) {
     return "auth_401_invalid_credentials";

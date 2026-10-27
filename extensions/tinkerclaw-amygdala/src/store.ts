@@ -9,7 +9,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import type { Explanation, ExplanationEvent, ExplanationRow } from "./explain.js";
-import type { Review, ReviewReportRow, ReviewRow } from "./review.js";
+import type { PassReview, Review, ReviewReportRow, ReviewRow } from "./review.js";
 import { SCHEMA_SQL, SCHEMA_VERSION } from "./schema.js";
 import type {
   Change,
@@ -86,6 +86,13 @@ export class AmygdalaStore {
       "CREATE TABLE IF NOT EXISTS reviews(decision_id TEXT PRIMARY KEY, session TEXT NOT NULL, turn_id TEXT NOT NULL, ts INTEGER NOT NULL, status TEXT NOT NULL, model TEXT, verdict TEXT, body_json TEXT, error TEXT)",
     );
     this.db.exec("CREATE INDEX IF NOT EXISTS reviews_ts ON reviews(ts)");
+    // Added 2026-10-15: pass reviews (review.ts) share the table; `kind` tells a judged flag ('flag') from a judged
+    // pass ('pass'). Rows from before read as flags.
+    const reviewCols = (this.db.prepare("PRAGMA table_info(reviews)").all() as Row[]).map(
+      (r) => r.name as string,
+    );
+    if (!reviewCols.includes("kind"))
+      this.db.exec("ALTER TABLE reviews ADD COLUMN kind TEXT NOT NULL DEFAULT 'flag'");
     // Added 2026-10-06, the same way. The feed (feed.ts) reads a decision's verdicts by situation, up
     // to 400 times per call, and the spend sums read verdicts by time; neither had an index, so each
     // lookup scanned the whole table (live store, 166,865 rows: 20.4 ms a lookup, ~7 s a feed, two
@@ -98,8 +105,8 @@ export class AmygdalaStore {
   saveReview(r: ReviewRow): void {
     this.db
       .prepare(
-        "INSERT INTO reviews(decision_id, session, turn_id, ts, status, model, verdict, body_json, error) VALUES (?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(decision_id) DO UPDATE SET status = excluded.status, model = excluded.model, verdict = excluded.verdict, body_json = excluded.body_json, error = excluded.error",
+        "INSERT INTO reviews(decision_id, session, turn_id, ts, status, model, verdict, body_json, error, kind) VALUES (?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(decision_id) DO UPDATE SET status = excluded.status, model = excluded.model, verdict = excluded.verdict, body_json = excluded.body_json, error = excluded.error, kind = excluded.kind",
       )
       .run(
         r.decisionId,
@@ -111,6 +118,7 @@ export class AmygdalaStore {
         r.review?.verdict ?? null,
         r.review ? json(r.review) : null,
         r.error ?? null,
+        r.kind ?? "flag",
       );
   }
 
@@ -132,8 +140,9 @@ export class AmygdalaStore {
       turnId: r.turn_id as string,
       ts: r.ts as number,
       status: r.status as ReviewRow["status"],
+      kind: r.kind === "pass" ? ("pass" as const) : ("flag" as const),
       ...(r.model ? { model: r.model as string } : {}),
-      ...(r.body_json ? { review: parse<Review>(r.body_json) } : {}),
+      ...(r.body_json ? { review: parse<Review | PassReview>(r.body_json) } : {}),
       ...(r.error ? { error: r.error as string } : {}),
     }));
   }
@@ -150,9 +159,106 @@ export class AmygdalaStore {
   }
 
   /**
+   * The checks Jev let pass in one turn that no done review covers yet (2026-10-15): the `proceed` decisions of its
+   * pre-tool seam (one per tool call) where Jev was asked (not the fallback family: not consulted, unavailable,
+   * dormant). Oldest first, at most `limit`. The "not yet judged" test sits in the query so the limit never hides an
+   * unjudged pass behind judged ones.
+   */
+  unjudgedPassesForTurn(turnId: string, limit = 30): DecisionRow[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT d.* FROM decisions d JOIN situations s ON s.id = d.situation_id WHERE s.turn_id = ? AND d.seam = 'pre-tool' AND d.kind = 'proceed' AND d.family != 'fallback' " +
+            "AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.decision_id = d.id AND r.status = 'done') ORDER BY d.ts, d.rowid LIMIT ?",
+        )
+        .all(turnId, limit) as Row[]
+    ).map((r) => this.decisionFromRow(r));
+  }
+
+  /**
+   * The done reviews since `since`, with the decision each judged (2026-10-25, for the retune): flags and passes alike,
+   * oldest first. `confidence` is the reviewer's own, read from the review body.
+   */
+  reviewEvidence(since: number): {
+    decisionId: string;
+    situationId: string;
+    reasonCode: string;
+    kind: "flag" | "pass";
+    verdict: string;
+    confidence: "low" | "medium" | "high";
+  }[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT r.decision_id AS decisionId, d.situation_id AS situationId, d.reason_code AS reasonCode,
+                  r.kind AS kind, r.verdict AS verdict, r.body_json AS body
+           FROM reviews r JOIN decisions d ON d.id = r.decision_id
+           WHERE r.status = 'done' AND r.ts >= ? ORDER BY r.ts, r.rowid`,
+        )
+        .all(since) as Row[]
+    ).map((r) => {
+      let confidence: "low" | "medium" | "high" = "medium";
+      try {
+        const c = (JSON.parse(String(r.body)) as { confidence?: unknown }).confidence;
+        if (c === "low" || c === "high") confidence = c;
+      } catch {
+        /* a body that does not parse reads as medium */
+      }
+      return {
+        decisionId: r.decisionId as string,
+        situationId: r.situationId as string,
+        reasonCode: r.reasonCode as string,
+        kind: r.kind === "pass" ? "pass" : "flag",
+        verdict: r.verdict as string,
+        confidence,
+      };
+    });
+  }
+
+  /** When a turn began: its earliest situation (the prompt seam fires before the first step). Null for an unknown turn. */
+  turnStartTs(turnId: string): number | null {
+    const r = this.db
+      .prepare("SELECT MIN(ts) AS ts FROM situations WHERE turn_id = ?")
+      .get(turnId) as Row | undefined;
+    return typeof r?.ts === "number" ? r.ts : null;
+  }
+
+  /**
    * What the reviews say, per rule: how many flags each family/response/rule raised since `since`, how Grok judged
    * them, and how the owner voted on them. The evidence for tightening a question or dropping an injection.
    */
+  /** Per rule (family, kind, full reason code), the flag reviews by one judge since `since` (earned.ts, 2026-10-15). */
+  earnedStats(
+    since: number,
+    judgePrefix: string,
+  ): {
+    family: string;
+    kind: string;
+    reasonCode: string;
+    n: number;
+    useful: number;
+    harmful: number;
+  }[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT d.family AS family, d.kind AS kind, d.reason_code AS reasonCode, COUNT(*) AS n,
+                  SUM(r.verdict = 'useful') AS useful, SUM(r.verdict = 'harmful') AS harmful
+           FROM reviews r JOIN decisions d ON d.id = r.decision_id
+           WHERE r.status = 'done' AND r.kind = 'flag' AND r.ts >= ? AND substr(r.model, 1, ?) = ?
+           GROUP BY d.family, d.kind, d.reason_code`,
+        )
+        .all(since, judgePrefix.length, judgePrefix) as Row[]
+    ).map((r) => ({
+      family: r.family as string,
+      kind: r.kind as string,
+      reasonCode: r.reasonCode as string,
+      n: r.n as number,
+      useful: (r.useful as number) ?? 0,
+      harmful: (r.harmful as number) ?? 0,
+    }));
+  }
+
   reviewReport(since: number): ReviewReportRow[] {
     return (
       this.db
@@ -162,6 +268,7 @@ export class AmygdalaStore {
                   COUNT(*) AS n,
                   SUM(r.verdict = 'useful') AS useful, SUM(r.verdict = 'harmless') AS harmless,
                   SUM(r.verdict = 'noise') AS noise, SUM(r.verdict = 'harmful') AS harmful,
+                  SUM(r.kind = 'pass') AS passes, SUM(r.verdict = 'fine') AS fine, SUM(r.verdict = 'missed') AS missed,
                   SUM(EXISTS(SELECT 1 FROM labels l WHERE l.target_id = d.id AND l.kind = 'useful' AND l.value = 1)) AS up,
                   SUM(EXISTS(SELECT 1 FROM labels l WHERE l.target_id = d.id AND l.kind = 'useful' AND l.value = -1)) AS down
            FROM reviews r JOIN decisions d ON d.id = r.decision_id
@@ -180,6 +287,10 @@ export class AmygdalaStore {
       harmful: (r.harmful as number) ?? 0,
       ownerUp: (r.up as number) ?? 0,
       ownerDown: (r.down as number) ?? 0,
+      // Pass reviews (2026-10-15) count as fine / missed; a rule with none keeps the flag-only shape.
+      ...((r.passes as number) > 0
+        ? { fine: (r.fine as number) ?? 0, missed: (r.missed as number) ?? 0 }
+        : {}),
     }));
   }
 

@@ -70,6 +70,8 @@ Compare _section structure_, not just byte size: `diff <(grep -E '^#{1,3} ' A.md
 **Tools:** grep
 **Done when:** Title/version/hook in `papers.json`, the landing `index.html`, and the blog post all match the version you intend to publish
 
+The blog post BODY must match too, not only its links. "Upload the last version" means the post presents that version: diff the paper's previous and current md, and every changed claim, number, section or title goes into the post text alongside the new PDF and cover. A post whose links point at v_new while its text still describes v_old is a divergence, not a pass.
+
 ### 5. Verdict
 
 **Tools:** (none)
@@ -90,3 +92,4 @@ Emit an explicit verdict. On divergence, name the link and the decision required
 ## Failures Overcome
 
 - **Stale-fork regression (2026-06-18, J10):** three editing rounds landed on a `tinkerclaw` copy that was a v1.1 fork; the build lineage had advanced to v1.8 with a whole Related-Work section, evals, and retrieval the fork lacked. Building the fork would have stripped them from the live paper. A section-header diff (Step 2) catches this in one command. Pairs with {{papers-staleness-audit}} (which covers improvement-notes staleness; this covers cross-representation divergence).
+- **Link-only version roll (2026-10-16, J-series posts):** asked to upload the latest version of the papers, a turn swapped PDF links and covers and left post text on the old versions where the paper had changed. the architect, 10:03: "When asking you to upload the last version of the papers I meant it, knowing that in some cases it would be a content update. Do it." Step 4 now requires the body to match the version.

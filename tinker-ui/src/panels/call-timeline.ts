@@ -21,6 +21,7 @@ import {
   ANATOMY_CHARS_PER_TOKEN,
   estimateTokens,
 } from "../../../src/shared/anatomy-token-estimate.js";
+import { fractalParentOf, isFractalRunId } from "../fractal-run-id.js";
 import { cacheSegments, fmtTokens, moralCodeState } from "./context-cache.js";
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "./context-timeline.js";
 
@@ -236,7 +237,14 @@ export interface PromptView {
    * being prepared or answered before its first call, a turn that made no model call, or a history
    * row (no per-call timing).
    */
-  newer?: { ordinal: number; state: "preparing" | "no-calls" | "history" };
+  newer?: { ordinal: number; state: "preparing" | "no-calls" | "history"; fractal?: boolean };
+  /**
+   * FORK 2026-10-08 — set when the window is a Fractal turn drawn TOGETHER with the turn it reflects
+   * on (the owner: "Afegeix una línia vertical quan acaba el torn normal i segueix dibuixant els
+   * tokens d'anada i vinguda del torn fractal"). `firstCall` is the index in `calls` of the Fractal
+   * run's first call, where the renderer draws the line; the counts are each side's calls.
+   */
+  fractal?: { firstCall: number; parentCalls: number; calls: number };
 }
 
 /**
@@ -251,6 +259,8 @@ export interface RunSnapshot {
   calls: SnapshotCall[];
   tools: Array<{ id: string; name: string; start: number; end?: number; isError?: boolean }>;
   compactions: CompactionBand[];
+  /** FORK 2026-10-08 — a Fractal run's snapshot carries the turn it reflects on, drawn with it. */
+  parent?: RunSnapshot;
 }
 
 export type SnapshotCall = Omit<
@@ -980,6 +990,8 @@ interface RunState {
   runId: string;
   turn: TurnSpan;
   model?: string;
+  /** FORK 2026-10-09 — lifecycle start's `modelProvider`; with `model` it names the route the run took. */
+  modelProvider?: string;
   callIds: string[];
   open?: string;
   /** The last tool RESULT since the previous call closed: the next call's inferred send (§5.4). */
@@ -1457,7 +1469,7 @@ export class CallTimelineStore {
   // ── live feed ──
 
   /** lifecycle start — the model was named (call 1's inferred send). */
-  turnStart(runId: string, t: number, model?: string): void {
+  turnStart(runId: string, t: number, model?: string, modelProvider?: string): void {
     if (!runId) {
       return;
     }
@@ -1474,8 +1486,25 @@ export class CallTimelineStore {
     r.turn.modelAt ??= t;
     if (model) {
       r.model = model;
+      // A fallback that names no provider must not leave the failed model's provider on the new id.
+      r.modelProvider = modelProvider || undefined;
     }
     this.touch(t, true);
+  }
+
+  /**
+   * FORK 2026-10-09 (Fractal v2, charter M2/C4) — the model run `runId` actually ran on: the last one
+   * lifecycle start or a `call` frame named (a fallback replaces the failed model), with the provider
+   * lifecycle start gave. The Fractal turn sends the same model, so its first call reads the chat's
+   * cached prefix instead of paying for it again. Undefined when the store never heard a model.
+   */
+  runModel(runId: string): { model: string; provider?: string } | undefined {
+    const r = this.runs.get(runId);
+    const model = r?.model;
+    if (!r || !model) {
+      return undefined;
+    }
+    return r.modelProvider ? { model, provider: r.modelProvider } : { model };
   }
 
   /** lifecycle end / error, or the chat final — whichever arrives first; idempotent. */
@@ -2222,6 +2251,113 @@ export class CallTimelineStore {
   }
 
   private computePromptView(): PromptView | null {
+    const v = this.computeBaseView();
+    return v ? this.withRunningFractal(this.withFractalParent(v)) : null;
+  }
+
+  /**
+   * FORK 2026-10-10 — the Fractal runs in the background, so the owner can start a new prompt
+   * before it ends (owner, 2026-10-10: "Since it is running in the background, if I start a new
+   * turn before fractal is finished…"). Its later calls already fall into the new prompt's window;
+   * this pulls the window back to the reflection's first call, so it reads as one green stretch
+   * that keeps going beside the new turn instead of starting mid-way.
+   */
+  private withRunningFractal(v: PromptView): PromptView {
+    if (v.fractal || isFractalRunId(v.runId)) {
+      return v;
+    }
+    const calls = this.calls;
+    const end = Math.min(calls.length, v.firstCall + v.calls);
+    const inside = new Set<string>();
+    for (let i = v.firstCall; i < end; i++) {
+      if (isFractalRunId(calls[i].runId) && !calls[i].historic) {
+        inside.add(calls[i].runId);
+      }
+    }
+    if (inside.size === 0) {
+      return v;
+    }
+    let lo = v.firstCall;
+    for (let i = 0; i < v.firstCall; i++) {
+      if (inside.has(calls[i].runId) && !calls[i].historic) {
+        lo = i;
+        break;
+      }
+    }
+    if (lo === v.firstCall) {
+      return v;
+    }
+    let prompt = v.prompt;
+    let out = v.out;
+    for (let i = lo; i < v.firstCall; i++) {
+      prompt = Math.max(prompt, calls[i].stack.total);
+      out = Math.max(out, outputTotal(calls[i]));
+    }
+    return {
+      ...v,
+      start: Math.min(v.start, calls[lo].sendAt),
+      firstCall: lo,
+      calls: end - lo,
+      prompt,
+      out,
+    };
+  }
+
+  /**
+   * FORK 2026-10-08 — a Fractal turn is drawn after the turn it reflects on, in one window: the
+   * parent's calls, then the Fractal's. Until the Fractal run has a call of its own, the base view
+   * already holds the parent (with `newer.fractal` set), so nothing changes here.
+   */
+  private withFractalParent(v: PromptView): PromptView {
+    const parentId = fractalParentOf(v.runId);
+    if (!parentId || !v.runId) {
+      return v;
+    }
+    const calls = this.calls;
+    const end = Math.min(calls.length, v.firstCall + v.calls);
+    let lo = -1;
+    let parentCalls = 0;
+    for (let i = 0; i < end; i++) {
+      if (calls[i].runId === parentId && !calls[i].historic) {
+        if (lo < 0) {
+          lo = i;
+        }
+        parentCalls++;
+      }
+    }
+    let first = -1;
+    let fractalCalls = 0;
+    for (let i = Math.max(0, lo); i < end; i++) {
+      if (calls[i].runId === v.runId) {
+        if (first < 0) {
+          first = i;
+        }
+        fractalCalls++;
+      }
+    }
+    if (lo < 0 || first < 0 || first < lo) {
+      return v;
+    }
+    let prompt = 0;
+    let out = 0;
+    for (let i = lo; i < end; i++) {
+      prompt = Math.max(prompt, calls[i].stack.total);
+      out = Math.max(out, outputTotal(calls[i]));
+    }
+    const parent = this.turns.find((tr) => tr.runId === parentId);
+    return {
+      ...v,
+      start: Math.min(parent?.tickAt ?? calls[lo].sendAt, calls[lo].sendAt),
+      ordinal: this.turnOrdinal(parentId),
+      firstCall: lo,
+      calls: end - lo,
+      prompt,
+      out,
+      fractal: { firstCall: first, parentCalls, calls: fractalCalls },
+    };
+  }
+
+  private computeBaseView(): PromptView | null {
     const newest = this.newestPromptView();
     if (!newest) {
       return null;
@@ -2265,6 +2401,7 @@ export class CallTimelineStore {
       newer: {
         ordinal: newest.ordinal,
         state: newest.end === undefined ? "preparing" : newest.calls > 0 ? "history" : "no-calls",
+        ...(isFractalRunId(newest.runId) ? { fractal: true } : {}),
       },
     };
   }
@@ -2294,7 +2431,7 @@ export class CallTimelineStore {
     let ordinal: number;
     if (prep && !running && (!turn || (turn.end !== undefined && prep.start > turn.end))) {
       start = prep.start;
-      ordinal = this.droppedTurns + this.turns.length + 1;
+      ordinal = this.droppedTurns + this.promptTurns() + 1;
     } else if (turn) {
       start = turn.tickAt;
       end = turn.end;
@@ -2326,9 +2463,37 @@ export class CallTimelineStore {
     };
   }
 
+  /**
+   * FORK 2026-10-08 — counted in PROMPTS: a Fractal turn is part of the prompt it reflects on, so it
+   * takes its parent's ordinal and does not push the next prompt's number up by one.
+   */
   turnOrdinal(runId: string): number {
+    const parent = fractalParentOf(runId);
+    if (parent !== null) {
+      return this.turnOrdinal(parent);
+    }
     const i = this.turns.findIndex((turn) => turn.runId === runId);
-    return i < 0 ? 0 : this.droppedTurns + i + 1;
+    if (i < 0) {
+      return 0;
+    }
+    let n = 0;
+    for (let k = 0; k <= i; k++) {
+      if (!isFractalRunId(this.turns[k].runId)) {
+        n++;
+      }
+    }
+    return this.droppedTurns + n;
+  }
+
+  /** Turns that answered a prompt, Fractal turns left out. */
+  private promptTurns(): number {
+    let n = 0;
+    for (const tr of this.turns) {
+      if (!isFractalRunId(tr.runId)) {
+        n++;
+      }
+    }
+    return n;
   }
 
   totals(): { turns: number; calls: number } {
@@ -2368,10 +2533,27 @@ export class CallTimelineStore {
     if (!turn || turn.end === undefined) {
       return null;
     }
+    // FORK 2026-10-08 — a Fractal run takes the turn it reflects on along, so a reload still draws
+    // both sides of the line. The sample budget is split between them.
+    const parentId = fractalParentOf(turn.runId);
+    const parentTurn = parentId
+      ? this.turns.find(
+          (tr) =>
+            tr.runId === parentId && !tr.historic && tr.end !== undefined && live.has(tr.runId),
+        )
+      : undefined;
+    if (!parentTurn) {
+      return this.snapshotOf(turn, maxSamples);
+    }
+    const half = Math.max(2, Math.floor(maxSamples / 2));
+    return { ...this.snapshotOf(turn, half), parent: this.snapshotOf(parentTurn, half) };
+  }
+
+  private snapshotOf(turn: TurnSpan, maxSamples: number): RunSnapshot {
     const runId = turn.runId;
-    const end = turn.end;
+    const end = turn.end ?? turn.start;
     const calls = this.calls.filter((c) => c.runId === runId && !c.historic);
-    const per = Math.max(2, Math.floor(maxSamples / calls.length));
+    const per = Math.max(2, Math.floor(maxSamples / Math.max(1, calls.length)));
     return {
       v: 1,
       runId,
@@ -2416,8 +2598,19 @@ export class CallTimelineStore {
    */
   restoreRun(snapshot: unknown): boolean {
     const snap = readRunSnapshot(snapshot);
-    if (!snap || this.runs.has(snap.runId) || this.turns.some((tr) => tr.runId === snap.runId)) {
+    if (!snap) {
       return false;
+    }
+    // FORK 2026-10-08 — the turn a Fractal run reflects on comes back first (one level only: the
+    // parent of a Fractal turn is never itself a Fractal turn).
+    let restoredParent = false;
+    const parentRaw = (snapshot as { parent?: unknown }).parent;
+    const parentId = fractalParentOf(snap.runId);
+    if (parentRaw && parentId && str((parentRaw as { runId?: unknown }).runId) === parentId) {
+      restoredParent = this.restoreRun(parentRaw);
+    }
+    if (this.runs.has(snap.runId) || this.turns.some((tr) => tr.runId === snap.runId)) {
+      return restoredParent;
     }
     const { runId } = snap;
     const turn: TurnSpan = { runId, ...snap.turn };
@@ -2676,10 +2869,31 @@ const label = (key: string): string => SEGMENT_LABELS[key] ?? key;
  * send → first token, the prompt with its cache split, the top composition segments, output by
  * kind, duration and tokens/s.
  */
+/**
+ * FORK 2026-10-10 — the stretches of `calls` that belong to a Fractal run, as [from, to) index
+ * ranges, neighbours merged. The renderer paints a light green band behind each one.
+ */
+export function fractalSpans(calls: readonly TimelineCall[]): Array<{ from: number; to: number }> {
+  const spans: Array<{ from: number; to: number }> = [];
+  for (let i = 0; i < calls.length; i++) {
+    if (!isFractalRunId(calls[i].runId)) {
+      continue;
+    }
+    const last = spans[spans.length - 1];
+    if (last && last.to === i) {
+      last.to = i + 1;
+    } else {
+      spans.push({ from: i, to: i + 1 });
+    }
+  }
+  return spans;
+}
+
 export function describeCall(c: TimelineCall, ctx: { turnOrdinal: number; now: number }): string[] {
   const lines: string[] = [];
   lines.push(
     `call ${c.index} of turn ${ctx.turnOrdinal || "?"}` +
+      (isFractalRunId(c.runId) ? " · 🌿 Fractal (background)" : "") +
       (c.model ? ` · ${c.model}` : "") +
       (c.historic ? " · history row" : ""),
   );

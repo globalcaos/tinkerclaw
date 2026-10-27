@@ -10,11 +10,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  attributeSubagentUsage,
   attributeToolUsage,
   createUsageRegistry,
   getUsageRegistry,
   isUsageMark,
   mergeUsageMarks,
+  subagentTranscriptDir,
   type UsageMark,
   type UsageRegistry,
 } from "./usage-attribution.js";
@@ -222,6 +224,68 @@ describe("attributeToolUsage — exec (D1)", () => {
         opts(),
       ),
     ).toEqual([skill("human-voice", "exec", skillMd)]);
+  });
+
+  // FORK 2026-10-21 (audit class "shell-var"): the palette-gap miss on chat mv0kz9mp.
+  it("a skill path held in a shell variable counts where the variable is used", () => {
+    const skillMd = path.join(home, ".claude/skills/human-voice/SKILL.md");
+    const hv = [skill("human-voice", "exec", skillMd)];
+    expect(
+      bash("S=~/.claude/skills/human-voice/scripts/voicecheck.py; python3 -I $S draft.txt"),
+    ).toEqual(hv);
+    expect(
+      bash('S="$HOME/.claude/skills/human-voice"\npython3 "${S}/scripts/voicecheck.py" x'),
+    ).toEqual(hv);
+    expect(
+      bash("export D=~/.claude/skills/human-voice && python3 $D/scripts/voicecheck.py"),
+    ).toEqual(hv);
+    expect(bash("A=~/.claude/skills; B=$A/human-voice/scripts; python3 $B/voicecheck.py")).toEqual(
+      hv,
+    );
+  });
+
+  // FORK 2026-10-21 (audit class "path-bin"): `jarvis "…"` runs skills/jarvis-voice/bin/jarvis.
+  it("a bare command that is a PATH link into a skill → that skill; other commands → nothing", () => {
+    const bin = path.join(tmp, "path-bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.symlinkSync(
+      path.join(home, ".claude/skills/human-voice/scripts/voicecheck.py"),
+      path.join(bin, "voicecheck"),
+    );
+    fs.symlinkSync(path.join(tmp, "nowhere"), path.join(bin, "dangling"));
+    write(path.join(bin, "plain"), "#!/bin/sh\n");
+    const local = createUsageRegistry({ skillRoots: [], recipeRoots: [], commandDirs: [bin] });
+    const run = (command: string) =>
+      attributeToolUsage({ name: "Bash", args: { command } }, local, opts());
+    const hv = [
+      skill("human-voice", "exec", path.join(home, ".claude/skills/human-voice/SKILL.md")),
+    ];
+    expect(run('voicecheck --mode chat "draft"')).toEqual(hv);
+    expect(run("cd /tmp && (sudo voicecheck x)")).toEqual(hv);
+    expect(run("echo voicecheck; plain x; dangling; ls")).toEqual([]);
+    expect(run("rm voicecheck")).toEqual([]);
+    expect(local.skillForCommand?.("../x")).toBeUndefined();
+    // A heredoc body is text: a line starting with the word is not a run; its paths still count.
+    expect(run("cat >> notes.md <<'EOF'\nvoicecheck said hi\nEOF\nls")).toEqual([]);
+    expect(run("cat <<-EOF > n.md\n\tvoicecheck x\n\tEOF\nvoicecheck y")).toEqual(hv);
+    expect(
+      run(
+        "python3 - <<EOF\nopen('" +
+          home +
+          "/.claude/skills/human-voice/scripts/voicecheck.py')\nEOF",
+      ),
+    ).toEqual(hv);
+    // A helper script written through a heredoc that runs a skill keeps its chip (audit 2026-10-21:
+    // dropping these bodies lost 40 real uses and removed no false chip).
+    const vc = `${home}/.claude/skills/human-voice/scripts/voicecheck.py`;
+    expect(run(`cat <<'EOF' > /tmp/x.sh\nV=${vc}\npython3 $V\nEOF\nbash /tmp/x.sh`)).toEqual(hv);
+  });
+
+  it("a shell variable never turns a write or an unknown value into a chip", () => {
+    expect(bash("S=~/.claude/skills/human-voice/SKILL.md; sed -i s/a/b/ $S")).toEqual([]);
+    expect(bash("S=~/.claude/skills/human-voice/notes.md; echo hi > $S")).toEqual([]);
+    expect(bash("S=$(ls ~/.claude/skills); python3 $S/x.py")).toEqual([]);
+    expect(bash("python3 $UNSET/scripts/voicecheck.py")).toEqual([]);
   });
 
   it("listing or grepping the skills root draws no chip storm", () => {
@@ -623,6 +687,119 @@ describe("createUsageRegistry", () => {
     expect(local.isSkillDir?.(dir)).toBe(true);
     fs.rmSync(path.join(dir, "SKILL.md"));
     expect(local.isSkillDir?.(dir)).toBe(true);
+  });
+
+  // FORK 2026-10-21 (audit class "created-same-turn"): a miss is never cached.
+  it("sees a SKILL.md written after a first probe found none", () => {
+    const dir = path.join(tmp, "late-skill/skills/fresh");
+    write(path.join(dir, "scripts/run.py"), "print(1)\n");
+    const local = createUsageRegistry({
+      skillRoots: [path.join(tmp, "late-skill/skills")],
+      recipeRoots: [],
+    });
+    const call = { name: "Bash", args: { command: `python3 ${dir}/scripts/run.py` } };
+    expect(local.isSkillDir?.(dir)).toBe(false);
+    expect(attributeToolUsage(call, local, opts())).toEqual([]);
+    write(path.join(dir, "SKILL.md"), "---\nname: fresh\n---\n");
+    expect(local.isSkillDir?.(dir)).toBe(true);
+    expect(attributeToolUsage(call, local, opts())).toEqual([
+      skill("fresh", "exec", path.join(dir, "SKILL.md")),
+    ]);
+  });
+});
+
+// FORK 2026-10-21 (audit class "subagent"): a Workflow's agents' calls reach the turn that launched it.
+describe("subagent usage", () => {
+  const projects = () => path.join(home, ".claude/projects");
+  const line = (o: unknown) => JSON.stringify(o) + "\n";
+  const assistant = (cwd: string, ...blocks: unknown[]) =>
+    line({
+      parentUuid: null,
+      isSidechain: true,
+      type: "assistant",
+      cwd,
+      message: { role: "assistant", content: blocks },
+    });
+
+  it("names the transcript folder a Workflow result gives, only under <claude>/projects/…/subagents/", () => {
+    const dir = path.join(projects(), "-w/sess/subagents/workflows/wf_abc");
+    const text = `Workflow launched in background. Task ID: w1\nSummary: x\nTranscript dir: ${dir}\nScript file: /x.js`;
+    expect(subagentTranscriptDir(text, { homeDir: home })).toBe(dir);
+    expect(
+      subagentTranscriptDir("Transcript dir: /etc/subagents/x", { homeDir: home }),
+    ).toBeUndefined();
+    expect(
+      subagentTranscriptDir(`Transcript dir: ${projects()}/-w/sess`, { homeDir: home }),
+    ).toBeUndefined();
+    expect(
+      subagentTranscriptDir(`Transcript dir: ${projects()}/../../subagents/x`, { homeDir: home }),
+    ).toBeUndefined();
+    expect(subagentTranscriptDir(42, { homeDir: home })).toBeUndefined();
+  });
+
+  it("attributes every agent's tool calls via subagent, merged, and reads appended lines later", () => {
+    const dir = path.join(projects(), "-w/sess/subagents/workflows/wf_one");
+    const a = write(
+      path.join(dir, "agent-a1.jsonl"),
+      line({ type: "user", message: { role: "user", content: "task" } }) +
+        line({
+          type: "api-request-blob",
+          message: { content: [{ type: "tool_use", name: "Skill", input: { skill: "bar" } }] },
+        }) +
+        assistant(tmp, {
+          type: "tool_use",
+          id: "t1",
+          name: "Bash",
+          input: { command: "python3 ~/.claude/skills/human-voice/scripts/voicecheck.py x" },
+        }),
+    );
+    write(
+      path.join(dir, "agent-a2.jsonl"),
+      assistant(
+        tmp,
+        { type: "text", text: "hi" },
+        { type: "tool_use", id: "t2", name: "Skill", input: { skill: "foo" } },
+      ) +
+        // Claude Code's real key order: `type` after the message.
+        line({
+          parentUuid: "p",
+          isSidechain: true,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "t3",
+                name: "Read",
+                input: { file_path: path.join(recipes, "coding/debug.md") },
+              },
+            ],
+          },
+          type: "assistant",
+          cwd: tmp,
+        }),
+    );
+    write(
+      path.join(dir, "journal.jsonl"),
+      assistant(tmp, { type: "tool_use", name: "Skill", input: { skill: "bar" } }),
+    );
+    const names = (marks: UsageMark[]) =>
+      marks.map((m) => `${m.kind}:${m.name}:${m.via}:${m.toolCallId ?? ""}`).toSorted();
+    expect(names(attributeSubagentUsage(dir, reg, opts()))).toEqual([
+      "recipe:Debug a failure:subagent:",
+      "skill:foo:subagent:",
+      "skill:human-voice:subagent:",
+    ]);
+    fs.appendFileSync(
+      a,
+      assistant(tmp, { type: "tool_use", id: "t4", name: "Skill", input: { skill: "bar" } }),
+    );
+    expect(names(attributeSubagentUsage(dir, reg, opts()))).toContain("skill:bar:subagent:");
+    expect(attributeSubagentUsage(path.join(tmp, "missing-dir"), reg, opts())).toEqual([]);
+  });
+
+  it("isUsageMark accepts via subagent", () => {
+    expect(isUsageMark({ kind: "skill", name: "x", via: "subagent" })).toBe(true);
   });
 });
 

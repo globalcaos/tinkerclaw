@@ -93,7 +93,7 @@ function buildAllowlist(workspaceDir: string | undefined | null): string[] {
   list.push(path.resolve(home, "src/jarvis-icu"));
   // FORK 2026-07-08: the four roots above are code/workspace dirs, but the
   // user's REAL documents (drafts, PDFs, plans we point him at) live under the
-  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. a village
+  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. an Townsville
   // licence draft under ~/Documents — was rejected server-side with "outside
   // allowlist" even after the client matcher learned to render spaced/accented
   // paths as clickable. The client fix was necessary but not sufficient; the
@@ -169,7 +169,95 @@ function platformOpenCommand(): { cmd: string; argsBefore: string[] } {
   }
 }
 
+/**
+ * FORK 2026-10-15 — the path checks both RPCs share: traversal, allowlist, private ~/.claude.
+ * Returns the absolute path, or the refusal text.
+ */
+function checkOpenablePath(
+  inputPath: unknown,
+  workspaceDir: string | undefined | null,
+): { absPath: string } | { error: string; path?: string } {
+  if (typeof inputPath !== "string" || inputPath.length === 0) return { error: "path is required" };
+  if (inputPath.includes("..")) return { error: "path traversal not allowed" };
+  const absPath = path.resolve(expandTilde(inputPath));
+  if (!isInsideAllowlist(absPath, buildAllowlist(workspaceDir))) {
+    return { error: "outside allowlist", path: absPath };
+  }
+  if (reachesPrivateClaudePath(absPath)) {
+    return { error: "resolves into a private ~/.claude path", path: absPath };
+  }
+  return { absPath };
+}
+
+/** Largest file the browser path will carry over the socket (base64 adds a third). */
+export const READ_EXTERNAL_MAX_BYTES = 40 * 1024 * 1024;
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".md": "text/markdown",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+};
+
 export const configOpenExternalHandlers: GatewayRequestHandlers = {
+  /**
+   * FORK 2026-10-15 (the architect: the agent may run on another machine, e.g. the Pi): returns the file's
+   * bytes so the BROWSER shows it, instead of a viewer opening on the gateway's own desktop. Same
+   * allowlist and refusals as config.openExternalFile; ADMIN scope like it.
+   */
+  "config.readExternalFile": async ({ params, context, respond }) => {
+    const cfg = context.getRuntimeConfig();
+    const checked = checkOpenablePath(
+      params && typeof params === "object" ? (params as { path?: unknown }).path : undefined,
+      resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg)),
+    );
+    if ("error" in checked) {
+      respond(true, { ok: false, ...checked }, undefined);
+      return;
+    }
+    const { absPath } = checked;
+    try {
+      const st = fs.statSync(absPath);
+      if (!st.isFile()) {
+        respond(true, { ok: false, error: "not a file", path: absPath }, undefined);
+        return;
+      }
+      if (st.size > READ_EXTERNAL_MAX_BYTES) {
+        respond(
+          true,
+          { ok: false, error: "file too large for the browser", path: absPath },
+          undefined,
+        );
+        return;
+      }
+      const ext = path.extname(absPath).toLowerCase();
+      respond(
+        true,
+        {
+          ok: true,
+          path: absPath,
+          name: path.basename(absPath),
+          mime: MIME_BY_EXT[ext] ?? "text/plain",
+          size: st.size,
+          base64: fs.readFileSync(absPath).toString("base64"),
+        },
+        undefined,
+      );
+    } catch (err) {
+      respond(true, { ok: false, error: (err as Error).message, path: absPath }, undefined);
+    }
+  },
   "config.openExternalFile": async ({ params, context, respond }) => {
     const inputPath =
       params && typeof params === "object" ? (params as { path?: unknown }).path : undefined;

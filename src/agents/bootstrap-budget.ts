@@ -1,4 +1,5 @@
 import path from "node:path";
+import { CANONICAL_ROOT_MEMORY_FILENAME } from "../memory/root-memory-files.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import type { EmbeddedContextFile } from "./embedded-agent-helpers.js";
 import type { WorkspaceBootstrapFile } from "./workspace.js";
@@ -7,8 +8,19 @@ export const DEFAULT_BOOTSTRAP_NEAR_LIMIT_RATIO = 0.85;
 export const DEFAULT_BOOTSTRAP_PROMPT_WARNING_MAX_FILES = 3;
 export const DEFAULT_BOOTSTRAP_PROMPT_WARNING_SIGNATURE_HISTORY_MAX = 32;
 
+// The index re-warns after it moves by another tenth of its budget, not on every edited line.
+const MEMORY_INDEX_SIGNATURE_STEPS = 10;
+
 export type BootstrapTruncationCause = "per-file-limit" | "total-limit";
 export type BootstrapPromptWarningMode = "off" | "once" | "always";
+/**
+ * MEMORY.md index budget mode:
+ * - off: no check
+ * - watch: log once per size step, no prompt text (default)
+ * - once: also tell the agent once per size step
+ * - always: tell the agent on every run while over budget
+ */
+export type MemoryIndexWarningMode = "off" | "watch" | "once" | "always";
 
 export type BootstrapInjectionStat = {
   name: string;
@@ -40,11 +52,23 @@ export type BootstrapBudgetAnalysis = {
   };
 };
 
+export type MemoryIndexOverBudget = {
+  name: string;
+  path: string;
+  rawChars: number;
+  maxChars: number;
+  truncated: boolean;
+};
+
 export type BootstrapPromptWarning = {
   signature?: string;
   warningShown: boolean;
   lines: string[];
   warningSignaturesSeen: string[];
+  /** Agent-visible memory index notice (once/always modes only). */
+  memoryIndexLines?: string[];
+  /** Operator log line, set when the over-budget index is due a notice in any mode but off. */
+  memoryIndexLogLine?: string;
 };
 
 export type BootstrapTruncationReportMeta = {
@@ -293,10 +317,52 @@ export function formatBootstrapTruncationWarningLines(params: {
       `+${params.analysis.truncatedFiles.length - topFiles.length} more truncated file(s).`,
     );
   }
+  if (params.analysis.truncatedFiles.some((file) => file.name === CANONICAL_ROOT_MEMORY_FILENAME)) {
+    lines.push(
+      `${CANONICAL_ROOT_MEMORY_FILENAME} is the memory index: instead of raising the limit, move its detail into topic files (memory/<topic>.md) and keep one line per topic in it.`,
+    );
+  }
   lines.push(
     "If unintentional, raise agents.defaults.bootstrapMaxChars and/or agents.defaults.bootstrapTotalMaxChars.",
   );
   return lines;
+}
+
+/**
+ * MEMORY.md is the index of the memory palace: one line per topic, loaded on every
+ * main-session turn, with the detail in topic files the agent opens on demand.
+ * Returns the index only when it has grown past its soft budget. Never truncates.
+ */
+export function analyzeMemoryIndexBudget(params: {
+  files: BootstrapInjectionStat[];
+  maxChars: number;
+}): MemoryIndexOverBudget | undefined {
+  const maxChars = normalizePositiveLimit(params.maxChars);
+  const index = params.files.find(
+    (file) => !file.missing && file.name === CANONICAL_ROOT_MEMORY_FILENAME,
+  );
+  if (!index || index.rawChars <= maxChars) {
+    return undefined;
+  }
+  return {
+    name: index.name,
+    path: index.path,
+    rawChars: index.rawChars,
+    maxChars,
+    truncated: index.truncated,
+  };
+}
+
+export function formatMemoryIndexWarningLines(budget: MemoryIndexOverBudget): string[] {
+  return [
+    `${budget.name} is ${budget.rawChars} chars, over its ${budget.maxChars}-char index budget. It loads on every turn, so keep it an index: one short line per topic, pointing to the file that holds the detail (memory/<topic>.md).`,
+    "Move detail out of the index into topic files (add a section to an existing topic file before creating a new one), merge near-duplicate lines, and drop lines that are no longer true. Open a topic with memory_get when a task needs it.",
+  ];
+}
+
+function buildMemoryIndexSignature(budget: MemoryIndexOverBudget): string {
+  const step = Math.floor((budget.rawChars / budget.maxChars) * MEMORY_INDEX_SIGNATURE_STEPS);
+  return JSON.stringify({ memoryIndex: budget.path, maxChars: budget.maxChars, step });
 }
 
 export function buildBootstrapPromptWarning(params: {
@@ -305,6 +371,7 @@ export function buildBootstrapPromptWarning(params: {
   previousSignature?: string;
   seenSignatures?: string[];
   maxFiles?: number;
+  memoryIndex?: { budget?: MemoryIndexOverBudget; mode: MemoryIndexWarningMode };
 }): BootstrapPromptWarning {
   const signature = buildBootstrapTruncationSignature(params.analysis);
   let seenSignatures = normalizeSeenSignatures(params.seenSignatures);
@@ -314,10 +381,27 @@ export function buildBootstrapPromptWarning(params: {
   const hasSeenSignature = Boolean(signature && seenSignatures.includes(signature));
   const warningShown =
     params.mode !== "off" && Boolean(signature) && (params.mode === "always" || !hasSeenSignature);
-  const warningSignaturesSeen =
+  let warningSignaturesSeen =
     signature && params.mode !== "off"
       ? appendSeenSignature(seenSignatures, signature)
       : seenSignatures;
+
+  // The index budget shares the persisted signature history, so "once" survives across turns.
+  const memoryIndexMode = params.memoryIndex?.mode ?? "off";
+  const memoryIndexBudget = memoryIndexMode === "off" ? undefined : params.memoryIndex?.budget;
+  let memoryIndexLines: string[] = [];
+  let memoryIndexLogLine: string | undefined;
+  if (memoryIndexBudget) {
+    const memoryIndexSignature = buildMemoryIndexSignature(memoryIndexBudget);
+    const due = memoryIndexMode === "always" || !seenSignatures.includes(memoryIndexSignature);
+    warningSignaturesSeen = appendSeenSignature(warningSignaturesSeen, memoryIndexSignature);
+    if (due) {
+      memoryIndexLogLine = `memory index ${memoryIndexBudget.path} is ${memoryIndexBudget.rawChars} chars (index budget ${memoryIndexBudget.maxChars}); move detail into topic files`;
+      if (memoryIndexMode === "once" || memoryIndexMode === "always") {
+        memoryIndexLines = formatMemoryIndexWarningLines(memoryIndexBudget);
+      }
+    }
+  }
   return {
     signature,
     warningShown,
@@ -328,6 +412,8 @@ export function buildBootstrapPromptWarning(params: {
         })
       : [],
     warningSignaturesSeen,
+    ...(memoryIndexLines.length > 0 ? { memoryIndexLines } : {}),
+    ...(memoryIndexLogLine ? { memoryIndexLogLine } : {}),
   };
 }
 
@@ -336,21 +422,36 @@ export function appendBootstrapPromptWarning(
   warningLines?: string[],
   options?: {
     preserveExactPrompt?: string;
+    memoryIndexLines?: string[];
   },
 ): string {
   const normalizedLines = (warningLines ?? []).map((line) => line.trim()).filter(Boolean);
-  if (normalizedLines.length === 0) {
+  const memoryIndexLines = (options?.memoryIndexLines ?? [])
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (normalizedLines.length === 0 && memoryIndexLines.length === 0) {
     return prompt;
   }
   if (options?.preserveExactPrompt && prompt === options.preserveExactPrompt) {
     return prompt;
   }
-  const warningBlock = [
-    "[Bootstrap truncation warning]",
-    "Some workspace bootstrap files were truncated before injection.",
-    "Treat Project Context as partial and read the relevant files directly if details seem missing.",
-    ...normalizedLines.map((line) => `- ${line}`),
-  ].join("\n");
+  const blocks: string[] = [];
+  if (normalizedLines.length > 0) {
+    blocks.push(
+      [
+        "[Bootstrap truncation warning]",
+        "Some workspace bootstrap files were truncated before injection.",
+        "Treat Project Context as partial and read the relevant files directly if details seem missing.",
+        ...normalizedLines.map((line) => `- ${line}`),
+      ].join("\n"),
+    );
+  }
+  if (memoryIndexLines.length > 0) {
+    blocks.push(
+      ["[Memory index over budget]", ...memoryIndexLines.map((line) => `- ${line}`)].join("\n"),
+    );
+  }
+  const warningBlock = blocks.join("\n\n");
   return prompt ? `${prompt}\n\n${warningBlock}` : warningBlock;
 }
 

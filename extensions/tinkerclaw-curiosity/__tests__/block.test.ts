@@ -59,3 +59,13 @@ describe("the turn block", () => {
     expect(curiosityContextFor(undefined, o)).toBeUndefined();
   });
 });
+
+describe("buildCuriosityBlock: no Fractal section in the reply", () => {
+  // 2026-10-09: the Fractal runs as its own background turn, so a reply has no 🌿 block. The old
+  // wording ("before the 🌿 FRACTAL block") told every main reply that one belonged there.
+  it("places DEEPER without naming a Fractal block", () => {
+    const b = buildCuriosityBlock("- fractals", "/w/passions.md");
+    expect(b).not.toMatch(/FRACTAL/);
+    expect(b).toMatch(/before the closing summary card/);
+  });
+});

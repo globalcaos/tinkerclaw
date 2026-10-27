@@ -44,6 +44,52 @@ function setup() {
   return { d, transcript, mapFile, seen, map };
 }
 
+describe("BridgeSessionMap with the bridge's rewind seam published (2026-10-22)", () => {
+  const SLOT = Symbol.for("openclaw.bridgeRewind");
+  const g = globalThis as Record<symbol, unknown>;
+  afterEach(() => {
+    delete g[SLOT];
+  });
+
+  it("point asks the bridge to rebind (its cache and warm worker), follows the fork, and does not rewrite the file itself", () => {
+    const { mapFile, seen, map } = setup();
+    const before = readFileSync(mapFile, "utf-8");
+    const calls: Array<[string, string]> = [];
+    g[SLOT] = {
+      busy: () => false,
+      rebind: (from: string, to: string) => (calls.push([from, to]), { ok: true }),
+    };
+    expect(map.point("agent:main:tinker:t1", "33333333-3333-3333-3333-333333333333")).toBe(true);
+    expect(calls).toEqual([[S1, "33333333-3333-3333-3333-333333333333"]]);
+    expect(readFileSync(mapFile, "utf-8")).toBe(before);
+    expect(seen.get("agent:main:tinker:t1")?.sessionId).toBe(
+      "33333333-3333-3333-3333-333333333333",
+    );
+  });
+
+  it("a refused or throwing rebind leaves the tab where it was", () => {
+    const { seen, map } = setup();
+    g[SLOT] = { busy: () => false, rebind: () => ({ ok: false, reason: "busy" }) };
+    expect(map.point("agent:main:tinker:t1", "33333333-3333-3333-3333-333333333333")).toBe(false);
+    g[SLOT] = {
+      busy: () => false,
+      rebind: () => {
+        throw new Error("boom");
+      },
+    };
+    expect(map.point("agent:main:tinker:t1", "33333333-3333-3333-3333-333333333333")).toBe(false);
+    expect(seen.get("agent:main:tinker:t1")?.sessionId).toBe(S1);
+  });
+
+  it("busy reads the bridge by the tab's Claude session; an unknown tab, or no bridge, is not busy", () => {
+    const { map } = setup();
+    expect(map.busy("agent:main:tinker:t1")).toBe(false); // no bridge published
+    g[SLOT] = { busy: (id: string) => id === S1, rebind: () => ({ ok: true }) };
+    expect(map.busy("agent:main:tinker:t1")).toBe(true);
+    expect(map.busy("agent:main:tinker:unknown")).toBe(false);
+  });
+});
+
 describe("BridgeSessionMap on temp copies", () => {
   it("knows only tabs whose hooks it has heard from", () => {
     const { map, transcript } = setup();

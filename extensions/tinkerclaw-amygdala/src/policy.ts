@@ -118,10 +118,22 @@ export function buildHookSettings(
       },
     ],
   });
+  // The hard-rule layer (AEGIS, J11 §6.1) runs first and blocks in every mode: a prohibited step is held before the
+  // judge is asked. It reads this plugin's policy; its spool and owner grants stay in the v3.1 data dir (2026-10-15).
+  const hard = {
+    matcher: "*",
+    hooks: [
+      {
+        type: "command",
+        command: `AMYGDALA_POLICY_PATH=${shq(join(dataDir, "policy.json"))} node ${shq(join(dataDir, "hooks", "hard-rules.mjs"))}`,
+        timeout: 10,
+      },
+    ],
+  };
   return {
     hooks: {
       UserPromptSubmit: [entry("prompt.mjs", t.prompt ?? 5)],
-      PreToolUse: [entry("pre-tool.mjs", t.pre ?? 330, "*")],
+      PreToolUse: [hard, entry("pre-tool.mjs", t.pre ?? 330, "*")],
       PostToolUse: [entry("post-tool.mjs", t.post ?? 5, "*")],
       Stop: [entry("stop.mjs", t.stop ?? 8)],
     },

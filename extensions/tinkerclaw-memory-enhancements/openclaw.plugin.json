@@ -4,7 +4,7 @@
     "onStartup": true
   },
   "name": "Memory Enhancements",
-  "description": "Memory-core companions, mostly observers in v0.1. Live: O(1) anchor \u2192 chunk hippocampus index. Scaffolded but log-only: task-conditioned retrieval scoring, contradiction-gate on writes, compaction-aware capture. The compaction-capture hook does NOT delay compaction \u2014 it logs which messages would have been dropped. Real persistence + true eviction land in v0.2.",
+  "description": "Memory-core companions. Live: the O(1) anchor \u2192 chunk hippocampus index, and the memory write gate (config key contradictionGate): one gate in front of every memory note write, from Claude Code workers and from the gateway's embedded runner. It reads the notes in the same folder and the always-loaded rule files and gives each write one outcome: saved with its source, skipped as a repeat, saved with the old line struck and dated, refused until the owner answers a clash, or kept as a quote only. Ships in watch mode (logs what it would do). Still a scaffold: task-conditioned retrieval scoring. Observer only: compaction-aware capture.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -56,16 +56,40 @@
       "contradictionGate": {
         "type": "object",
         "additionalProperties": false,
+        "description": "The memory write gate. On gateway start the plugin publishes the resolved config to <state dir>/memory-gate/config.json for the tinkerclaw-core Claude Code hook, and guards the embedded runner's write/edit tools itself. Every decision is a row in <state dir>/data/memory-gate/gate.jsonl.",
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": true
+            "default": true,
+            "description": "false: no gate at all (the published config is removed)."
           },
           "mode": {
             "type": "string",
             "enum": ["warn", "block"],
             "default": "warn",
-            "description": "warn: log contradictions but allow the write. block: refuse the write."
+            "description": "warn: watch mode, every write goes through unchanged and the gate only logs what it would have done. block: enforce, a repeat is skipped, a clash or an unsourced rule is refused until the owner answers, an update keeps the old line struck and dated, someone else's words are saved as a quote only."
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Folders or single files whose Markdown notes the gate guards. Default: the Claude Code auto-memory folder (autoMemoryDirectory in ~/.claude/settings.json) and, per agent workspace, MEMORY.md and memory/. Claude Code's per-project memory folders are always included."
+          },
+          "rulesFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Always-loaded files a new line is checked against for a clash. Default: per agent workspace AGENTS.md, SOUL.md, USER.md, IDENTITY.md, MEMORY.md, plus the auto-memory folder's MEMORY.md."
+          },
+          "excludeDirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": ["archive", "consolidation-logs", "co-access"],
+            "description": "Folder names under a root that hold logs, not notes; writes there pass untouched."
           }
         }
       },

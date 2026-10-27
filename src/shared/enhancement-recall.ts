@@ -30,7 +30,7 @@ export type RecallDoc = {
   /** The card id: `<kind>:<name>`. */
   id: string;
   kind: "skill" | "recipe" | "plugin";
-  /** The folder or file name a surface map points at (`youtube-ultimate`, `acme-coding`). */
+  /** The folder or file name a surface map points at (`youtube-ultimate`, `orbis-coding`). */
   slug: string;
   title: string;
   summary: string;
@@ -261,8 +261,8 @@ export const NAMED_SURFACES: ReadonlyArray<{ id: string; re: RegExp; cards: read
   { id: "outlook", re: /\boutlook\b/i, cards: ["skill:outlook-hack"] },
   {
     id: "programming-wiki",
-    re: /programming wiki|\bdokuwiki\b|acmevision_lab|\bforecr\b.*\blogin/i,
-    cards: ["recipe:acme-programming-wiki-maintenance"],
+    re: /programming wiki|\bdokuwiki\b|orbisvision_lab|\bforecr\b.*\blogin/i,
+    cards: ["recipe:orbis-programming-wiki-maintenance"],
   },
   {
     id: "gantt",
@@ -277,7 +277,7 @@ export const NAMED_SURFACES: ReadonlyArray<{ id: string; re: RegExp; cards: read
   {
     id: "article-code",
     re: /article code|codi d'?article|llibreria comer/i,
-    cards: ["recipe:acme-article-code"],
+    cards: ["recipe:orbis-article-code"],
   },
   {
     id: "personal-document",
@@ -296,8 +296,8 @@ export const NAMED_SURFACES: ReadonlyArray<{ id: string; re: RegExp; cards: read
   },
   {
     id: "product-logo",
-    re: /(?:acme|acmevision|acmemove|acmepid)\b[^.\n]{0,60}\b(?:logo|wordmark)|\b(?:logo|wordmark)\b[^.\n]{0,60}\b(?:acme|acmevision|acmemove|acmepid)\b/i,
-    cards: ["recipe:acme-product-logo"],
+    re: /(?:orbis|orbisvision|orbismove|orbispid)\b[^.\n]{0,60}\b(?:logo|wordmark)|\b(?:logo|wordmark)\b[^.\n]{0,60}\b(?:orbis|orbisvision|orbismove|orbispid)\b/i,
+    cards: ["recipe:orbis-product-logo"],
   },
   { id: "freeze", re: /\bi'?m off\b|\bfreeze\b|power off/i, cards: ["skill:freeze-thaw"] },
   {
@@ -306,9 +306,9 @@ export const NAMED_SURFACES: ReadonlyArray<{ id: string; re: RegExp; cards: read
     cards: ["recipe:give-goku-access"],
   },
   {
-    id: "acme-coding",
-    re: /commit diagram|\bfore2\b.*\bgit\b|acme feature/i,
-    cards: ["recipe:acme-coding"],
+    id: "orbis-coding",
+    re: /commit diagram|\bfore2\b.*\bgit\b|orbis feature/i,
+    cards: ["recipe:orbis-coding"],
   },
   {
     id: "candidate-cv",

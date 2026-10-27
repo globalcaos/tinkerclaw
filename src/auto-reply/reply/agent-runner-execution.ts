@@ -92,6 +92,7 @@ import type { FollowupRun } from "./queue.js";
 import { resolveFollowupRunPromptKeys } from "./queue/types.js";
 import {
   dispatchRateLimitRetryThroughGateway,
+  parseRateLimitEnvelopeReset,
   parseRateLimitReset,
   scheduleRateLimitRetry,
 } from "./rate-limit-retry.js";
@@ -2181,6 +2182,26 @@ export async function runAgentTurnWithFallback(params: {
       commandBody: params.commandBody,
       isHeartbeat: params.isHeartbeat,
       payloads: runResult.payloads,
+    });
+  }
+
+  // FORK 2026-10-09 — a usage limit can also arrive as a FINISHED turn: the Tinker
+  // bridge emits it as an `__ERR_ENV__` envelope with stopReason "stop", so the catch
+  // block above never sees it and its retry was never armed. Same guards as there.
+  const envelopeResetAt = parseRateLimitEnvelopeReset(runResult?.payloads);
+  if (
+    envelopeResetAt !== undefined &&
+    params.sessionKey &&
+    shouldSurfaceToControlUi &&
+    !params.isHeartbeat &&
+    !isSubagentSessionKey(params.sessionKey)
+  ) {
+    scheduleRateLimitRetry({
+      sessionKey: params.sessionKey,
+      runId,
+      prompt: params.commandBody,
+      resetAt: envelopeResetAt,
+      dispatch: dispatchRateLimitRetryThroughGateway,
     });
   }
 

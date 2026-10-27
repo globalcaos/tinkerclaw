@@ -51,7 +51,7 @@ describe("enrich", () => {
     expect(r[0]?.label.length).toBeLessThanOrEqual(80);
   });
   it("a single-line restatement or one bullet adds nothing", () => {
-    expect(readingsOf("Send it to Jordi.")).toEqual([]);
+    expect(readingsOf("Send it to Sam.")).toEqual([]);
     expect(readingsOf("- only one")).toEqual([]);
   });
   it("existing readings are kept", () => {
@@ -83,6 +83,35 @@ describe("questionsFor", () => {
     ]);
     const read = sit("pre-tool", { request: F("r"), effectClass: F("read") });
     expect(fam.questionsFor("pre-tool", read, freshState())).toEqual([]);
+  });
+  it("pre-tool: excess-scope is not asked when every target is the agent's own or one the owner named (2026-10-25)", () => {
+    const file = (path: string) => ({ path, kind: "file" as const, resolvedFrom: path });
+    const del = (owned: Situation["ownedTargets"]["value"]) =>
+      fam.questionsFor(
+        "pre-tool",
+        sit("pre-tool", {
+          request: F("tidy up"),
+          effectClass: F("delete"),
+          targets: F([file("/w/a.log"), file("/w/b.log")]),
+          ownedTargets: F(owned),
+        }),
+        freshState(),
+      );
+    expect(del([])).toEqual(["excess-scope"]);
+    expect(del([{ path: "/w/a.log", why: "created" }])).toEqual(["excess-scope"]);
+    expect(
+      del([
+        { path: "/w/a.log", why: "created" },
+        { path: "/w/b.log", why: "named" },
+      ]),
+    ).toEqual([]);
+    // A file the agent only edited is still the owner's: the question stays.
+    expect(
+      del([
+        { path: "/w/a.log", why: "scratch" },
+        { path: "/w/b.log", why: "edited" },
+      ]),
+    ).toEqual(["excess-scope"]);
   });
   it("evidence questions only with an open reading, at pre-tool and post-tool", () => {
     const open = freshState({ readings: [{ id: "r1", label: "a", status: "open" }] });

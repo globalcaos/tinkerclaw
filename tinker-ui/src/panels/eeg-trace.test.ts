@@ -728,13 +728,18 @@ describe("eegCostWidthPx", () => {
     expect(qwenPx / opusPx).toBeCloseTo(costRatio, 1);
   });
 
-  it("is monotonic in cost across the METERED ladder: kimi > qwen3.8 > glm", () => {
+  // 2026-10-23: kimi-k3 fell to $5.50 (Sail Research), under qwen3.8-max's $6.00, so the old
+  // fixed "kimi > qwen" pin failed on a legitimate reprice. The property is that width follows
+  // cost, so order the pair by their own cost instead of by a remembered price.
+  it("is monotonic in cost across the METERED ladder: dearer of kimi/qwen3.8 > cheaper > glm", () => {
     expect(typeof EEG_EFFORT_MULT).toBe("object");
     const kimi = eegCostWidthPx("moonshotai/kimi-k3", "max");
     const qwen = eegCostWidthPx("qwen/qwen3.8-max", "medium");
     const glm = eegCostWidthPx("z-ai/glm-5", "minimal");
-    expect(kimi).toBeGreaterThan(qwen);
-    expect(qwen).toBeGreaterThan(glm);
+    const kimiDearer = eegRelCost("moonshotai/kimi-k3") >= eegRelCost("qwen/qwen3.8-max");
+    const [dear, cheap] = kimiDearer ? [kimi, qwen] : [qwen, kimi];
+    expect(dear).toBeGreaterThan(cheap);
+    expect(cheap).toBeGreaterThan(glm);
   });
 
   // FORK 2026-08-16 (the architect: "double check that the EEG thickness of the models are
@@ -821,10 +826,11 @@ describe("eegCostWidthPx", () => {
   // ratio test guards the middle: the dearest models must stay SEPARABLE and their
   // widths must stay PROPORTIONAL, however wide that gets.
   it("never clips the expensive end — ratios survive at any magnitude", () => {
-    const kimi = eegCostWidthPx("moonshotai/kimi-k3", "medium"); // $8.50/Mtok, cash
+    const kimi = eegCostWidthPx("moonshotai/kimi-k3", "medium"); // $5.50/Mtok, cash (2026-10-23)
     const qwen = eegCostWidthPx("qwen/qwen3.8-max", "medium"); // $6/Mtok, cash
     const fable = eegCostWidthPx("claude-fable-5", "medium"); // prepaid reference
-    expect(kimi).toBeGreaterThan(qwen);
+    // 2026-10-23: kimi fell under qwen; the two are close, so assert only that they stay separable.
+    expect(Math.abs(kimi - qwen)).toBeGreaterThan(1);
     // proportional, not merely ordered — the whole reason the axis is linear
     expect(kimi / qwen).toBeCloseTo(
       eegRelCost("moonshotai/kimi-k3") / eegRelCost("qwen/qwen3.8-max"),
@@ -834,8 +840,8 @@ describe("eegCostWidthPx", () => {
       eegRelCost("moonshotai/kimi-k3") / eegRelCost("claude-fable-5"),
       2,
     );
-    // and it is genuinely wide: kimi is ~19x fable and must draw that way.
-    expect(kimi).toBeGreaterThan(40);
+    // and it is genuinely wide: kimi is ~13x fable and must draw that way (was ~19x before 2026-10-23).
+    expect(kimi).toBeGreaterThan(25);
   });
 
   it("falls back to a default cost for unknown models (never NaN)", () => {
@@ -970,7 +976,7 @@ describe("eegCostWidthLogPx — the bounded surfaces (the architect 2026-08-28)"
       "claude-sonnet-5",
       "claude-opus-4-8",
       "claude-fable-5",
-      "qwen/qwen3.8-27b",
+      "openai-codex/gpt-5.5", // a seat price, so metered-seat moves (GLM-5.2 fell under Fable 5 on 2026-10-24) cannot reorder the pin
       "moonshotai/kimi-k3",
     ];
     const rows = models.map((m) => ({
@@ -989,11 +995,12 @@ describe("eegCostWidthLogPx — the bounded surfaces (the architect 2026-08-28)"
     // CONSTRUCTION — 25.00 at the current constants — while the true cost ratio is
     // ~794× at today's Relace seat ($8.50). The pinned property: the drawn ratio
     // stays far below the cost ratio. 2026-09-26: Luna is 0.082 and Kimi K3 is 9.043 (Sail Research),
-    // so the true ratio is ~110× — hence > 100.
+    // so the true ratio was ~110×; 2026-10-17 Kimi K3 fell to 8.1 (Sail Research), ~98.7× — hence > 90.
     const kimi = "moonshotai/kimi-k3";
     const luna = "codex/gpt-5.6-luna";
     const costRatio = eegRelCost(kimi) / eegRelCost(luna);
-    expect(costRatio).toBeGreaterThan(100);
+    // 2026-10-23: Kimi K3 fell to $5.50 (Sail Research), ~67x Luna — hence > 60.
+    expect(costRatio).toBeGreaterThan(60);
     const drawnRatio = eegCostWidthLogPx(kimi, "medium") / eegCostWidthLogPx(luna, "medium");
     // Luna is no longer the 1px anchor (2026-09-23), so both widths come off the anchor.
     const px = (rel: number) =>
@@ -1156,7 +1163,7 @@ describe("eegProviderPaint", () => {
 // and which would have silently re-broken on a future `claude-fable-5.2`.
 describe("fable 5.1 — subscription vs metered route", () => {
   it("the claude-code route is amortised, an openrouter route would be cash", () => {
-    expect(eegRelCost("claude-code/claude-fable-5-1")).toBeCloseTo(1.1383, 4);
+    expect(eegRelCost("claude-code/claude-fable-5-1")).toBeCloseTo(0.9771, 4);
     expect(eegRelCost("openrouter/anthropic/claude-fable-5.1")).toBe(50);
   });
 
@@ -1180,7 +1187,7 @@ describe("fable 5.1 — subscription vs metered route", () => {
   it("a hypothetical future hyphen/dot spelling cannot flip the basis", () => {
     // Route decides, spelling does not: both metered ids stay at cash price.
     expect(eegRelCost("openrouter/anthropic/claude-fable-5-2")).toBe(50);
-    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(1.1383, 4);
+    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(0.9771, 4);
   });
 });
 
@@ -2129,7 +2136,12 @@ describe("resolveEegPaint — the central point (the architect 2026-08-06)", () 
     // FORK 2026-08-12: deepseek no longer floors. On the log axis $0.144/Mtok is a
     // real, drawable price — it is the CHEAPEST metered model, not a free one, and
     // the panel now says so instead of hiding it in the hairline with local greps.
-    const dseek = resolveEegPaint({ model: "deepseek/deepseek-v4-flash", provider: "openrouter" });
+    const dseek = resolveEegPaint({
+      model: "deepseek/deepseek-v4.1-flash",
+      provider: "openrouter",
+    });
+    // 2026-10-25: plain v4-flash fell to $0.047 (Baidu promo) and hit the hairline floor, so this
+    // assertion rides the V4.1 Flash row ($0.18), which stays a real, drawable price.
     expect(dseek.stroke).toBe("#4D6BFE");
     expect(dseek.width).toBeGreaterThan(EEG_COST_PX_FLOOR);
     expect(dseek.width).toBeLessThan(eegCostWidthPx("qwen/qwen3.8-max", "medium"));

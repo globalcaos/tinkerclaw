@@ -391,33 +391,33 @@ export const EEG_COST_COMPARE_LABEL = "Grok";
  * When a price legitimately changes, update the number here — that is the whole ritual.
  */
 export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
+  ["z-ai/glm-5.3-flash", 0.41], // re-priced 2026-10-27 live endpoints (was 0.44px). re-priced 2026-10-26 live endpoints (was 0.41px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 0.5px)
   ["codex/gpt-5.6-luna", 0.48], // off the floor since the 2026-09-23 measured-seat re-base
-  ["claude-haiku-4-5", 0.66], // off the floor since the 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4-flash-0731", 0.77], // 0.132 — re-checked 2026-09-26 live (StreamLake still cheapest, −17%)
-  ["xai/grok-4.5", 0.79], // off the floor since the 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4.1-flash", 1.05], // 0.18 (Decart, −55%; was Sail Research $0.40) — re-checked 2026-10-06 live endpoints
-  ["claude-sonnet-5", 1.32], // 2026-09-23 measured-seat re-base
-  ["z-ai/glm-5.3-flash", 1.45], // 0.25 (DeepInfra, +79%) — re-checked 2026-10-01 live endpoints
+  ["claude-haiku-4-5", 0.57], // 2026-10-10 seat re-measurement (was 0.66); off the floor since the 2026-09-23 measured-seat re-base
+  ["xai/grok-4.5", 0.68], // 2026-10-10 seat re-measurement (was 0.79); off the floor since the 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4-flash-0731", 0.87], // re-priced 2026-10-26 live endpoints (was 0.78px). 0.1333 (Baidu fp8, -11%; was Sail Research $0.15) — re-checked 2026-10-24 live endpoints (was 0.87px)
+  ["deepseek/deepseek-v4.1-flash", 1.05], // 0.18 (Decart, +20%; was Sail Research $0.15) — re-checked 2026-10-23 live endpoints
+  ["claude-sonnet-5", 1.14], // 2026-10-10 seat re-measurement (was 1.32); 2026-09-23 measured-seat re-base
+  ["claude-opus-4-8", 2.84], // 2026-10-10 seat re-measurement (was 3.31); 2026-09-23 measured-seat re-base
   ["tencent/hy3", 3.07], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
-  ["claude-opus-4-8", 3.31], // 2026-09-23 measured-seat re-base
   ["deepseek/deepseek-v4-flash-vision-exp", 3.76], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
+  ["xiaomi/mimo-v2.6-pro", 4.55], // 0.783 (DeepInfra via OR, −10%; was $0.87) — re-checked 2026-10-20 live endpoints
+  ["deepseek/deepseek-v4-pro-0813", 4.65], // re-priced 2026-10-26 live endpoints (was 2.3px). 0.396 (Baidu fp8, -50%; Baidu promo back, may revert; was $0.80) — re-checked 2026-10-24 live endpoints (was 4.65px)
   ["codex/gpt-5.6-terra", 4.77], // 2026-09-23 measured-seat re-base
-  ["xiaomi/mimo-v2.6-pro", 5.06], // 0.87 (DeepInfra, +5%; GMICloud seat gone) — re-checked 2026-10-06 live endpoints
-  ["minimax/minimax-m3", 5.58], // 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
-  ["claude-fable-5", 6.62], // 2026-09-23 measured-seat re-base
-  ["z-ai/glm-5.3", 7.67], // 1.32 (Novita, +170%; Baidu now $4.40) — re-checked 2026-10-06 live endpoints
-  ["qwen/qwen3.8-27b", 8.66], // 1.49 (Cerebras, −16%) — re-checked 2026-10-02 live endpoints
-  ["z-ai/glm-5.2", 10.47], // 1.80 (DeepInfra, +305%; Baidu now $7.88) — re-checked 2026-10-06 live endpoints
-  ["deepseek/deepseek-v4-pro-0813", 11.51], // 1.98 (StreamLake and DeepSeek; Baidu seat gone, Ionstream $1.48 is status -2 down) — re-checked 2026-10-03 live endpoints
+  ["minimax/minimax-m3", 5.12], // re-priced 2026-10-27 live endpoints (was 5.58px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
+  ["claude-fable-5", 5.68], // 2026-10-10 seat re-measurement (was 6.62); 2026-09-23 measured-seat re-base
+  ["qwen/qwen3.8-27b", 7.27], // re-priced 2026-10-26 live endpoints (was 2.91px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
+  ["z-ai/glm-5.3", 8.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
+  ["z-ai/glm-5.2", 8.37], // re-priced 2026-10-26 live endpoints (was 3.45px). 0.594 (Baidu fp8, -59%; was DeepInfra, our route, $1.44) — re-checked 2026-10-24 live endpoints (was 8.37px)
+  ["moonshotai/kimi-k2.6", 10.47], // re-priced 2026-10-27 live endpoints (was 11.34px). re-priced 2026-10-26 live endpoints (was 11.0px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 11.34px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
   ["openai-codex/gpt-5.5", 11.93], // 2026-09-23 measured-seat re-base
-  ["moonshotai/kimi-k2.6", 13.95], // 2.40 (DigitalOcean, +31%; Baidu seat gone) — re-checked 2026-10-06 live endpoints
   ["google/gemini-3.8-flash", 21.8], // $3.75 promo, same as 3.7
   ["google/gemini-3.7-flash", 21.8],
   ["qwen/qwen3.7-max", 25.73],
   ["qwen/qwen3.8-max", 34.88],
+  ["moonshotai/kimi-k3", 47.97], // re-priced 2026-10-27 live endpoints (was 31.98px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["github-copilot/gpt-5.4", 48.61],
   ["google/gemini-3.5-flash", 52.33],
-  ["moonshotai/kimi-k3", 56.69], // 9.75 (Phala, −13%) — re-checked 2026-10-06 live endpoints
   ["github-copilot/claude-opus-4.7", 80.99],
   ["github-copilot/gpt-5.5", 97.15],
 ] as const;
@@ -537,37 +537,37 @@ export const EEG_COST_LOG_PX_FLOOR = 0.375; // tool:local + anything under the r
  */
 export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["tool:local", 0.38],
+  ["z-ai/glm-5.3-flash", 7.23], // re-priced 2026-10-27 live endpoints (was 7.49px). re-priced 2026-10-26 live endpoints (was 7.21px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 7.87px). Earlier: 0.16 (OpenInference, −20%; was $0.20) — re-checked 2026-10-24 live endpoints
   ["codex/gpt-5.6-luna", 7.75], // 2026-09-23 measured-seat re-base
-  ["claude-haiku-4-5", 8.83], // 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4-flash-0731", 9.32], // 0.132 — re-checked 2026-09-26 live (StreamLake still cheapest, −17%)
-  ["xai/grok-4.5", 9.44], // 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4.1-flash", 10.35], // 0.18 (Decart, −55%; was Sail Research $0.40) — re-checked 2026-10-06 live endpoints
-  ["claude-sonnet-5", 11.13], // 2026-09-23 measured-seat re-base
-  ["z-ai/glm-5.3-flash", 11.44], // 0.25 (DeepInfra, +79%) — re-checked 2026-10-01 live endpoints
+  ["claude-haiku-4-5", 8.33], // 2026-10-10 seat re-measurement (was 8.83); 2026-09-23 measured-seat re-base
+  ["xai/grok-4.5", 8.93], // 2026-10-10 seat re-measurement (was 9.44); 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4-flash-0731", 9.75], // re-priced 2026-10-26 live endpoints (was 9.35px). 0.15 (Sail Research fp4, -17%; was DeepInfra, our route, $0.18) — re-checked 2026-10-24 live endpoints
+  ["deepseek/deepseek-v4.1-flash", 10.35], // 0.18 (Decart, +20%; was Sail Research $0.15) — re-checked 2026-10-23 live endpoints
+  ["claude-sonnet-5", 10.62], // 2026-10-10 seat re-measurement (was 11.13); 2026-09-23 measured-seat re-base
+  ["claude-opus-4-8", 13.66], // 2026-10-10 seat re-measurement (was 14.16); 2026-09-23 measured-seat re-base
   ["tencent/hy3", 13.91], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
-  ["claude-opus-4-8", 14.16], // 2026-09-23 measured-seat re-base
   ["deepseek/deepseek-v4-flash-vision-exp", 14.59], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
+  ["xiaomi/mimo-v2.6-pro", 15.22], // 0.783 (DeepInfra via OR, −10%; was $0.87) — re-checked 2026-10-20 live endpoints
+  ["deepseek/deepseek-v4-pro-0813", 15.29], // re-priced 2026-10-26 live endpoints (was 12.96px). 0.80 (Sail Research fp4, +37%; was $0.582) — re-checked 2026-10-24 live endpoints
   ["codex/gpt-5.6-terra", 15.38], // 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4-pro", 15.44], // 0.8376 — re-checked 2026-09-26 live (StreamLake took cheapest from Baidu $1.6292, −49% out)
-  ["xiaomi/mimo-v2.6-pro", 15.57], // 0.87 (DeepInfra, +5%; GMICloud seat gone) — re-checked 2026-10-06 live endpoints
-  ["minimax/minimax-m3", 15.89], // 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
-  ["claude-fable-5", 16.46], // 2026-09-23 measured-seat re-base
-  ["z-ai/glm-5.3", 16.95], // 1.32 (Novita, +170%; Baidu now $4.40) — re-checked 2026-10-06 live endpoints
-  ["qwen/qwen3.8-27b", 17.35], // 1.49 (Cerebras, −16%) — re-checked 2026-10-02 live endpoints
-  ["z-ai/glm-5.2", 17.98], // 1.80 (DeepInfra, +305%; Baidu now $7.88) — re-checked 2026-10-06 live endpoints
-  ["deepseek/deepseek-v4-pro-0813", 18.29], // 1.98 (StreamLake and DeepSeek; Baidu seat gone, Ionstream $1.48 is status -2 down) — re-checked 2026-10-03 live endpoints
+  ["minimax/minimax-m3", 15.61], // re-priced 2026-10-27 live endpoints (was 15.89px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
+  ["claude-fable-5", 15.95], // 2026-10-10 seat re-measurement (was 16.46); 2026-09-23 measured-seat re-base
+  ["qwen/qwen3.8-27b", 16.77], // re-priced 2026-10-26 live endpoints (was 13.73px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
+  ["z-ai/glm-5.3", 17.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
+  ["z-ai/glm-5.2", 17.24], // re-priced 2026-10-26 live endpoints (was 14.3px). 1.44 (DeepInfra, our route, -20%; was $1.80) — re-checked 2026-10-24 live endpoints
+  ["deepseek/deepseek-v4-pro", 17.37], // re-priced 2026-10-26 live endpoints (was 13.12px). 0.4157 (Baidu, -78%; was StreamLake $1.8966) — re-checked 2026-10-25 live endpoints (was 18.15px). Earlier: 1.8966 (StreamLake still cheapest, +126% vs $0.8376; GMICloud $1.914 next) — re-checked 2026-10-10 live endpoints
+  ["moonshotai/kimi-k2.6", 17.98], // re-priced 2026-10-27 live endpoints (was 18.24px). re-priced 2026-10-26 live endpoints (was 18.14px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 18.24px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
   ["openai-codex/gpt-5.5", 18.41], // 2026-09-23 measured-seat re-base
-  ["moonshotai/kimi-k2.6", 18.93], // 2.40 (DigitalOcean, +31%; Baidu seat gone) — re-checked 2026-10-06 live endpoints
+  ["z-ai/glm-5.1", 19.56], // re-priced 2026-10-27 live endpoints (was 19.71px). 3.036 — re-checked 2026-09-10 live (StreamLake still cheapest)
   ["moonshotai/kimi-k2.7-code", 19.67], // 3.0 (StreamLake, was the $3.50 list) — re-checked 2026-10-01 live endpoints
-  ["z-ai/glm-5.1", 19.71], // 3.036 — re-checked 2026-09-10 live (StreamLake still cheapest)
   ["google/gemini-3.8-flash", 20.41], // $3.75 promo, same as 3.7
   ["google/gemini-3.7-flash", 20.41],
   ["meta/muse-spark-1.2", 20.82],
   ["qwen/qwen3.7-max", 20.96],
   ["qwen/qwen3.8-2.4t-a95b", 21.96],
   ["qwen/qwen3.8-max", 21.96],
+  ["moonshotai/kimi-k3", 23.02], // re-priced 2026-10-27 live endpoints (was 21.68px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["google/gemini-3.5-flash", 23.31],
-  ["moonshotai/kimi-k3", 23.57], // 9.75 (Phala, −13%) — re-checked 2026-10-06 live endpoints
 ] as const;
 
 /**

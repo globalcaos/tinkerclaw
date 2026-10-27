@@ -7,6 +7,13 @@ import { CircuitBreaker } from "./breaker.js";
 import { TtlLru, cacheKey } from "./cache.js";
 import type { JevQuestion, JevSituation, JevVerdict } from "./types.js";
 
+/**
+ * The owner's rule (2026-10-15): a Jev call with no answer within 1 s has failed. Every caller's budget is
+ * clamped to this, so a slow Jev never holds a prompt, a tool call or a stop for longer; the caller takes the
+ * same "timeout" path it already has. The tool-call hook carries its own copy (amygdala-pretooluse.mjs).
+ */
+export const JEV_MAX_WAIT_MS = 1_000;
+
 export interface JevTransport {
   post(
     url: string,
@@ -213,7 +220,7 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
         `${this.o.baseUrl.replace(/\/+$/, "")}/v1/systemone`,
         body,
         headers,
-        o.budgetMs ?? 2000,
+        Math.min(o.budgetMs ?? JEV_MAX_WAIT_MS, JEV_MAX_WAIT_MS),
       );
     } catch (err) {
       // Only the error's name is inspected; its message is never propagated (it could echo the key).

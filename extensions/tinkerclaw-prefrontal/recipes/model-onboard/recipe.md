@@ -111,7 +111,14 @@ Check the SUBSCRIPTION routes first, because they are the ones that look absent:
   "not served yet" as **expired on read** — vendors ship ids between our runs, and
   a stale negative is what kept Fable 5.1 on the wrong route.
 
-Only if no subscription route serves it, use the metered one (OpenRouter et al),
+Next, a **direct API key we already hold** (Google via `GEMINI_API_KEY`, xAI, DeepInfra):
+list that provider's own models endpoint and look for the id there before going metered.
+
+The route sets the BILLING LABEL only, never whether the model is onboarded (the architect,
+2026-10-13: "no model should be left out"). A model no catalog sells yet still gets its
+score and a dossier row marked "no public price yet"; see `model-catalog-refresh` Step 1.
+
+Only if no subscription or direct route serves it, use the metered one (OpenRouter et al),
 with id, price AND context window taken from the live catalog:
 
 ```bash

@@ -61,6 +61,7 @@ function getSessionStoreLoader(): ((cfg: any) => any) | null {
   }
   return _sessionStoreLoader;
 }
+import { isSlashCommandPrompt } from "openclaw/plugin-sdk/fork-prompt-envelope";
 import { makeFitnessLookup } from "openclaw/plugin-sdk/fork-recipe-engine";
 import { taskText } from "openclaw/plugin-sdk/fork-thalamus";
 import { callGateway } from "openclaw/plugin-sdk/testing";
@@ -93,7 +94,7 @@ import {
   type MarketplaceFetch,
   type MarketplaceMeta,
 } from "./recipe-marketplace.js";
-import { recipeIndexExtraDirs, seedPlanFromPrompt } from "./recipe-matcher.js";
+import { loadRecipeIndex, recipeIndexExtraDirs, seedPlanFromPrompt } from "./recipe-matcher.js";
 import { createRecipeRpcs } from "./recipe-rpcs.js";
 import { resolveOwnRecipesDir } from "./recipe-runner.js";
 import { RecipeStore } from "./recipe-store.js";
@@ -156,6 +157,13 @@ const loadAdvice = (): Promise<AdviceModule | undefined> =>
 export default function register(api: OpenClawPluginApi) {
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const config = api.config as Record<string, any>;
+  // The gateway runs at most subagents.maxConcurrent subagents at once and REFUSES a spawn once a
+  // requester has maxChildrenPerAgent active children; defaults mirror src/config/agent-limits.ts
+  // (8 and 5). Orchestration never asks for more than this at once. (2026-10-09)
+  const orchestrationMaxInFlight = Math.min(
+    Number(config?.agents?.defaults?.subagents?.maxConcurrent) || 8,
+    Number(config?.agents?.defaults?.subagents?.maxChildrenPerAgent) || 5,
+  );
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const pluginConfig = (config.plugins as any)?.entries?.[PLUGIN_ID]?.config ?? {};
 
@@ -887,7 +895,8 @@ export default function register(api: OpenClawPluginApi) {
         pollIntervalMs,
         stalenessThresholdMs,
         cores: os.cpus?.().length ?? 0,
-        concurrencyCap: concurrencyCap(),
+        // Since 2026-10-09 the cap also respects the gateway's subagent limits (see orchestrationMaxInFlight).
+        concurrencyCap: Math.min(concurrencyCap(), orchestrationMaxInFlight),
         // FORK 2026-07-25 (the architect): the ORCA card's footer link OPENS this file in the system
         // viewer, so the panel points at the real policy rather than restating it. Path only —
         // serving the text would ship a few KB on every budget refresh for nothing.
@@ -1110,7 +1119,7 @@ export default function register(api: OpenClawPluginApi) {
           return {};
         }
         const prompt: string = typeof event?.prompt === "string" ? event.prompt : "";
-        if (!prompt.trim()) return {};
+        if (!prompt.trim() || isSlashCommandPrompt(prompt)) return {};
 
         // Provenance trail emitter → the RECIPES panel sees searched/matched/
         // merged/composed/authored as the recipe lifecycle unfolds. Same shape
@@ -1165,7 +1174,7 @@ export default function register(api: OpenClawPluginApi) {
           log.info?.(
             `[recipe-matcher] sessionKey=${sessionKey} no recommendation owed (${turn.why})`,
           );
-          return parts.length > 0 ? { prependSystemContext: parts.join("\n\n") } : {};
+          return parts.length > 0 ? { prependContext: parts.join("\n\n") } : {};
         }
         const ranking = turn.ranking;
 
@@ -1356,7 +1365,10 @@ export default function register(api: OpenClawPluginApi) {
       } catch (err) {
         log.warn?.(`[recipe-matcher] before_prompt_build failed: ${String(err)}`);
       }
-      if (parts.length > 0) return { prependSystemContext: parts.join("\n\n") };
+      // FORK 2026-10-10 (J-series Phase 1.5): effort guidance, the matched recipe, the gap note and the advice tag are
+      // computed from THIS prompt, so they ride the turn (prependContext). As system context a warm Claude Code worker
+      // saw them only at spawn, and each new match moved the whole cached prefix.
+      if (parts.length > 0) return { prependContext: parts.join("\n\n") };
       return {};
     },
     { priority: 20 },
@@ -1425,6 +1437,7 @@ export default function register(api: OpenClawPluginApi) {
     // Opt-in gates (all default OFF): arbitrary orchestration scripts, publishing
     // to JourneyKits, and downloading recipes from JourneyKits.
     allowOrchestrationScripts: pluginConfig.orchestration?.allowScripts === true,
+    orchestrationMaxInFlight,
     allowRecipePublish: pluginConfig.marketplace?.allowPublish === true,
     allowRemoteRecipeInstall: pluginConfig.marketplace?.allowRemoteInstall === true,
   });
@@ -1463,6 +1476,17 @@ export default function register(api: OpenClawPluginApi) {
   log.info?.(
     `[prefrontal] kit RPCs registered (baseUrl=${typeof journeyCfg.baseUrl === "string" ? journeyCfg.baseUrl : "default"}, apiKey=${journeyCfg.apiKey ? "set" : "absent"})`,
   );
+
+  // FORK 2026-10-09: warm the matcher once at start so `<stateDir>/prefrontal/
+  // recipe-index.json` (recipe-index-publish.ts) exists for Claude Code sessions as
+  // soon as the gateway is up, not after the first matched turn. Same dirs the turn
+  // hook scans (ownRecipesDir + recipeIndexExtraDirs). Fire-and-forget: a scan failure
+  // logs one line and never delays or fails registration.
+  void loadRecipeIndex(ownRecipesDir, recipeIndexExtraDirs(bridgedSkillsDir), log).catch((err) => {
+    log.warn?.(
+      `[prefrontal] recipe-index warm-up failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
   // ── Restart resume: single source of truth (FORK 2026-05-30) ──
   // The plan-based `restart-continue` auto-fire was REMOVED. It resumed any

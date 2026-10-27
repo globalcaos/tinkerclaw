@@ -2,7 +2,7 @@
 file: subagents-and-recipes.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-06-04
+last_verified: 2026-10-09
 last_verified_commit: 24237e0cd22
 single_owner: yes — subagent + kit orchestration + plan persistence + skill-library behavior + marketplace semantics facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 tinker-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream), memory-layout.md (WHERE recipe-archive / skill-library / failure-state stores live on disk), probes.md (fork.skill.* / fork.prefrontal.* RPC surface), config-shape.md (RECIPE_AUTOAPPLY_ENABLED, dead-code trap registry)
@@ -13,6 +13,8 @@ verify:
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'a=open("extensions/tinkerclaw-prefrontal/recipe-advice.ts").read(); t=open("src/shared/enhancement-task-rank.ts").read(); m=open("extensions/tinkerclaw-prefrontal/recipe-matcher.ts").read(); i=open("extensions/tinkerclaw-prefrontal/index.ts").read(); assert "isInteractiveSession" in a or "isInteractiveSession" in t, "the matcher gate is the main-only test again (bible subagents-and-recipes retrieval v2)"; assert "SEED_CONFIDENCE = 0.6" in t and "allowSeed" in m, "a plan can seed from an INSPIRE or a weak match (bible retrieval v2)"; assert "wins over" in m, "the overlay recipe no longer wins a slug collision (bible retrieval v2)"; assert "openclaw.thalamus.taskRanker" in open("src/infra/thalamus-task-ranking.ts").read(), "the one-ranker slot is gone: Jev is asked twice per turn (bible retrieval v2)"; assert "task-notification" in open("src/shared/enhancement-text.ts").read(), "runtime notices get a list again (bible retrieval v2)"; assert "prefrontal.recipe.extract" in open("extensions/tinkerclaw-prefrontal/recipe-rpcs.ts").read(), "recipe.extract is not registered (bible retrieval v2)"'
   - name: the Overseer never arms itself; only an explicit fork.overseer.activate call starts it (2026-10-05)
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && ! grep -qE 'callGatewayFromCli\([[:space:]]*"fork\.overseer\.activate' extensions/tinkerclaw-prefrontal/index.ts && ! grep -qF 'Overseer engaged (' extensions/tinkerclaw-prefrontal/index.ts && grep -qF '"fork.overseer.activate": async' src/fork/overseer-runtime.ts
+  - name: the gateway publishes the recipe catalog for Claude Code sessions and warms it at start (2026-10-09)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'void publishRecipeIndex(index' extensions/tinkerclaw-prefrontal/recipe-matcher.ts && grep -qF 'void loadRecipeIndex(ownRecipesDir' extensions/tinkerclaw-prefrontal/index.ts && grep -qF 'resolveStateDir' extensions/tinkerclaw-prefrontal/recipe-index-publish.ts && grep -qF 'recipe-index.json' claude-plugins/tinkerclaw-core/scripts/recipe-hint.mjs
   - name: spawn helper script is executable
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
   - name: a detached fan-out runs on its own unit and --status tells running from dead (2026-10-01)
@@ -431,6 +433,13 @@ Recovery contract: because the matcher seeds a plan for substantially every non-
 **Don't regress:** the privacy gate (`RoutingReader.gate`) applies to every ranking read; the advice is never a `chat.send`; the matcher hook must not run for subagents or cron; a ranking with no Jev entry must never be labelled Jev.
 
 **Files:** `src/shared/enhancement-{text,recall,rank,replay,replay-rank,budget,task-rank}.ts`, `src/infra/thalamus-task-ranking.ts`, `extensions/tinkerclaw-thalamus/src/{task-ranker,store,runtime}.ts`, `extensions/tinkerclaw-prefrontal/{recipe-matcher,recipe-advice,recipe-extract,index}.ts`, `scripts/broca-retrieval-replay.ts`, `scripts/broca-rank-live.ts`.
+
+## The published recipe catalog — Claude Code reads what the gateway publishes (FORK 2026-10-09)
+
+The matcher's catalog lived only inside the gateway, so a plain Claude Code session (a terminal or a background job) could run a recipe it already knew by slug but could not discover one, and the hand-kept `CATALOG.md` was missing 30 of 111 slugs. Same pattern as the moral code: the gateway publishes, Claude Code only reads.
+
+- **Producer.** `recipe-index-publish.ts publishRecipeIndex()` writes `<state dir>/prefrontal/recipe-index.json` = `{version:1, generatedAt, recipes:[{slug, owner, title, summary, tags, category?, subdivision?, path}]}`, sorted by slug, one entry per slug exactly as `loadRecipeIndex` resolved it (the overlay wins). The state dir comes from `resolveStateDir` (`openclaw/plugin-sdk/state-paths`), the resolver the moral code uses, so both files sit under one root. It runs from `loadRecipeIndex`'s rebuild branch (fire-and-forget, never on a cache hit) and once at plugin register, so the file exists right after start. The write is atomic (tmp + rename), skipped when the recipes array is unchanged, and never throws into its caller. `category` and `subdivision` now ride on `RecipeIndexEntry` (not scored) so the catalog keeps each recipe's shelf.
+- **Consumers.** `tinkerclaw-core`'s `recipe-hint.mjs` (UserPromptSubmit, plain Claude Code only; `tool-loop.md`, 2026-10-09) and the Claude Code `jarvis-recipe` skill's locate step. A chat worker keeps the gateway's own per-turn matcher above; it never reads this file.
 
 ## Composition, loops, and on-the-fly authoring (FORK 2026-05-29/30)
 

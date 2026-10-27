@@ -635,6 +635,41 @@ export function nextResetPaging(
 }
 
 /**
+ * FORK 2026-10-18 (the architect: "when I type /clear the chat does not reset") — what an archive may still
+ * bring onto a tab the owner cleared at `clearedAt` (the gateway's reset instant). `/clear` keeps
+ * Main's key, so every archive of that key stays pageable, and an empty pane is already "at the
+ * top": the first upward flick paged the cleared turns, and weeks of older ones, straight back in.
+ * Only rows at or after the clear come back; a row with no time cannot prove it is newer and is
+ * dropped. `done`: this archive reached the clear (reset before it, or holding a row from before
+ * it). Archives page newest first, so nothing older can hold a row after the clear either.
+ */
+export function archiveRowsAfterClear(
+  rows: readonly unknown[],
+  a: ResetArchiveMeta,
+  clearedAt: number | null,
+): { rows: unknown[]; done: boolean } {
+  if (clearedAt === null) {
+    return { rows: [...rows], done: false };
+  }
+  if (a.resetAt !== null && a.resetAt < clearedAt) {
+    return { rows: [], done: true };
+  }
+  let reachedClear = false;
+  const kept = rows.filter((m) => {
+    const t = asRecord(m)?.timestamp;
+    if (typeof t !== "number" || !Number.isFinite(t)) {
+      return false;
+    }
+    if (t < clearedAt) {
+      reachedClear = true;
+      return false;
+    }
+    return true;
+  });
+  return { rows: kept, done: reachedClear };
+}
+
+/**
  * The client row that marks an archive on the page: below the archive it closes, labelled by what
  * it was (`kind`). A run boundary.
  */
@@ -855,7 +890,7 @@ export function applyResetArchivePage(page: unknown[], plan: ResetArchivePlan): 
 }
 
 /**
- * FORK 2026-10-02 (the architect: "When switching from Acmevision to its slave, parallel worker, the chat
+ * FORK 2026-10-02 (the architect: "When switching from Orbisvision to its slave, parallel worker, the chat
  * history does not load at all") — history for a page that holds NO server rows yet but is not
  * blank: the live bubbles of a run it has been watching (a reload while the session was busy), and
  * client notes. The tail merge treats such a page as blank and REPLACES it, which would drop the

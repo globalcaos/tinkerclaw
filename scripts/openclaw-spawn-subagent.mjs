@@ -55,6 +55,21 @@ if (!TASK) {
   process.exit(2);
 }
 
+// FORK 2026-10-21: optional admission hook. On a small host (the Pi) a burst of gateway-routed spawns
+// stalls the gateway's event loop and every chat with it. If the host installs an executable
+// `<state dir>/admit`, it is run as `admit gateway` and may block until the gateway can take another
+// agent; any non-zero exit or a missing hook lets the spawn through. Opt out with OPENCLAW_ADMIT=0.
+{
+  const admit = path.join(
+    process.env.OPENCLAW_STATE_DIR ?? path.join(os.homedir(), ".openclaw"),
+    "admit",
+  );
+  if (process.env.OPENCLAW_ADMIT !== "0" && fs.existsSync(admit)) {
+    const { spawnSync } = await import("node:child_process");
+    spawnSync(admit, ["gateway"], { stdio: ["ignore", "ignore", "inherit"] });
+  }
+}
+
 const MODEL = flag("model");
 const LABEL = flag("label");
 const THINKING = flag("thinking");

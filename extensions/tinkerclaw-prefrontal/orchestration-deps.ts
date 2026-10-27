@@ -103,6 +103,26 @@ function resolveAutoLeaf(
 interface HistoryMessage {
   role?: string;
   content?: unknown;
+  model?: string;
+  stopReason?: string;
+  errorMessage?: string;
+}
+
+/**
+ * The error text when the child's last assistant message is a provider error rather than an
+ * answer (stopReason "error", or the "<synthetic>" model the runtime uses for error stand-ins,
+ * e.g. "You've hit your weekly limit"); "" otherwise. agent.wait reports such a run as ok.
+ * (2026-10-09: 11 fan-out units died this way and were read as finished.)
+ */
+export function lastAssistantError(messages: unknown): string {
+  const arr = Array.isArray(messages) ? (messages as HistoryMessage[]) : [];
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (m?.role !== "assistant") continue;
+    if (m.stopReason !== "error" && m.model !== "<synthetic>") return "";
+    return (m.errorMessage || extractLastAssistantText([m]) || "provider error").trim();
+  }
+  return "";
 }
 
 /**
@@ -143,6 +163,13 @@ export interface ProductionRuntimeOpts {
   /** Phase sink (wire to fork.prefrontal.setRecipe at the call site for the panel). */
   onPhase?: (title: string) => void;
   /**
+   * Most units in flight at once: min(subagents.maxConcurrent, maxChildrenPerAgent) from the gateway
+   * config. Without it the runtime caps at min(16, cores-2), which can exceed both. (2026-10-09)
+   */
+  maxInFlight?: number;
+  /** Pause before re-trying a spawn refused for max active children. Default 15 s; tests pass 1. */
+  spawnRetryDelayMs?: number;
+  /**
    * Default leaf model for spawned units. COERCED to claude-code/* (see
    * coerceClaudeCodeModel) so billing safety holds regardless of value. Default
    * DEFAULT_LEAF_MODEL. Per-unit override via agent({model}).
@@ -171,29 +198,44 @@ export async function spawnTextVia(
   runTimeoutSeconds: number,
   model?: string,
   thinking?: string,
+  spawnRetryDelayMs = 15_000,
 ): Promise<string> {
   // Pin a claude-code/* model on EVERY spawn here (the billing guard is centralized
   // so no caller can bypass it). Omitted/non-claude-code → DEFAULT_LEAF_MODEL.
   const leafModel = coerceClaudeCodeModel(model);
-  const spawn = await callGateway<{
-    ok?: boolean;
-    childSessionKey?: string;
-    runId?: string;
-    note?: string;
-  }>({
-    method: "fork.subagents.spawn",
-    params: {
-      task,
-      label,
-      model: leafModel,
-      thinking,
-      parentSessionKey,
-      runTimeoutSeconds,
-      expectsCompletionMessage: false,
-    },
-    timeoutMs: (runTimeoutSeconds + 10) * 1000,
-    scopes: ADMIN_SCOPES, // fork.subagents.spawn is admin-only; the loopback must request it
-  });
+  // A requester with agents.defaults.subagents.maxChildrenPerAgent active children gets its next spawn
+  // REFUSED, not queued (src/agents/subagent-spawn.ts). A sibling unit or another fan-out on the same
+  // parent frees a slot within minutes, so wait for one inside the unit's own budget instead of failing
+  // the unit. Any other spawn error still throws at once. (2026-10-09)
+  type SpawnAck = { ok?: boolean; childSessionKey?: string; runId?: string; note?: string };
+  const spawnDeadline = Date.now() + runTimeoutSeconds * 1000;
+  let spawned: SpawnAck | undefined;
+  for (;;) {
+    try {
+      spawned = await callGateway<SpawnAck>({
+        method: "fork.subagents.spawn",
+        params: {
+          task,
+          label,
+          model: leafModel,
+          thinking,
+          parentSessionKey,
+          runTimeoutSeconds,
+          expectsCompletionMessage: false,
+        },
+        timeoutMs: (runTimeoutSeconds + 10) * 1000,
+        scopes: ADMIN_SCOPES, // fork.subagents.spawn is admin-only; the loopback must request it
+      });
+      break;
+    } catch (err) {
+      const message = String((err as Error)?.message ?? err);
+      if (!/max active children/i.test(message) || Date.now() >= spawnDeadline) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, spawnRetryDelayMs));
+    }
+  }
+  const spawn = spawned;
   if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
     throw new Error(`orchestration spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
   }
@@ -230,6 +272,12 @@ export async function spawnTextVia(
     timeoutMs: 10_000,
     scopes: ADMIN_SCOPES,
   });
+  const providerError = lastAssistantError(hist?.messages);
+  if (providerError) {
+    throw new Error(
+      `orchestration run ended in a provider error, not an answer: ${providerError.slice(0, 200)}`,
+    );
+  }
   return extractLastAssistantText(hist?.messages);
 }
 
@@ -279,8 +327,13 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
       runTimeoutSeconds,
       model,
       thinking,
+      opts.spawnRetryDelayMs,
     );
     return { finalText };
   };
-  return createOrchestrationRuntime({ spawn, onPhase: opts.onPhase });
+  return createOrchestrationRuntime({
+    spawn,
+    onPhase: opts.onPhase,
+    maxInFlight: opts.maxInFlight,
+  });
 }

@@ -51,6 +51,12 @@ describe("Computational Humor registration", () => {
     const hookNames = onFn.mock.calls.map((c: unknown[]) => c[0]);
     expect(hookNames).toContain("before_prompt_build");
     expect(hookNames).toContain("llm_output");
+    // 2026-10-10 (plan Phase 1.4): the tap on a purple line's chips lands here.
+    expect(api.registerGatewayMethod).toHaveBeenCalledWith(
+      "limbic.reaction.set",
+      expect.any(Function),
+      { scope: "operator.write" },
+    );
   });
 
   it("handlers are functions", async () => {

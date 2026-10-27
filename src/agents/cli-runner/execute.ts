@@ -211,6 +211,7 @@ export async function executePreparedCliRun(
   let prompt = applyPluginTextReplacements(
     prependBootstrapPromptWarning(basePrompt, context.bootstrapPromptWarningLines, {
       preserveExactPrompt: context.heartbeatPrompt,
+      memoryIndexLines: context.bootstrapMemoryIndexLines,
     }),
     context.backendResolved.textTransforms?.input,
   );

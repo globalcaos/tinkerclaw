@@ -6,6 +6,8 @@ Most agents are funny by accident. This one is funny on purpose, and gets funnie
 
 When the LIMBIC layer notices two semantically distant concepts that bridge in embedding space — the bisociation behind every good joke — it considers attempting humor. A sensitivity threshold (default `0.8`) filters misfires. The next user message is scanned for laughter, emoji, affirmations, or dead air; that signal is captured and fed back into calibration so future attempts lean toward what actually lands. Frequency knobs go from `off` (zero overhead) to `high` (50% turn rate). Persona-aware humor preferences are read from Identity Persistence at startup if it's installed.
 
+In the Tinker chat, three small chips sit under each reply that has a spoken line: laughed, neutral, not now. One tap records how the line landed, and a tap outranks anything read from your next message. Each recorded line is also marked joke or plain. Jev decides that, and only when Thalamus is already allowed to send real text to Jev (`jev.sendRealSituations`). It then gets the one line, redacted, and nothing else from the chat. Without that permission, or without a Jev token, nothing is sent and the line stays unmarked.
+
 ## Install
 
 ```bash

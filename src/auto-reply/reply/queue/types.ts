@@ -1,4 +1,5 @@
 import type { ExecToolDefaults } from "../../../agents/bash-tools.js";
+import type { ThinkSource } from "../../../agents/embedded-agent-runner/run/types.js";
 import type { SkillSnapshot } from "../../../agents/skills.js";
 import type { SilentReplyPromptMode } from "../../../agents/system-prompt.types.js";
 import type { SessionEntry } from "../../../config/sessions.js";
@@ -96,6 +97,18 @@ export type FollowupRun = {
     authProfileId?: string;
     authProfileIdSource?: "auto" | "user";
     thinkLevel?: ThinkLevel;
+    /**
+     * FORK 2026-10-09 (effort slider) — who chose `thinkLevel` (ThinkSource). Carried on the run
+     * like `thalamusChain`, for the same reason: it is decided during reply resolution and read at
+     * execution time, by the attempt's `__openclawThinkSource` smuggle key. PERSISTED NOWHERE.
+     * Absent reads as "default".
+     */
+    thinkSource?: ThinkSource;
+    /**
+     * FORK 2026-10-09 — Thalamus called ultracode for this turn. Set only when `thinkSource` is
+     * "thalamus": a human pin overrules the router's whole effort decision, ultracode included.
+     */
+    ultracode?: boolean;
     verboseLevel?: VerboseLevel;
     reasoningLevel?: ReasoningLevel;
     elevatedLevel?: ElevatedLevel;

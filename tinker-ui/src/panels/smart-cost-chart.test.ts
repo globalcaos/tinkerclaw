@@ -281,7 +281,8 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
     // scIdxTag(): that is the chart's own formatter, and asserting against it would
     // compare the chart to itself. Renders `idx 52.0 at High (AA)` today, `idx 61.5`
     // before the 2026-09-05 rescale; the one-decimal rounding is part of the shape.
-    expect(svg).toContain(`idx ${aaScoreAt("claude-opus-5", "high")!.toFixed(1)} at High (AA)`);
+    expect(svg).toContain(`High effort — `);
+    expect(svg).toContain(`· idx ${aaScoreAt("claude-opus-5", "high")!.toFixed(1)}`);
     expect(svg).not.toContain("measured once, not per effort");
     expect(svg).toContain("/task");
     expect(svg).toContain("1M ctx");
@@ -1283,7 +1284,7 @@ describe("smart-cost chart — vendor rungs AA never scored", () => {
     expect(minimal.smart).toBe(54.96);
     const svg = renderSmartCostChart([m]);
     expect(svg).toContain("sc-rail-cost");
-    expect(svg).toContain("headline — AA published no per-effort split");
+    expect(svg).toContain("Estimated Intelligence Index — AA's single headline score");
   });
 
   it("leaves a FULLY scored model untouched — no rail, solid curve, real spread", () => {
@@ -1296,9 +1297,9 @@ describe("smart-cost chart — vendor rungs AA never scored", () => {
 
   it("keeps the tooltip honest about which rungs are measured", () => {
     const svg = renderSmartCostChart([fable()]);
-    expect(svg).toContain("at Max (AA)");
-    expect(svg).toContain("ESTIMATE");
-    expect(svg).toContain("not an AA measurement");
+    // 2026-10-10: a public AA number prints bare; a guessed one says "(Estimated Intelligence Index".
+    expect(svg).toContain("Max effort — ");
+    expect(svg).toContain("(Estimated Intelligence Index — ");
   });
 });
 

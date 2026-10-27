@@ -101,7 +101,16 @@ function mmrSelect(
 }
 
 /**
- * Pack selected events under a token budget.
+ * Pack selected events under a token budget, in rank order.
+ *
+ * An event that does not fit the remaining budget is skipped and the walk goes on, so
+ * smaller, lower-ranked hits still get packed. `truncated` is true whenever any ranked
+ * event was left out, and the packed total never exceeds `maxTokens`.
+ *
+ * FORK 2026-10-09 — SKIP, NEVER STOP. This loop used to `break` at the first event that
+ * did not fit, so one oversized top hit (a long tool result) hid every hit below it:
+ * recall() returned 0 events with truncated=true, and the gateway RPC `engram.search`
+ * answered nothing for ordinary queries.
  */
 function packUnderBudget(
   events: ScoredRecallEvent[],
@@ -115,7 +124,7 @@ function packUnderBudget(
     const eventTokens = e.event.tokens || estimateTokens(e.event.content);
     if (tokens + eventTokens > maxTokens) {
       truncated = true;
-      break;
+      continue;
     }
     packed.push(e);
     tokens += eventTokens;

@@ -123,6 +123,38 @@ class ConnectionManagerTest {
     assertEquals(false, params?.allowTOFU)
   }
 
+  // FORK 2026-10-19 (the architect: phone app)
+  @Test
+  fun resolveTlsParamsForEndpoint_pairedJarvisDoorOnTailnetAllowsCleartext() {
+    val endpoint = GatewayEndpoint.manual(host = "100.64.0.20", port = 18794)
+
+    val paired =
+      ConnectionManager.resolveTlsParamsForEndpoint(
+        endpoint,
+        storedFingerprint = null,
+        manualTlsEnabled = false,
+        jarvisDoorPaired = true,
+      )
+    val unpaired =
+      ConnectionManager.resolveTlsParamsForEndpoint(
+        endpoint,
+        storedFingerprint = null,
+        manualTlsEnabled = false,
+        jarvisDoorPaired = false,
+      )
+    val pairedButPublicHost =
+      ConnectionManager.resolveTlsParamsForEndpoint(
+        GatewayEndpoint.manual(host = "example.com", port = 18794),
+        storedFingerprint = null,
+        manualTlsEnabled = false,
+        jarvisDoorPaired = true,
+      )
+
+    assertNull(paired)
+    assertEquals(true, unpaired?.required)
+    assertEquals(true, pairedButPublicHost?.required)
+  }
+
   @Test
   fun resolveTlsParamsForEndpoint_discoveryTailnetWithoutHintsStillRequiresTls() {
     val endpoint =

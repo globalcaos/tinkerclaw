@@ -186,6 +186,8 @@ const FRACTAL = [
   "Structure this turn's reply as labelled sections",
   "append a \u{1F33F} FRACTAL reflection section",
   "FRACTAL reflection section",
+  // FORK 2026-10-09 (Fractal v2): the neutral seam new Fractal prompts carry (fractal-turn.ts).
+  "⟦FRACTAL-DOCTRINE⟧",
 ];
 const RECIPE_PATTERNS = [
   /<active_recipe\b/,

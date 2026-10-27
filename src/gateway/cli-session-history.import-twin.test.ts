@@ -164,3 +164,26 @@ describe("withoutChatRowContract — an imported prompt shows the owner's words,
     expect(withoutChatRowContract(untouched)).toBe(untouched);
   });
 });
+
+describe("withoutChatRowContract — blocks in front of the owner's words (2026-10-10)", () => {
+  it("cuts <turn_context> and a Fractal result block, keeping only what he typed", () => {
+    const typed = "[Sat 2026-10-10 19:36 GMT+2] Try again";
+    const text =
+      "<turn_context>\nThe per-turn section …\n## Runtime\nmodel=x\n</turn_context>\n\n" +
+      "[Background Fractal reflection on an earlier turn of this chat. It ran …]\n" +
+      "⟦FRACTAL-RESULT run=p finished=13:07⟧\nclean\n⟦/FRACTAL-RESULT⟧\n---\n" +
+      typed +
+      "\n\n<!-- TINKERCLAW chat-row contract -->\nBefore EVERY tool call…";
+    const [a, b] = withoutChatRowContract([
+      { role: "user", content: text },
+      { role: "user", content: [{ type: "text", text }] },
+    ]) as Array<{ content: unknown }>;
+    expect(a.content).toBe(typed);
+    expect((b.content as Array<{ text: string }>)[0].text).toBe(typed);
+  });
+
+  it("CONTROL: a prompt that merely mentions <turn_context> mid-text is left alone", () => {
+    const row = { role: "user", content: "why does <turn_context> show up?" };
+    expect(withoutChatRowContract([row])[0]).toBe(row);
+  });
+});

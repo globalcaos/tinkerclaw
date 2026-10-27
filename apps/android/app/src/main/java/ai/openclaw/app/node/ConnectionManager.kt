@@ -9,6 +9,7 @@ import ai.openclaw.app.gateway.GatewayConnectOptions
 import ai.openclaw.app.gateway.GatewayEndpoint
 import ai.openclaw.app.gateway.GatewayTlsParams
 import ai.openclaw.app.gateway.isLoopbackGatewayHost
+import ai.openclaw.app.jarvis.isTailnetHost
 import android.os.Build
 
 class ConnectionManager(
@@ -30,6 +31,7 @@ class ConnectionManager(
       endpoint: GatewayEndpoint,
       storedFingerprint: String?,
       manualTlsEnabled: Boolean,
+      jarvisDoorPaired: Boolean = false,
     ): GatewayTlsParams? {
       val stableId = endpoint.stableId
       val stored = storedFingerprint?.trim().takeIf { !it.isNullOrEmpty() }
@@ -38,6 +40,9 @@ class ConnectionManager(
 
       if (isManual) {
         if (!manualTlsEnabled && cleartextAllowedHost) return null
+        // FORK 2026-10-19 (the architect: phone app) — a paired Jarvis app reaches the gateway through the
+        // phone door over plain ws:// on the tailnet; WireGuard is the encryption there.
+        if (!manualTlsEnabled && jarvisDoorPaired && isTailnetHost(endpoint.host)) return null
         if (!stored.isNullOrBlank()) {
           return GatewayTlsParams(
             required = true,
@@ -170,6 +175,11 @@ class ConnectionManager(
 
   fun resolveTlsParams(endpoint: GatewayEndpoint): GatewayTlsParams? {
     val stored = prefs.loadGatewayTlsFingerprint(endpoint.stableId)
-    return resolveTlsParamsForEndpoint(endpoint, storedFingerprint = stored, manualTlsEnabled = manualTls())
+    return resolveTlsParamsForEndpoint(
+      endpoint,
+      storedFingerprint = stored,
+      manualTlsEnabled = manualTls(),
+      jarvisDoorPaired = prefs.jarvisPaired.value,
+    )
   }
 }

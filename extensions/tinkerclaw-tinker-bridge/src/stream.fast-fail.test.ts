@@ -73,6 +73,21 @@ describe("shouldFastFailInitStall (BRIDGE FIX 2/3: init-only stall fast-fail)", 
     ).toBe(false);
   });
 
+  // 2026-10-09: a turn that starts while a restart drains is frozen at once (worker.ts), and a
+  // drain may wait up to 10 minutes. All 20 kills of this watchdog from 10-01 to 10-09 hit a
+  // frozen worker, two of them the owner's own turns ("The model never started replying").
+  it("does NOT abort a turn a restart holds frozen, however long it has been silent", () => {
+    expect(
+      shouldFastFailInitStall({
+        elapsedMs: FAST_FAIL_INIT_SILENT_MS * 5,
+        textLen: 0,
+        thinkingLen: 0,
+        linesSeen: 0,
+        held: true,
+      }),
+    ).toBe(false);
+  });
+
   it("honors caller-supplied overrides for window and line budget", () => {
     expect(
       shouldFastFailInitStall({

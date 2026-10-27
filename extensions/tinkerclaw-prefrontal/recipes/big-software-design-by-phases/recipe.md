@@ -138,6 +138,8 @@ the clickable URL and path; the plan document has a short UI-choices section.
   and has a load button. A transient process dies with the next power-off.
 - **Test saves against a scratch server** (`--port <other> --out $(mktemp -d)`), never the principal's folder.
   Click hidden radios through their labels; select repeated blocks with `.nth()`, not `nth-of-type`.
+  Unpin a sticky page header before element screenshots (`.pg-head{position:static}` via an injected style):
+  pinned, it covers the top of every block and hides the very controls being reviewed (Ensō page, 2026-10-15).
 - **Look at the screenshots** before handing over, and put the URL and the path on their own lines.
 
 ### 3. Feedback rounds
@@ -201,7 +203,7 @@ caught at the master's review, 2026-09-29):
 
 **Build the test environment for speed in the first wave.** The charter takes `master-worker-coding`'s Speed
 tactics, and the first wave builds suites that run parallel from day one, timing tests that run alone, cheap
-fakes and test-only settings for costly production ones. The AcmeVision 2.0 build ran 20 hours on
+fakes and test-only settings for costly production ones. The OrbisVision 2.0 build ran 20 hours on
 single-process suites before a turn went to retrofitting them (2026-10-01).
 
 When something live is replaced, its protection never lapses: the old system keeps working until the new one is

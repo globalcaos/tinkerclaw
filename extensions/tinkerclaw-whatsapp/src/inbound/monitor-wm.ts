@@ -66,8 +66,12 @@ export async function createWmMonitorSocket(options: {
   // every inbound DM gets dropped with "selfE164=null" → access-control's
   // owner-DM (Tier 1) check can't match `from` against `selfE164` →
   // `[wa-debug] DROP: access denied from=+<owner-e164> ... fromMe=true`.
+  // FORK 2026-10-13: hand the adapter the same store file the Go client opens
+  // (session-wm.ts resolves it with resolveUserPath too) so it can resolve
+  // peer LIDs from whatsmeow_lid_map.
   const adapter = createBaileysAdapter({
     wmClient: client,
+    storePath: resolveUserPath(storePath),
   });
 
   await connectWmClient(client);

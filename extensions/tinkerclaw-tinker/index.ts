@@ -605,6 +605,101 @@ const plugin = {
           }
         }
 
+        // --- Jarvis voice for a remote page (FORK 2026-10-15) ---
+        // When the gateway runs on another machine (the Pi), its speaker is not where the architect is.
+        // `jarvis` drops every spoken line into ~/.openclaw/data/jarvis-voice/<epoch-ms>.wav;
+        // a page opened from elsewhere polls `latest` and plays new lines. House token only.
+        if (pathname.startsWith(`${PREFIX}/api/jarvis-voice/`)) {
+          if (!hasHouseToken(req)) {
+            res.statusCode = 401;
+            res.end("unauthorized");
+            return true;
+          }
+          const voiceDir = path.join(
+            process.env.HOME ?? "/home/user",
+            ".openclaw/data/jarvis-voice",
+          );
+          const sub = pathname.slice(`${PREFIX}/api/jarvis-voice/`.length);
+          // FORK 2026-10-23: the phone page went off screen with these chats waiting for an answer.
+          // One marker per chat in phone-away/; `jarvis` consumes it and calls jarvis-call --buzz.
+          if (sub === "away" && req.method === "POST") {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) {
+              chunks.push(chunk as Buffer);
+            }
+            let body: { chats?: unknown; away?: unknown; beat?: unknown } = {};
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString());
+            } catch {
+              body = {};
+            }
+            const awayDir = path.join(voiceDir, "phone-away");
+            fs.mkdirSync(awayDir, { recursive: true });
+            const chats = Array.isArray(body.chats) ? body.chats : [];
+            for (const chat of chats) {
+              if (typeof chat !== "string" || !/^[\w.-]{1,120}$/.test(chat)) continue;
+              const marker = path.join(awayDir, chat);
+              // v2 (2026-10-23 21:10): written at send, refreshed by the page's 3 s heartbeat while
+              // it is on screen; `jarvis` calls the phone when the refresh has gone quiet.
+              if (body.beat === true) {
+                if (fs.existsSync(marker) && fs.statSync(marker).size > 0) {
+                  fs.writeFileSync(marker, String(Date.now()));
+                }
+              } else if (body.away === true) fs.writeFileSync(marker, String(Date.now()));
+              else fs.rmSync(marker, { force: true });
+            }
+            if (body.beat !== true) {
+              fs.appendFileSync(
+                path.join(voiceDir, "phone-away.log"),
+                `${new Date().toISOString()}\t${body.away === true ? "away" : "clear"}\t${chats.join(",")}\n`,
+              );
+            }
+            res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify({ ok: true }));
+            return true;
+          }
+          if (sub === "latest") {
+            let latest: string | null = null;
+            try {
+              latest =
+                fs
+                  .readdirSync(voiceDir)
+                  .filter((f) => /^\d+\.wav$/.test(f))
+                  .sort((x, y) => Number.parseInt(y, 10) - Number.parseInt(x, 10))[0] ?? null;
+            } catch {
+              latest = null;
+            }
+            // 2026-10-22: the line's text too (latest.txt = "<id>\t<text>"), so the phone app can
+            // say it in its own voice (GBD). Only when it belongs to this wav.
+            let text: string | null = null;
+            try {
+              const [id, ...rest] = fs
+                .readFileSync(path.join(voiceDir, "latest.txt"), "utf8")
+                .split("\t");
+              if (id === latest) text = rest.join("\t");
+            } catch {
+              text = null;
+            }
+            res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify({ latest, text }));
+            return true;
+          }
+          if (/^\d+\.wav$/.test(sub)) {
+            try {
+              const buf = fs.readFileSync(path.join(voiceDir, sub));
+              res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
+              res.end(buf);
+            } catch {
+              res.statusCode = 404;
+              res.end("not found");
+            }
+            return true;
+          }
+          res.statusCode = 404;
+          res.end("not found");
+          return true;
+        }
+
         // --- Context Anatomy API (proxied through /tinker/api/context-anatomy/) ---
         if (pathname.startsWith(`${PREFIX}/api/context-anatomy/`)) {
           // Handle CORS preflight

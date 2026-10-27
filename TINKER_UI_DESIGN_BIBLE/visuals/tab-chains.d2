@@ -1,0 +1,37 @@
+direction: right
+title: "Tabs and the master–slave contract (bible §5.8AK)" {
+  near: top-center
+  shape: text
+  style.font-size: 28
+}
+
+human: "the architect\nright-click → Set conversation slave" { shape: person }
+state: "tinker-ui-state.json\nchoice loop:chains\n(pairs of tabs, the contract)" { shape: cylinder }
+human -> state: "draws the pair"
+
+chain: "ONE CHAIN = ONE CONTRACT (a tab is in at most one)" {
+  style.stroke-dash: 3
+  master: "MASTER tab\n(drives, owns the Gantt tab)" { style.fill: "#e9d8b4" }
+  slave: "SLAVE tab\n(the reviewer / worker, e.g. Astra)" { style.fill: "#cfe3d4" }
+  master -> slave: "converse.mjs --no-wait\n⟦AGENT:label⟧ + fromSessionKey=master" { style.stroke: "#2f6f4f" }
+  slave -> master: "wake-on-finish.mjs\n⟦AGENT:label⟧ + fromSessionKey=slave\n(the slave's final reply)" { style.stroke: "#2f6f4f" }
+}
+
+gate: "GATEWAY  sessions.send\ntab-chain-contract.ts\nlets an ⟦AGENT⟧ message in only if\nfrom == to  OR  (from,to) is a chain pair" {
+  shape: hexagon
+  style.fill: "#f3e3a3"
+}
+state -> gate: "read on every agent send"
+chain.master -> gate
+chain.slave -> gate
+
+stranger: "ANY OTHER TAB\n(no contract)" { style.fill: "#f0c9c4" }
+other: "A third chat" { style.fill: "#eeeeee" }
+stranger -> gate: "⟦AGENT:…⟧ into another chat" { style.stroke: "#b03a2e"; style.stroke-dash: 4 }
+gate -> other: "REFUSED\nno master-slave contract" { style.stroke: "#b03a2e"; style.bold: true }
+
+own: "A tab's own helpers (never cross a tab)" {
+  bg: "background Bash job / longjob / Fractal\nwake the SAME tab that launched them"
+  note: "A reviewer with no slave tab is NOT run\nas a hidden codex exec: stop and ask\nfor the chain (recipe adversarial-review-loop)"
+}
+own.bg -> chain.master: "self wake only" { style.stroke: "#7a6a3a" }

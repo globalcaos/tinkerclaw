@@ -577,6 +577,11 @@ export interface KitRpcsDeps {
    *     prefrontal.recipe.install downloads recipe files from JourneyKits.
    */
   allowOrchestrationScripts?: boolean;
+  /**
+   * Most orchestration units in flight at once: min(agents.defaults.subagents.maxConcurrent,
+   * maxChildrenPerAgent). A spawn past maxChildrenPerAgent is refused, not queued. (2026-10-09)
+   */
+  orchestrationMaxInFlight?: number;
   allowRecipePublish?: boolean;
   allowRemoteRecipeInstall?: boolean;
 }
@@ -1607,6 +1612,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         callGateway,
         parentSessionKey: p.sessionKey,
         runTimeoutSeconds: p.runTimeoutSeconds,
+        maxInFlight: deps.orchestrationMaxInFlight,
         onPhase: (title) => {
           void callGateway({
             method: "fork.prefrontal.setRecipe",

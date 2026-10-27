@@ -1,12 +1,25 @@
 # Fractal Reflection
 
-> Your agent finishes the turn — then a second, read-only agent grades what just happened, off to the side.
+> Your agent finishes the turn. Then a second pass looks back at it, asks what it taught, and fixes the cause, off to the side.
 
-Most agents close a turn and move on. This one hands the finished turn to a separate reviewer that had no part in doing the work.
+This plugin holds the Fractal doctrine: `fractal-prompt.md`, the core every reflection reads, and `chapters/`, one per reason a reflection runs. It also carries an older triage lane, described further down, which is off by default.
 
-**This is off by default and it costs money.** Read the next two sections before enabling it.
+## How the Fractal runs in TinkerClaw
 
-## What actually happens
+In a full TinkerClaw install the reflection runs after each turn you send from the Tinker page:
+
+1. **A gate decides first.** The page asks the gateway's `fractal.gate` whether the turn holds a lesson. Rules always look for a correction ("why did you…"), a fight with the tools, a long delivery, or "I don't see it". With a Jev token, Jev reads the turn and can say no. Without one, every turn gets its reflection.
+2. **Its own session, so you never wait.** The reflection runs in `agent:<id>:fractal:<P>`, started as a copy of the chat's Claude Code conversation, so it sees every tool call of the turn and writes nothing into your chat.
+3. **It fixes, and proposes the rest.** It may edit files, notes and code on a branch and merge into develop. A send, a delete, a publish, a spend or a restart is held by a guard in code and comes back as a `Proposed:` line on its card, for you to run. Config: `plugins.entries.tinkerclaw-tinker-bridge.config.fractalGuard` (`enforce` by default, `watch`, `off`).
+4. **Every claim is checked.** Each path and commit it names is checked against the disk and git, and its folded 🌿 card under your reply shows a tick or a cross.
+
+The pieces live in the gateway (`src/infra/fractal/`), the Tinker page (`tinker-ui/src/fractal-turn.ts`), the Tinker bridge (`fork-parent.ts`, `fractal-ledger.ts`, `fractal-guard.ts`) and the tinkerclaw-core Claude Code plugin (`scripts/fractal-guard.mjs`). This plugin alone, installed into a stock OpenClaw, gives you only the doctrine and the legacy lane below.
+
+Two limits today: the trigger lives in the Tinker page, so a turn that arrives on WhatsApp or another channel gets no reflection, and the guard reads command text, so a script that sends or deletes inside itself is not seen.
+
+## The legacy triage lane (off by default, costs money)
+
+Read this and the next section before enabling it.
 
 When a main agent turn ends, the plugin builds a compact digest of that turn and **spawns a separate subagent** — its own run, its own session key, out of band — to triage it. The triage lane is read-only by enforcement, not by request: `subagent.run` takes no tool list, so the plugin registers a `before_tool_call` hook that blocks every tool except `read`, `grep`, `find`, `ls`, `memory_search` and `memory_get` for any fractal lane session (sessionKey prefix `fractal-reflection:`) or run it spawned. Tools outside that allowlist, including ones added later, are refused. Other sessions are not touched.
 
@@ -14,7 +27,7 @@ It returns one of three verdicts — `clean`, `act`, or `gap` — plus findings.
 
 Every finished turn produces **exactly one append-only ledger row** in `~/.openclaw/data/fractal/results.jsonl`, including the ones where nothing ran — `skipped` (with a reason), `suspended`, `error`. Skips are never silent.
 
-### What it does NOT do (yet)
+### What the lane does NOT do
 
 - **There is no fix lane.** Drop 1 ships the COLD triage arm only. Findings are recorded as `flagged` and stop there — nothing is edited, committed or actioned on your behalf. The `fixModel` / `fixThinkLevel` / `maxFixTurnsCeiling` / `maxFixSpawnsPerHour` / `artifactRoots` keys are reserved for that lane and have **no effect today**.
 - **There is no in-band injection.** The v1 design injected a reflection prompt into your live session and debounced it; that machinery is retired. Nothing is added to your conversation.
@@ -52,13 +65,13 @@ With `config.enabled` anything other than `true`, **no `agent_end` or `before_to
 
 ## Gateway RPCs
 
-| method | what it does |
-|---|---|
-| `fractal.status` | enabled / suspended / breaker state / governor mode |
-| `fractal.stats` | ledger stats over a window, plus governor pressure |
-| `fractal.feed` | recent rows, optionally filtered by status |
-| `fractal.byRunId` | the row for one parent run |
-| `fractal.suspend` / `fractal.resume` | kill switch (suspend persists across restarts) |
+| method                               | what it does                                        |
+| ------------------------------------ | --------------------------------------------------- |
+| `fractal.status`                     | enabled / suspended / breaker state / governor mode |
+| `fractal.stats`                      | ledger stats over a window, plus governor pressure  |
+| `fractal.feed`                       | recent rows, optionally filtered by status          |
+| `fractal.byRunId`                    | the row for one parent run                          |
+| `fractal.suspend` / `fractal.resume` | kill switch (suspend persists across restarts)      |
 
 ## Related plugins
 

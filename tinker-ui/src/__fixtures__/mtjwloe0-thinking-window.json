@@ -2833,7 +2833,7 @@
       "content": [
         {
           "type": "text",
-          "text": "2026-09-07 15:37:06.713961416 +0200 /home/user/.claude/projects/-home-globalcaos--openclaw/memory/reference_bible_invariant_gate_state.md\n2026-09-07 14:35:59.539513141 +0200 /home/user/.openclaw/workspace/MEMORY.md\n2026-09-07 14:36:42.731200154 +0200 /home/user/.openclaw/workspace/memory/knowledge/operational-lessons.md"
+          "text": "2026-09-07 15:37:06.713961416 +0200 /home/user/.claude/projects/-home-user--openclaw/memory/reference_bible_invariant_gate_state.md\n2026-09-07 14:35:59.539513141 +0200 /home/user/.openclaw/workspace/MEMORY.md\n2026-09-07 14:36:42.731200154 +0200 /home/user/.openclaw/workspace/memory/knowledge/operational-lessons.md"
         }
       ],
       "timestamp": 1788788254625,
@@ -2899,7 +2899,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Successfully replaced 1 block(s) in /home/user/.claude/projects/-home-globalcaos--openclaw/memory/feedback_a_check_is_evidence_not_a_verdict.md."
+          "text": "Successfully replaced 1 block(s) in /home/user/.claude/projects/-home-user--openclaw/memory/feedback_a_check_is_evidence_not_a_verdict.md."
         }
       ],
       "timestamp": 1788788296499,

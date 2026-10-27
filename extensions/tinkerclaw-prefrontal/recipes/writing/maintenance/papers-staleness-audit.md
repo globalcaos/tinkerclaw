@@ -95,6 +95,7 @@ Surface it plainly. Recommend, don't act — publishing/refreshing is a separate
 - **Duplicate posts:** the naive fix for a stale post is "publish it again" → two posts for one paper. The `stale` action is explicitly UPDATE-existing, not create.
 - **Publishing a sketch:** a seed `v0.x` sketch folder (e.g. a striatum stub) looks like a new paper to a folder-only scan. The `not-ready` verdict holds it back until it has a real version + PDF.
 - **Crying wolf on notes:** the first scanner flagged every paper with a non-empty notes file (13/18) as stale, drowning the real signal. The cure is the `^##.*Pending`-section test plus archive-on-incorporation discipline (see Constraints) — a detector that flags everything is no detector.
+- **A scan that covered 17 of 20 and undercounted notes (2026-10-10).** Asked for a J-series status table, the turn hand-checked folders because `staleness-verdict.json` skipped J19/J20 (`META` stopped at J18), read `2026-10-05-retrieval-v2-plan.md` as J17's paper, and flagged notes only under a `## Pending` heading, missing dated notes in J2, J10, J11 and J20. Fixed in `~/.openclaw/workspace/pulse-graphs/staleness-scan.py`: J19/J20 listed, paper must be a `-vX` file and never a plan, a sectioned notes file newer than the paper counts as pending, and a multi-folder Jn prefers the one holding a versioned paper. Next time: run the scanner (one call) and read `red_rows`; the architect's PDF comments are a separate check (`~/src/pdf-review/pdf-comments.py`, none embedded on 10-10).
 
 ## Automation
 

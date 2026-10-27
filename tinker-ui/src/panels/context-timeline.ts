@@ -194,6 +194,8 @@ interface TimelineController {
   setFilterMode(mode: "session" | "all"): void;
   getFilterMode(): "session" | "all";
   loadAllSessions(sessionKeys?: string[]): void;
+  /** FORK 2026-10-15 — repaint on demand (the Amygdala marks changed); coalesced per frame. */
+  refresh(): void;
 }
 
 const MAX_BUFFER = 2000;
@@ -287,6 +289,39 @@ export function callColumn(
 
 export type BarSelectMode = "context" | "response" | "context-summarize" | "response-summarize";
 
+/** FORK 2026-10-15 (the architect: "little brain icons in the call timeline panel on the turn it
+ *  intervened"). One Amygdala bubble the chat currently shows for this tab; `ts` in ms. */
+export interface AmyMark {
+  id: string;
+  ts: number;
+  toolUseId: string | null;
+}
+
+export interface ContextTimelineAmyOptions {
+  /** Every bubble known for the tab, time order. Read on every render; no option → no mark. */
+  amyMarks?: () => AmyMark[];
+  /** A 🧠 click: focus that bubble in the chat (app.ts focusAmyBubble). */
+  onAmyMarkClick?: (id: string) => void;
+}
+
+// The column's own rules (.ct-col, .ct-provider) live in styles/base.css; these few ride with
+// the module, injected once, the way call-timeline-canvas.ts carries its own.
+const AMY_STYLE_ID = "ct-amy-mark-style";
+const AMY_CSS = `
+.ct-amy-mark{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;gap:1px;height:13px;margin-bottom:1px;font-size:11px;line-height:13px;color:#FF69B4;cursor:pointer;user-select:none;white-space:nowrap;filter:drop-shadow(0 0 1px rgba(255,105,180,.55))}
+.ct-amy-mark:hover{transform:scale(1.2)}
+.ct-amy-mark b{font:700 9px/1 "SF Mono","Fira Code",monospace;color:#FF69B4}
+`;
+function ensureAmyStyle(): void {
+  if (document.getElementById(AMY_STYLE_ID)) {
+    return;
+  }
+  const el = document.createElement("style");
+  el.id = AMY_STYLE_ID;
+  el.textContent = AMY_CSS;
+  document.head.appendChild(el);
+}
+
 export function mountContextTimeline(
   container: HTMLElement,
   onBarSelect: (event: AnatomyEvent, mode: BarSelectMode) => void,
@@ -301,6 +336,9 @@ export function mountContextTimeline(
   // per-call session badge so you can see which session each tool call came
   // from. Returns the short title/emoji for a session key, or null if unknown.
   getSessionLabel?: (sessionKey: string) => string | null,
+  // FORK 2026-10-15 — optional Amygdala marks (see ContextTimelineAmyOptions). Trailing and
+  // optional so the existing callers' argument lists stay as they are.
+  amy?: ContextTimelineAmyOptions,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
   let selectedIdx: number | null = null;
@@ -659,6 +697,62 @@ export function mountContextTimeline(
     buffer.push(entry);
   }
 
+  // ─── Amygdala marks (FORK 2026-10-15) ───
+  /** Last 🧠 clicked, so a re-click on a stacked mark moves to the next bubble. */
+  let lastAmyClickId: string | null = null;
+
+  /** A column of THIS tab's session: in "All" mode other sessions' columns sit in the buffer. */
+  function ownColumn(entry: BufferEntry): boolean {
+    const sk = entry.event.sessionKey;
+    const own = getSessionKey();
+    return !sk || !own || sk === own;
+  }
+
+  /**
+   * The column of the LLM call that issued the tool call the mark judged. Exact first: the
+   * column that lists the tool call id (pushToolExec attaches it). Else the last column sent at
+   * or before the mark. Else the group whose span holds the time: an anatomy row stamped at the
+   * turn's END (post-turn) with the turn's duration covers a mark its stamp follows — that is
+   * every column of a session reloaded from the DB. -1 when no column holds it.
+   */
+  function amyColumnIndex(mark: AmyMark): number {
+    if (mark.toolUseId) {
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        const tools = buffer[i].event.toolsTriggered;
+        if (ownColumn(buffer[i]) && tools?.some((t) => t.toolCallId === mark.toolUseId)) {
+          return i;
+        }
+      }
+    }
+    let idx = -1;
+    for (let i = 0; i < buffer.length; i++) {
+      if (!ownColumn(buffer[i])) {
+        continue;
+      }
+      const t = getTimestampMs(buffer[i].event);
+      if (t > 0 && t <= mark.ts) {
+        idx = i;
+      }
+    }
+    let next = idx + 1;
+    while (next < buffer.length && !ownColumn(buffer[next])) {
+      next++;
+    }
+    const cand = buffer[next];
+    if (
+      cand &&
+      cand.event.callColumn !== true &&
+      (idx < 0 || cand.groupId !== buffer[idx].groupId)
+    ) {
+      const end = getTimestampMs(cand.event);
+      const start = end - (cand.event.durationMs ?? 0);
+      if (end > 0 && start <= mark.ts) {
+        return next;
+      }
+    }
+    return idx;
+  }
+
   // ─── Render ───
   function render() {
     container.innerHTML = "";
@@ -775,6 +869,23 @@ export function mountContextTimeline(
     spacer.style.minWidth = "0";
     container.appendChild(spacer);
 
+    // FORK 2026-10-15 — which 🧠 sit on which column, resolved once per paint.
+    const marksByCol = new Map<number, AmyMark[]>();
+    if (amy?.amyMarks) {
+      for (const m of amy.amyMarks()) {
+        if (!m || typeof m.id !== "string" || !Number.isFinite(m.ts)) {
+          continue;
+        }
+        const ci = amyColumnIndex(m);
+        if (ci < 0) {
+          continue;
+        }
+        const list = marksByCol.get(ci) ?? [];
+        list.push(m);
+        marksByCol.set(ci, list);
+      }
+    }
+
     // Group entries and render
     let currentGroupId: string | null = null;
     let groupEl: HTMLElement | null = null;
@@ -851,6 +962,34 @@ export function mountContextTimeline(
       const modelShort = shortModelName(modelId);
       if (modelShort) {
         iconEl.title = `${provider}/${cleanModelName(modelId)}`;
+      }
+      // FORK 2026-10-15 (the architect: "little brain icons ... on the turn it intervened"). In-flow,
+      // right above the provider icon, so it rides the bar's height and COLUMN_CHROME_PX (the
+      // chrome OUTSIDE the bar area) stays the measured 60. Several bubbles on one call stack
+      // as ONE brain with a count; a click opens the first, each re-click the next.
+      const colMarks = marksByCol.get(i);
+      if (colMarks && colMarks.length > 0) {
+        ensureAmyStyle();
+        const ids = colMarks.map((m) => m.id);
+        const mark = document.createElement("span");
+        mark.className = "ct-amy-mark";
+        mark.dataset.amyId = ids[0];
+        mark.dataset.amyIds = ids.join(" ");
+        mark.textContent = "🧠";
+        if (ids.length > 1) {
+          const n = document.createElement("b");
+          n.textContent = String(ids.length);
+          mark.appendChild(n);
+        }
+        mark.title = "Amygdala acted here — click to show";
+        mark.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const at = lastAmyClickId === null ? -1 : ids.indexOf(lastAmyClickId);
+          const id = ids[(at + 1) % ids.length];
+          lastAmyClickId = id;
+          amy?.onAmyMarkClick?.(id);
+        });
+        barArea.appendChild(mark);
       }
       barArea.appendChild(iconEl);
 
@@ -1235,6 +1374,10 @@ export function mountContextTimeline(
 
     getFilterMode() {
       return filterMode;
+    },
+
+    refresh() {
+      scheduleRender();
     },
 
     async loadAllSessions(_sessionKeys?: string[]) {

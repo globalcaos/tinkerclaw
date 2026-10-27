@@ -15,6 +15,7 @@ import { loadAuthProfileStoreForRuntime } from "../auth-profiles/store.js";
 import type { AuthProfileCredential } from "../auth-profiles/types.js";
 import {
   buildBootstrapInjectionStats,
+  analyzeMemoryIndexBudget,
   buildBootstrapPromptWarning,
   buildBootstrapTruncationReportMeta,
   analyzeBootstrapBudget,
@@ -30,6 +31,8 @@ import {
   resolveBootstrapMaxChars,
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
+  resolveMemoryIndexMaxChars,
+  resolveMemoryIndexWarningMode,
 } from "../embedded-agent-helpers.js";
 import { resolvePromptBuildHookResult } from "../embedded-agent-runner/run/attempt.prompt-helpers.js";
 import { resolveAttemptPrependSystemContext } from "../embedded-agent-runner/run/attempt.prompt-helpers.js";
@@ -144,11 +147,12 @@ export async function prepareCliRunContext(
   });
   const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
   const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
+  const bootstrapInjectionStats = buildBootstrapInjectionStats({
+    bootstrapFiles,
+    injectedFiles: contextFiles,
+  });
   const bootstrapAnalysis = analyzeBootstrapBudget({
-    files: buildBootstrapInjectionStats({
-      bootstrapFiles,
-      injectedFiles: contextFiles,
-    }),
+    files: bootstrapInjectionStats,
     bootstrapMaxChars,
     bootstrapTotalMaxChars,
   });
@@ -158,7 +162,17 @@ export async function prepareCliRunContext(
     mode: bootstrapPromptWarningMode,
     seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
     previousSignature: params.bootstrapPromptWarningSignature,
+    memoryIndex: {
+      budget: analyzeMemoryIndexBudget({
+        files: bootstrapInjectionStats,
+        maxChars: resolveMemoryIndexMaxChars(params.config),
+      }),
+      mode: resolveMemoryIndexWarningMode(params.config),
+    },
   });
+  if (bootstrapPromptWarning.memoryIndexLogLine) {
+    cliBackendLog.warn(bootstrapPromptWarning.memoryIndexLogLine);
+  }
   const { defaultAgentId, sessionAgentId } = resolveSessionAgentIds({
     sessionKey: params.sessionKey,
     config: params.config,
@@ -418,6 +432,9 @@ export async function prepareCliRunContext(
     systemPrompt,
     systemPromptReport,
     bootstrapPromptWarningLines: bootstrapPromptWarning.lines,
+    ...(bootstrapPromptWarning.memoryIndexLines
+      ? { bootstrapMemoryIndexLines: bootstrapPromptWarning.memoryIndexLines }
+      : {}),
     ...(openClawHistoryPrompt ? { openClawHistoryPrompt } : {}),
     heartbeatPrompt,
     authEpoch,

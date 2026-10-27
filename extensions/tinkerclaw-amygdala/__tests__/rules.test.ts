@@ -49,11 +49,14 @@ describe("parity with v3.1", () => {
       expect(r.explanation).toBe(v.explanation);
       expect(r.enforce).toBe(v.enforce);
       expect(r.scope).toBe(v.scope);
+      expect(r.ownerIntent).toBe(v.ownerIntent);
     });
   });
 
   it("covers every distinct v3.1 rule id with an example", () => {
-    const ids = new Set(V31_RULES.map((r) => r.rule));
+    // ownerIntent rules are decided by the pre-execution hook (it reads the owner's words);
+    // their examples live in learned-intuition's hook-script.test.ts.
+    const ids = new Set(V31_RULES.filter((r) => !r.ownerIntent).map((r) => r.rule));
     const covered = new Set(RULE_EXAMPLES.map(([id]) => id));
     for (const id of ids) expect(covered.has(id)).toBe(true);
   });
@@ -69,6 +72,17 @@ describe("parity with v3.1", () => {
   it.each(SAFE_EXAMPLES)("keeps safe command allowed: %s", (cmd) => {
     expect(evaluateRules("exec", cmd).decision).toBe("allow");
     expect(evaluateRuleBased("exec", cmd).decision).toBe("allow");
+  });
+});
+
+describe("owner-intent rules are left to the hook (2026-10-13)", () => {
+  it("both in-process evaluators allow a cache purge; the hook decides it", () => {
+    expect(evaluateRules("exec", "pip cache purge").decision).toBe("allow");
+    expect(evaluateRuleBased("exec", "pip cache purge").decision).toBe("allow");
+    expect(serializeRules().find((r) => r.id === "DELETE_UNREQUESTED")?.ownerIntent).toBe("delete");
+    expect(serializeAegisRules().find((r) => r.id === "DELETE_UNREQUESTED")?.ownerIntent).toBe(
+      "delete",
+    );
   });
 });
 

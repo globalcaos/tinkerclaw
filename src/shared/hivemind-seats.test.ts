@@ -35,7 +35,7 @@ describe("formatAgentBanner", () => {
 
 describe("sanitizeSeatId", () => {
   it("accepts token-shaped ids", () => {
-    expect(sanitizeSeatId("seat-alex_1")).toBe("seat-alex_1");
+    expect(sanitizeSeatId("seat-xavi_1")).toBe("seat-xavi_1");
     expect(sanitizeSeatId("dev:abc.def")).toBe("dev:abc.def");
   });
   it("rejects traversal and junk", () => {

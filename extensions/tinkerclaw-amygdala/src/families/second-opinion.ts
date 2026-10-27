@@ -17,6 +17,16 @@ function hasText(f: { value: string | null }): boolean {
   return typeof f.value === "string" && f.value.trim().length > 0;
 }
 
+/**
+ * Every target of the step is one the agent created, keeps in scratch, or the owner named (situation.ts
+ * `ownedTargetsOf`). A file it only edited before is still the owner's, so it does not count here.
+ */
+function allOwned(s: Situation): boolean {
+  const n = s.targets.value?.length ?? 0;
+  const own = (s.ownedTargets?.value ?? []).filter((o) => o.why !== "edited").length;
+  return n > 0 && own >= n;
+}
+
 function leadingOpen(state: TurnState) {
   return state.readings.find((r) => r.status === "open");
 }
@@ -47,9 +57,12 @@ export function createSecondOpinionFamily(_deps: FamilyDeps): Family {
       if (seam === "pre-tool") {
         if ((s.draftCommitments.value ?? []).length > 0) ids.push("commitment-changed");
         const effect = s.effectClass.value;
+        // A step whose every target the agent made or the owner named cannot reach beyond what he named
+        // (2026-10-25: excess-scope 81 % noise in the reviews, mostly deletes of the agent's own files).
         if (
           (effect === "send" || effect === "spend" || effect === "delete") &&
-          (hasText(s.request) || hasText(s.restatement))
+          (hasText(s.request) || hasText(s.restatement)) &&
+          !allOwned(s)
         ) {
           ids.push("excess-scope");
         }
@@ -129,7 +142,7 @@ export function createSecondOpinionFamily(_deps: FamilyDeps): Family {
           reasonCode: "commitment-changed",
         });
       }
-      if (crossesId(asked, verdicts, "excess-scope")) {
+      if (crossesId(asked, verdicts, "excess-scope") && !allOwned(s)) {
         cands.push({
           response: {
             kind: "ask",

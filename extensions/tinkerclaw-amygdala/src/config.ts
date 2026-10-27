@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_EARNED, type EarnedConfig } from "./earned.js";
 import type { FamilyId } from "./types.js";
 
 export interface AmygdalaConfig {
@@ -25,9 +26,23 @@ export interface AmygdalaConfig {
   hooks: { enabled: boolean };
   /** The WOULD HAVE explainer (2026-10-05): a second model words each flag for the owner. */
   explain: { enabled: boolean; ladder: string[]; timeoutMs: number; concurrency: number };
-  /** Grok's after-the-fact verdict on whether each flag would have helped (2026-10-06). */
-  review: { enabled: boolean; dailyCap: number };
+  /**
+   * Grok's after-the-fact verdict on whether each flag would have helped (2026-10-06). `passDailyCap` (2026-10-15)
+   * bounds the pass review, which judges the steps Jev let through: one call per turn, so the cap counts turns.
+   */
+  review: { enabled: boolean; dailyCap: number; passDailyCap: number; ladder: string[] };
+  /** Progressive activation (2026-10-15): a rule Sonnet's reviews find worth it acts on its own (earned.ts). */
+  earned: EarnedConfig;
 }
+
+/**
+ * The reviewer's models (2026-10-15, the architect: "use sonnet instead of Grok for automatically evaluating whether it would be
+ * a right or wrong call"). Haiku only answers when Sonnet does not; earned.ts counts Sonnet's reviews alone.
+ */
+export const DEFAULT_REVIEW_LADDER = [
+  "claude-code/claude-sonnet-5-5",
+  "claude-code/claude-haiku-4-5",
+];
 
 /** Grok first (the architect's ask, 2026-10-05; the subscription lane), then a different supply so one outage does not end it. */
 export const DEFAULT_EXPLAIN_LADDER = ["xai/grok-4.6", "claude-code/claude-haiku-4-5"];
@@ -77,6 +92,10 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
   const hooks = obj(r.hooks);
   const explain = obj(r.explain);
   const review = obj(r.review);
+  const earned = obj(r.earned);
+  const reviewLadder = Array.isArray(review.ladder)
+    ? review.ladder.filter((x): x is string => typeof x === "string" && x.includes("/"))
+    : [];
   const ladder = Array.isArray(explain.ladder)
     ? explain.ladder.filter((x): x is string => typeof x === "string" && x.includes("/"))
     : [];
@@ -93,7 +112,8 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
     jev: {
       baseUrl: str(jev.baseUrl, "https://api.typesafe.ai"),
       model: str(jev.model, "jev-latest"),
-      timeoutMs: num(jev.timeoutMs, 2600),
+      // 2026-10-15: the owner's 1 s rule (the Jev client clamps anything longer, JEV_MAX_WAIT_MS).
+      timeoutMs: num(jev.timeoutMs, 1000),
       sendRealSituations: bool(jev.sendRealSituations, false),
       ...(optStr(jev.tokenHelpUrl) ? { tokenHelpUrl: optStr(jev.tokenHelpUrl) } : {}),
     },
@@ -101,7 +121,8 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
     failClosedOnLevel3: bool(r.failClosedOnLevel3, false),
     cost: { eurPerUsd: num(cost.eurPerUsd, 0.92) },
     learn: {
-      autoLoosen: bool(learn.autoLoosen, true),
+      // Off since 2026-10-25: only the owner loosens a rule. A loosening waits as his card (changes.ts).
+      autoLoosen: bool(learn.autoLoosen, false),
       capsPerWeek: num(learn.capsPerWeek, 2),
       capsPerDay: num(learn.capsPerDay, 6),
     },
@@ -112,6 +133,19 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
       timeoutMs: num(explain.timeoutMs, 180_000),
       concurrency: num(explain.concurrency, 2),
     },
-    review: { enabled: bool(review.enabled, true), dailyCap: num(review.dailyCap, 150) },
+    review: {
+      enabled: bool(review.enabled, true),
+      dailyCap: num(review.dailyCap, 150),
+      passDailyCap: num(review.passDailyCap, 150),
+      ladder: reviewLadder.length ? reviewLadder : [...DEFAULT_REVIEW_LADDER],
+    },
+    earned: {
+      enabled: bool(earned.enabled, DEFAULT_EARNED.enabled),
+      days: num(earned.days, DEFAULT_EARNED.days),
+      minReviews: num(earned.minReviews, DEFAULT_EARNED.minReviews),
+      minUseful: num(earned.minUseful, DEFAULT_EARNED.minUseful),
+      maxHarmful: num(earned.maxHarmful, DEFAULT_EARNED.maxHarmful),
+      judge: str(earned.judge, DEFAULT_EARNED.judge),
+    },
   };
 }

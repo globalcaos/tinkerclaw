@@ -296,6 +296,7 @@
   "memory-engram",
   "fork-instrumentation",
   "fork-error-envelope",
+  "fork-rate-limit-reset",
   "fork-message-hooks",
   "fork-inflight-steer",
   "fork-prefrontal-schema",
@@ -309,5 +310,6 @@
   "fork-telemetry",
   "fork-jev",
   "fork-thalamus",
-  "fork-thalamus-runtime"
+  "fork-thalamus-runtime",
+  "fork-prompt-envelope"
 ]

@@ -72,9 +72,9 @@ divergence nobody notices.
 **The invariant that replaced the cap.** Both new matches are one function:
 `assembleRetrievalPackAsync`, the yielding twin added 2026-09-03 so a gateway-side caller stops
 holding the event loop. `retrieval-integration.ts` states the contract — equal output, different
-scheduling — and `index.cold-pack.test.ts` tests byte identity on a production-shaped 2,000-event
-tie-order corpus plus the empty and no-match edges. That is stronger evidence for the risk this
-row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
+scheduling — and `extensions/tinkerclaw-total-recall/__tests__/cold-pack.test.ts` tests byte
+identity on a production-shaped 2,000-event tie-order corpus plus the empty and no-match edges.
+That is stronger evidence for the risk this row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
 this protecting here?_ — the answer is "none": these are not two uncoordinated derivations; they
 are an intentional pair with an explicit equivalence contract and a regression test.
 

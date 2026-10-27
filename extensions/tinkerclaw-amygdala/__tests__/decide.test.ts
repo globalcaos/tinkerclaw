@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TurnContexts } from "../src/context.js";
 import { decide, type DecideDeps, type DecideInput } from "../src/decide.js";
 import type { Family } from "../src/families/types.js";
@@ -161,7 +161,7 @@ describe("decide: families and merge", () => {
     await decide(deps, input("ls"));
     expect(jev.calls).toHaveLength(1);
     expect(jev.calls[0].qs).toEqual(["danger-level", "runs-or-quotes", "excess-scope"]);
-    expect(jev.calls[0].budgetMs).toBe(2600);
+    expect(jev.calls[0].budgetMs).toBe(1000);
   });
 
   it("off questions are not asked", async () => {
@@ -294,7 +294,13 @@ describe("decide: the judge is out", () => {
 
   it("breaker open / timeout / error → fail open, degraded, family fallback", async () => {
     const { deps } = setup({ families: fams, mode: "enforce", jev: skip("breaker-open") });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const r = await decide(deps, input("git push origin main"));
+    // The reason survives in the log (2026-10-22: an unflagged refusal left only "jev-unavailable").
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+      /\[amygdala\] jev unavailable seam=pre-tool .*skipped=breaker-open:\d/,
+    );
+    warn.mockRestore();
     expect(r.decision).toMatchObject({
       family: "fallback",
       degraded: true,
@@ -616,6 +622,44 @@ describe("decide: one family enforced while the rest stays in shadow", () => {
       expect(r.decision.enforced, f.id).toBe(false);
       expect(r.hook.kind, f.id).toBe("none");
     }
+  });
+});
+
+// 2026-10-15, progressive activation: a note or send-back whose rule earned it from the reviews acts in shadow mode.
+describe("decide: earned rules act in shadow, holds never do", () => {
+  const noteFam = fam("safety", ["danger-level"], () => ({
+    response: note("check the path first"),
+    drivers: ["danger-level"],
+    reasonCode: "table-d2-low",
+  }));
+  const holdFam = fam("safety", ["danger-level"], () => ({
+    response: hold,
+    drivers: ["danger-level"],
+    reasonCode: "x",
+  }));
+  it("an earned note is enforced, with the full reason code asked", async () => {
+    const asked: string[] = [];
+    const { deps } = setup({ families: [noteFam], mode: "shadow" });
+    deps.earned = (family, kind, code) => (asked.push(`${family}|${kind}|${code}`), true);
+    const r = await decide(deps, input("ls"));
+    expect(r.decision).toMatchObject({ enforced: true, mode: "shadow" });
+    expect(r.hook.kind).toBe("context");
+    expect(asked).toEqual(["safety|note|table-d2-low[danger-level]"]);
+  });
+  it("a rule that has not earned it stays a shadow record", async () => {
+    const { deps } = setup({ families: [noteFam], mode: "shadow" });
+    deps.earned = () => false;
+    const r = await decide(deps, input("ls"));
+    expect(r.decision.enforced).toBe(false);
+    expect(r.hook.kind).toBe("none");
+  });
+  it("a hold is never asked about and never enforced this way", async () => {
+    let calls = 0;
+    const { deps } = setup({ families: [holdFam], mode: "shadow" });
+    deps.earned = () => (calls++, true);
+    const r = await decide(deps, input("ls"));
+    expect(r.decision.enforced).toBe(false);
+    expect(calls).toBe(0);
   });
 });
 

@@ -241,6 +241,33 @@ export function forgetResumeSessionId(sessionId: string): number {
   return doomed.length;
 }
 
+/**
+ * FORK 2026-10-22 (Rewind): point every binding of one claude-cli session at another (the fork a Rewind wrote, or the
+ * original for Undo), in the cache this process uses AND on disk. `updatedAt` is bumped so the lookup by openclaw
+ * session id (newest entry wins) returns the new id. Returns the number of entries moved (0 = nothing was bound).
+ */
+export function rebindResumeSessionId(from: string, to: string): number {
+  if (!from || !to || from === to) {
+    return 0;
+  }
+  const map = loadSessionMap();
+  const moved = Object.keys(map).filter((k) => map[k]?.sessionId === from);
+  if (moved.length === 0) {
+    return 0;
+  }
+  const now = Date.now();
+  for (const k of moved) {
+    map[k] = { ...map[k], sessionId: to, updatedAt: now };
+  }
+  ensureDir();
+  try {
+    fs.writeFileSync(mapPath(), JSON.stringify(map, null, 2), "utf8");
+  } catch {
+    // swallow — the in-memory cache already follows the fork, so THIS boot resumes it even if the write fails
+  }
+  return moved.length;
+}
+
 export function clearSessionMap(): void {
   cache = {};
   try {

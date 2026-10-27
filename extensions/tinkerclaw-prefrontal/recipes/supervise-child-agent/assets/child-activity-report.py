@@ -84,7 +84,7 @@ ledger = os.path.exists(home + "/.openclaw/forensic/llm-ledger.sqlite")
 print(json.dumps({"prompts": out, "ledger": ledger}))
 '''
 
-AUTO = re.compile(r"^(<<<BEGIN_OPENCLAW|⟦OVERSEER|Reply with exactly|\[Subagent Context\]|# FRACTAL|<task-notification>|System: \[)|Execute the morning briefing", re.S)
+AUTO = re.compile(r"^(<<<BEGIN_OPENCLAW|⟦OVERSEER|⟦AGENT:|Reply with exactly|Reply with the single word|Give this chat tab a SHORT|Output token limit hit|Your response above was stopped by a safety classifier|Identity check after deploy|Supervisor check|\[Subagent Context\]|# FRACTAL|<task-notification>|System: \[)|Execute the morning briefing", re.S)
 BUILTIN_REDACT = [r"[\w.+-]+@[\w-]+\.[\w.]+", r"\b[0-9a-fA-F]{32,}\b"]
 
 

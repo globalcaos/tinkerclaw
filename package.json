@@ -1253,6 +1253,10 @@
       "types": "./dist/plugin-sdk/fork-error-envelope.d.ts",
       "default": "./dist/plugin-sdk/fork-error-envelope.js"
     },
+    "./plugin-sdk/fork-rate-limit-reset": {
+      "types": "./dist/plugin-sdk/fork-rate-limit-reset.d.ts",
+      "default": "./dist/plugin-sdk/fork-rate-limit-reset.js"
+    },
     "./plugin-sdk/fork-message-hooks": {
       "types": "./dist/plugin-sdk/fork-message-hooks.d.ts",
       "default": "./dist/plugin-sdk/fork-message-hooks.js"
@@ -1308,6 +1312,10 @@
     "./plugin-sdk/fork-thalamus-runtime": {
       "types": "./dist/plugin-sdk/fork-thalamus-runtime.d.ts",
       "default": "./dist/plugin-sdk/fork-thalamus-runtime.js"
+    },
+    "./plugin-sdk/fork-prompt-envelope": {
+      "types": "./dist/plugin-sdk/fork-prompt-envelope.d.ts",
+      "default": "./dist/plugin-sdk/fork-prompt-envelope.js"
     },
     "./extension-api": "./dist/extensionAPI.js",
     "./cli-entry": "./openclaw.mjs"
@@ -1507,7 +1515,7 @@
     "runtime-sidecars:gen": "node --import tsx scripts/generate-runtime-sidecar-paths-baseline.ts --write",
     "stage:bundled-plugin-runtime-deps": "node scripts/stage-bundled-plugin-runtime-deps.mjs",
     "start": "node scripts/run-node.mjs",
-    "test": "node scripts/test-projects.mjs && node scripts/test-invariants.mjs",
+    "test": "node scripts/test-with-invariants.mjs",
     "test:all": "pnpm lint && pnpm build && pnpm test && pnpm bible:invariants && pnpm test:e2e && pnpm test:live && pnpm test:docker:all",
     "test:auth:compat": "node scripts/run-vitest.mjs run --config test/vitest/vitest.gateway.config.ts src/gateway/server.auth.compat-baseline.test.ts src/gateway/client.test.ts src/gateway/reconnect-gating.test.ts src/gateway/protocol/connect-error-details.test.ts",
     "test:build:bundled-runtime-deps": "node scripts/test-built-bundled-runtime-deps.mjs",

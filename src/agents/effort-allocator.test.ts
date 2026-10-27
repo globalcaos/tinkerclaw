@@ -139,6 +139,14 @@ describe("userTaskLength — the size heuristic measures the USER's ask, not our
     expect(userTaskLength(withTrailer)).toBeLessThan(280);
   });
 
+  // FORK 2026-10-09 (Fractal v2, charter C4) — new prompts open the doctrine with a neutral marker.
+  it("strips the trailer behind the new ⟦FRACTAL-DOCTRINE⟧ marker", () => {
+    const asked = "what time is it?";
+    const NEW_TRAILER = "\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n" + "Judge the finished turn. ".repeat(80);
+    expect(NEW_TRAILER.length).toBeGreaterThan(1200);
+    expect(userTaskLength(asked + NEW_TRAILER)).toBe(asked.length);
+  });
+
   it("handles an absent prompt and a bare marker", () => {
     expect(userTaskLength(undefined)).toBe(0);
     expect(userTaskLength("")).toBe(0);

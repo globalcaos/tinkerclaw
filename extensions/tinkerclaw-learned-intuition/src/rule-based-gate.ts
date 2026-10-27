@@ -44,6 +44,15 @@ export interface AegisRule {
   enforce: boolean;
   /** "exec" → only execution-tool command text; "all" → tool name + input. */
   scope: AegisScope;
+  /**
+   * "delete" → the rule needs the OWNER'S intent, which only the pre-execution hook can read
+   * (his latest typed message). The in-process evaluators skip such rules; the hook allows a
+   * match when every target is agent scratch under /tmp/<name>, or the owner's latest message
+   * asks to delete, or he typed the one-time "allow <code>".
+   * "secret" (2026-10-13) → same, for reading or using a stored password: his latest message must
+   * ask for it in his own words (Jev agreeing), or the one-time code. No /tmp exemption.
+   */
+  ownerIntent?: "delete" | "secret";
 }
 
 /**
@@ -90,6 +99,34 @@ export const AEGIS_RULES: AegisRule[] = [
     explanation: "Filesystem format command",
     enforce: true,
     scope: "exec",
+  },
+  {
+    // the architect, 2026-10-13: "help me liberate some disk space" was answered by purging the pip and
+    // npm caches and force-removing 8 deploy worktrees (~41 GB), none of which he asked to
+    // delete. Asking for help is not an instruction to delete: deletion needs his explicit
+    // words. ownerIntent:"delete" makes the hook check them (see the field doc above).
+    pattern:
+      /(?:^|[\s;&|(`])(?:rm|shred|unlink)\s|\bfind\s[^;&|]*\s-delete\b|\bgit\s+(?:rm\s|clean\s+-\S*f|worktree\s+remove\s+(?:\S+\s+)*(?:--force|-f)\b)|\b(?:pip3?|uv|conda|yarn|npm|pnpm)\s+(?:cache\s+(?:purge|clean|remove|prune|rm)|store\s+prune|clean\b)|\bdocker\s+(?:(?:system|image|volume|container|builder|network)\s+prune|rmi\b|rm\b)|\bapt(?:-get)?\s+(?:autoremove|purge|remove|clean|autoclean)\b|\bsnap\s+remove\b|\bjournalctl\s[^;&|]*--vacuum|\bhuggingface-cli\s+delete-cache\b|\btimeshift\s[^;&|]*--delete\b/,
+    rule: "DELETE_UNREQUESTED",
+    explanation: "Deletes files or caches the owner did not explicitly ask to delete",
+    enforce: true,
+    scope: "exec",
+    ownerIntent: "delete",
+  },
+  {
+    // the architect, 2026-10-13 21:13: "Jev should do the same with accessing the passwords as with
+    // deleting stuff, it should be enforced by the amygdala, and only allowed by express
+    // phrasing." Reading or using a stored password, key file or .env needs his own words,
+    // checked by the hook exactly like a deletion (ownerIntent:"secret"). SSH keys used by
+    // ssh -i are not in scope: they authenticate, nobody reads them.
+    pattern:
+      /[\w.-]+\.secret\b|\.config\/(?:orbisvision|jarvis)\/|\.openclaw\/(?:[\w.-]+\/)?\.env\b|\.openclaw\/credentials\/|\bsecret-tool\s+lookup\b|\bpass\s+show\b/,
+    rule: "SECRET_UNREQUESTED",
+    explanation:
+      "Reads or uses a stored password or secret the owner did not explicitly ask to use",
+    enforce: true,
+    scope: "all",
+    ownerIntent: "secret",
   },
   {
     // /dev/null and /dev/zero are sinks, not devices to destroy — exempt them
@@ -233,7 +270,8 @@ function noteAegisDecision(result: RuleBasedResult): RuleBasedResult {
 export function evaluateRuleBased(toolName: string, argsStr: string): RuleBasedResult {
   const combined = `${toolName} ${argsStr}`;
 
-  for (const { pattern, rule, explanation } of AEGIS_RULES) {
+  for (const { pattern, rule, explanation, ownerIntent } of AEGIS_RULES) {
+    if (ownerIntent) continue; // needs the owner's words: decided by the pre-execution hook
     if (pattern.test(combined)) {
       return noteAegisDecision({
         decision: "hard_block",
@@ -260,7 +298,8 @@ export function evaluateRuleBased(toolName: string, argsStr: string): RuleBasedR
  */
 export function evaluateAegisEnforced(toolName: string, argsStr: string): RuleBasedResult {
   const combined = `${toolName} ${argsStr}`;
-  for (const { pattern, rule, explanation, enforce } of AEGIS_RULES) {
+  for (const { pattern, rule, explanation, enforce, ownerIntent } of AEGIS_RULES) {
+    if (ownerIntent) continue; // needs the owner's words: decided by the pre-execution hook
     if (enforce && pattern.test(combined)) {
       return noteAegisDecision({
         decision: "hard_block",
@@ -288,6 +327,7 @@ export interface SerializedAegisRule {
   explanation: string;
   enforce: boolean;
   scope: AegisScope;
+  ownerIntent?: "delete" | "secret";
 }
 
 /** Flatten `AEGIS_RULES` to JSON-safe rows for `policy.json`. */
@@ -299,5 +339,6 @@ export function serializeAegisRules(): SerializedAegisRule[] {
     explanation: r.explanation,
     enforce: r.enforce,
     scope: r.scope,
+    ...(r.ownerIntent ? { ownerIntent: r.ownerIntent } : {}),
   }));
 }

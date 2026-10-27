@@ -40,11 +40,11 @@ describe("shared/rel-cost-table", () => {
     });
 
     // The most expensive inversion available: a METERED cash route ($50/Mtok)
-    // sitting above the amortized subscription /opus/ row (0.5692 since the 2026-09-23
+    // sitting above the amortized subscription /opus/ row (0.4886 since the 2026-10-10 re-measurement, 0.5692 after the 2026-09-23
     // measured re-base; 0.2232 before) — 88x.
     it("prices claude-opus-5-fast as metered cash, not as amortized opus", () => {
       const claimants = allRowsMatching("openrouter/anthropic/claude-opus-5-fast");
-      expect(claimants.map((r) => r4(r.relCost))).toEqual([50.0, 0.5692]);
+      expect(claimants.map((r) => r4(r.relCost))).toEqual([50.0, 0.4886]);
       expect(relCostFor("openrouter/anthropic/claude-opus-5-fast")).toBe(50.0);
     });
 
@@ -89,9 +89,9 @@ describe("shared/rel-cost-table", () => {
     const FIXTURE: [string, number][] = [
       // 2026-09-23 measured re-base: Claude seat ×2.55, ChatGPT seat ×7.66 vs the
       // borrowed 0.0893 unit. Grok still BORROWS the Anthropic multiple (unmeasured).
-      ["xai/grok-4.6", 0.1366],
-      ["claude-code/claude-opus-5", 0.5692],
-      ["claude-code/claude-opus-5-5", 0.4553],
+      ["xai/grok-4.6", 0.1173],
+      ["claude-code/claude-opus-5", 0.4886],
+      ["claude-code/claude-opus-5-5", 0.3909],
       ["openai-codex/gpt-5.6-sol", 1.3685],
       ["openai/gpt-5.6-luna", 0.0821],
     ];
@@ -106,9 +106,9 @@ describe("shared/rel-cost-table", () => {
     // while grok and opus stayed green. Pin the ORDERED claimant list instead.
     it("pins the ordered claimant list behind each fixture price", () => {
       const claims = (id: string) => allRowsMatching(id).map((row) => r4(row.relCost));
-      expect(claims("xai/grok-4.6")).toEqual([0.1366]);
-      expect(claims("claude-code/claude-opus-5")).toEqual([0.5692]);
-      expect(claims("claude-code/claude-opus-5-5")).toEqual([0.4553, 0.5692]);
+      expect(claims("xai/grok-4.6")).toEqual([0.1173]);
+      expect(claims("claude-code/claude-opus-5")).toEqual([0.4886]);
+      expect(claims("claude-code/claude-opus-5-5")).toEqual([0.3909, 0.4886]);
       expect(claims("openai-codex/gpt-5.6-sol")).toEqual([1.3685, 0.6842]);
       expect(claims("openai/gpt-5.6-luna")).toEqual([0.0821, 0.6842]);
     });
@@ -146,7 +146,7 @@ describe("shared/rel-cost-table", () => {
         at100("Max 5× €100"),
         at100("Team €125"),
         at100("Max 20× €200"),
-      ]).toEqual([29.3, 29.3, 23.4, 58.6]);
+      ]).toEqual([34.1, 34.1, 27.3, 68.2]); // re-measured 2026-10-10 (was 29.3 / 29.3 / 23.4 / 58.6)
       expect([
         at100("Plus €20"),
         at100("Business €25"),
@@ -243,5 +243,16 @@ describe("shared/rel-cost-table", () => {
       ).map((row) => row.modelMatch.source);
       expect(bad).toEqual([]);
     });
+  });
+});
+
+describe("ai-analysis legend (2026-10-10: a typed 340× outlived the 09-23 re-measurement)", () => {
+  it("app.ts never types the seat multiple; it computes it from SEAT_MEASURED", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../../tinker-ui/src/app.ts", import.meta.url), "utf8");
+    const line =
+      src.split("\n").find((l) => l.includes("Read the two marks as different questions")) ?? "";
+    expect(line).toContain("seatValueMultiple(");
+    expect(line).not.toMatch(/<b>\d+×<\/b>/);
   });
 });

@@ -112,27 +112,59 @@ export function renderRefusalStrip(
    * Absent or null: only Rewind, because nothing may be offered that Thalamus has no pick for.
    */
   retry?: { label: string; chipHtml: string; reason?: string } | null,
+  /**
+   * FORK 2026-10-22: the exchange (the owner's prompt row and what answered it) this strip sits under. A click is refused
+   * when that exchange is no longer the newest one on the page, so a strip that went stale cannot rewind a newer turn.
+   */
+  exchangeKey?: string | null,
+  /** Exchanges a Rewind takes from this one on (2026-10-22); above 1 the button says so and no retry is offered. */
+  rewindCount = 1,
+  /** A partial refusal (the reply dodged part of the work, 2026-10-22): same offer, its own words. */
+  partial = false,
 ): string {
   // "settled" is the same offer in shadow mode: the strip is the user's choice, not an enforcement (2026-09-30,
   // shadow mode never showed Rewind).
   if (!iv || (!isOpen(iv) && iv.state !== "settled")) return "";
   const t = esc(turnId);
+  const ex = exchangeKey ? ` data-exchange="${esc(exchangeKey)}"` : "";
+  const many = rewindCount > 1;
   const rewind = canRewind
-    ? `<button class="amy-btn amy-small" data-amy-act="rewind" data-turn="${t}">⟲ Rewind</button>`
+    ? `<button class="amy-btn amy-small" data-amy-act="rewind" data-turn="${t}"${ex}` +
+      (many
+        ? ` title="This exchange and the ${rewindCount - 1} after it leave the chat and the model's memory">⟲ Rewind ${rewindCount} exchanges</button>`
+        : `>⟲ Rewind</button>`)
     : rewindBlocked
       ? `<button class="amy-btn amy-small" disabled title="${esc(rewindBlocked)}">⟲ Rewind</button>`
       : "";
   const retryBtn =
-    canRewind && retry
+    canRewind && retry && !many
       ? `<button class="amy-btn amy-small amy-retry" data-amy-act="rewind-retry" data-turn="${t}"${retry.reason ? ` title="${esc(retry.reason)}"` : ""}>` +
         `⟲ Rewind and retry with ${retry.chipHtml}<span class="amy-retry-name">${esc(retry.label)}</span></button>`
       : "";
   return (
-    `<div class="amy-refstrip" data-turn="${t}"><span>🧠</span><span class="amy-t">This looks like a refusal</span>` +
+    `<div class="amy-refstrip" data-turn="${t}"><span>🧠</span><span class="amy-t">${partial ? "This looks like a partial refusal" : "This looks like a refusal"}</span>` +
     rewind +
     retryBtn +
     `<button class="amy-btn amy-small" data-amy-act="refusal-keep" data-turn="${t}">Keep</button>` +
     `<span class="amy-m">logged for the router</span></div>`
+  );
+}
+
+/** The line that stands where a rewound exchange was. Undo only while it is still the newest thing on the page. */
+export function renderExchangeRewound(
+  key: string,
+  info: { ts: number; restored?: string; count?: number },
+  canUndo: boolean,
+): string {
+  const k = esc(key);
+  const title = info.restored ? ` title="${esc(info.restored)}"` : "";
+  const n = Math.max(1, info.count ?? 1);
+  return (
+    `<div class="amy-rewound" data-exchange="${k}"${title}>⟲ Rewound ${n === 1 ? "1 exchange" : `${n} exchanges`} · ${esc(fmtClock(info.ts))} · the model no longer sees it` +
+    (canUndo
+      ? ` · <a href="#" role="button" data-amy-act="rewind-exchange-undo" data-exchange="${k}">Undo</a>`
+      : "") +
+    `</div>`
   );
 }
 

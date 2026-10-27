@@ -1,5 +1,5 @@
 /**
- * The Jev chip: a compact line next to the composer saying whether Jev is off (no token), checking a token, on, or refused.
+ * The Jev chip: a compact line in the top bar, beside the gateway status (moved from the composer 2026-10-22), saying whether Jev is off (no token), checking a token, on, or refused.
  * It draws what the gateway's `jev.status` answers and follows its `jev.status` event; on a gateway without the method it
  * draws nothing, so an older gateway and this page stay exactly as they were. The status never carries the token.
  */

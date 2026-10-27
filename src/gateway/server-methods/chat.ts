@@ -13,6 +13,7 @@ import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import type { PromptDisposition } from "../../auto-reply/get-reply-options.types.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
+import type { TurnThinkLevelContext } from "../../auto-reply/reply/get-reply-directives.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
@@ -166,7 +167,7 @@ import { formatForLog } from "../ws-log.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { setGatewayDedupeEntry } from "./agent-wait-dedupe.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
-import { buildChatSendCommandBody } from "./chat-command-body.js";
+import { buildChatSendCommandBody, resolveChatSendTurnThinking } from "./chat-command-body.js";
 import { appendInjectedAssistantMessageToTranscript } from "./chat-transcript-inject.js";
 import {
   buildWebchatAssistantMessageFromReplyPayloads,
@@ -3380,10 +3381,19 @@ export const chatHandlers: GatewayRequestHandlers = {
           ? resolveChatSendTranscriptMediaFields(await persistedImagesPromise)
           : {};
 
+      // FORK 2026-10-09 (effort slider): the `thinking` param no longer rides the command body as
+      // a `/think <lvl>` directive. Every path that applies an inline `/think` stores it in
+      // sessionEntry.thinkingLevel, so the pin the slider re-sends each turn outlived its turn and
+      // later Auto turns never reached Thalamus. It travels on the context instead
+      // (`TurnThinkLevel` below), as a pin for this turn that no persistence path reads. A `/think`
+      // the user types into the message is still a directive and still persists.
       const commandBody = buildChatSendCommandBody({
         message: parsedMessage,
-        thinking: p.thinking,
         model: p.model,
+      });
+      const turnThinkLevel = resolveChatSendTurnThinking({
+        message: parsedMessage,
+        thinking: p.thinking,
       });
       const messageForAgent = systemProvenanceReceipt
         ? [systemProvenanceReceipt, parsedMessage].filter(Boolean).join("\n\n")
@@ -3409,12 +3419,14 @@ export const chatHandlers: GatewayRequestHandlers = {
       // See: https://github.com/moltbot/moltbot/issues/3658
       const stampedMessage = injectTimestamp(messageForAgent, timestampOptsFromConfig(cfg));
 
-      const ctx: MsgContext = {
+      const ctx: MsgContext & TurnThinkLevelContext = {
         Body: messageForAgent,
         BodyForAgent: stampedMessage,
         BodyForCommands: commandBody,
         RawBody: parsedMessage,
         CommandBody: commandBody,
+        // FORK 2026-10-09 (effort slider): the slider's level, as a pin for THIS turn only.
+        TurnThinkLevel: turnThinkLevel,
         InputProvenance: systemInputProvenance,
         SessionKey: sessionKey,
         Provider: INTERNAL_MESSAGE_CHANNEL,

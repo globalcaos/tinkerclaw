@@ -91,6 +91,7 @@ import {
 } from "../session-utils.js";
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
+import { checkTabContract, isAgentTabMessage, loadChains } from "../tab-chain-contract.js";
 import { chatHandlers, createChatAbortOps } from "./chat.js";
 import { suggestTitleViaBridge } from "./suggest-title.js";
 import type {
@@ -568,6 +569,27 @@ async function handleSessionSend(params: {
       errorShape(ErrorCodes.INVALID_REQUEST, `session not found: ${key}`),
     );
     return;
+  }
+
+  // FORK 2026-10-15 (bible §5.8AG): a tab speaking into another chat needs a master-slave contract.
+  const outgoing =
+    typeof (p as { message?: unknown }).message === "string"
+      ? (p as { message: string }).message
+      : "";
+  if (isAgentTabMessage(outgoing)) {
+    const fromSessionKey = (p as { fromSessionKey?: string }).fromSessionKey;
+    const verdict = checkTabContract({
+      fromKey: fromSessionKey,
+      toKey: canonicalKey,
+      chains: loadChains(),
+    });
+    if (!verdict.ok) {
+      console.error(
+        `[tab-contract] refused ${params.method} from=${fromSessionKey ?? "(anonymous)"} to=${canonicalKey}: ${verdict.reason}`,
+      );
+      params.respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, verdict.reason));
+      return;
+    }
   }
 
   let interruptedActiveRun = false;

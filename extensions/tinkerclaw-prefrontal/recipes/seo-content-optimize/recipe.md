@@ -113,6 +113,8 @@ grade, add an FAQ section where natural, and state key claims as extractable,
 citable facts. Brand-voice guard: before finalizing, diff the draft's tone,
 phrasing, and person against {{context_file}} and revert any drifted passage.
 
+**Figures and depth gate (2026-10-13).** Before publishing a post that carries data: (a) every figure must be readable cold by a non-engineer: plain titles, a subtitle per bar or series, no unexplained jargon or abbreviation (say what an H200 is and where to rent it), no clipped or overlapping labels, checked on a rendered screenshot; (b) costs that depend on place or provider are shown as ranges across several countries or providers, never one country as if it were the default; (c) the post adds research beyond the conversation that prompted it (who sells it, at what price, what changes the answer). Then send the rendered pages to a second-vendor reviewer (Astra) at least once before publishing.
+
 ### 4. Generate schema markup
 
 **Done when:** JSON-LD that parses and matches schema.org vocabulary exists.
@@ -157,3 +159,4 @@ the top-3 changes the operator should approve first.
 - Optimized content did not match brand voice. Fixed with a calibration step
   using on-brand content as style references (here: {{context_file}}).
 - v1.0 distilled 2026-06-13 from Journey kit matt-clawd/seo-content-optimizer.
+- **2026-10-13, post 631 (token cost):** published straight from a chat thread. The owner: "a bit sloppy. You mention Ireland like it belongs there, instead of making a good cross-country average. You just posted the information talked about, did not dig deeper anywhere ... what the fuck is H200 and where do I rent it from? The figures is what a person sees first, and what should not need any context." Fix: the figures-and-depth gate in step 3.

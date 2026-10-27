@@ -18,9 +18,11 @@ import {
   type TurnOutcome,
 } from "../fork/turn-outcome.js";
 import {
+  attributeSubagentUsage,
   attributeToolUsage,
   getUsageRegistry,
   mergeUsageMarks,
+  subagentTranscriptDir,
   type UsageMark,
   type UsageRegistry,
 } from "../fork/usage-attribution.js";
@@ -646,11 +648,28 @@ const NO_USAGE_MARKS: readonly UsageMark[] = Object.freeze([]);
 let historyUsageRegistryForTest: UsageRegistry | undefined;
 /** read/exec attributions, keyed by the object the call was read from (fork note: COST). */
 let historyUsageMemo = new WeakMap<object, readonly UsageMark[]>();
+/**
+ * FORK 2026-10-21: an EMPTY memo whose arguments name a `/skills/` path remembers the registry it was
+ * computed with, and is recomputed once that registry is rebuilt (at most once a minute). A skill
+ * whose SKILL.md is written after the call was first projected (built in the same turn, or read by
+ * an embedded run while it streams) otherwise kept "no chip" until the gateway restarted.
+ */
+let historyEmptyMemoRegistry = new WeakMap<object, UsageRegistry>();
+const SKILL_PATH_HINT = /\/skills\//;
 
-/** Test seam: attribute history against `registry` instead of the real roots; undefined restores. */
-export function __setHistoryUsageRegistryForTest(registry: UsageRegistry | undefined): void {
+/**
+ * Test seam: attribute history against `registry` instead of the real roots; undefined restores.
+ * `keepMemo` swaps the registry the way the 60 s rebuild does, keeping the per-call memo.
+ */
+export function __setHistoryUsageRegistryForTest(
+  registry: UsageRegistry | undefined,
+  opts?: { keepMemo?: boolean },
+): void {
   historyUsageRegistryForTest = registry;
-  historyUsageMemo = new WeakMap();
+  if (!opts?.keepMemo) {
+    historyUsageMemo = new WeakMap();
+    historyEmptyMemoRegistry = new WeakMap();
+  }
   transcriptReadCache.clear();
 }
 
@@ -681,6 +700,8 @@ type HistoryUsageCollector = {
   openTurn(index: number): void;
   /** One tool call of the open turn, served or not; `source` is the object it was read from. */
   addCall(name: string, args: unknown, toolCallId: string | undefined, source: object): void;
+  /** FORK 2026-10-21: a subagent transcript folder a tool result of the open turn names. */
+  addSubagentDir(dir: string): void;
   /** Stamp the open turn's marks onto its user row. */
   finish(): void;
 };
@@ -715,6 +736,11 @@ function createHistoryUsageCollector(messages: unknown[]): HistoryUsageCollector
         let marks: readonly UsageMark[];
         if (USAGE_ARGUMENT_TOOLS.has(lower)) {
           let memo = historyUsageMemo.get(source);
+          const emptyWith =
+            memo === NO_USAGE_MARKS ? historyEmptyMemoRegistry.get(source) : undefined;
+          if (emptyWith && emptyWith !== resolveRegistry()) {
+            memo = undefined; // a skill path that was not a skill then: ask again
+          }
           if (!memo) {
             gateArguments ??= !ambientPathMayCarryUsage();
             const fresh =
@@ -723,6 +749,11 @@ function createHistoryUsageCollector(messages: unknown[]): HistoryUsageCollector
                 : attribute(name, args, toolCallId);
             memo = fresh.length > 0 ? fresh : NO_USAGE_MARKS;
             historyUsageMemo.set(source, memo);
+            if (memo === NO_USAGE_MARKS && argumentsNameSkillPath(args)) {
+              historyEmptyMemoRegistry.set(source, resolveRegistry());
+            } else {
+              historyEmptyMemoRegistry.delete(source);
+            }
           }
           marks = memo;
         } else if (lower === "skill" || name.startsWith("mcp__")) {
@@ -737,11 +768,35 @@ function createHistoryUsageCollector(messages: unknown[]): HistoryUsageCollector
         // attribution must never cost the history its rows
       }
     },
+    addSubagentDir(dir) {
+      if (userIndex < 0) {
+        return;
+      }
+      try {
+        found.push(...attributeSubagentUsage(dir, resolveRegistry()));
+      } catch {
+        // attribution must never cost the history its rows
+      }
+    },
     finish() {
       flush();
       userIndex = -1;
     },
   };
+}
+
+function argumentsNameSkillPath(args: unknown): boolean {
+  if (typeof args === "string") {
+    return SKILL_PATH_HINT.test(args);
+  }
+  if (!args || typeof args !== "object") {
+    return false;
+  }
+  const record = args as Record<string, unknown>;
+  return USAGE_ARGUMENT_KEYS.some((key) => {
+    const value = record[key];
+    return typeof value === "string" && SKILL_PATH_HINT.test(value);
+  });
 }
 
 function attachTurnUsage(row: unknown, marks: readonly UsageMark[]): unknown {
@@ -794,7 +849,22 @@ function collectBridgeToolCall(
   if (!data || typeof data !== "object") {
     return;
   }
-  const record = data as { phase?: unknown; name?: unknown; args?: unknown; toolCallId?: unknown };
+  const record = data as {
+    phase?: unknown;
+    name?: unknown;
+    args?: unknown;
+    toolCallId?: unknown;
+    result?: unknown;
+  };
+  if (record.phase === "result") {
+    // FORK 2026-10-21: a Workflow's result names the folder its agents write; their calls are
+    // this turn's work too (usage-attribution.ts, "Subagents").
+    const dir = subagentTranscriptDir(record.result);
+    if (dir) {
+      usage.addSubagentDir(dir);
+    }
+    return;
+  }
   if (record.phase === "start" && typeof record.name === "string") {
     usage.addCall(
       record.name,

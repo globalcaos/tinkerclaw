@@ -35,10 +35,7 @@ import { emitAgentEvent } from "../infra/agent-events.js";
 import { recordAlgorithmOutcome } from "../infra/algorithm-metrics.js";
 import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
 import { estimateTokens } from "../memory/engram/event-store.js";
-import type { MemoryEvent } from "../memory/engram/event-types.js";
-import type { ContextCache, CompactionBudgets } from "../memory/engram/pointer-compaction.js";
-import { pointerCompact, estimateCacheTokens } from "../memory/engram/pointer-compaction.js";
-import { renderMarkers } from "../memory/engram/time-range-marker.js";
+import { renderToolResultEvictionMarker } from "../memory/engram/eviction-marker.js";
 import { appendGap, detectUncertaintySpans, extractTopic, makeGap } from "./curiosity-store.js";
 
 // FORK 2026-07-28 — LIVENESS. Instruments on this file's traffic path declare themselves here, at
@@ -1614,171 +1611,6 @@ export function maybeTriggerFractalReflection(
 }
 
 // ---------------------------------------------------------------------------
-// Hook: Pointer-based compaction (ENGRAM Phase 1B)
-// ---------------------------------------------------------------------------
-
-/**
- * Feature flag: set ENGRAM_POINTER_COMPACTION=1 to enable.
- */
-function isPointerCompactionEnabled(): boolean {
-  // Default to enabled in tinkerclaw fork; set ENGRAM_POINTER_COMPACTION=0 to disable.
-  return process.env["ENGRAM_POINTER_COMPACTION"] !== "0";
-}
-
-/**
- * Convert SDK messages to MemoryEvents for pointer compaction.
- * Uses already-ingested events when available, falls back to mapping messages directly.
- */
-function messagesToMemoryEvents(
-  messages: Array<{ role: string; content?: unknown }>,
-  sessionKey: string,
-): MemoryEvent[] {
-  const events: MemoryEvent[] = [];
-  let turnId = 0;
-
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      turnId++;
-    }
-
-    const text =
-      typeof msg.content === "string"
-        ? msg.content
-        : Array.isArray(msg.content)
-          ? (msg.content as Array<{ type?: string; text?: string }>)
-              .filter((c) => c.type === "text" && typeof c.text === "string")
-              .map((c) => c.text as string)
-              .join("")
-          : "";
-
-    if (!text) {
-      continue;
-    }
-
-    const kind =
-      msg.role === "user"
-        ? "user_message"
-        : msg.role === "assistant"
-          ? "agent_message"
-          : msg.role === "toolResult"
-            ? "tool_result"
-            : "system_event";
-
-    events.push({
-      id: `ptr-${events.length}`,
-      timestamp: new Date().toISOString(),
-      turnId,
-      sessionKey,
-      kind: kind as MemoryEvent["kind"],
-      content: text,
-      tokens: estimateTokens(text),
-      metadata: { importance: 5 },
-    });
-  }
-
-  return events;
-}
-
-export interface PointerCompactionResult {
-  /** Whether compaction was performed. */
-  compacted: boolean;
-  /** New messages array with markers injected, or null if not compacted. */
-  messages: Array<{ role: string; content: unknown }> | null;
-  /** Number of events evicted. */
-  eventsEvicted: number;
-  /** Tokens freed. */
-  tokensFreed: number;
-}
-
-/**
- * Attempt pointer-based compaction on the session messages.
- * Returns the compacted message list with time-range markers,
- * or { compacted: false } if not enabled or nothing to evict.
- *
- * Called from run.ts BEFORE narrative compaction.
- */
-export function tryPointerCompaction(
-  sessionManager: SessionManager,
-  messages: Array<{ role: string; content?: unknown }>,
-  contextWindowTokens: number,
-  sessionKey: string,
-  log: { info: (msg: string) => void; warn: (msg: string) => void },
-): PointerCompactionResult {
-  if (!isPointerCompactionEnabled()) {
-    return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
-  }
-
-  const ingestionRuntime = getIngestionRuntime(sessionManager);
-  const eventStore = ingestionRuntime?.eventStore ?? null;
-
-  // Build context cache from messages
-  const events = messagesToMemoryEvents(messages, sessionKey);
-  if (events.length === 0) {
-    return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
-  }
-
-  const cache: ContextCache = { events: [...events], markers: [] };
-  const tokensBefore = estimateCacheTokens(cache);
-
-  const budgets: CompactionBudgets = {
-    ctx: contextWindowTokens,
-    headroom: Math.floor(contextWindowTokens * 0.2), // 20% headroom
-    hotTailTurns: 3,
-    markerSoftCap: 15,
-  };
-
-  try {
-    const cycles = pointerCompact(cache, budgets, eventStore ?? undefined);
-    if (cycles === 0) {
-      return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
-    }
-
-    const tokensAfter = estimateCacheTokens(cache);
-    const tokensFreed = tokensBefore - tokensAfter;
-    const eventsEvicted = events.length - cache.events.length;
-
-    log.info(
-      `engram: pointer compaction completed — ${cycles} cycles, ${eventsEvicted} events evicted, ~${tokensFreed} tokens freed`,
-    );
-
-    // Rebuild messages: surviving events as messages + markers as system message
-    const newMessages: Array<{ role: string; content: unknown }> = [];
-
-    // Prepend markers as a system message
-    const markersText = renderMarkers(cache.markers);
-    if (markersText) {
-      newMessages.push({
-        role: "system",
-        content: markersText,
-      });
-    }
-
-    // Add surviving events back as messages
-    for (const event of cache.events) {
-      const role =
-        event.kind === "user_message"
-          ? "user"
-          : event.kind === "agent_message"
-            ? "assistant"
-            : event.kind === "tool_result" || event.kind === "artifact_reference"
-              ? "toolResult"
-              : "system";
-      newMessages.push({ role, content: event.content });
-    }
-
-    return {
-      compacted: true,
-      messages: newMessages,
-      eventsEvicted,
-      tokensFreed,
-    };
-  } catch (err) {
-    log.warn(`engram: pointer compaction failed: ${String(err)}`);
-    return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Hook: AMYGDALA shadow logging (Phase 1)
 // Evaluates every tool execution through AMYGDALA and logs predictions.
 // Does NOT block actions — shadow mode only (alpha = 0).
@@ -1835,4 +1667,80 @@ export async function amygdalaShadowLog(params: {
   } catch {
     // Shadow logging should never crash the agent
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// FORK 2026-10-23 — junk-first eviction (the architect 19:59: "Turn on the junk first eviction").
+// The engine in memory/engram/pointer-compaction.ts ranks tool output first, but nothing called it
+// since the runner was renamed, and its rebuild of the message list from events dropped the
+// toolCallId pairing the provider APIs require. This pass keeps every message and every pairing:
+// when the desk passes TRIGGER of the window, the bodies of old, large tool results (outside the
+// last HOT_TAIL user turns) are swapped, oldest first, for a one-line stub until the desk is under
+// TARGET. The session record on disk is never touched, so the original is one tool call away.
+// Opt out with ENGRAM_TOOL_EVICTION=0.
+//
+// FORK 2026-10-25 — the stub is a marker now (memory/engram/eviction-marker.ts). The old one said
+// "run the tool again", which re-fetches a page or re-runs a command whose answer may have changed,
+// and it quoted nothing, so the agent had no words to search for. The marker quotes the result's
+// exact first and last lines and names its toolCallId: recall({id}) returns the whole result from
+// the transcript (memory/engram/transcript-item.ts, behind total-recall's recall tool).
+// ---------------------------------------------------------------------------------------------
+const TOOL_EVICTION_TRIGGER = 0.8;
+const TOOL_EVICTION_TARGET = 0.6;
+const TOOL_EVICTION_HOT_TAIL = 3;
+const TOOL_EVICTION_MIN_TOKENS = 200;
+
+export interface ToolResultEvictionResult {
+  evicted: number;
+  tokensFreed: number;
+  /** New message list, or null when nothing was evicted. */
+  messages: Array<{ role: string; content?: unknown }> | null;
+}
+
+const estimateMsgTokens = (m: { content?: unknown }): number =>
+  Math.ceil(JSON.stringify(m.content ?? "").length / 4);
+
+export function evictOldToolResults(
+  messages: Array<{ role: string; content?: unknown; toolName?: string; toolCallId?: string }>,
+  contextWindowTokens: number,
+): ToolResultEvictionResult {
+  const none = { evicted: 0, tokensFreed: 0, messages: null };
+  if (process.env["ENGRAM_TOOL_EVICTION"] === "0" || !contextWindowTokens) return none;
+  let total = messages.reduce((s, m) => s + estimateMsgTokens(m), 0);
+  if (total <= contextWindowTokens * TOOL_EVICTION_TRIGGER) return none;
+  const target = contextWindowTokens * TOOL_EVICTION_TARGET;
+
+  // Everything from the HOT_TAIL-th last user message onward stays verbatim.
+  let hotStart = messages.length;
+  for (let i = messages.length - 1, seen = 0; i >= 0; i--) {
+    if (messages[i].role === "user" && ++seen === TOOL_EVICTION_HOT_TAIL) {
+      hotStart = i;
+      break;
+    }
+  }
+  if (hotStart === messages.length) return none; // fewer than HOT_TAIL turns: nothing is old
+
+  const out = messages.slice();
+  let evicted = 0;
+  let tokensFreed = 0;
+  for (let i = 0; i < hotStart && total - tokensFreed > target; i++) {
+    const m = out[i];
+    if (m.role !== "toolResult") continue;
+    const t = estimateMsgTokens(m);
+    if (t < TOOL_EVICTION_MIN_TOKENS) continue;
+    const marker = renderToolResultEvictionMarker({
+      toolName: m.toolName,
+      toolCallId: m.toolCallId,
+      content: m.content,
+    });
+    const markerContent = [{ type: "text", text: marker }];
+    const markerTokens = estimateMsgTokens({ content: markerContent });
+    if (markerTokens >= t) {
+      continue; // a marker longer than the result buys nothing
+    }
+    out[i] = { ...m, content: markerContent };
+    tokensFreed += t - markerTokens;
+    evicted++;
+  }
+  return evicted ? { evicted, tokensFreed, messages: out } : none;
 }

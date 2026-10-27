@@ -28,6 +28,7 @@ import {
 // the value. See `src/agents/plugin-provider-config-overlay.ts`.
 import { registerPluginProviderConfigOverlay } from "openclaw/plugin-sdk/provider-config-overlay";
 import { checkClaudeCredentials } from "./src/auth.js";
+import { publishBackgroundTasksSeam } from "./src/background-tasks.js";
 import { buildClaudeCodeProviderConfig } from "./src/catalog.js";
 import {
   DEFAULT_BINARY,
@@ -37,11 +38,14 @@ import {
   PROVIDER_ID,
   PROVIDER_LABEL,
 } from "./src/defaults.js";
+import { resolveFractalGuardMode } from "./src/fractal-guard.js";
+import { rearmLimitResumes } from "./src/limit-resume.js";
 import {
   armAdoptionScan,
   ensureAdoptionScan,
   registerBridgeDrainParticipant,
 } from "./src/restart-reattach.js";
+import { publishRewindSeam } from "./src/rewind-seam.js";
 import { createClaudeCodeStreamFn } from "./src/stream.js";
 import { claudeCodeThinkingProfile } from "./src/thinking-budget.js";
 import { getPool } from "./src/worker-pool.js";
@@ -53,6 +57,8 @@ type TinkerBridgeConfig = {
   disallowedTools?: string[];
   warmOnBoot?: string[];
   transport?: "pipe" | "file";
+  /** FORK 2026-10-25 (src/fractal-guard.ts): "enforce" (default) | "watch" | "off". */
+  fractalGuard?: string;
 };
 
 export default definePluginEntry({
@@ -67,6 +73,7 @@ export default definePluginEntry({
       Array.isArray(pluginConfig.disallowedTools) && pluginConfig.disallowedTools.length > 0
         ? pluginConfig.disallowedTools
         : DEFAULT_DISALLOWED_TOOLS;
+    const fractalGuard = resolveFractalGuardMode(pluginConfig.fractalGuard);
 
     // FORK 2026-05-10: surface the tinker-bridge runtime defaults to the LLM idle
     // watchdog. `applyConfiguredProviderOverrides` reads `timeoutSeconds` off
@@ -122,6 +129,7 @@ export default definePluginEntry({
           binary,
           cwd,
           disallowedTools,
+          fractalGuard,
           sessionKey: (model as unknown as { sessionKey?: string }).sessionKey,
         });
       },
@@ -150,12 +158,21 @@ export default definePluginEntry({
     // (restart-reattach.ts). Workers a file-transport gateway left are adopted whichever transport
     // is configured now, so switching back to "pipe" strands nothing.
     setBridgeTransport(resolveBridgeTransport(pluginConfig.transport));
+    // FORK 2026-10-22: Rewind (amygdala2.rewind) moves a tab to a truncated copy of its claude-cli session through this.
+    publishRewindSeam();
+    // FORK 2026-10-25: each chat's live background tasks, for the page's rows and the Fractal wait.
+    publishBackgroundTasksSeam(getPool);
     registerBridgeDrainParticipant(getPool);
     // Runs on first need (boot recovery, the first bridge turn); gateway_start is the backstop for
     // a boot with nothing to recover and no turn, so idle leftovers are still adopted.
     armAdoptionScan(getPool);
     api.on("gateway_start", async () => {
       await ensureAdoptionScan();
+    });
+    // FORK 2026-10-09: wakes armed for chats a usage limit stopped live on disk; a restart between
+    // the limit and its reset must not drop them (limit-resume.ts).
+    api.on("gateway_start", () => {
+      rearmLimitResumes();
     });
 
     // warmOnBoot is declared in config-schema but deferred: the system prompt

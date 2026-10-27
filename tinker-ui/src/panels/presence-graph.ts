@@ -609,6 +609,7 @@ export function attachPresenceGraphs(container: HTMLElement): void {
     } | null = null;
     container.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
+      if (ev.pointerType === "touch") return; // touch reorders by long-press (below)
       const target = ev.target as HTMLElement;
       if (target.closest(".pg-body, button, input, a")) return;
       const head = target.closest(".pg-head") as HTMLElement | null;
@@ -650,6 +651,74 @@ export function attachPresenceGraphs(container: HTMLElement): void {
     };
     container.addEventListener("pointerup", finish);
     container.addEventListener("pointercancel", finish);
+
+    // FORK 2026-10-20 (the architect, phone): press and hold anywhere on a chart picks it up; drag and drop
+    // it among the others. A slide before the hold is a scroll or a pan, not a pick-up; a second
+    // finger is a pinch. Once picked up, touchmove is cancelled so the panel does not scroll away.
+    const LP_MS = 450;
+    const LP_SLOP = 8;
+    let lp: { timer: number; x: number; y: number; id: number; el: HTMLElement } | null = null;
+    const dropLp = () => {
+      if (lp) window.clearTimeout(lp.timer);
+      lp = null;
+    };
+    container.addEventListener(
+      "pointerdown",
+      (ev) => {
+        if (ev.pointerType !== "touch") return;
+        const el = (ev.target as HTMLElement).closest(".pg-chart") as HTMLElement | null;
+        if (!el || !container.contains(el)) return;
+        if (lp) return dropLp(); // second finger: pinch, not a pick-up
+        const x = ev.clientX;
+        const y = ev.clientY;
+        const id = ev.pointerId;
+        lp = {
+          x,
+          y,
+          id,
+          el,
+          timer: window.setTimeout(() => {
+            if (!lp) return;
+            drag = { el: lp.el, startY: lp.y, moved: true, pointerId: lp.id };
+            lp.el.dataset.dragging = "1";
+            try {
+              (
+                window as Window & { JarvisNative?: { vibrate?: (ms: number) => void } }
+              ).JarvisNative?.vibrate?.(30);
+            } catch {
+              /* a buzz is a nicety */
+            }
+            lp = null;
+          }, LP_MS),
+        };
+      },
+      true,
+    );
+    container.addEventListener(
+      "pointermove",
+      (ev) => {
+        if (
+          lp &&
+          ev.pointerId === lp.id &&
+          Math.hypot(ev.clientX - lp.x, ev.clientY - lp.y) > LP_SLOP
+        )
+          dropLp();
+      },
+      true,
+    );
+    container.addEventListener("pointerup", (ev) => lp && ev.pointerId === lp.id && dropLp(), true);
+    container.addEventListener(
+      "pointercancel",
+      (ev) => lp && ev.pointerId === lp.id && dropLp(),
+      true,
+    );
+    container.addEventListener(
+      "touchmove",
+      (ev) => {
+        if (drag?.moved) ev.preventDefault();
+      },
+      { passive: false },
+    );
   }
   container.querySelectorAll<HTMLElement>(".pg-chart").forEach((chart) => {
     if (chart.dataset.wired === "1") return;
@@ -701,25 +770,142 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       { passive: false },
     );
 
+    // Mouse/pen: drag pans (desktop, unchanged).
     let dragX: number | null = null,
       dragWin: { t0: number; t1: number } | null = null;
     body.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "touch") return;
       dragX = ev.clientX;
       dragWin = { ...win() };
       body.style.cursor = "grabbing";
     });
     window.addEventListener("pointermove", (ev) => {
-      if (dragX == null || !dragWin) return;
+      if (ev.pointerType === "touch" || dragX == null || !dragWin) return;
       const r = svgEl().getBoundingClientRect(),
         span = dragWin.t1 - dragWin.t0;
       const dt = -((ev.clientX - dragX) / ((PW / W) * r.width)) * span;
       paintView(container, clampTo({ t0: dragWin.t0 + dt, t1: dragWin.t1 + dt }, limit()), key);
     });
-    window.addEventListener("pointerup", () => {
+    const panEnd = () => {
       dragX = null;
       dragWin = null;
       body.style.cursor = "";
+    };
+    window.addEventListener("pointerup", panEnd);
+    window.addEventListener("pointercancel", panEnd);
+
+    // FORK 2026-10-20 (the architect, phone: "the three commands mix together, zoom is random"). Touch is
+    // one gesture at a time, decided once:
+    //   • every finger is CAPTURED on .pg-body, which paintView never replaces. Before, the finger's
+    //     own target (an SVG node) was thrown away by the repaint, its pointerup went nowhere, and a
+    //     stale finger turned the next one-finger touch into a phantom pinch;
+    //   • one finger: after 10 px the axis is locked. Vertical = the panel's scroll (the browser's,
+    //     touch-action: pan-y), the chart ignores it; horizontal = pan;
+    //   • two fingers: pinch on the real 2-D finger distance; no pan again until every finger is up.
+    // FORK 2026-10-20 (the architect): a tap shows the numbers at that spot (the hover tooltip); a touch that
+    // starts within DOT_GRAB px of that dot drags it along the graph instead of panning.
+    const DOT_GRAB = 28;
+    let dotX: number | null = null;
+    type Touch = { x: number; y: number };
+    const fingers = new Map<number, Touch>();
+    let g: {
+      mode: "undecided" | "pan" | "scroll" | "pinch" | "inspect";
+      x0: number;
+      y0: number;
+      win0: { t0: number; t1: number };
+      d0: number;
+      frac: number;
+    } | null = null;
+    const dist = () => {
+      const [a, b] = [...fingers.values()];
+      return Math.max(30, Math.hypot(a.x - b.x, a.y - b.y));
+    };
+    body.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "touch") return;
+      if (fingers.size === 0) g = null; // a new gesture: forget everything from the last one
+      try {
+        body.setPointerCapture(ev.pointerId);
+      } catch {
+        /* capture is best-effort */
+      }
+      fingers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (fingers.size === 1) {
+        g = {
+          mode: dotX != null && Math.abs(ev.clientX - dotX) <= DOT_GRAB ? "inspect" : "undecided",
+          x0: ev.clientX,
+          y0: ev.clientY,
+          win0: { ...win() },
+          d0: 0,
+          frac: 0,
+        };
+      } else if (fingers.size === 2 && g && g.mode !== "scroll") {
+        const [a, b] = [...fingers.values()];
+        g = {
+          ...g,
+          mode: "pinch",
+          win0: { ...win() },
+          d0: dist(),
+          frac: Math.max(0, Math.min(1, plotFrac((a.x + b.x) / 2))),
+        };
+      }
     });
+    body.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType !== "touch" || !fingers.has(ev.pointerId) || !g) return;
+      fingers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (chart.dataset.dragging === "1" || !DATA.get(key)) return;
+      const f = limit();
+      if (g.mode === "undecided") {
+        const dx = ev.clientX - g.x0;
+        const dy = ev.clientY - g.y0;
+        if (Math.hypot(dx, dy) < 10) return;
+        g.mode = Math.abs(dx) > Math.abs(dy) ? "pan" : "scroll";
+      }
+      if (g.mode === "inspect" && fingers.size === 1) {
+        hoverAt(ev);
+        dotX = ev.clientX;
+        return;
+      }
+      if (g.mode === "pan" && fingers.size === 1) {
+        const r = svgEl().getBoundingClientRect();
+        const span = g.win0.t1 - g.win0.t0;
+        const dt = -((ev.clientX - g.x0) / ((PW / W) * r.width)) * span;
+        paintView(container, clampTo({ t0: g.win0.t0 + dt, t1: g.win0.t1 + dt }, f), key);
+      } else if (g.mode === "pinch" && fingers.size === 2) {
+        const span = g.win0.t1 - g.win0.t0;
+        const nspan = Math.max(DAY, Math.min(f.t1 - f.t0, (span * g.d0) / dist()));
+        const center = g.win0.t0 + g.frac * span;
+        paintView(
+          container,
+          clampTo({ t0: center - g.frac * nspan, t1: center - g.frac * nspan + nspan }, f),
+          key,
+        );
+      }
+    });
+    const touchEnd = (ev: PointerEvent) => {
+      if (ev.pointerType !== "touch") return;
+      // A tap (one finger, never moved past the axis threshold) puts the info dot there.
+      if (
+        ev.type === "pointerup" &&
+        g?.mode === "undecided" &&
+        fingers.size === 1 &&
+        chart.dataset.dragging !== "1"
+      ) {
+        hoverAt(ev);
+        dotX = ev.clientX;
+      }
+      fingers.delete(ev.pointerId);
+      if (fingers.size === 0) g = null;
+    };
+    body.addEventListener("pointerup", touchEnd);
+    body.addEventListener("pointercancel", touchEnd);
+    // While the dot is being dragged the panel must not scroll under it.
+    body.addEventListener(
+      "touchmove",
+      (ev) => {
+        if (g?.mode === "inspect") ev.preventDefault();
+      },
+      { passive: false },
+    );
     body.addEventListener("dblclick", () => {
       if (loadLinkX()) paintView(container, longestRange());
       else {
@@ -742,6 +928,7 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       });
     // Drop this chart's whole hover state: tooltip + crosshair + series dimming.
     const clearHover = () => {
+      dotX = null;
       ACTIVE_HOVER = null;
       hideFloatingTip();
       const svg = svgEl();
@@ -751,6 +938,11 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       dimSeries(svg, null);
     };
     body.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType === "touch") return; // touch shows the numbers on a tap / dot drag (above)
+      hoverAt(ev);
+    });
+    // FORK 2026-10-20 (the architect, phone): the hover body as a function, so a tap and a dot drag reuse it.
+    function hoverAt(ev: { clientX: number; clientY: number }): void {
       if (dragX != null) return;
       const g = DATA.get(key);
       if (!g) return;
@@ -809,7 +1001,10 @@ export function attachPresenceGraphs(container: HTMLElement): void {
         r.left + xpix + 8,
         r.top + 2,
       );
+    }
+    // A lifted finger leaves the numbers up (the dot stays where it was left); the mouse clears them.
+    body.addEventListener("pointerleave", (ev) => {
+      if (ev.pointerType !== "touch") clearHover();
     });
-    body.addEventListener("pointerleave", clearHover);
   });
 }

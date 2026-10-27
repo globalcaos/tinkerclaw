@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildSituation, judgedReply, missing } from "../src/situation.js";
+import {
+  buildSituation,
+  judgedReply,
+  missing,
+  ownedTargetsOf,
+  pathsNamedIn,
+  turnKindOf,
+} from "../src/situation.js";
 import type { SeamInput, SessionContext } from "../src/situation.js";
 
 const ctx: SessionContext = { workspaceRoot: "/work/proj", homeDir: "/home/u" };
@@ -139,6 +146,17 @@ describe("buildSituation", () => {
     expect(onlyContract.request.value).toBe("do X");
   });
 
+  // FORK 2026-10-09 (Fractal v2, charter C4) — new prompts open the doctrine with a neutral marker.
+  it("drops the doctrine behind the new ⟦FRACTAL-DOCTRINE⟧ marker", () => {
+    const prompt =
+      "[Fri 2026-10-09 20:10 GMT+2] no thinking indicator visible, are you stuck?\n\n---\n\n" +
+      "⟦FRACTAL-DOCTRINE⟧\n# 🌿 FRACTAL\n" +
+      "x".repeat(5000) +
+      "\n\n<!-- TINKERCLAW chat-row contract -->\nBefore EVERY tool call...";
+    const s = buildSituation({ seam: "prompt", sessionKey: "k", turnId: "t", now: 1, prompt }, ctx);
+    expect(s.request.value).toBe("no thinking indicator visible, are you stuck?");
+  });
+
   it("strips a metadata wrapper from the prompt; c.request wins", () => {
     const s = buildSituation(
       {
@@ -232,5 +250,90 @@ describe("buildSituation", () => {
     const a = buildSituation(input, ctx);
     const b = buildSituation(input, ctx);
     expect({ ...a, id: "" }).toEqual({ ...b, id: "" });
+  });
+});
+
+describe("turnKindOf (2026-10-25)", () => {
+  it("a fractal session is a reflection, whatever its prompt", () => {
+    expect(turnKindOf("agent:main:fractal:abc")).toBe("reflection");
+    expect(turnKindOf("agent:main:fractal:abc", "hello")).toBe("reflection");
+  });
+
+  it("the Fractal label marks a reflection, any other agent label an agent, the rest the owner", () => {
+    const stamp = "[Sat 2026-10-25 00:10 GMT+2] ";
+    expect(turnKindOf("tab", `${stamp}⟦AGENT:🌿 Fractal · prompt 3⟧ reflect on the turn`)).toBe(
+      "reflection",
+    );
+    expect(turnKindOf("tab", `${stamp}⟦AGENT:⏳ Longjob · build⟧ done`)).toBe("agent");
+    expect(turnKindOf("tab", `${stamp}fix the Fractal gate`)).toBe("owner");
+    expect(turnKindOf("tab")).toBeUndefined();
+  });
+
+  it("buildSituation fills turnKind from the context, else from the session key and prompt", () => {
+    expect(buildSituation(base, { ...ctx, turnKind: "agent" }).turnKind).toEqual({
+      value: "agent",
+      origin: "derived",
+    });
+    expect(
+      buildSituation({ ...base, sessionKey: "agent:main:fractal:x" }, ctx).turnKind.value,
+    ).toBe("reflection");
+    expect(buildSituation(base, ctx).turnKind).toEqual({ value: null, origin: "missing" });
+  });
+});
+
+describe("owned targets (2026-10-25)", () => {
+  it("pathsNamedIn: absolute, ~/, relative and file names; not URLs, addresses or prose", () => {
+    expect(
+      pathsNamedIn(
+        "Fix ~/src/app/main.ts and src/util.ts, then delete old.log. See https://x.test/a/b or mail a@b.test (e.g. now).",
+        "/home/u",
+      ),
+    ).toEqual(["/home/u/src/app/main.ts", "src/util.ts", "old.log"]);
+    expect(pathsNamedIn("Delete /work/demo/tmp/old.log please.", "/home/u")).toEqual([
+      "/work/demo/tmp/old.log",
+    ]);
+  });
+
+  it("ownedTargetsOf: created, scratch, named, edited; a written folder does not own what is under it", () => {
+    const t = (p: string) => ({ path: p, kind: "file" as const, resolvedFrom: p });
+    expect(
+      ownedTargetsOf(
+        [
+          t("/w/new.txt"),
+          t("/tmp/jarvis/x/a"),
+          t("/w/src/util.ts"),
+          t("/w/cfg.json"),
+          t("/w/other"),
+        ],
+        {
+          created: ["/w/new.txt", "/w"],
+          edited: ["/w/cfg.json"],
+          scratchDirs: ["/tmp/jarvis"],
+          named: ["src/util.ts"],
+        },
+      ),
+    ).toEqual([
+      { path: "/w/new.txt", why: "created" },
+      { path: "/tmp/jarvis/x/a", why: "scratch" },
+      { path: "/w/src/util.ts", why: "named" },
+      { path: "/w/cfg.json", why: "edited" },
+    ]);
+    expect(
+      ownedTargetsOf([{ path: "anna@x.test", kind: "address", resolvedFrom: "x" }], {
+        named: ["anna@x.test"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("buildSituation: named from the owner's request, never from a reflection's prompt", () => {
+    const step = { ...base, tool: "Bash", toolInput: { command: "rm /work/proj/old.log" } };
+    expect(buildSituation(step, { ...ctx, request: "delete old.log" }).ownedTargets.value).toEqual([
+      { path: "/work/proj/old.log", why: "named" },
+    ]);
+    expect(
+      buildSituation(step, { ...ctx, request: "delete old.log", turnKind: "reflection" })
+        .ownedTargets.value,
+    ).toEqual([]);
+    expect(buildSituation(base, ctx).ownedTargets).toEqual({ value: null, origin: "missing" });
   });
 });

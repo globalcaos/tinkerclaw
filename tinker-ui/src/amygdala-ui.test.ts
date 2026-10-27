@@ -44,6 +44,8 @@ const dec = (id: string, over: Partial<JevDecision> = {}): JevDecision => ({
   weak: false,
   codeDid: "held",
   degraded: false,
+  // Fixtures are decisions that acted unless a test says otherwise (2026-10-15: shadow records draw nothing).
+  enforced: true,
   ...over,
 });
 const hold = (over: Partial<InterventionView> = {}): InterventionView => ({
@@ -112,6 +114,21 @@ const btn = (attrs: Record<string, string>): Element => {
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 };
+const frag = (html: string): DocumentFragment =>
+  document.createRange().createContextualFragment(html);
+/** An `amygdala.hook` payload as the gateway broadcasts it (CONTRACT.md, unit gateway). */
+const hookRow = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id,
+  ts: 10_500,
+  tool: "Bash",
+  target: "rm -rf build",
+  decision: "deny",
+  rule: "DELETE_UNREQUESTED",
+  toolUseId: "toolu_h1",
+  sessionId: "cc-session-1",
+  enforced: true,
+  ...over,
+});
 
 describe("inert while the gateway has no amygdala methods", () => {
   it("an unknown-method error keeps every hook empty", async () => {
@@ -136,22 +153,24 @@ describe("inert while the gateway has no amygdala methods", () => {
 });
 
 describe("available: the chat and panel hooks", () => {
-  it("probes status then the feed, and draws the window after the run its time falls in", async () => {
+  it("probes status then the feed, and draws the end-of-run bubbles after the run their time falls in", async () => {
     const { ui, calls } = await available({ decisionEvents: [dec("v1")], interventions: [hold()] });
     expect(calls.map((c) => c[0])).toEqual(["amygdala2.status", "amygdala2.feed"]);
     const inRun = ui.afterRun(userRow(9_000), userRow(20_000));
     expect(inRun).toContain('data-amy-turn="agent:main:tinker:tabX#1"');
-    expect(inRun).toContain("amy-jev");
-    expect(inRun).toContain("Held before it ran"); // the hold card
+    expect(inRun).toContain("amy-inline"); // a pink bubble, not a window
+    expect(inRun).not.toContain("amy-jev");
+    expect(inRun).toContain("Held before it ran"); // the hold card rides on its action
     expect(ui.afterRun(userRow(20_000), userRow(30_000))).toBe(""); // another run
     expect(ui.afterRun(userRow(1_000), userRow(9_000))).toBe(""); // an earlier run
   });
   it("a prompt with no time can only claim the newest turn, in the last run", async () => {
     const { ui } = await available({ decisionEvents: [dec("v1")] });
     expect(ui.afterRun({ role: "user" }, { role: "user" })).toBe("");
-    expect(ui.afterRun({ role: "user" }, null)).toContain("amy-jev");
+    expect(ui.afterRun({ role: "user" }, null)).toContain("amy-inline");
   });
-  it("a consult note draws 'not consulted' for a step with no answers, only once and only in its run", async () => {
+  // 2026-10-15: the CHECKS window is gone, and with it the "not consulted" line; the note is accepted and draws nothing.
+  it("a consult note draws nothing now", async () => {
     const { ui } = await available();
     ui.onEvent("amygdala2.consult", {
       sessionKey: TAB,
@@ -159,16 +178,8 @@ describe("available: the chat and panel hooks", () => {
       ts: 12_000,
       state: "real-steps-stay-local",
     });
-    const html = ui.afterRun(userRow(9_000), userRow(20_000));
-    expect(html).toContain("not consulted");
-    expect(ui.afterRun(userRow(20_000), null)).toBe("");
-    ui.onEvent("amygdala2.consult", {
-      sessionKey: "other-tab",
-      turnId: "z#1",
-      ts: 12_000,
-      state: "judge-down",
-    });
-    expect(ui.afterRun(userRow(9_000), userRow(20_000))).not.toContain("z#1");
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toBe("");
+    expect(ui.store.turnsFor(TAB)).toHaveLength(0);
   });
   it("only the exceptional change is a card at the end of the chat", async () => {
     const { ui } = await available({
@@ -259,49 +270,168 @@ describe("clicks call the gateway with the right parameters", () => {
   });
   it("local toggles repaint and are remembered; unknown acts are not ours", async () => {
     const { ui, spies } = await available({ decisionEvents: [dec("v1")] });
-    const checksOpen = (): boolean =>
-      document
-        .createRange()
-        .createContextualFragment(ui.afterRun(userRow(9_000), null))
-        .querySelector(".amy-jev-checks")!
-        .classList.contains("amy-open");
-    expect(checksOpen()).toBe(false);
-    await ui.handleClick(btn({ "data-amy-act": "jev-toggle", "data-run": `${TAB}#1` }));
-    expect(checksOpen()).toBe(true);
-    expect(spies.repaintChat).toHaveBeenCalled();
+    // The window toggles still answer (handleClick unchanged, 2026-10-15) even though no window is drawn.
+    for (const act of ["jev-toggle", "jev-act-toggle"]) {
+      spies.repaintChat.mockClear();
+      expect(await ui.handleClick(btn({ "data-amy-act": act, "data-run": `${TAB}#1` }))).toBe(true);
+      expect(spies.repaintChat).toHaveBeenCalled();
+    }
+    expect(
+      await ui.handleClick(
+        btn({ "data-amy-act": "jev-col", "data-run": `${TAB}#1`, "data-col": "0" }),
+      ),
+    ).toBe(true);
     await ui.handleClick(btn({ "data-amy-act": "acc", "data-acc": "learning" }));
     expect(await ui.handleClick(btn({ "data-amy-act": "no-such-act" }))).toBe(false);
     expect(await ui.handleClick(btn({}))).toBe(false);
     await ui.handleClick(btn({ "data-amy-act": "dot" }));
     expect(spies.openPanel).toHaveBeenCalled();
   });
-  // 2026-10-06, the architect: "Keep the Jev's insertions in the chat collapsed by default from now on."
-  it("WOULD HAVE is collapsed by default and opens on a click; a card that waits for an answer forces it open", async () => {
+  // 2026-10-15, the architect: "I don't need to see the jev boxes at the end of the turn anymore."
+  it("an action with no tool call is a pink bubble at the end of its run; a card that waits for an answer rides on it", async () => {
     const { ui } = await available({
       decisionEvents: [dec("v1", { codeDid: "sent-back", decisionId: "D1" })],
     });
-    const act = (): Element | null =>
-      document
-        .createRange()
-        .createContextualFragment(ui.afterRun(userRow(9_000), null))
-        .querySelector(".amy-jev-act");
-    expect(act()!.classList.contains("amy-open")).toBe(false);
-    await ui.handleClick(btn({ "data-amy-act": "jev-act-toggle", "data-run": `${TAB}#1` }));
-    expect(act()!.classList.contains("amy-open")).toBe(true);
-    await ui.handleClick(btn({ "data-amy-act": "jev-act-toggle", "data-run": `${TAB}#1` }));
-    expect(act()!.classList.contains("amy-open")).toBe(false);
+    const bubble = (): Element | null =>
+      frag(ui.afterRun(userRow(9_000), null)).querySelector('[data-amy-bubble="jev:D1"]');
+    expect(bubble()).not.toBeNull();
+    expect(bubble()!.classList.contains("amy-inline")).toBe(true);
+    expect(bubble()!.getAttribute("data-tool-use")).toBe("");
+    expect(bubble()!.querySelector(".amy-jact")).not.toBeNull();
+    expect(bubble()!.textContent).toContain("Sent the reply back to be finished"); // mode enforce: acted, not would
+    expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-jev");
     ui.onEvent("amygdala2.intervention", hold({ decisionId: "D1" }));
-    expect(act()!.classList.contains("amy-open")).toBe(true);
+    expect(bubble()!.textContent).toContain("Held before it ran");
   });
-  it("a click on a timeline column lists that step's checks; a second click folds them", async () => {
-    const { ui } = await available({ decisionEvents: [dec("v1", { codeDid: "ok" })] });
-    await ui.handleClick(btn({ "data-amy-act": "jev-toggle", "data-run": `${TAB}#1` }));
-    expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-tdet");
-    const col = btn({ "data-amy-act": "jev-col", "data-run": `${TAB}#1`, "data-col": "0" });
-    await ui.handleClick(col);
-    expect(ui.afterRun(userRow(9_000), null)).toContain('class="amy-tdet"');
-    await ui.handleClick(col);
-    expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-tdet");
+});
+
+// 2026-10-15, the architect: "all performed actions from Jev (not the ones he skips) right where he does it, within its context."
+describe("inline bubbles per tool call", () => {
+  it("a Jev action that names a tool call is drawn by inlineFor, not after the run", async () => {
+    const { ui } = await available({
+      decisionEvents: [
+        dec("n1", { codeDid: "note", decisionId: "D1", toolUseId: "toolu_9", enforced: true }),
+        dec("o1", { codeDid: "ok", turnId: `${TAB}#2`, ts: 11_000, toolUseId: "toolu_ok" }),
+        dec("s1", {
+          codeDid: "sent-back",
+          decisionId: "D2",
+          turnId: `${TAB}#2`,
+          ts: 12_000,
+          enforced: true,
+        }),
+      ],
+      interventions: [
+        hold({ id: "ivn", decisionId: "D1", kind: "note", state: "settled" }),
+        hold({
+          id: "ivs",
+          decisionId: "D2",
+          kind: "send-back",
+          state: "settled",
+          turnId: `${TAB}#2`,
+        }),
+      ],
+    });
+    const after = frag(ui.afterRun(userRow(9_000), userRow(20_000)));
+    expect(after.querySelectorAll(".amy-turn")).toHaveLength(1);
+    expect(after.querySelectorAll(".amy-jev")).toHaveLength(0);
+    expect(after.querySelectorAll("[data-amy-bubble]")).toHaveLength(1);
+    expect(after.querySelector('[data-amy-bubble="jev:D2"]')).not.toBeNull();
+    expect(after.querySelector('[data-amy-bubble="jev:D1"]')).toBeNull();
+    const inline = frag(ui.inlineFor("toolu_9"));
+    const b = inline.querySelector('[data-amy-bubble="jev:D1"]')!;
+    expect(b.getAttribute("data-tool-use")).toBe("toolu_9");
+    expect(b.querySelector(".amy-jact")).not.toBeNull();
+    expect(b.querySelector('[data-amy-act="label"]')).not.toBeNull(); // the vote stays
+    expect(ui.inlineFor("toolu_ok")).toBe(""); // a check that passed is skipped
+    expect(ui.inlineFor("toolu_nope")).toBe("");
+    expect(ui.inlineFor("")).toBe("");
+  });
+  // 2026-10-15, the architect: "I don't want to see so many pink stuff." A shadow record ("would have") draws nothing.
+  it("a shadow decision draws no bubble and no timeline mark", async () => {
+    const { ui } = await available({
+      decisionEvents: [
+        dec("n1", { codeDid: "note", decisionId: "D1", toolUseId: "toolu_9", enforced: false }),
+        dec("s1", {
+          codeDid: "sent-back",
+          decisionId: "D2",
+          turnId: `${TAB}#2`,
+          ts: 12_000,
+          enforced: false,
+        }),
+      ],
+    });
+    expect(ui.inlineFor("toolu_9")).toBe("");
+    expect(
+      frag(ui.afterRun(userRow(9_000), userRow(20_000))).querySelectorAll("[data-amy-bubble]"),
+    ).toHaveLength(0);
+    expect(ui.marks()).toEqual([]);
+  });
+  it("a hook action needs no amygdala2: it is a bubble even while the plugin is off, and 'allow' is skipped", async () => {
+    const m = make(() => {
+      throw { message: "unknown method: amygdala2.status" };
+    });
+    await m.ui.onConnected();
+    expect(m.ui.available()).toBe(false);
+    m.spies.repaintChat.mockClear();
+    m.ui.onHookAction(hookRow("hook-1"));
+    m.ui.onHookAction(hookRow("hook-2", { decision: "allow", toolUseId: "toolu_h2" }));
+    m.ui.onHookAction(hookRow("hook-1")); // the feed seed repeats the live event
+    expect(m.spies.repaintChat).toHaveBeenCalledTimes(1);
+    const b = frag(m.ui.inlineFor("toolu_h1")).querySelectorAll("[data-amy-bubble]");
+    expect(b).toHaveLength(1);
+    expect(b[0]!.getAttribute("data-amy-bubble")).toBe("hook-1");
+    expect(b[0]!.getAttribute("data-tool-use")).toBe("toolu_h1");
+    expect(b[0]!.textContent).toContain("AMYGDALA");
+    expect(m.ui.inlineFor("toolu_h2")).toBe("");
+    expect(m.ui.marks()).toEqual([{ id: "hook-1", ts: 10_500, toolUseId: "toolu_h1" }]);
+  });
+  it("keeps the newest 500 hook actions by time: a live row that came before the seed survives it", async () => {
+    const { ui } = await available();
+    ui.onHookAction(hookRow("hook-live", { ts: 99_000, toolUseId: "toolu_live" }));
+    for (let i = 0; i < 500; i++)
+      ui.onHookAction(hookRow(`hook-${i}`, { ts: 1_000 + i, toolUseId: `toolu_${i}` }));
+    const marks = ui.marks();
+    expect(marks).toHaveLength(500);
+    expect(marks.at(-1)).toEqual({ id: "hook-live", ts: 99_000, toolUseId: "toolu_live" });
+    expect(marks[0]!.id).toBe("hook-1"); // hook-0, the oldest, went
+    expect(ui.inlineFor("toolu_0")).toBe("");
+    expect(ui.inlineFor("toolu_live")).toContain('data-amy-bubble="hook-live"');
+  });
+  it("marks lists hook and Jev bubbles in time order; focus marks one bubble until cleared", async () => {
+    const { ui, spies } = await available({
+      decisionEvents: [
+        dec("n1", { codeDid: "note", decisionId: "D1", toolUseId: "toolu_9", enforced: true }),
+      ],
+    });
+    ui.onHookAction(hookRow("hook-1", { ts: 9_500 }));
+    ui.onHookAction(hookRow("hook-3", { ts: 10_500, toolUseId: "toolu_9" }));
+    expect(ui.marks()).toEqual([
+      { id: "hook-1", ts: 9_500, toolUseId: "toolu_h1" },
+      { id: "jev:D1", ts: 10_000, toolUseId: "toolu_9" },
+      { id: "hook-3", ts: 10_500, toolUseId: "toolu_9" },
+    ]);
+    // Hook first, then Jev, for the same tool call.
+    const ids = [...frag(ui.inlineFor("toolu_9")).querySelectorAll("[data-amy-bubble]")].map((e) =>
+      e.getAttribute("data-amy-bubble"),
+    );
+    expect(ids).toEqual(["hook-3", "jev:D1"]);
+    expect(ui.focused()).toBeNull();
+    spies.repaintChat.mockClear();
+    ui.setFocus("jev:D1");
+    expect(ui.focused()).toBe("jev:D1");
+    expect(spies.repaintChat).toHaveBeenCalledTimes(1);
+    const focusedNow = frag(ui.inlineFor("toolu_9"));
+    expect(
+      focusedNow.querySelector('[data-amy-bubble="jev:D1"]')!.classList.contains("amy-focus"),
+    ).toBe(true);
+    expect(
+      focusedNow.querySelector('[data-amy-bubble="hook-3"]')!.classList.contains("amy-focus"),
+    ).toBe(false);
+    ui.setFocus("jev:D1"); // same id: no repaint
+    expect(spies.repaintChat).toHaveBeenCalledTimes(1);
+    ui.setFocus(null);
+    expect(ui.focused()).toBeNull();
+    expect(ui.inlineFor("toolu_9")).not.toContain("amy-focus");
   });
 });
 
@@ -375,6 +505,70 @@ describe("rewind and retry with another model (Thalamus full deploy)", () => {
     document.createRange().createContextualFragment(m.ui.afterRun(userRow(9_000), null));
   const retryAttr = (m: Parameters<typeof strip>[0]) =>
     strip(m).querySelector('[data-amy-act="rewind-retry"]');
+
+  it("a provider safeguard offers Rewind and asks Thalamus for the retry model; nothing is sent unclicked", async () => {
+    const m = await setup((method) =>
+      method === "thalamus.retryPick" ? { ok: true, pick } : undefined,
+    );
+    const sg = (): DocumentFragment =>
+      document.createRange().createContextualFragment(m.ui.afterRun(userRow(9_000), null, true));
+    expect(sg().querySelector('[data-amy-act="rewind"]')).not.toBeNull();
+    await vi.waitFor(() =>
+      expect(sg().querySelector('[data-amy-act="rewind-retry"]')?.textContent).toContain(
+        "Grok 4.7",
+      ),
+    );
+    expect(m.calls.some(([method]) => method === "thalamus.retryPick")).toBe(true);
+    expect(m.sendOneTurn).not.toHaveBeenCalled();
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+  });
+
+  it("a settled shadow refusal on a safeguard block still offers Rewind, which puts the prompt back in the composer", async () => {
+    const m = await available({
+      status: status({ mode: "shadow" }),
+      interventions: [hold({ kind: "refusal", state: "settled", cmd: undefined })],
+      decisionEvents: [dec("v1", { codeDid: "refusal", enforced: false })],
+    });
+    expect(m.ui.afterRun(userRow(9_000), null)).toBe("");
+    const html = m.ui.afterRun(userRow(9_000), null, true);
+    expect(html).toContain('data-amy-act="rewind"');
+  });
+
+  // 2026-10-22 14:55, the owner: "When Jev detects a refusal to respond, the ui should present a rewind button along its
+  // detection". Amygdala runs in shadow, so an ordinary refusal is settled and unenforced, and the 10-15 rule hid it.
+  const shadowRefusal = () => ({
+    interventions: [hold({ kind: "refusal", state: "settled", cmd: undefined })],
+    decisionEvents: [dec("v1", { codeDid: "refusal", enforced: false })],
+  });
+
+  it("any refusal Jev detects in shadow offers Rewind once the gateway's Rewind drops the exchange (rewind ≥ 2)", async () => {
+    const m = await available({
+      status: status({ mode: "shadow", rewind: 2 }),
+      ...shadowRefusal(),
+    });
+    const html = m.ui.afterRun(userRow(9_000), null);
+    expect(html).toContain('data-amy-act="rewind"');
+    expect(html).toContain('data-amy-act="refusal-keep"');
+    // A detection, not a withheld action: no "would have" in front of it.
+    expect(html).toContain("Marked the reply as a refusal");
+    expect(html).not.toContain("Would have");
+  });
+
+  it("an older gateway (no rewind level) draws nothing for an ordinary shadow refusal", async () => {
+    const m = await available({ status: status({ mode: "shadow" }), ...shadowRefusal() });
+    expect(m.ui.afterRun(userRow(9_000), null)).toBe("");
+  });
+
+  it("a turn Jev marked three times, with no decision rows (the live feed's shape, 2026-10-21), shows one strip", async () => {
+    const iv = (id: string, ts: number) =>
+      hold({ id, ts, kind: "refusal", state: "settled", cmd: undefined });
+    const m = await available({
+      status: status({ mode: "shadow", rewind: 2 }),
+      interventions: [iv("r1", 10_000), iv("r2", 10_500), iv("r3", 11_000)],
+    });
+    const html = m.ui.afterRun(userRow(9_000), null);
+    expect(frag(html).querySelectorAll('[data-amy-act="rewind"]')).toHaveLength(1);
+  });
 
   it("the event's pick draws the second button with the model's name and its picker chip", async () => {
     const m = await setup((method) =>
@@ -618,34 +812,345 @@ describe("rewind", () => {
   });
 });
 
-// the architect 2026-10-05: "two kinds of messages". Nothing else of Jev's is drawn per reply: no chip on a tool row, no
-// sent-back chip, no settled one-liners.
-describe("two windows per reply", () => {
-  it("one CHECKS and one WOULD HAVE window for a reply with several turns, and nothing else", async () => {
+describe("Rewind next to a refusal takes the exchange off the page and keeps the owner's draft (2026-10-22)", () => {
+  const refusal = (): InterventionView =>
+    hold({ id: "iv-r", kind: "refusal", title: "This looks like a refusal", cmd: undefined });
+  const NEWEST = { key: "K", prompt: "the refused request", at: 9_000 };
+  const setup = async (
+    extra: Partial<AmygdalaUiDeps> = {},
+    rewind: (method: string, params?: unknown) => unknown = () => ({
+      ok: true,
+      restoredPrompt: "the refused request",
+    }),
+  ) => {
+    const hideExchange = vi.fn();
+    const showExchange = vi.fn();
+    const sendOneTurn = vi.fn(async () => {});
+    const m = make(
+      (method, params) =>
+        method === "amygdala2.rewind"
+          ? rewind(method, params)
+          : method === "amygdala2.status"
+            ? status()
+            : {
+                status: status(),
+                interventions: [refusal()],
+                decisionEvents: [dec("v1", { codeDid: "refusal" })],
+              },
+      { newestExchange: () => NEWEST, hideExchange, showExchange, sendOneTurn, ...extra },
+    );
+    await m.ui.onConnected();
+    const click = (attrs: Record<string, string> = {}) =>
+      m.ui.handleClick(
+        btn({ "data-amy-act": "rewind", "data-turn": `${TAB}#1`, "data-exchange": "K", ...attrs }),
+      );
+    const rewinds = () => m.calls.filter((c) => c[0] === "amygdala2.rewind");
+    return { ...m, hideExchange, showExchange, sendOneTurn, click, rewinds };
+  };
+
+  // 2026-10-22, the architect: "Rewind should get attached to the turn, so I can remove from history more than one turn".
+  it("level 3: an older refused turn offers Rewind for it and the exchange after it, and sends its prompt", async () => {
+    const at = { key: "K", prompt: "the refused request", at: 9_000, later: 1 };
+    const m = make(
+      (method) =>
+        method === "amygdala2.rewind"
+          ? { ok: true, restoredPrompt: "the refused request", forkSessionId: "f1" }
+          : method === "amygdala2.status"
+            ? status({ mode: "shadow", rewind: 3 })
+            : {
+                status: status({ mode: "shadow", rewind: 3 }),
+                interventions: [refusal()],
+                decisionEvents: [dec("v1", { codeDid: "refusal", enforced: false })],
+              },
+      {
+        exchangeKeyOf: () => "K",
+        newestExchange: () => ({ key: "LATER", prompt: "no rewind button shows", at: 12_000 }),
+        exchangeAt: (k) => (k === "K" ? at : null),
+        hideExchange: vi.fn(),
+      },
+    );
+    await m.ui.onConnected();
+    const b = frag(m.ui.afterRun(userRow(9_000), null)).querySelector('[data-amy-act="rewind"]');
+    expect(b?.textContent).toBe("⟲ Rewind 2 exchanges");
+    expect(b?.hasAttribute("disabled")).toBe(false);
+    await m.ui.handleClick(
+      btn({ "data-amy-act": "rewind", "data-turn": `${TAB}#1`, "data-exchange": "K" }),
+    );
+    expect(m.calls.find((c) => c[0] === "amygdala2.rewind")?.[1]).toMatchObject({
+      turnId: `${TAB}#1`,
+      fromPrompt: "the refused request",
+    });
+    expect(m.spies.setComposerText).toHaveBeenCalledWith("the refused request");
+  });
+
+  it("level 3 with a reply still running: Rewind is greyed out, and nothing is sent", async () => {
+    const m = make(
+      (method) =>
+        method === "amygdala2.status"
+          ? status({ mode: "shadow", rewind: 3 })
+          : {
+              status: status({ mode: "shadow", rewind: 3 }),
+              interventions: [refusal()],
+              decisionEvents: [dec("v1", { codeDid: "refusal", enforced: false })],
+            },
+      { exchangeKeyOf: () => "K", exchangeAt: () => null },
+    );
+    await m.ui.onConnected();
+    const strip = frag(m.ui.afterRun(userRow(9_000), null));
+    expect(strip.querySelector('[data-amy-act="rewind"]')).toBeNull();
+    const b = strip.querySelector(".amy-refstrip button[disabled]");
+    expect(b?.textContent).toBe("⟲ Rewind");
+    expect(b?.getAttribute("title")).toBe("Wait for the reply to finish");
+  });
+
+  it("the strip names its exchange, so a click can tell it went stale", async () => {
+    const m = await setup({ exchangeKeyOf: () => "K" });
+    const html = m.ui.afterRun(userRow(9_000), null);
+    expect(frag(html).querySelector('[data-amy-act="rewind"]')?.getAttribute("data-exchange")).toBe(
+      "K",
+    );
+  });
+
+  it("success: the gateway rewinds, the exchange leaves the page, the prompt lands in the box, and nothing is sent", async () => {
+    const m = await setup();
+    await m.click();
+    expect(m.rewinds()).toHaveLength(1);
+    expect(m.hideExchange).toHaveBeenCalledWith({
+      sessionKey: TAB,
+      key: "K",
+      prompt: "the refused request",
+      at: 9_000,
+      rewoundAt: 50_000,
+      restored: "the refused request",
+    });
+    expect(m.spies.setComposerText).toHaveBeenCalledWith("the refused request");
+    expect(m.sendOneTurn).not.toHaveBeenCalled();
+  });
+
+  it("a strip gone stale (another exchange is the newest now) rewinds nothing", async () => {
+    const m = await setup({
+      newestExchange: () => ({ key: "NEWER", prompt: "newer", at: 20_000 }),
+    });
+    await m.click();
+    expect(m.rewinds()).toHaveLength(0);
+    expect(m.hideExchange).not.toHaveBeenCalled();
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+    expect(m.spies.notify).toHaveBeenCalled();
+  });
+
+  it("a reply still running (no newest exchange) rewinds nothing", async () => {
+    const m = await setup({ newestExchange: () => null });
+    await m.click();
+    expect(m.rewinds()).toHaveLength(0);
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+  });
+
+  it("an unsent draft is asked about BEFORE anything is rewound: no keeps it, yes replaces it", async () => {
+    const no = await setup({
+      composerDraft: () => "half a thought",
+      confirmReplaceDraft: () => false,
+    });
+    await no.click();
+    expect(no.rewinds()).toHaveLength(0);
+    expect(no.hideExchange).not.toHaveBeenCalled();
+    expect(no.spies.setComposerText).not.toHaveBeenCalled();
+    const yes = await setup({
+      composerDraft: () => "half a thought",
+      confirmReplaceDraft: () => true,
+    });
+    await yes.click();
+    expect(yes.rewinds()).toHaveLength(1);
+    expect(yes.spies.setComposerText).toHaveBeenCalledWith("the refused request");
+  });
+
+  it("an empty or blank box is not a draft: nothing is asked", async () => {
+    const confirmReplaceDraft = vi.fn(() => false);
+    const m = await setup({ composerDraft: () => "  \n ", confirmReplaceDraft });
+    await m.click();
+    expect(confirmReplaceDraft).not.toHaveBeenCalled();
+    expect(m.spies.setComposerText).toHaveBeenCalled();
+  });
+
+  it("an older gateway's raw transcript prompt never reaches the box: the page's own words do; a gateway at rewind 2 is trusted", async () => {
+    const blob = `<turn_context>${"x".repeat(500)}</turn_context>\n\n[Thu 2026-10-22 15:01 GMT+2] the refused request\n\n<!-- TINKERCLAW chat-row contract -->`;
+    const older = await setup({}, () => ({ ok: true, restoredPrompt: blob }));
+    await older.click();
+    expect(older.spies.setComposerText).toHaveBeenCalledWith("the refused request");
+    expect(older.hideExchange).toHaveBeenCalledWith(
+      expect.objectContaining({ restored: "the refused request" }),
+    );
+    const newer = await setup({}, () => ({ ok: true, restoredPrompt: "words from the gateway" }));
+    newer.ui.onEvent("amygdala2.status", status({ rewind: 2 }));
+    await newer.click();
+    expect(newer.spies.setComposerText).toHaveBeenCalledWith("words from the gateway");
+  });
+
+  it("a tab change while the gateway works: the exchange is hidden in ITS tab, and the other tab's box is left alone", async () => {
+    let tab = TAB;
+    const m = await setup({ tabKey: () => tab }, () => {
+      tab = "agent:main:tinker:other";
+      return { ok: true, restoredPrompt: "the refused request" };
+    });
+    await m.click();
+    expect(m.hideExchange).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: TAB }));
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+    expect(m.spies.notify).toHaveBeenCalled();
+  });
+
+  it("a rewind the gateway refuses (reply running, no capability) changes nothing on the page", async () => {
+    const m = await setup({}, () => ({
+      ok: false,
+      reason: "a reply is still running in this tab",
+    }));
+    await m.click();
+    expect(m.hideExchange).not.toHaveBeenCalled();
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+    expect(m.spies.notify).toHaveBeenCalledWith(expect.stringContaining("still running"));
+  });
+
+  it("a gateway that throws leaves the page alone and says so", async () => {
+    const m = await setup({}, () => {
+      throw new Error("socket closed");
+    });
+    await m.click();
+    expect(m.hideExchange).not.toHaveBeenCalled();
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+    expect(m.spies.notify).toHaveBeenCalled();
+  });
+
+  it("a gateway that hands back no prompt hides the exchange but writes nothing into the box", async () => {
+    const m = await setup({}, () => ({ ok: true, restoredPrompt: "" }));
+    await m.click();
+    expect(m.hideExchange).toHaveBeenCalledWith(expect.objectContaining({ restored: "" }));
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+  });
+
+  it("Undo on the placeholder asks the gateway to point the tab back, then brings the exchange back", async () => {
+    const m = await setup();
+    await m.click();
+    await m.ui.handleClick(btn({ "data-amy-act": "rewind-exchange-undo", "data-exchange": "K" }));
+    expect(m.rewinds()[1]?.[1]).toEqual({ sessionKey: TAB, turnId: "", undo: true });
+    expect(m.showExchange).toHaveBeenCalledWith(TAB, "K");
+    // The Jev strip of that turn is back too (it was marked rewound by the click).
+    expect(m.ui.afterRun(userRow(9_000), null)).not.toContain("Rewound");
+  });
+
+  it("an Undo the gateway refuses leaves the exchange hidden", async () => {
+    const m = await setup({}, (_method, params) =>
+      (params as { undo?: boolean }).undo
+        ? { ok: false, reason: "nothing to undo" }
+        : { ok: true, restoredPrompt: "x" },
+    );
+    await m.ui.handleClick(btn({ "data-amy-act": "rewind-exchange-undo", "data-exchange": "K" }));
+    expect(m.showExchange).not.toHaveBeenCalled();
+  });
+
+  it("a placeholder run draws none of the Jev turns of the exchange it replaced", async () => {
+    const m = await setup();
+    expect(m.ui.afterRun({ role: "user", ts: 9_000, _rewoundExchange: "r1" }, null)).toBe("");
+  });
+});
+
+// the architect 2026-10-05 wanted "two kinds of messages"; since 2026-10-15 (the architect) neither window is drawn. Nothing
+// else of Jev's is drawn per reply either: no chip on a tool row, no sent-back chip, no settled one-liners, no CHECKS.
+describe("no windows per reply", () => {
+  it("a reply with checks that all passed draws nothing after the run", async () => {
     const { ui } = await available({
       decisionEvents: [
-        dec("n1", { codeDid: "note", decisionId: "D1", toolUseId: "toolu_9" }),
-        dec("o1", { codeDid: "ok", turnId: `${TAB}#2`, ts: 11_000 }),
-        dec("s1", { codeDid: "sent-back", decisionId: "D2", turnId: `${TAB}#2`, ts: 12_000 }),
-      ],
-      interventions: [
-        hold({ id: "ivn", decisionId: "D1", kind: "note", state: "settled" }),
-        hold({
-          id: "ivs",
-          decisionId: "D2",
-          kind: "send-back",
-          state: "settled",
-          turnId: `${TAB}#2`,
-        }),
+        dec("o1", { codeDid: "ok", toolUseId: "toolu_1" }),
+        dec("o2", { codeDid: "ok", turnId: `${TAB}#2`, ts: 11_000 }),
       ],
     });
-    const frag = document
-      .createRange()
-      .createContextualFragment(ui.afterRun(userRow(9_000), userRow(20_000)));
-    expect(frag.querySelectorAll(".amy-turn")).toHaveLength(1);
-    expect(frag.querySelectorAll(".amy-jev")).toHaveLength(2);
-    expect(frag.querySelector(".amy-jev-checks .amy-jsm")!.textContent).toContain("3 checks");
-    expect(frag.querySelectorAll(".amy-jev-act .amy-jact")).toHaveLength(2);
-    expect(frag.querySelector(".amy-sentback, .amy-note-chip, .amy-settled, .amy-card")).toBeNull();
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toBe("");
+    expect(ui.inlineFor("toolu_1")).toBe("");
+  });
+  it("markers still land after the run", async () => {
+    const { ui } = await available({ decisionEvents: [dec("o1", { codeDid: "ok" })] });
+    ui.onEvent("amygdala2.marker", {
+      id: "mk1",
+      sessionKey: TAB,
+      turnId: `${TAB}#1`,
+      ts: 10_100,
+      kind: "unsupported-after-two",
+      items: ["amygdala2.rewind"],
+    });
+    const html = ui.afterRun(userRow(9_000), null);
+    const f = frag(html);
+    expect(f.querySelectorAll(".amy-jev")).toHaveLength(0);
+    expect(html).toContain("amygdala2.rewind");
+  });
+});
+
+// 2026-10-22, the architect: "Add the rewind every time Jev detects a refusal, not only complete but also partial".
+describe("a partial refusal (a reply sent back for dodging part of the work) offers the same strip", () => {
+  const sendBack = (id: string, decisionId: string) =>
+    hold({
+      id,
+      decisionId,
+      kind: "send-back",
+      state: "settled",
+      title: "Reply sent back",
+      cmd: undefined,
+    });
+  const why = (id: string, decisionId: string, questionId: string) =>
+    dec(id, {
+      decisionId,
+      questionId,
+      codeDid: "sent-back",
+      enforced: false,
+      seam: "stop",
+      stepLabel: "stop",
+    });
+  const shadow3 = () => status({ mode: "shadow", rewind: 3 });
+
+  it("dodged work: the strip says partial refusal and offers Rewind", async () => {
+    const m = await available({
+      status: shadow3(),
+      interventions: [sendBack("sb1", "d-sb")],
+      decisionEvents: [why("e1", "d-sb", "dodged-work")],
+    });
+    const html = m.ui.afterRun(userRow(9_000), null);
+    expect(html).toContain("This looks like a partial refusal");
+    expect(frag(html).querySelectorAll('[data-amy-act="rewind"]')).toHaveLength(1);
+  });
+
+  it("a reply sent back for an unsupported claim is not a refusal: no strip", async () => {
+    const m = await available({
+      status: shadow3(),
+      interventions: [sendBack("sb1", "d-sb")],
+      decisionEvents: [why("e1", "d-sb", "claim-support")],
+    });
+    expect(m.ui.afterRun(userRow(9_000), null)).not.toContain("refusal");
+  });
+
+  it("a turn with a refusal and a dodged-work send-back (twice each, the 18:58 shape) shows one strip, the whole one", async () => {
+    const m = await available({
+      status: shadow3(),
+      interventions: [
+        hold({
+          id: "r1",
+          decisionId: "d1",
+          kind: "refusal",
+          state: "settled",
+          cmd: undefined,
+          ts: 10_000,
+        }),
+        sendBack("s1", "d1"),
+        hold({
+          id: "r2",
+          decisionId: "d2",
+          kind: "refusal",
+          state: "settled",
+          cmd: undefined,
+          ts: 10_500,
+        }),
+        sendBack("s2", "d2"),
+      ],
+      decisionEvents: [why("e1", "d1", "dodged-work"), why("e2", "d2", "dodged-work")],
+    });
+    const html = m.ui.afterRun(userRow(9_000), null);
+    expect(frag(html).querySelectorAll(".amy-refstrip")).toHaveLength(1);
+    expect(html).toContain("This looks like a refusal");
+    expect(html).not.toContain("partial refusal");
   });
 });

@@ -27,7 +27,7 @@ export type RejectReason =
   | "blocked"
   | "no-effect";
 
-export type DeferReason = "cap-week" | "cap-day" | "auto-loosen-off";
+export type DeferReason = "cap-week" | "cap-day";
 
 export type ChangeOutcome =
   | { outcome: "applied"; change: Change }
@@ -37,7 +37,14 @@ export type ChangeOutcome =
 
 /** The engine that replays, gates, applies, approves and undoes changes (changes.ts). Retune and nightly use only this. */
 export interface ChangeEngineApi {
-  propose(p: Proposal, o?: { proposedBy?: Change["proposedBy"] }): Promise<ChangeOutcome>;
+  /**
+   * `ownerOnly`: a loosening becomes a pending card for the owner whatever the replay says (2026-10-25, the reviewers'
+   * evidence). A tightening is not affected.
+   */
+  propose(
+    p: Proposal,
+    o?: { proposedBy?: Change["proposedBy"]; ownerOnly?: boolean },
+  ): Promise<ChangeOutcome>;
   approve(changeId: string, yes: boolean): Promise<ChangeOutcome>;
   undo(changeId: string): { ok: boolean; change?: Change; reason?: string };
   pending(): Change[];

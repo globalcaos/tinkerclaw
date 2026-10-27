@@ -214,6 +214,15 @@ describe("resolveWhatsAppOutboundTarget", () => {
   });
 
   describe("explicit/custom modes", () => {
+    it("allows an explicit send to a number outside allowFrom (allowFrom gates waking, not writing)", () => {
+      mockNormalizedDirectMessage(PRIMARY_TARGET, SECONDARY_TARGET);
+      expectAllowedForTarget({
+        allowFrom: [PRIMARY_TARGET],
+        mode: "explicit",
+        to: SECONDARY_TARGET,
+      });
+    });
+
     it("allows message in null mode when allowList is not set", () => {
       mockNormalizedDirectMessage(PRIMARY_TARGET);
       expectAllowedForTarget({ allowFrom: undefined, mode: null });

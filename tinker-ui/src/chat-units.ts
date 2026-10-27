@@ -58,8 +58,19 @@ export type ChatUnitDeps = {
    * first prompt), `nextUserMsg` the prompt that ends it (null at the end of the chat). Returns "" when nothing is drawn.
    */
   amygdalaAfterRun?: (userMsg: unknown, nextUserMsg: unknown) => string;
+  /**
+   * The background Fractal's card for the run that answers `userMsg` (fractal-card.ts), or "" when
+   * that prompt has none. Drawn right under the run, before the amygdala's window.
+   */
+  fractalAfterRun?: (userMsg: unknown) => string;
   /** The amygdala's cards that belong at the very end of the chat, above the thinking indicator. */
   amygdalaTail?: () => string;
+  /**
+   * FORK 2026-10-21 — the purple ask-session cards (ask-session-card.ts) of a finished run whose Reasoning group is
+   * folded: `rows` are the rows the group folds. Drawn right under the group, so a woken session's question and
+   * answer stay in the feed after the turn ends. "" draws nothing; absent = no cards outside the fold.
+   */
+  askCardsInFold?: (rows: readonly unknown[], results: ToolResultMap) => string;
   /**
    * FORK 2026-10-01 — the answering model's rail for one run (chat-rail.ts): `rows` are the run's
    * rows, `prev` the model the previous run resolved to. Null draws no rail. Absent = no rails.
@@ -539,6 +550,20 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
         g += `</div>`;
         g += `</div>`;
         units.push({ key: `g:${chatRowKey(groupAnchor, intermediateIndices[0])}`, html: g });
+        // FORK 2026-10-21 — the fold hides its rows; an ask-session card among them is drawn under it instead (it is
+        // drawn in place, inside the group, once the group is open, so the card is on screen exactly once).
+        if (!expanded && deps.askCardsInFold) {
+          const cards = deps.askCardsInFold(
+            intermediateIndices.map((j) => view[j]),
+            globalResultMap,
+          );
+          if (cards) {
+            units.push({
+              key: `ask:${chatRowKey(groupAnchor, intermediateIndices[0])}`,
+              html: cards,
+            });
+          }
+        }
         // FORK 2026-06-19 (bug A): render EVERY answer bubble (all visible text after the last tool),
         // in order — not just a single final bubble.
         // FORK 2026-08-09: this run just emitted a structural "▸ Reasoning" group above, so its
@@ -597,6 +622,17 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
           key: `rail-start:${anchor}`,
           html: railCapHtml(railed.rail, "start"),
         });
+      }
+
+      // FORK 2026-10-09 — the background Fractal's card sits right under the run it reflects on.
+      if (deps.fractalAfterRun && runStart > 0) {
+        const card = deps.fractalAfterRun(view[runStart - 1]);
+        if (card) {
+          units.push({
+            key: `fractal:${chatRowKey(view[runStart - 1], runStart - 1)}`,
+            html: card,
+          });
+        }
       }
 
       // The amygdala's Jev window and cards close the run they judged (design doc §9); "" draws nothing.

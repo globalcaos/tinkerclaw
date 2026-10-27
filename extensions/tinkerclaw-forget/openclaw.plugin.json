@@ -1,0 +1,53 @@
+{
+  "id": "tinkerclaw-forget",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "name": "Forget",
+  "description": "Forget one fact in every place it was copied (notes, old versions, search indexes, summaries, chat records, backups) and hand back a receipt that names the places it cannot reach. Preview by default: it searches and changes nothing until mode is apply.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["off", "preview", "apply"],
+        "default": "preview",
+        "description": "off = load nothing; preview = the forget tool and memory.forget find every copy and report, change nothing; apply = a preview hands out a one-time confirm code, and passing it back redacts every copy it can reach."
+      },
+      "extraRoots": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "More folders to sweep as notes (absolute or ~/...). The workspace notes, memorySearch.extraPaths, Claude Code's autoMemoryDirectory, the state dir's memory, wiki, agent transcripts and the engram stores are always swept."
+      },
+      "backupDirs": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Folders that hold backups (default <stateDir>/backups). Text files in them are redacted; archives and encrypted bundles are listed as out of reach."
+      },
+      "remoteCopies": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Copies outside this machine the owner knows of, e.g. \"encrypted nightly backup on Google Drive\". Each is listed on every receipt as out of reach."
+      },
+      "claudeCode": {
+        "type": "boolean",
+        "default": true,
+        "description": "Also sweep Claude Code's transcripts and prompt history (~/.claude/projects, ~/.claude/history.jsonl), where the cc-bridge chat workers keep their own copy of each chat."
+      },
+      "gitHistory": {
+        "type": "boolean",
+        "default": true,
+        "description": "Search the git history of every swept folder that is a repository, and list the commits and remotes that still hold the fact. It never rewrites history."
+      },
+      "maxBinaryScanMB": {
+        "type": "number",
+        "default": 2048,
+        "description": "Binary stores (SQLite, vector files) larger than this are listed as not searched instead of read."
+      }
+    }
+  }
+}

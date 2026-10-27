@@ -71,13 +71,19 @@
 //     (laptop $1,563.12 + Goku $31.67; ~96% Opus/Fable) → $2,703 of list value / week.
 //   · ChatGPT Plus — `Weekly` 16% since 2026-09-21 10:00 UTC; burn $14.39 (151 Sol +
 //     10 Luna turns, laptop only — Goku drew none) → $89.9 / week.
+//   · RE-MEASURED 2026-10-10 ~16:48 UTC (the architect: "redo all the numbers"): Claude Max 20x on
+//     owner@example.com — `seven_day` 67%; burn since the CLI moved to that account
+//     (2026-10-09 10:45 UTC, so the meter's first ~19 h of window are NOT in the sum)
+//     $2,109.78 (Opus 5.5 $1,829.60 · Sonnet 5.5 $244.63 · Haiku $28.17 · Fable $7.38),
+//     laptop only → $3,149 / week. Replaces the 09-23 $2,703. Same direction as before:
+//     a lower bound, so the multiple below is too.
 // BOTH ARE LOWER BOUNDS ON THE CEILING, so the prices they imply are UPPER bounds:
 // anything else on the same account (claude.ai chats; ChatGPT "Work" agent runs, which
 // share the Codex pool) moved the meter without appearing in our transcripts. The
 // ChatGPT figure also rests on $14 of burn and an integer 16% (±3%).
 //
 // WHAT THE NUMBERS SAY, at 100% of the weekly cap — € of list value per € of fee:
-//   Claude Pro 29× · Max 5x 29× · Team Premium 23× · Max 20x 59×
+//   Claude Pro 34× · Max 5x 34× · Team Premium 27× · Max 20x 68×   (2026-10-10; was 29/29/23/59)
 //   ChatGPT Plus 19× · Business 16× · Pro 5x 19× · Pro 10x 19× · Pro 25x 19×
 //   (until DevDay 2026-09-29 Pro 200 was 20× → 39×; now no OpenAI tier beats Plus per €)
 // So the ChatGPT circles move RIGHT, not left: the Plus seat returns a third of what the
@@ -115,7 +121,7 @@ export interface SeatMeasurement {
 }
 
 export const SEAT_MEASURED: Readonly<Record<SeatVendor, SeatMeasurement>> = {
-  anthropic: { plan: "Max 20×", feeEur: 200, quotaMult: 20, weeklyListUsd: 1594.79 / 0.59 },
+  anthropic: { plan: "Max 20×", feeEur: 200, quotaMult: 20, weeklyListUsd: 2109.78 / 0.67 },
   openai: { plan: "Plus", feeEur: 20, quotaMult: 1, weeklyListUsd: 14.39 / 0.16 },
 };
 
@@ -303,11 +309,14 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // FORK 2026-08-18: added with the model itself. No generic /qwen/ row exists, so
   // without this the 27B would have fallen through to EEG_DEFAULT_REL_COST (2.58)
   // and drawn 19% thin — the "dot with no cost row" failure the block above warns of.
-  { modelMatch: /qwen3\.8-27b/i, relCost: 1.49 }, // re-checked 2026-10-02 live endpoints. $0.99/$1.49 Cerebras cheapest (was $1.782, -16%).
-  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 1.98 }, // re-checked 2026-10-03 live endpoints. $0.66/$1.98 StreamLake and DeepSeek cheapest live seats (was $0.396 Baidu, which now charges $3.96; Ionstream lists $1.48 but reports status -2, down, so it is not a buyable price). OR list $0.66/$1.98.
-  { modelMatch: /deepseek.*v4-pro/i, relCost: 0.8376 }, // $0.4188/$0.8376 — re-checked 2026-09-26 live endpoints (StreamLake took cheapest from Baidu $1.6292, −49% out). OR list $0.816/$1.632.
-  { modelMatch: /minimax/i, relCost: 0.96 }, // re-checked 2026-10-01 live endpoints. $0.23/$0.96 CoreWeave cheapest (was OR list $1.20, -20%).
+  { modelMatch: /qwen3\.8-27b/i, relCost: 1.25 }, // re-checked 2026-10-26 live endpoints. $0.039/$1.25 Chutes fp8 cheapest healthy seat (was Tenstorrent $0.02/$0.50, +150%: Tenstorrent now reports status -5 and 0% uptime, so it is not buyable; Near AI $1.35 next). Earlier: re-checked 2026-10-16 live endpoints. $0.02/$0.50 Tenstorrent fp4 cheapest (was Chutes $0.039/$1.25, -60%). Earlier: re-checked 2026-10-14 live endpoints. $0.039/$1.25 Chutes cheapest (was Near AI $0.04/$1.35, -7%; DeepInfra, our route, unchanged at $1.875).
+  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 0.8 }, // re-checked 2026-10-26 live endpoints. $0.45/$0.80 Sail Research fp4 cheapest (was Baidu $0.132/$0.396, +102%: Baidu is back at its $3.96 list; StreamLake and DeepSeek $1.98; DeepInfra, our route, $1.30/$2.60). Earlier: re-checked 2026-10-24 live endpoints. $0.132/$0.396 Baidu fp8 cheapest (was Sail Research $0.45/$0.80, -50%: Baidu is back on its promo, may revert; Sail Research unchanged; DeepSeek and StreamLake $1.98). Earlier: re-checked 2026-10-23 live endpoints. $0.45/$0.80 Sail Research fp4 cheapest (was Sail Research $0.896/$0.582, +37%; DeepInfra, our route, $1.30/$2.60). Earlier: re-checked 2026-10-19 live endpoints. $0.896/$0.582 Sail Research fp4 cheapest (was Baidu $0.133/$0.40, +45%: Baidu's promo ended and it is back at the $3.96 list; DeepInfra, our route, $1.30/$2.60). Earlier: re-checked 2026-10-18 live endpoints. $0.133/$0.40 Baidu fp8 cheapest (was Baidu $0.249/$0.748, -47%; Baidu promo deepened, may revert). Earlier: re-checked 2026-10-17 live endpoints. $0.249/$0.748 Baidu fp8 cheapest (was StreamLake $0.66/$1.98, -62%); Baidu is an 81% promotional discount off $3.96 list, healthy 100% uptime, so it may revert. Earlier: re-checked 2026-10-03 live endpoints. $0.66/$1.98 StreamLake and DeepSeek cheapest live seats (was $0.396 Baidu, which now charges $3.96; Ionstream lists $1.48 but reports status -2, down, so it is not a buyable price). OR list $0.66/$1.98.
+  { modelMatch: /deepseek.*v4-pro/i, relCost: 1.5 }, // re-checked 2026-10-26 live endpoints. $0.90/$1.50 Relace fp4 cheapest, 100% uptime (was Baidu $0.2079/$0.4157, +261%: Baidu promo ended, now $3.38; StreamLake $1.9105 next). Earlier: re-checked 2026-10-25 live endpoints. $0.2079/$0.4157 Baidu fp8 cheapest, 100% uptime (was StreamLake $0.9483/$1.8966, -78%: Baidu promo, may revert). Earlier: $0.9483/$1.8966 — re-checked 2026-10-10 live endpoints (StreamLake still cheapest, +126% vs $0.8376; GMICloud $1.914 next). Only the plain deepseek-v4-pro id; the -0813 row above is separate.
+  { modelMatch: /minimax-m3\.1/i, relCost: 0.57 }, // re-checked 2026-10-27 live endpoints. $0.1425/$0.57 GMICloud fp8 cheapest (was Relace $0.09/$0.50, +14%: Relace no longer lists this model; InferenceNet, DigitalOcean, Novita, Nebius and SambaNova $0.60 next). Earlier: re-checked 2026-10-25 live endpoints. $0.09/$0.50 Relace cheapest (was InferenceNet $0.10/$0.55, -9%). Earlier: re-checked 2026-10-24 live endpoints. $0.10/$0.55 InferenceNet fp4 cheapest (was $0.50, +10%; GMICloud $0.57, DigitalOcean and Novita $0.60 next). Earlier: added 2026-10-23 (AA 42.7057). $0.10/$0.50 InferenceNet fp4 cheapest live seat, status 0, 100% uptime (Parasail, Together and MiniMax list $0.15/$0.60). OR carried only a $0 free tier until 2026-10-22.
+  { modelMatch: /minimax/i, relCost: 0.88 }, // re-checked 2026-10-27 live endpoints. $0.224/$0.88 DeepInfra, our route, fp8 cheapest (was CoreWeave $0.23/$0.96, -8%; DeepInfra's older listing $0.28/$1.10 unchanged; the new listing reports no uptime figure yet). Earlier: re-checked 2026-10-01 live endpoints. $0.23/$0.96 CoreWeave cheapest (was OR list $1.20, -20%).
+  { modelMatch: /muse-wonder/i, relCost: 20.0 }, // $4.000/$20.000 OpenRouter list, 2026-10-13
   { modelMatch: /muse-spark/i, relCost: 4.25 }, // $1.250/$4.250
+  { modelMatch: /reflection\/beam/i, relCost: 1.0 }, // re-checked 2026-10-23 live endpoints. $0.25/$1.00 Nebius cheapest (OR list now $0.25/$1.00, was $1.00/$3.00 on 2026-10-17, -67%). Earlier: $1.000/$3.000 OpenRouter list, 2026-10-17
   // PROVIDER-SCOPED ON PURPOSE. The native `google/*` rows further down sit on an
   // AMORTIZED scale (3.5 Flash = 0.0804 for a $9 sticker, i.e. ÷112), left over from
   // when Gemini was reachable on a free CLI tier. An unscoped /gemini-3.7.*flash/ here
@@ -316,8 +325,8 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // Only the metered OpenRouter route gets the raw number.
   { modelMatch: /openrouter\/.*gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.750/$3.750 OR
   { modelMatch: /openrouter\/.*gemini-3\.7.*flash/i, relCost: 1.875 }, // $0.375/$1.875 OR
-  { modelMatch: /mimo.*flash/i, relCost: 0.28 }, // re-checked 2026-10-06 live endpoints. $0.10/$0.28 Darkbloom cheapest (was GMICloud $0.133/$0.266, +5%).
-  { modelMatch: /mimo/i, relCost: 0.87 }, // re-checked 2026-10-06 live endpoints. pro: $0.43/$0.87 DeepInfra cheapest (was GMICloud $0.4133/$0.8265, +5%).
+  { modelMatch: /mimo.*flash/i, relCost: 0.238 }, // re-checked 2026-10-24 live endpoints. $0.119/$0.238 GMICloud bf16 cheapest healthy seat (was Darkbloom $0.10/$0.28, -15%; DeepInfra $0.182 reports status -5 and 13% uptime, held out). Earlier: re-checked 2026-10-06 live endpoints. $0.10/$0.28 Darkbloom cheapest (was GMICloud $0.133/$0.266, +5%).
+  { modelMatch: /mimo/i, relCost: 0.783 }, // re-checked 2026-10-20 live endpoints. pro: $0.387/$0.783 DeepInfra cheapest via OR (was $0.43/$0.87, -10%; DeepInfra API list unchanged). Earlier: re-checked 2026-10-06 live endpoints. pro: $0.43/$0.87 DeepInfra cheapest (was GMICloud $0.4133/$0.8265, +5%).
   { modelMatch: /inkling-small/i, relCost: 1.2 }, // $0.450/$1.200
   { modelMatch: /inkling/i, relCost: 4.05 }, // $0.950/$4.050
   { modelMatch: /tencent|hy3/i, relCost: 0.528 }, // $0.132/$0.528 — re-checked 2026-09-19 live endpoints (Tencent took cheapest back; DeepInfra $0.435 is gone). OR list still $0.132/$0.528 (weekday 00-16 UTC window).
@@ -326,16 +335,16 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /nex-n2-mini/i, relCost: 0.1 }, // $0.025/$0.100
   { modelMatch: /nex-n2/i, relCost: 1.0 }, // nex-n2-pro $0.250/$1.000
   { modelMatch: /solar-pro/i, relCost: 0.12 }, // $0.030/$0.120
-  { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // re-checked 2026-10-01 live endpoints. $0.075/$0.25 DeepInfra cheapest (was $0.14, +79%).
-  { modelMatch: /glm-5\.3/i, relCost: 1.32 }, // re-checked 2026-10-06 live endpoints. $0.42/$1.32 Novita cheapest (was Baidu $0.1554/$0.4884, which now charges $1.40/$4.40: +170%). OR list $0.07/$7.00 is a cheap-input seat, not the buyable out price.
-  { modelMatch: /glm-5\.1/i, relCost: 3.036 }, // $0.966/$3.036 — re-checked 2026-09-10 live endpoints (StreamLake still cheapest)
-  { modelMatch: /glm-5\.2/i, relCost: 1.8 }, // re-checked 2026-10-06 live endpoints. $0.5625/$1.80 DeepInfra cheapest (was Baidu $0.141/$0.444, which now charges $2.25/$7.88: +305%). OR list $0.0112/$12 is a cheap-input seat.
+  { modelMatch: /glm-5\.3-flash/i, relCost: 0.0701 }, // re-checked 2026-10-27 live endpoints. $0.0513/$0.0701 Relace cheapest sane seat (was Relace $0.0413/$0.0758, -8%; OpenInference lists $0.0986 in / $0.0173 out, an output price below its input, held out again; DeepInfra, our route, $0.15/$0.50). Earlier: re-checked 2026-10-26 live endpoints. $0.0413/$0.0758 Relace cheapest sane seat (was OpenInference $0.0665/$0.0698, +9%; OpenInference now lists $0.0765 in / $0.0100 out, an output price below its input, read as a listing glitch and not used). Earlier: re-checked 2026-10-25 live endpoints. $0.0665/$0.0698 OpenInference cheapest (was Relace $0.0304/$0.0852, -18%). Earlier: re-checked 2026-10-24 live endpoints. $0.0304/$0.0852 Relace cheapest (was OpenInference $0.059/$0.16, -47%; Darkbloom $0.18 and Wafer $0.20 next; DeepInfra, our route, unchanged at $0.075/$0.25). Earlier: re-checked 2026-10-20 live endpoints. $0.059/$0.16 OpenInference cheapest (was OpenInference $0.048/$0.20, -20%; DeepInfra, our route, unchanged at $0.075/$0.25). Earlier: re-checked 2026-10-18 live endpoints. $0.048/$0.20 OpenInference cheapest (was StreamLake $0.075/$0.25, -20%). Earlier: re-checked 2026-10-17 live endpoints. $0.075/$0.25 StreamLake and DeepInfra (our route) cheapest (was StreamLake $0.0435/$0.145, +72%). Earlier: re-checked 2026-10-14 live endpoints. $0.0435/$0.145 StreamLake cheapest (was DeepInfra $0.075/$0.25, -42%; InferenceNet $0.15 next; DeepInfra, our route, unchanged).
+  { modelMatch: /glm-5\.3/i, relCost: 1.4 }, // re-checked 2026-10-19 live endpoints. $0.079/$1.40 Wafer fp4 cheapest (was Sail Research $0.50/$1.505, -7%; Inceptron $0.55/$1.40 ties on output). Earlier: re-checked 2026-10-16 live endpoints. $0.50/$1.505 Sail Research cheapest (was Novita $0.70/$2.20, -32%; Inceptron $2.20 next; DeepInfra, our route, unchanged). Earlier: re-checked 2026-10-09 live endpoints. $0.70/$2.20 Novita cheapest (was $0.42/$1.32, +67%; DeepInfra, our route, unchanged at $0.5625/$2.50). OR list $0.07/$7.00 is a cheap-input seat, not the buy
+  { modelMatch: /glm-5\.1/i, relCost: 2.9 }, // re-checked 2026-10-27 live endpoints. $0.90/$2.90 Chutes fp8 cheapest (was StreamLake $0.966/$3.036, -4%; StreamLake unchanged). Earlier: $0.966/$3.036 — re-checked 2026-09-10 live endpoints (StreamLake still cheapest)
+  { modelMatch: /glm-5\.2/i, relCost: 1.44 }, // re-checked 2026-10-26 live endpoints. $0.45/$1.44 DeepInfra, our route, fp4 cheapest, 100% uptime (was Baidu $0.189/$0.594, +142%: Baidu promo ended, now $4.40; StreamLake $1.93 next). Earlier: re-checked 2026-10-24 live endpoints. $0.189/$0.594 Baidu fp8 cheapest, 100% uptime (was DeepInfra, our route, $0.45/$1.44, -59%; StreamLake $0.88 next; DeepInfra unchanged). Earlier: re-checked 2026-10-23 live endpoints. $0.45/$1.44 DeepInfra (our route) cheapest, new fp4 listing (was DeepInfra $0.5625/$1.80, -20%). Earlier: re-checked 2026-10-16 live endpoints. $0.5625/$1.80 DeepInfra (our route) cheapest again (was Decart $0.273/$1.68, +7%). Earlier: re-checked 2026-10-10 live endpoints. $0.273/$1.68 Decart cheapest (was DeepInfra $0.5625/$1.80, -7%; DeepInfra, our route, unchanged). OR list $0.0112/$12 is a cheap-input seat.
   // FORK 2026-08-15: `/glm-5(?![.\d])/i` blocks a following digit or dot, but NOT a
   // letter or hyphen — so it also claimed `glm-5-turbo` and `glm-5v-turbo`, both
   // $4.000, and drew them at 1.92 (2.1× too thin). Both turbos get their own row.
   { modelMatch: /glm-5v?-turbo/i, relCost: 4.0 }, // $1.200/$4.000
   { modelMatch: /glm-5(?![.\d])/i, relCost: 1.92 }, // $0.600/$1.920
-  { modelMatch: /kimi-k2\.6/i, relCost: 2.4 }, // re-checked 2026-10-06 live endpoints. $0.57/$2.40 DigitalOcean cheapest (was Baidu $0.4341/$1.828, +31%). OR list $0.95/$4.00.
+  { modelMatch: /kimi-k2\.6/i, relCost: 1.8 }, // re-checked 2026-10-27 live endpoints. $0.39/$1.80 Chutes int4 cheapest (was Chutes $0.45/$1.95, -8%; DigitalOcean $2.40 next). Earlier: re-checked 2026-10-26 live endpoints. $0.45/$1.95 Chutes int4 cheapest (was Baidu $0.4493/$1.892, +3%: Baidu back at $4.00). Earlier: re-checked 2026-10-25 live endpoints. $0.4493/$1.892 Baidu cheapest (was Chutes $0.45/$1.95, -3%). Earlier: re-checked 2026-10-14 live endpoints. $0.45/$1.95 Chutes cheapest (was DigitalOcean $0.57/$2.40, -19%). OR list $0.95/$4.00.
   { modelMatch: /kimi-k2\.7/i, relCost: 3.0 }, // re-checked 2026-10-01 live endpoints. $0.7125/$3.00 StreamLake cheapest (was $3.50, -14%).
   { modelMatch: /qwen3\.6-max-preview/i, relCost: 6.162 }, // $1.027/$6.162 — added 2026-08-22
   { modelMatch: /qwen3\.6-plus/i, relCost: 1.95 }, // $0.325/$1.950
@@ -343,15 +352,17 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // at $0.220/$0.660 — confirmed via /api/v1/models/deepseek/deepseek-v4-flash-vision-exp/endpoints.
   // The 2026-08-27 "correction" to $1.32 was wrong; the $0.66 this pass wrote is real.
   { modelMatch: /deepseek-v4-flash-vision/i, relCost: 0.6468 }, // $0.2156/$0.6468 — re-checked 2026-09-12 live endpoints (DeepInfra cheapest, −2% vs the $0.66 DeepSeek seat of 2026-08-29)
-  { modelMatch: /deepseek-v4\.1-flash/i, relCost: 0.18 }, // re-checked 2026-10-06 live endpoints. $0.09/$0.18 Decart cheapest (was Sail Research $0.08/$0.40, -55%; Morph $0.284 and InferenceNet $0.30 next).
-  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.132 }, // $0.044/$0.132 — re-checked 2026-09-26 live endpoints (StreamLake still cheapest, −17% vs $0.1584). OR list halved with it, $0.04/$0.64 → $0.021/$0.32. No time-window overrides.
-  { modelMatch: /deepseek-v4-flash(?!-)/i, relCost: 0.0977 }, // $0.0489/$0.0977 — re-checked 2026-09-25 live endpoints (Baidu still cheapest, +32% out vs $0.0742).
+  { modelMatch: /deepseek-v4\.1-flash-1017/i, relCost: 0.15 }, // re-checked 2026-10-23 live endpoints. $0.101/$0.15 Sail Research cheapest (was Decart $0.09/$0.18, -17%; DeepInfra, our route, $0.0784/$0.2352). Earlier: added 2026-10-20 (AA 45.0965, 10-17 snapshot). $0.09/$0.18 Decart cheapest sane seat; DeepInfra, our route, $0.0784/$0.2352 via OR (API list $0.20/$0.60). Relace lists $0.05/$0.024 (output below input), held out.
+  { modelMatch: /deepseek-v4\.1-flash/i, relCost: 0.18 }, // re-checked 2026-10-23 live endpoints. $0.09/$0.18 Decart cheapest (was Sail Research $0.101/$0.15, +20%: Sail Research now lists $0.25 on this snapshot; OpenInference reports status -2, held out). Earlier: re-checked 2026-10-20 live endpoints. $0.101/$0.15 Sail Research cheapest sane seat (was OpenInference $0.0472/$0.12, +25%: OpenInference and Relace now list output below input, $0.0112 and $0.014, held out as mis-entered). Earlier: re-checked 2026-10-19 live endpoints. $0.0472/$0.12 OpenInference cheapest (was OpenInference $0.0648/$0.144, -17%). Earlier: re-checked 2026-10-18 live endpoints. $0.0648/$0.144 OpenInference cheapest (was Decart $0.09/$0.18, -20%). Earlier: re-checked 2026-10-06 live endpoints. $0.09/$0.18 Decart cheapest (was Sail Research $0.08/$0.40, -55%; Morph $0.284 and InferenceNet $0.30 next).
+  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.15 }, // re-checked 2026-10-26 live endpoints. $0.15/$0.15 Sail Research fp4 cheapest (was Baidu $0.0444/$0.1333, +12%: Baidu seat gone from the list; DeepInfra, our route, $0.18). Earlier: re-checked 2026-10-24 live endpoints. $0.0444/$0.1333 Baidu fp8 cheapest (was Sail Research $0.15, -11%; Sail Research, Relace $0.1694 and DeepInfra, our route, $0.18 follow). Earlier: re-checked 2026-10-23 live endpoints. $0.15/$0.15 Sail Research fp4 cheapest (was DeepInfra, our route, $0.06/$0.18, -17%; DeepInfra unchanged; Relace $0.0475/$0.1568 next). Earlier: $0.06/$0.18 — re-checked 2026-10-10 live endpoints (DeepInfra, our route, now cheapest; StreamLake rose to $0.264, so +36% vs $0.132). No time-window overrides.
+  { modelMatch: /deepseek-v4-flash(?!-)/i, relCost: 0.1652 }, // re-checked 2026-10-26 live endpoints. $0.0826/$0.1652 StreamLake fp8 cheapest, 100% uptime (was Baidu $0.0237/$0.0473, +249%: Baidu promo ended, now $0.14/$0.28; DeepInfra, our route, $0.09/$0.18). Earlier: re-checked 2026-10-25 live endpoints. $0.0237/$0.0473 Baidu fp8 cheapest, 100% uptime (was Baidu $0.0489/$0.0977, -52%: promo, may revert). Earlier: $0.0489/$0.0977 — re-checked 2026-09-25 live endpoints (Baidu still cheapest, +32% out vs $0.0742).
   // FORK 2026-08-23: openrouter/openai/gpt-5.3-codex is metered at $1.75/$14.00.
   // Without this row the generic /gpt-5/i catch-all (0.0893) would underprice it by
   // 157× against the actual metered rate. Must be scoped to the openrouter/ prefix so
   // the github-copilot/gpt-5.3-codex row above keeps its Copilot-adjusted price.
   { modelMatch: /openrouter\/openai\/gpt-5\.3-codex/i, relCost: 14.0 }, // $1.75/$14.00
-  { modelMatch: /kimi/i, relCost: 9.75 }, // re-checked 2026-10-06 live endpoints. kimi-k3 cheapest seat is Phala $1.95/$9.75 (was $2.25/$11.25, -13%).
+  { modelMatch: /kimi-k3\.1/i, relCost: 10.0 }, // added 2026-10-24 (AA 55.0869). $2.00/$10.00 Moonshot AI first-party mxfp4, the only standard seat on OpenRouter (a $4/$20 Moonshot tier is listed beside it). DeepInfra does not list it. Specific row ABOVE the generic /kimi/i or it would draw at the kimi-k3 price of 5.5.
+  { modelMatch: /kimi/i, relCost: 8.25 }, // re-checked 2026-10-27 live endpoints. kimi-k3 cheapest live seat is Decart mxfp4 $1.65/$8.25 (was Sail Research $1.20/$5.50, +50%: Sail Research now lists $0.25/$11; Relace $8.94 next). Earlier: re-checked 2026-10-23 live endpoints. kimi-k3 cheapest live seat is Sail Research fp4 $1.20/$5.50 (was Decart mxfp4 $1.65/$8.25, -33%; Decart now second at $8.25). Earlier: re-checked 2026-10-19 live endpoints. kimi-k3 cheapest live seat is Decart mxfp4 $1.65/$8.25 (was Sail Research $0.504/$8.10, +2%: Sail Research now lists $1.20/$9.00). Earlier: re-checked 2026-10-17 live endpoints. kimi-k3 cheapest live seat is Sail Research fp4 $0.504/$8.10 (was Chutes $1.85/$9.50, -15%). Earlier: re-checked 2026-10-14 live endpoints. kimi-k3 cheapest live seat is Chutes $1.85/$9.50 (Decart rose to $10.50 and reports status -2; was $9.90, -4%).
   { modelMatch: /qwen3\.8-max/i, relCost: 6.0 }, // $2/$6, cache read $0.25
   { modelMatch: /qwen3\.7-max/i, relCost: 4.425 }, // $1.475/$4.425, cache read $0.295
   { modelMatch: /glm/i, relCost: 3.036 }, // GLM generic fallback (glm-5.1/5.2/5.3 have specific rows above)
@@ -378,6 +389,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /openrouter\/.*fable/i, relCost: 50.0 }, // $10.000/$50.000 OR, ctx 1M
   { modelMatch: /nemotron-3\.5-lightning/i, relCost: 0.2 }, // $0.080/$0.200 OR, ctx 262k
   { modelMatch: /ling-3\.0-flash/i, relCost: 0.063 }, // $0.021/$0.063 OR, ctx 262k
+  { modelMatch: /ling-3\.1-flash/i, relCost: 0.225 }, // $0.075/$0.225 OR (Novita, only seller), ctx 262k, read live 2026-10-14; OR listed it at $0 until the day before
   { modelMatch: /longcat-2\.0/i, relCost: 1.2 }, // $0.300/$1.200 OR, ctx 1.05M
 
   // ── Native / non-Copilot paths — SUBSCRIPTION, so relCost is amortized ──
@@ -416,6 +428,8 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /opus-5[.-]5/i, relCost: seatRelCost("anthropic", 20) },
   { modelMatch: /opus/i, relCost: seatRelCost("anthropic", 25) },
   { modelMatch: /sonnet/i, relCost: seatRelCost("anthropic", 10) },
+  // Haiku 5.5 list is $0.10/$0.50 (anthropic.com pricing 2026-10-08, prompts up to 100k; $0.50/$2.50 above). Must sit ABOVE /haiku/i.
+  { modelMatch: /haiku-5[.-]5/i, relCost: seatRelCost("anthropic", 0.5) },
   { modelMatch: /haiku/i, relCost: seatRelCost("anthropic", 5) },
   // FORK 2026-09-09: GPT-6 Astra is on the ChatGPT seat (openai-codex). The 05:45
   // cron left it chart-only because it probed Codex CLI 0.150.1 ("upgrade required").
@@ -432,6 +446,11 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // rows below do NOT match the dotted 6.1 id, so it needs its own pair.
   { modelMatch: /openai-codex\/.*gpt-6\.1-sol/i, relCost: seatRelCost("openai", 10) }, // ChatGPT Plus seat, $10 out
   { modelMatch: /gpt-6\.1-sol/i, relCost: 10.0 }, // metered list fallback — $2 in / $10 out
+  // FORK 2026-10-27: gpt-6.1-terra, shipped 2026-10-26, $1 in / $5 out (OpenRouter live catalog,
+  // openai/gpt-6.1-terra). Seat probe on chatgpt.com/backend-api/codex: gpt-6.1-terra → OK;
+  // gpt-6-1-terra and gpt-6.1-terra-9-9 → 400. Same measured seat unit as Sol.
+  { modelMatch: /openai-codex\/.*gpt-6\.1-terra/i, relCost: seatRelCost("openai", 5) }, // ChatGPT Plus seat, $5 out
+  { modelMatch: /gpt-6\.1-terra/i, relCost: 5.0 }, // metered list fallback — $1 in / $5 out
   { modelMatch: /openai-codex\/.*gpt-6-sol/i, relCost: seatRelCost("openai", 10) }, // ChatGPT Plus seat, $10 out
   { modelMatch: /openai-codex\/.*gpt-6-luna/i, relCost: seatRelCost("openai", 0.5) }, // ChatGPT Plus seat, $0.50 out
   { modelMatch: /gpt-6-astra/i, relCost: 50.0 }, // metered list fallback — $10 in / $50 out

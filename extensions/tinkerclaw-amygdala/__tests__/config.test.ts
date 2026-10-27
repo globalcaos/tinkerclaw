@@ -55,6 +55,14 @@ describe("parseConfig", () => {
     expect(props.jev.properties.tokenHelpUrl.default).toBeUndefined();
   });
 
+  // 2026-10-15: the pass review (what Jev let through) has its own cap, counted in turns.
+  it("the pass review has its own daily cap, 150 turns by default", () => {
+    expect(cfg.review.dailyCap).toBe(props.review.properties.dailyCap.default);
+    expect(cfg.review.passDailyCap).toBe(150);
+    expect(parseConfig({ review: { passDailyCap: 20 } }).review.passDailyCap).toBe(20);
+    expect(parseConfig({ review: { passDailyCap: "many" } }).review.passDailyCap).toBe(150);
+  });
+
   it("takes overrides and ignores wrong-typed values", () => {
     const c = parseConfig({
       mode: "enforce",
@@ -62,7 +70,7 @@ describe("parseConfig", () => {
       families: { efficiency: true },
     });
     expect(c.mode).toBe("enforce");
-    expect(c.jev.timeoutMs).toBe(2600);
+    expect(c.jev.timeoutMs).toBe(1000);
     expect(c.jev.sendRealSituations).toBe(true);
     expect(c.families.efficiency).toBe(true);
     expect(parseConfig({ mode: "loud" }).mode).toBe("shadow");

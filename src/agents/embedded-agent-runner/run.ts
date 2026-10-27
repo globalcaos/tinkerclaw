@@ -1002,6 +1002,11 @@ export async function runEmbeddedPiAgent(
             agentId: workspaceResolution.agentId,
             legacyBeforeAgentStartResult,
             thinkLevel,
+            // FORK 2026-10-09 (effort slider): forward who chose the level and Thalamus's ultracode
+            // call. Ultracode rides only while the level is still the one Thalamus chose: when this
+            // run lowers thinking (an unsupported level, a fallback model), the fan-out drops too.
+            thinkSource: params.thinkSource,
+            ultracode: params.ultracode === true && thinkLevel === initialThinkLevel,
             fastMode: params.fastMode,
             verboseLevel: params.verboseLevel,
             reasoningLevel: params.reasoningLevel,

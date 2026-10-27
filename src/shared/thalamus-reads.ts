@@ -264,10 +264,174 @@ const PROOF_CUES =
   /\b(prove|proof|derive|research|investigate|design a|architecture|root cause|novel)\b/i;
 const CODE_CUES = /(```|\bimplement\b|\brefactor\b|\bdebug\b|\bfix (the )?bug\b|\bmigrate\b)/i;
 
+// FORK 2026-10-09 — a TRIVIAL tier (difficulty 1) for the local read. Auto now hands the task read
+// the choice of effort (src/shared/thalamus-effort.ts), and before this tier a bare "hello" read as
+// difficulty 2: harmless for the effort (2 is low too) but dishonest as a read, and the rule the
+// prefrontal effort router already applied (extensions/tinkerclaw-prefrontal/effort-router.ts
+// classifyComplexity, 2026-05-29) was not shared. Lifted here, not imported: core never imports
+// from an extension. STRICTER than the extension's rule, on purpose: a miss costs nothing (2 is
+// still low), a false hit would under-think a real ask. A prompt is trivial when it has at most
+// TRIVIAL_MAX_WORDS words, EVERY word is a greeting / acknowledgement / thanks in English, Spanish
+// or Catalan or a filler around one, at least one is the greeting itself (whole words, so "no"
+// inside "another" or "hi" inside "this" cannot match), and nothing deep or code-shaped is in it.
+// "hello world program in rust" is therefore NOT trivial; "moltes gràcies" and "got it" are.
+const TRIVIAL_MAX_WORDS = 8;
+const TRIVIAL_WORDS: ReadonlySet<string> = new Set([
+  // English
+  "hi",
+  "hello",
+  "hey",
+  "heya",
+  "yo",
+  "thanks",
+  "thank",
+  "thx",
+  "ty",
+  "ok",
+  "okay",
+  "yes",
+  "yep",
+  "yeah",
+  "no",
+  "nope",
+  "ack",
+  "got",
+  "sure",
+  "great",
+  "cool",
+  "perfect",
+  "nice",
+  "bye",
+  "cheers",
+  "morning",
+  "evening",
+  "night",
+  "welcome",
+  // Spanish
+  "hola",
+  "gracias",
+  "vale",
+  "sí",
+  "si",
+  "buenos",
+  "buenas",
+  "días",
+  "dias",
+  "tardes",
+  "noches",
+  "adiós",
+  "adios",
+  "genial",
+  "perfecto",
+  "claro",
+  "nada",
+  // Catalan
+  "gràcies",
+  "gracies",
+  "bon",
+  "bona",
+  "dia",
+  "tarda",
+  "nit",
+  "adéu",
+  "adeu",
+  "val",
+  "d'acord",
+  "entesos",
+  "perfecte",
+  "merci",
+]);
+/** Words allowed AROUND a greeting without making it an ask ("thank you so much", "de nada"). */
+const TRIVIAL_FILLERS: ReadonlySet<string> = new Set([
+  "you",
+  "a",
+  "lot",
+  "there",
+  "it",
+  "that",
+  "is",
+  "fine",
+  "and",
+  "too",
+  "so",
+  "much",
+  "very",
+  "all",
+  "good",
+  "the",
+  "this",
+  "please",
+  "done",
+  "right",
+  "de",
+  "molt",
+  "moltes",
+  "bé",
+  "be",
+  "bien",
+  "muy",
+  "mucho",
+  "muchas",
+  "todo",
+  "tot",
+  "que",
+  "eso",
+  "això",
+  "es",
+  "és",
+  "está",
+  "esta",
+  "i",
+  "y",
+  "ja",
+  "ya",
+  "bueno",
+  "bo",
+  "per",
+  "por",
+  "favor",
+  "us",
+  "plau",
+  "sisplau",
+  "un",
+  "una",
+]);
+/** Letters of the three languages, apostrophes kept so "d'acord" is one word. */
+const TRIVIAL_WORD_RE = /[\p{L}']+/gu;
+
+/** A greeting, an acknowledgement or a thanks, and nothing else: the local read's difficulty 1. */
+export function isTrivialPrompt(text: string): boolean {
+  const words = (text.match(TRIVIAL_WORD_RE) ?? []).map((w) => w.toLowerCase());
+  if (words.length === 0 || words.length > TRIVIAL_MAX_WORDS) {
+    return false;
+  }
+  if (PROOF_CUES.test(text) || CODE_CUES.test(text)) {
+    return false;
+  }
+  let greeting = false;
+  for (const w of words) {
+    if (TRIVIAL_WORDS.has(w)) {
+      greeting = true;
+    } else if (!TRIVIAL_FILLERS.has(w)) {
+      return false;
+    }
+  }
+  return greeting;
+}
+
 function localDifficulty(text: string): 1 | 2 | 3 | 4 | 5 {
-  if (PROOF_CUES.test(text)) return 5;
-  if (CODE_CUES.test(text) || text.length > 1500) return 4;
-  if (text.length < 160) return 2;
+  if (PROOF_CUES.test(text)) {
+    return 5;
+  }
+  if (CODE_CUES.test(text) || text.length > 1500) {
+    return 4;
+  }
+  if (isTrivialPrompt(text)) {
+    return 1;
+  }
+  if (text.length < 160) {
+    return 2;
+  }
   return 3;
 }
 

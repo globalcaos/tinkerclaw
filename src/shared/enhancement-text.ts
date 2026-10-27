@@ -9,7 +9,10 @@
 const STAMP = /^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b(?:\[number\]|[^\]])*\]\s*/;
 const ABORT_NOTE = /^Note: The previous agent run was aborted by the user\.[^\n]*\n+/;
 const SENDER_BLOCK = /^Sender \(untrusted metadata\):\s*```json[\s\S]*?```\s*/;
-const FRACTAL_TAIL = /\n+---\n+\*\*After your reply, append a 🌿 FRACTAL[\s\S]*$/;
+// FORK 2026-10-09 (Fractal v2, charter C4) — new prompts open the doctrine with `⟦FRACTAL-DOCTRINE⟧`
+// (FRACTAL_DOCTRINE_MARKER, appended-prompt-blocks.ts); old transcripts keep the old literal. Both cut.
+const FRACTAL_TAIL =
+  /\n+---\n+(?:\*\*After your reply, append a 🌿 FRACTAL|⟦FRACTAL-DOCTRINE⟧)[\s\S]*$/;
 
 /**
  * The request as the person wrote it: the sender block, the delivery stamp, the abort note and the reflection

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetRateLimitRetryStateForTest,
+  parseRateLimitEnvelopeReset,
   parseRateLimitReset,
   RATE_LIMIT_RETRY_JITTER_MAX_MS,
   RATE_LIMIT_RETRY_JITTER_MIN_MS,
@@ -269,5 +270,43 @@ describe("rearmPersistedRateLimitRetries", () => {
     expect(rearmPersistedRateLimitRetries(afterRestart, { storePath, jitterMs: 20_000 })).toBe(0);
     await vi.advanceTimersByTimeAsync(600_000);
     expect(afterRestart).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseRateLimitEnvelopeReset", () => {
+  // The envelope the Tinker bridge persisted on 2026-10-09 17:36:30Z, trimmed to its
+  // load-bearing fields.
+  const now = Date.parse("2026-10-09T17:36:30.492Z");
+  const envelope = (fields: Record<string, unknown>) =>
+    `__ERR_ENV__:${JSON.stringify({ kind: "error", fatal: true, ...fields })}`;
+
+  it("reads the reset from a rate-limit envelope's raw provider text", () => {
+    const payloads = [
+      {
+        text: envelope({
+          category: "rate_limit",
+          raw: "You've hit your session limit \u00b7 resets 8:30pm (Europe/Madrid)",
+        }),
+      },
+    ];
+    expect(parseRateLimitEnvelopeReset(payloads, now)).toBe(Date.parse("2026-10-09T18:30:00Z"));
+  });
+
+  it("ignores envelopes of other categories", () => {
+    const payloads = [
+      { text: envelope({ category: "auth", raw: "resets 8:30pm (Europe/Madrid)" }) },
+    ];
+    expect(parseRateLimitEnvelopeReset(payloads, now)).toBeUndefined();
+  });
+
+  it("ignores ordinary reply text that mentions a reset", () => {
+    expect(
+      parseRateLimitEnvelopeReset([{ text: "Your plan resets 8:30pm (Europe/Madrid)." }], now),
+    ).toBeUndefined();
+  });
+
+  it("ignores a malformed envelope", () => {
+    expect(parseRateLimitEnvelopeReset([{ text: "__ERR_ENV__:{not json" }], now)).toBeUndefined();
+    expect(parseRateLimitEnvelopeReset(undefined, now)).toBeUndefined();
   });
 });

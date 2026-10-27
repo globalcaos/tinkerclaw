@@ -16,7 +16,8 @@
  * Nothing here belongs in a prompt.
  *
  * L3: `emitEvent` is O(1), never throws and never awaits, so every helper below is safe on a hot
- * path and safe before the writer starts (pre-start records are counted and dropped).
+ * path and safe before the writer starts (pre-start records are counted and dropped, or kept in the
+ * spool by a script that called startEventSpool).
  * L4: no free text ever reaches a row. Labels are the closed sets typed here; a query, a topic, a
  * concept, a bridge, a recipe name or a path is never passed on. A raw session key may be handed
  * in — `emitEvent` hashes it into `session_hash` + `session_kind` and stores neither.
@@ -42,6 +43,12 @@ export type JCuriosityState = (typeof J_CURIOSITY_STATES)[number];
 
 export const J_CONTRADICTION_OUTCOMES = ["pass", "flagged", "blocked"] as const;
 export type JContradictionOutcome = (typeof J_CONTRADICTION_OUTCOMES)[number];
+
+/** The background Fractal turn: failed, else durable when it wrote a file, else clean. */
+export const J_FRACTAL_RUN_OUTCOMES = ["clean", "durable", "failed"] as const;
+export type JFractalRunOutcome = (typeof J_FRACTAL_RUN_OUTCOMES)[number];
+/** The two labels only the triage lane writes (extensions/tinkerclaw-fractal-reflection, off). */
+const J_FRACTAL_TRIAGE_LANE_OUTCOMES = ["success", "docked"] as const;
 
 // ─── the slot map ───────────────────────────────────────────────────────────────────────────
 
@@ -138,6 +145,15 @@ export const J_ROW_SPECS: Readonly<Record<string, JRowSpec>> = {
     n4: null,
     fields: ["house", "mode", "score", "margin"],
   },
+  "j.fractal.run": {
+    labels: [...J_FRACTAL_RUN_OUTCOMES, ...J_FRACTAL_TRIAGE_LANE_OUTCOMES],
+    durMs: "run",
+    n1: "files_written",
+    n2: "tool_calls",
+    n3: null,
+    n4: null,
+    fields: [],
+  },
 };
 
 // ─── the rows ───────────────────────────────────────────────────────────────────────────────
@@ -181,6 +197,30 @@ export function emitJConsolidationRun(row: {
     n2: row.skillsExtracted,
     n3: row.skillsDeprecated,
     sessionKey: row.sessionKey ?? null,
+  });
+}
+
+/**
+ * J3 · `j.fractal.run` — one row per background Fractal turn (a `fractal-*` run), written beside
+ * its `run.done` by fractal-run-tally.ts. `filesWritten` counts distinct files a file-edit tool
+ * wrote without an error; a write made through a shell command is not seen. `toolCalls` counts
+ * every tool the run started.
+ */
+export function emitJFractalRun(row: {
+  readonly outcome: JFractalRunOutcome;
+  readonly durMs: number;
+  readonly filesWritten: number;
+  readonly toolCalls: number;
+  readonly sessionKey?: string | null;
+  readonly runId?: string | null;
+}): void {
+  emitEvent("j.fractal.run", {
+    runId: row.runId ?? null,
+    sessionKey: row.sessionKey ?? null,
+    label: row.outcome,
+    durMs: row.durMs,
+    n1: row.filesWritten,
+    n2: row.toolCalls,
   });
 }
 

@@ -136,7 +136,7 @@ describe("Ollama provider", () => {
           models: {
             providers: {
               ollama: {
-                baseUrl: "http://192.0.2.14:11434/v1",
+                baseUrl: "http://192.168.1.14:11434/v1",
                 api: "openai-completions",
                 models: [],
               },
@@ -149,7 +149,7 @@ describe("Ollama provider", () => {
       expect(fetchCallUrls(fetchMock).filter((url) => url.endsWith("/api/tags"))).toHaveLength(1);
 
       // Native API strips /v1 suffix via resolveOllamaApiBase()
-      expect(provider?.baseUrl).toBe("http://192.0.2.14:11434");
+      expect(provider?.baseUrl).toBe("http://192.168.1.14:11434");
     });
   });
 

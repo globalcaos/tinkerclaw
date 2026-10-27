@@ -27,6 +27,11 @@ export interface EventMetadata {
   supersededBy?: string;
   tags?: string[];
   artifactId?: string;
+  /**
+   * FORK 2026-10-10: on an externalised tool result (artifact_reference), the dedupe key of the
+   * raw output, so a later ingestion pipeline recognises the same output without the artifact.
+   */
+  rawKey?: string;
   embeddingStatus?: "pending" | "complete" | "failed";
   /** Importance score: 1–10. Higher = more valuable for recall (default 5). */
   importance?: number;

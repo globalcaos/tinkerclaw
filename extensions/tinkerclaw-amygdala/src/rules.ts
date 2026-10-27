@@ -26,6 +26,8 @@ export interface AegisRule {
   /** true -> hard-deny on match; false -> observe-only. */
   enforce: boolean;
   scope: AegisScope;
+  /** "delete" → needs the owner's intent; only the pre-execution hook can read it (see rule-based-gate.ts). */
+  ownerIntent?: "delete" | "secret";
 }
 
 export interface SerializedRule {
@@ -35,6 +37,7 @@ export interface SerializedRule {
   explanation: string;
   enforce: boolean;
   scope: AegisScope;
+  ownerIntent?: "delete" | "secret";
 }
 
 export const AEGIS_RULES: AegisRule[] = [
@@ -76,6 +79,34 @@ export const AEGIS_RULES: AegisRule[] = [
     explanation: "Filesystem format command",
     enforce: true,
     scope: "exec",
+  },
+  {
+    // the architect, 2026-10-13: "help me liberate some disk space" was answered by purging the pip and
+    // npm caches and force-removing 8 deploy worktrees (~41 GB), none of which he asked to
+    // delete. Asking for help is not an instruction to delete: deletion needs his explicit
+    // words. ownerIntent:"delete" makes the hook check them (see the field doc above).
+    pattern:
+      /(?:^|[\s;&|(`])(?:rm|shred|unlink)\s|\bfind\s[^;&|]*\s-delete\b|\bgit\s+(?:rm\s|clean\s+-\S*f|worktree\s+remove\s+(?:\S+\s+)*(?:--force|-f)\b)|\b(?:pip3?|uv|conda|yarn|npm|pnpm)\s+(?:cache\s+(?:purge|clean|remove|prune|rm)|store\s+prune|clean\b)|\bdocker\s+(?:(?:system|image|volume|container|builder|network)\s+prune|rmi\b|rm\b)|\bapt(?:-get)?\s+(?:autoremove|purge|remove|clean|autoclean)\b|\bsnap\s+remove\b|\bjournalctl\s[^;&|]*--vacuum|\bhuggingface-cli\s+delete-cache\b|\btimeshift\s[^;&|]*--delete\b/,
+    rule: "DELETE_UNREQUESTED",
+    explanation: "Deletes files or caches the owner did not explicitly ask to delete",
+    enforce: true,
+    scope: "exec",
+    ownerIntent: "delete",
+  },
+  {
+    // the architect, 2026-10-13 21:13: "Jev should do the same with accessing the passwords as with
+    // deleting stuff, it should be enforced by the amygdala, and only allowed by express
+    // phrasing." Reading or using a stored password, key file or .env needs his own words,
+    // checked by the hook exactly like a deletion (ownerIntent:"secret"). SSH keys used by
+    // ssh -i are not in scope: they authenticate, nobody reads them.
+    pattern:
+      /[\w.-]+\.secret\b|\.config\/(?:orbisvision|jarvis)\/|\.openclaw\/(?:[\w.-]+\/)?\.env\b|\.openclaw\/credentials\/|\bsecret-tool\s+lookup\b|\bpass\s+show\b/,
+    rule: "SECRET_UNREQUESTED",
+    explanation:
+      "Reads or uses a stored password or secret the owner did not explicitly ask to use",
+    enforce: true,
+    scope: "all",
+    ownerIntent: "secret",
   },
   {
     // /dev/null and /dev/zero are sinks, not devices to destroy - exempt them
@@ -236,7 +267,8 @@ export function evaluateRules(
 ): RulesResult {
   const combined = `${toolName} ${argsStr}`;
   const enforcedOnly = o?.enforcedOnly === true;
-  for (const { pattern, rule, explanation, enforce } of ALL_RULES) {
+  for (const { pattern, rule, explanation, enforce, ownerIntent } of ALL_RULES) {
+    if (ownerIntent) continue; // needs the owner's words: decided by the pre-execution hook
     if (enforcedOnly && !enforce) continue;
     if (pattern.test(combined)) {
       return {
@@ -264,5 +296,6 @@ export function serializeRules(): SerializedRule[] {
     explanation: r.explanation,
     enforce: r.enforce,
     scope: r.scope,
+    ...(r.ownerIntent ? { ownerIntent: r.ownerIntent } : {}),
   }));
 }

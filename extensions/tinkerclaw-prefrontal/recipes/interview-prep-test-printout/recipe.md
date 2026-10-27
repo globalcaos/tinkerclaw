@@ -232,3 +232,12 @@ A4, double-sided long edge, and confirm the job left the queue.
   generator now reads the grader from `review.<section>.grok.model` (`claude-*` → Claude), the rule
   the A3 builder already used, and names it on page 1, in the legend and on every note. Check the
   label against the engine before handing a brief over.
+- **A pasted answer is not a generated answer** (2026-10-07) — one candidate declared
+  "no AI" and pasted 26 whole answers, but the pasted text was lowercase with typos ("i change
+  between AI tools", "when it break"): typed by hand in another editor, most likely. Read the
+  pasted text before framing the question; when it looks hand-written, ask where the answers were
+  written, never "which AI wrote this".
+- **Question numbers from the PDF, not from the section's place on the A3** (2026-10-07) — the
+  first draft of the candidate's brief cited Python "8.1 and 8.2" because Python sits eighth on the A3;
+  the test numbers it 5, and the second paste burst was 5.5. Write every N.M from `pdftotext`
+  of the built PDF (step 4), then rebuild.

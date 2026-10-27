@@ -926,6 +926,31 @@ function isImportedChatDisplayMessage(message: unknown): boolean {
   return (meta as { importedFrom?: unknown }).importedFrom != null;
 }
 
+// FORK 2026-10-09: for a claude-cli turn the imported end_turn row IS the answer —
+// dropImportCoveredLocalAssistants (cli-session-history.ts) already deleted the local copy it
+// covers. Reserving only local rows let a newer turn's tool-loop imports push those answers out
+// of the window while their prompts stayed, so the floor protects them like local rows.
+function isImportedTurnAnswer(message: unknown): boolean {
+  const m = message as { role?: unknown; stopReason?: unknown; content?: unknown };
+  if (m.role !== "assistant" || (m.stopReason !== "end_turn" && m.stopReason !== "stop")) {
+    return false;
+  }
+  if (typeof m.content === "string") {
+    return m.content.trim().length > 0;
+  }
+  return (
+    Array.isArray(m.content) &&
+    m.content.some(
+      (b) =>
+        b != null &&
+        typeof b === "object" &&
+        (b as { type?: unknown }).type === "text" &&
+        typeof (b as { text?: unknown }).text === "string" &&
+        (b as { text: string }).text.trim().length > 0,
+    )
+  );
+}
+
 export function limitChatDisplayMessages<T>(messages: T[], maxMessages?: number): T[] {
   if (
     typeof maxMessages !== "number" ||
@@ -938,7 +963,7 @@ export function limitChatDisplayMessages<T>(messages: T[], maxMessages?: number)
   const limit = Math.floor(maxMessages);
   const localIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
-    if (!isImportedChatDisplayMessage(messages[i])) {
+    if (!isImportedChatDisplayMessage(messages[i]) || isImportedTurnAnswer(messages[i])) {
       localIndices.push(i);
     }
   }

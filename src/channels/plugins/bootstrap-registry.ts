@@ -101,9 +101,14 @@ export function listBootstrapChannelPluginIds(): readonly string[] {
   return resolveActiveBootstrapPlugins().sortedIds;
 }
 
+// FORK 2026-10-10 — resolve the bundled root ONCE per iteration. resolveBundledChannelRootScope
+// walks ancestor directories reading package.json files; doing it again for every channel id made
+// each deriveSessionChatType call cost (ids + 1) walks, and the 60 s task sweep paid that per task
+// (3.4 s of a 37 s live gateway CPU profile).
 export function* iterateBootstrapChannelPlugins(): IterableIterator<ChannelPlugin> {
-  for (const id of listBootstrapChannelPluginIds()) {
-    const plugin = getBootstrapChannelPlugin(id);
+  const registry = resolveActiveBootstrapPlugins();
+  for (const id of registry.sortedIds) {
+    const plugin = getBootstrapChannelPluginFrom(registry, id);
     if (plugin) {
       yield plugin;
     }
@@ -115,11 +120,20 @@ export function listBootstrapChannelPlugins(): readonly ChannelPlugin[] {
 }
 
 export function getBootstrapChannelPlugin(id: ChannelId): ChannelPlugin | undefined {
+  if (!resolveBootstrapChannelId(id)) {
+    return undefined;
+  }
+  return getBootstrapChannelPluginFrom(resolveActiveBootstrapPlugins(), id);
+}
+
+function getBootstrapChannelPluginFrom(
+  registry: CachedBootstrapPlugins,
+  id: ChannelId,
+): ChannelPlugin | undefined {
   const resolvedId = resolveBootstrapChannelId(id);
   if (!resolvedId) {
     return undefined;
   }
-  const registry = resolveActiveBootstrapPlugins();
   const cached = registry.byId.get(resolvedId);
   if (cached) {
     return cached;

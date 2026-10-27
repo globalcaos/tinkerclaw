@@ -21,6 +21,36 @@
 export const FRACTAL_DOCTRINE_MARKER = "**After your reply, append";
 
 /**
+ * FORK 2026-10-09 (Fractal v2, charter C4/P4) — the NEUTRAL seam new Fractal prompts carry
+ * (`\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n`). The Fractal runs as a turn of its own, so "after your reply"
+ * stopped being true; old transcripts keep the old literal, so every reader takes BOTH.
+ */
+export const FRACTAL_DOCTRINE_SEAM_MARKER = "⟦FRACTAL-DOCTRINE⟧";
+
+/** Every marker that opens an injected doctrine, old and new. */
+export const FRACTAL_DOCTRINE_MARKERS: readonly string[] = [
+  FRACTAL_DOCTRINE_MARKER,
+  FRACTAL_DOCTRINE_SEAM_MARKER,
+];
+
+/** Where the injected doctrine starts in `text`: the first of either marker, or -1. */
+function doctrineStart(text: string): number {
+  let at = -1;
+  for (const marker of FRACTAL_DOCTRINE_MARKERS) {
+    const i = text.indexOf(marker);
+    if (i >= 0 && (at < 0 || i < at)) {
+      at = i;
+    }
+  }
+  return at;
+}
+
+/** True when `text` carries an injected Fractal doctrine under either seam. */
+export function carriesFractalDoctrine(text: unknown): boolean {
+  return typeof text === "string" && text !== "" && doctrineStart(text) >= 0;
+}
+
+/**
  * The text with the appended doctrine removed, trimmed of the separator that introduced it.
  * Returns the input unchanged when no doctrine is present, and "" when the text is nothing but
  * doctrine — which lets a caller hide the bubble entirely rather than paint an empty one.
@@ -29,7 +59,7 @@ export function stripInjectedFractalDoctrine(text: string): string {
   if (!text) {
     return text;
   }
-  const at = text.indexOf(FRACTAL_DOCTRINE_MARKER);
+  const at = doctrineStart(text);
   if (at < 0) {
     return text;
   }

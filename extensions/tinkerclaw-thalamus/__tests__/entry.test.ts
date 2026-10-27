@@ -103,15 +103,17 @@ describe("the plugin entry", () => {
     }
   });
 
-  it("in shadow registers one loopback route, nine methods and one hook, and nothing else", () => {
+  it("in shadow registers one loopback route, eleven methods and one hook, and nothing else", () => {
     const r = register({ mode: "shadow" });
     expect(r.routes).toEqual(["plugin exact /plugins/thalamus/shortlist"]);
     expect(r.methods.toSorted()).toEqual([
+      "thalamus.anticipate.report",
       "thalamus.explain",
       "thalamus.feed",
       "thalamus.learning.pin",
       "thalamus.learning.report",
       "thalamus.learning.run",
+      "thalamus.lessons.run",
       "thalamus.panel",
       "thalamus.plan.preview",
       "thalamus.retryPick",

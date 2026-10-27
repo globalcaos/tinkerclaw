@@ -18,6 +18,7 @@ import path from "node:path";
 import { noteWorkerExit, noteWorkerSpawn } from "openclaw/plugin-sdk/fork-telemetry";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { amygdalaSettingsArgs } from "./amygdala-settings.js";
+import { bgTasksLogLine, type LiveBackgroundTask } from "./background-tasks.js";
 import { type ChildStreamsLike, guardChildStreams } from "./child-stream-guards.js";
 import { extractCliCommand } from "./cli-command.js";
 import {
@@ -31,11 +32,13 @@ import {
   RESUME_MAX_TRANSCRIPT_BYTES,
   maxOutputTokensFor,
 } from "./defaults.js";
+import { type FractalGuardMode, fractalGuardEnv } from "./fractal-guard.js";
 import {
   readMaterializedMoralCode,
   resolveCorePluginDir,
   transcriptHasMoralCode,
 } from "./moral-code-delivery.js";
+import { adaptCorePromptForClaudeCode } from "./prompt-adapt.js";
 import { loadPromptFile } from "./prompt-loader.js";
 import {
   type CcStreamStdoutLine,
@@ -49,7 +52,12 @@ import {
   leafModelOwnerText,
   subagentModelOwnerText,
 } from "./thalamus-worker-seam.js";
-import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
+import {
+  type ClaudeEffortSettings,
+  claudeEffortForTurn,
+  isAdaptiveEffortModel,
+  thinkLevelToMaxThinkingTokens,
+} from "./thinking-budget.js";
 import {
   isTranscriptOversized,
   resolveTranscriptPath,
@@ -75,6 +83,7 @@ import {
   type WorkerTurnMeta,
   writeWorkerMeta,
 } from "./worker-transport.js";
+import { workerUnitBaseArgs } from "./worker-unit-args.js";
 
 /** Is a restart draining right now? (core's restart-drain.ts global key; an extension may not import it) */
 function restartDrainActive(): boolean {
@@ -108,6 +117,61 @@ const TASK_DESCRIPTION_CAP = 64;
 export function isEarlyEmptyResult(r: CcStreamStdoutResult): boolean {
   return r.num_turns === 0 && !r.is_error && !(r.result ?? "").trim();
 }
+
+/**
+ * FORK 2026-10-09 (effort per turn): how long a turn waits for the CLI to confirm its effort
+ * (`apply_flag_settings`) before its prompt is written anyway. The request is already on stdin
+ * ahead of the prompt and the CLI reads stdin in order, so the wait only covers the CLI applying it
+ * asynchronously. A turn never fails on it.
+ */
+export const EFFORT_CONTROL_TIMEOUT_MS = 5_000;
+
+/**
+ * What effort this process runs, as far as this gateway knows: the settings the CLI confirmed;
+ * "none" when nothing was applied since the process was spawned or adopted (it runs the host's own
+ * effort, or what an earlier gateway applied); "unknown" after an apply the CLI did not confirm.
+ */
+export type AppliedEffort = ClaudeEffortSettings | "none" | "unknown";
+
+/**
+ * FORK 2026-10-09 (effort per turn) — the `apply_flag_settings` payload one turn needs, or null
+ * when nothing must be sent. A turn that names a level or ultracode asks for it
+ * (claudeEffortForTurn). One that names neither hands the effort back to the host
+ * (`effortLevel: null`) when something was, or may have been, applied before, and sends nothing on
+ * a process where nothing was. Nothing is sent when the process already runs what the turn asks.
+ */
+export function effortToApply(
+  turn: { thinkLevel?: string; ultracode?: boolean },
+  applied: AppliedEffort,
+): ClaudeEffortSettings | null {
+  const want: ClaudeEffortSettings | null =
+    claudeEffortForTurn(turn.thinkLevel, turn.ultracode) ??
+    (applied === "none" ? null : { effortLevel: null, ultracode: false });
+  if (!want) {
+    return null;
+  }
+  if (
+    typeof applied === "object" &&
+    applied.effortLevel === want.effortLevel &&
+    applied.ultracode === want.ultracode
+  ) {
+    return null;
+  }
+  return want;
+}
+
+/** `effort=high +ultracode`, or `effort=host default` for a null level: for the journal. */
+function describeEffort(s: ClaudeEffortSettings): string {
+  return `effort=${s.effortLevel ?? "host default"}${s.ultracode ? " +ultracode" : ""}`;
+}
+
+/** The `response` member of a CLI `control_response` line (CLI 2.1.295). */
+type ControlResponse = {
+  subtype?: unknown;
+  request_id?: unknown;
+  response?: unknown;
+  error?: unknown;
+};
 
 /**
  * FORK 2026-08-19 — NUL quarantine for the spawn argv.
@@ -462,9 +526,17 @@ export type WorkerSpawnParams = {
    * `think_hard` | `ultrathink`). Mapped to Claude Code's native
    * `MAX_THINKING_TOKENS` env knob at spawn (see `thinkLevelToMaxThinkingTokens`);
    * `off`/undefined omits the var entirely so the CLI keeps its own default.
+   * FORK 2026-10-09: only on a model WITHOUT adaptive effort (isAdaptiveEffortModel). An
+   * adaptive-effort model never gets MAX_THINKING_TOKENS; it takes each turn's level as an effort
+   * on the live process (WorkerTurnParams.thinkLevel, applyTurnEffort).
    */
   thinkLevel?: string;
   resumeSessionId?: string;
+  /**
+   * FORK 2026-10-09 (fork-parent.ts): `resumeSessionId` is ANOTHER session's CLI conversation;
+   * start from a copy of it (`--fork-session`) and never write to the original.
+   */
+  forkSession?: boolean;
   /**
    * FORK 2026-05-04: extra plugin directories to load. Each becomes
    * `--plugin-dir <path>` on claude-cli's command line. Defaults to the
@@ -490,6 +562,11 @@ export type WorkerSpawnParams = {
    * canonical key, NOT the worker-pool hash. See jarvis-voice SKILL.md.
    */
   openclawSessionKey?: string;
+  /**
+   * FORK 2026-10-25 (fractal-guard.ts): the mode of the Fractal guard. Only a worker for a background Fractal session
+   * (`agent:<id>:fractal:<P>`) acts on it; undefined = the default ("enforce").
+   */
+  fractalGuard?: FractalGuardMode;
 };
 
 export type WorkerTurnParams = {
@@ -501,6 +578,16 @@ export type WorkerTurnParams = {
    * start, so that after a restart the run that takes the turn can name it (frozenTurn).
    */
   runId?: string;
+  /**
+   * FORK 2026-10-09 (effort per turn): this turn's think level (a slider pin, or what Thalamus or
+   * the allocator chose on Auto), whether it asks for ultracode, and who chose them (`pin` |
+   * `thalamus` | `allocator` | `default`, for the journal). An adaptive-effort worker applies them
+   * on its live process before the prompt (applyTurnEffort); an older model ignores them here and
+   * keeps the budget it was spawned with.
+   */
+  thinkLevel?: string;
+  ultracode?: boolean;
+  thinkSource?: string;
 };
 
 /**
@@ -567,9 +654,28 @@ export class ClaudeCodeWorker extends EventEmitter {
    * warm/idle worker that was spawned with a now-stale thinking budget and
    * recycle it, so a later turn requesting a different think level doesn't reuse
    * a child whose `MAX_THINKING_TOKENS` env was baked in at the previous spawn.
+   * FORK 2026-10-09: on an adaptive-effort model it is only the spawn-time level: each turn's own
+   * level is applied on the live process (applyTurnEffort), and the pool no longer recycles such a
+   * worker for a level change.
    */
   readonly thinkLevel?: string;
   private readonly params: WorkerSpawnParams;
+  /**
+   * FORK 2026-10-09 (effort per turn): the model this child runs takes Claude Code's adaptive
+   * effort (isAdaptiveEffortModel), so its effort is applied per turn over stdin instead of a
+   * MAX_THINKING_TOKENS budget at spawn. Set from the spawn model (start) or the adopted meta.
+   */
+  private adaptiveEffort: boolean;
+  /** What effort this process runs as far as this gateway knows (effortToApply). Reset per child. */
+  private appliedEffort: AppliedEffort = "none";
+  /** Our control requests awaiting their `control_response`, by request_id. */
+  private pendingControls = new Map<string, (response: ControlResponse | null) => void>();
+  private controlSeq = 0;
+  /**
+   * Prompts steered in while this turn's own prompt waits for its effort (send): written right
+   * after it, never ahead of it. Null when no turn is waiting.
+   */
+  private heldSteers: string[] | null = null;
   private proc: ChildProcessWithoutNullStreams | null = null;
   private stdoutBuf = "";
   private stderrBuf = "";
@@ -626,8 +732,10 @@ export class ClaudeCodeWorker extends EventEmitter {
    * background, Workflow, Monitor), from `background_tasks_changed`; `notices` the tasks it said
    * ended while no turn was open; `unprompted` a turn it started on its own, kept line by line
    * until a run takes it (takeUnpromptedTurn) or a prompt joins it (send).
+   * FORK 2026-10-25: each live task keeps when it was first seen, for the page's row
+   * (background-tasks.ts).
    */
-  private bgTasks = new Map<string, string>();
+  private bgTasks = new Map<string, { description: string; startedAt: number }>();
   private taskDescriptions = new Map<string, string>();
   private notices: TaskNotice[] = [];
   private unprompted: {
@@ -654,6 +762,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     this.params = params;
     this.sessionKey = params.sessionKey;
     this.thinkLevel = params.thinkLevel;
+    this.adaptiveEffort = isAdaptiveEffortModel(params.model);
   }
 
   async start(): Promise<void> {
@@ -777,7 +886,19 @@ export class ClaudeCodeWorker extends EventEmitter {
     //
     // The prior behaviour and this correction are both kept in git history on
     // purpose: the fix is published as loudly as the original.
-    const personaOnly = systemPromptBody;
+    //
+    // FORK 2026-10-09: core's prompt was written for OpenClaw's own tool runtime, and four of
+    // its sections are false in this CLI: Tooling's OpenClaw tool names, Tool Call Style's "do
+    // not narrate" and /approve lines, Workspace's working directory, and the CLI reference's
+    // `gateway` tool. prompt-adapt.ts rewrites them to match the CLI. That corrects instructions
+    // and subtracts no identity: the identity line is untouched and every OpenClaw tool name
+    // stays visible beside what replaces it. stream.ts still keys the session on the UNADAPTED
+    // prompt, so adapting never moves a session.
+    const personaOnly = adaptCorePromptForClaudeCode(systemPromptBody, {
+      cwd: path.resolve(this.params.cwd),
+      disallowedTools: disallowed,
+      subagentHelper: subagentHelpBody.length > 0,
+    });
     // The "## Your Role" re-extraction below existed ONLY to rescue a spawned
     // subagent's task from the strip above (OpenClaw places it after the
     // sentinel, so the strip dropped it and subagents woke with no task). With
@@ -837,6 +958,9 @@ export class ClaudeCodeWorker extends EventEmitter {
     if (spawnModel) {
       args.push("--model", spawnModel);
     }
+    // FORK 2026-10-09 (effort per turn): the model this child really runs decides how it takes
+    // effort (a Thalamus provider may have replaced the session's model above).
+    this.adaptiveEffort = isAdaptiveEffortModel(spawnModel);
     args.push(...thalamusExtras.args);
     const cwd = path.resolve(this.params.cwd);
     if (!fs.existsSync(cwd)) {
@@ -887,6 +1011,9 @@ export class ClaudeCodeWorker extends EventEmitter {
       }
       if (!skipResume) {
         args.push("--resume", this.params.resumeSessionId);
+        if (this.params.forkSession) {
+          args.push("--fork-session");
+        }
         if (corePluginDir) {
           const transcriptPath = resolveTranscriptPath(cwd, this.params.resumeSessionId);
           if (!transcriptHasMoralCode(transcriptPath)) {
@@ -937,16 +1064,9 @@ export class ClaudeCodeWorker extends EventEmitter {
     // FORK 2026-09-30 (lifecycles.md L4b): on the FILE transport the unit owns its stdio (a FIFO
     // and two files in its worker dir), so it outlives a gateway restart. See worker-transport.ts.
     const workerDir = getBridgeTransport() === "file" ? prepareWorkerDir(unitId) : null;
-    const wrapperBaseArgs = workerDir
-      ? [
-          "--user",
-          "--quiet",
-          "--collect",
-          "--same-dir",
-          `--unit=${unitId}`,
-          `--setenv=TC_WORKER_DIR=${workerDir}`,
-        ]
-      : ["--user", "--pipe", "--quiet", "--same-dir", `--unit=${unitId}`];
+    // FORK 2026-10-19: both transports also start the unit with OOMScoreAdjust=500, so the kernel
+    // OOM killer takes a (resumable) worker before the gateway. See worker-unit-args.ts.
+    const wrapperBaseArgs = workerUnitBaseArgs({ unitId, workerDir });
 
     log.info(
       `spawning claude (reparented to systemd, ${workerDir ? "file transport" : "--pipe"}, unit=${unitId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
@@ -1017,7 +1137,8 @@ export class ClaudeCodeWorker extends EventEmitter {
       // Thinking-token budget — set explicitly below from this session's
       // think level. Native Claude Code knob (same class as the output-token
       // ceiling above), so it doesn't read as a harness tell. Omitted for
-      // off/undefined so the CLI keeps its own default.
+      // off/undefined so the CLI keeps its own default. FORK 2026-10-09: and
+      // removed, even a host-level value, on an adaptive-effort model (below).
       "MAX_THINKING_TOKENS",
       // FORK 2026-09-19 (de-evasion): re-export the fork's OWN wiring that the
       // child's helper scripts read directly (subagent-spawn / recipe-state /
@@ -1061,6 +1182,16 @@ export class ClaudeCodeWorker extends EventEmitter {
     // a bubble. Fall back to the hash only when the canonical key is absent
     // (yields a safe no-match → silent, never a mis-routed bubble).
     cleanEnv.TC_SESSION_KEY = this.params.openclawSessionKey ?? this.sessionKey;
+    // FORK 2026-10-25 (fractal-guard.ts): a background Fractal's worker gets TC_FRACTAL_GUARD, which arms the
+    // tinkerclaw-core PreToolUse hook that turns its sends, deletes, publishes, spends and restarts into proposals.
+    // Set before the Thalamus extras, which never overwrite a variable already here.
+    const guardEnv = fractalGuardEnv(cleanEnv.TC_SESSION_KEY, this.params.fractalGuard, Date.now());
+    Object.assign(cleanEnv, guardEnv);
+    if (guardEnv.TC_FRACTAL_GUARD && !corePluginDir) {
+      log.warn(
+        `[fractal-guard] ${cleanEnv.TC_SESSION_KEY}: tinkerclaw-core plugin not found, so the guard hook is not loaded`,
+      );
+    }
     // Never override a variable the bridge has already set (the allowlist is also enforced in the seam).
     for (const [k, v] of Object.entries(thalamusExtras.env)) {
       if (cleanEnv[k] === undefined) cleanEnv[k] = v;
@@ -1080,13 +1211,29 @@ export class ClaudeCodeWorker extends EventEmitter {
     // look like a harness tell). The helper clamps to the model's output
     // ceiling and returns undefined for off/unset → we OMIT the var entirely
     // (the CLI keeps its own default), never setting it to 0.
-    const __maxThinking = thinkLevelToMaxThinkingTokens(
-      this.params.thinkLevel,
-      maxOutputTokensFor(spawnModel),
-    );
-    if (__maxThinking !== undefined) {
-      cleanEnv.MAX_THINKING_TOKENS = String(__maxThinking);
+    //
+    // FORK 2026-10-09 (effort per turn): older models only. On an adaptive-effort
+    // model (Claude 5.x, Fable, Opus 4.7+) MAX_THINKING_TOKENS > 0 swaps the effort
+    // for a legacy fixed budget, and the effort the CLI then runs comes from the
+    // host's ~/.claude/settings.json whatever the slider says (measured on CLI
+    // 2.1.295). Such a child gets no budget, a host-level one included, and takes
+    // each turn's level as an effort on the live process (applyTurnEffort).
+    if (this.adaptiveEffort) {
+      delete cleanEnv.MAX_THINKING_TOKENS;
+    } else {
+      const __maxThinking = thinkLevelToMaxThinkingTokens(
+        this.params.thinkLevel,
+        maxOutputTokensFor(spawnModel),
+      );
+      if (__maxThinking !== undefined) {
+        cleanEnv.MAX_THINKING_TOKENS = String(__maxThinking);
+      }
     }
+    // FORK 2026-10-09: CLAUDE_CODE_EFFORT_LEVEL pins the effort for the life of the
+    // process AND makes apply_flag_settings answer success while changing nothing
+    // (measured on CLI 2.1.295). It is not on the allowlist; this guard keeps any
+    // other route (a Thalamus provider's env) from setting it on a worker.
+    delete cleanEnv.CLAUDE_CODE_EFFORT_LEVEL;
     // FORK 2026-04-28 (bible §5.76): probe for the user's claude install at
     // runtime instead of hardcoding an absolute home path. claude-cli
     // installs land under `~/.local/share/claude/versions/latest` for the
@@ -1234,6 +1381,10 @@ export class ClaudeCodeWorker extends EventEmitter {
     // the systemd-run wrapper, not claude). A spawn that throws above never reaches this line.
     this.unitId = unitId;
     this.turnsServed = 0;
+    // FORK 2026-10-09 (effort per turn): a new child (spawned, or adopted from the last gateway)
+    // runs no effort this gateway applied: its first turn that names one applies it.
+    this.appliedEffort = "none";
+    this.settlePendingControls();
     if (spawned) {
       noteWorkerSpawn({
         workerType: "tinker_bridge",
@@ -1249,6 +1400,7 @@ export class ClaudeCodeWorker extends EventEmitter {
       this.currentTurn = null;
       this.running = false;
       this.proc = null;
+      this.settlePendingControls();
       if (stale) {
         stale.reject(err as Error);
       }
@@ -1313,6 +1465,13 @@ export class ClaudeCodeWorker extends EventEmitter {
       if (log.debug) {
         const logLine = JSON.stringify(parsed).slice(0, 400);
         log.debug(`stdout[${this.sessionKey}] ${logLine}`);
+      }
+      // FORK 2026-10-09 (effort per turn): the CLI's answer to one of OUR control requests
+      // (applyTurnEffort). It is taken here, before anything else reads the line, so it never
+      // reaches a turn, the unprompted-turn keeper, the stream or the chat.
+      if (parsed.type === "control_response") {
+        this.takeControlResponse(parsed);
+        continue;
       }
       this.lastStdoutAt = Date.now();
       this.observeCallBoundary(parsed);
@@ -1406,7 +1565,9 @@ export class ClaudeCodeWorker extends EventEmitter {
       status?: unknown;
     };
     if (rec.subtype === "background_tasks_changed") {
-      this.bgTasks.clear();
+      const before = this.bgTasks;
+      const now = Date.now();
+      this.bgTasks = new Map();
       for (const t of Array.isArray(rec.tasks) ? rec.tasks : []) {
         const task = t as { task_id?: unknown; description?: unknown };
         if (typeof task?.task_id === "string") {
@@ -1414,9 +1575,18 @@ export class ClaudeCodeWorker extends EventEmitter {
             typeof task.description === "string" && task.description
               ? task.description
               : task.task_id;
-          this.bgTasks.set(task.task_id, d);
+          this.bgTasks.set(task.task_id, {
+            description: d,
+            startedAt: before.get(task.task_id)?.startedAt ?? now,
+          });
           this.rememberTask(task.task_id, d);
         }
+      }
+      if (
+        before.size !== this.bgTasks.size ||
+        [...this.bgTasks.keys()].some((id) => !before.has(id))
+      ) {
+        this.logBgTasks();
       }
     } else if (
       rec.subtype === "task_started" &&
@@ -1442,6 +1612,16 @@ export class ClaudeCodeWorker extends EventEmitter {
         this.notices.shift();
       }
     }
+  }
+
+  private logBgTasks(): void {
+    log.info(
+      bgTasksLogLine(
+        this.params.openclawSessionKey ?? this.sessionKey,
+        this.bgTasks.size,
+        this.sessionKey,
+      ),
+    );
   }
 
   private rememberTask(id: string, description: string): void {
@@ -1490,7 +1670,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     }
     const id = newUnpromptedTurnId();
     const notices = this.notices;
-    const liveTasks = [...this.bgTasks.values()];
+    const liveTasks = [...this.bgTasks.values()].map((t) => t.description);
     this.notices = [];
     this.strayActivityLogged = false;
     this.unprompted = { id, lines: [], startedAt: Date.now(), result: null, finishedAt: 0 };
@@ -1546,6 +1726,8 @@ export class ClaudeCodeWorker extends EventEmitter {
     const stale = this.currentTurn;
     this.currentTurn = null;
     this.proc = null;
+    // FORK 2026-10-09 (effort per turn): nothing will answer a control request any more.
+    this.settlePendingControls();
     // FORK 2026-10-01: the child's background tasks and any turn of its own die with it.
     if (this.unprompted) {
       log.warn(
@@ -1553,7 +1735,10 @@ export class ClaudeCodeWorker extends EventEmitter {
       );
     }
     this.unprompted = null;
-    this.bgTasks.clear();
+    if (this.bgTasks.size > 0) {
+      this.bgTasks.clear();
+      this.logBgTasks();
+    }
     this.notices = [];
     // FORK 2026-09-30 (L4b): a file-transport unit is gone (its dir was removed by the channel);
     // a drain waiting on it has nothing left to wait for.
@@ -1724,6 +1909,29 @@ export class ClaudeCodeWorker extends EventEmitter {
           }
         };
         params.signal?.addEventListener("abort", abortHandler, { once: true });
+        // FORK 2026-10-09 (effort per turn): an adaptive-effort model takes this turn's effort on
+        // its live process BEFORE the prompt (applyTurnEffort: never throws, never waits more than
+        // EFFORT_CONTROL_TIMEOUT_MS). Only a turn that changes the effort waits at all; every other
+        // turn is written in the same tick, as before.
+        const effort = this.adaptiveEffort ? effortToApply(params, this.appliedEffort) : null;
+        if (effort) {
+          const turn = this.currentTurn;
+          // A prompt steered in meanwhile must still land AFTER this turn's own (steer()).
+          this.heldSteers = [];
+          await this.applyTurnEffort(effort, params);
+          if (this.currentTurn !== turn) {
+            // The child died, or its stdin failed, while the effort was applied: that handler
+            // already settled the turn.
+            this.heldSteers = null;
+            return;
+          }
+          if (!this.proc) {
+            this.heldSteers = null;
+            this.currentTurn = null;
+            reject(new Error("claude subprocess went away before the turn could be written"));
+            return;
+          }
+        }
         // FORK 2026-09-25 (context-window-panel.md §6.1 A6 (i); cli-command.ts): a turn whose text
         // IS a CLI command reaches the CLI as that command and nothing else. The CLI runs a slash
         // command only when the line STARTS with it and reads everything after the name as its
@@ -1768,10 +1976,12 @@ export class ClaudeCodeWorker extends EventEmitter {
         try {
           this.proc.stdin.write(stdinLine);
         } catch (err) {
+          this.heldSteers = null;
           this.currentTurn = null;
           reject(err as Error);
           return;
         }
+        this.flushHeldSteers();
         // A turn that starts while a restart drains spends nothing until the next gateway takes
         // it: frozen at once, its prompt waits in the FIFO.
         if (this.channel && restartDrainActive()) {
@@ -1837,6 +2047,12 @@ export class ClaudeCodeWorker extends EventEmitter {
       message: { role: "user", content: text },
       ...(this.sessionId ? { session_id: this.sessionId } : {}),
     });
+    // FORK 2026-10-09 (effort per turn): this turn's own prompt is not written yet (its effort is
+    // being applied, send()); the steer follows it instead of overtaking it.
+    if (this.heldSteers) {
+      this.heldSteers.push(line);
+      return true;
+    }
     try {
       this.proc.stdin.write(line);
       return true;
@@ -1850,6 +2066,167 @@ export class ClaudeCodeWorker extends EventEmitter {
     }
   }
 
+  // ── FORK 2026-10-09 (effort per turn): the turn's effort on the live process ──────────────────
+  //
+  // Claude Code's stream-json input takes control requests beside user messages (measured on CLI
+  // 2.1.295, 2026-10-09):
+  //   → {"type":"control_request","request_id":ID,"request":{"subtype":"apply_flag_settings",
+  //      "settings":{"effortLevel":"low"|"medium"|"high"|"xhigh"|"max"|null,"ultracode":bool}}}
+  //   ← {"type":"control_response","response":{"subtype":"success"|"error","request_id":ID,…}}
+  // The new effort rides the process's next API request (output_config.effort on the wire), so a
+  // level change costs no respawn and keeps the warm conversation. `get_settings` answers with what
+  // the CLI then runs (`response.applied.effort` / `.ultracode`). Env CLAUDE_CODE_EFFORT_LEVEL would
+  // override all of it and make the apply report success while changing nothing, which is why
+  // start() deletes it.
+
+  /**
+   * Apply `want` before the turn's prompt and wait for the CLI to confirm it, at most
+   * EFFORT_CONTROL_TIMEOUT_MS. Never throws and never fails the turn: no answer, or a refusal, is
+   * one warn line and leaves the process "unknown", so the next turn sends again. A confirmed apply
+   * is read back (verifyEffort) without holding the turn.
+   */
+  private async applyTurnEffort(want: ClaudeEffortSettings, turn: WorkerTurnParams): Promise<void> {
+    const asked = describeEffort(want);
+    const res = await this.controlRequest({ subtype: "apply_flag_settings", settings: want });
+    if (!this.proc) {
+      return; // the child went away meanwhile: its exit or error handler settles the turn
+    }
+    if (!res || res.subtype !== "success") {
+      this.appliedEffort = "unknown";
+      log.warn(
+        res
+          ? `[effort] the CLI refused ${asked}: ${String(res.error ?? res.subtype).slice(0, 200)}; the turn runs on and the next one sends again [${this.sessionKey}]`
+          : `[effort] no answer to ${asked} in ${EFFORT_CONTROL_TIMEOUT_MS} ms; the prompt goes anyway, behind the request on stdin, and the next turn sends again [${this.sessionKey}]`,
+      );
+      return;
+    }
+    this.appliedEffort = want;
+    log.info(
+      `[effort] applied ${asked} (level=${turn.thinkLevel ?? "none"} source=${turn.thinkSource ?? "?"}) [${this.sessionKey}]`,
+    );
+    this.verifyEffort(want).catch((err: unknown) => {
+      log.warn(
+        `[effort] read-back failed [${this.sessionKey}]: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
+
+  /** Read back what the CLI runs after a confirmed apply; one warn line when it is not that. */
+  private async verifyEffort(want: ClaudeEffortSettings): Promise<void> {
+    const res = await this.controlRequest({ subtype: "get_settings" });
+    const applied =
+      res?.subtype === "success"
+        ? (res.response as { applied?: { effort?: unknown; ultracode?: unknown } } | undefined)
+            ?.applied
+        : undefined;
+    if (!applied) {
+      if (this.proc) {
+        log.info(
+          `[effort] could not read back ${describeEffort(want)}: get_settings ${res ? "refused" : "unanswered"} [${this.sessionKey}]`,
+        );
+      }
+      return;
+    }
+    // `effortLevel: null` hands the effort to the host's settings, a value the bridge does not know.
+    const effortOk = want.effortLevel === null || applied.effort === want.effortLevel;
+    if (!effortOk || applied.ultracode !== want.ultracode) {
+      log.warn(
+        `[effort] asked ${describeEffort(want)}, the CLI runs effort=${String(applied.effort)} ultracode=${String(applied.ultracode)} [${this.sessionKey}]`,
+      );
+    }
+  }
+
+  /**
+   * Write one control request and resolve with the CLI's `response`, or null on a timeout, a failed
+   * write or the child's end. Never rejects. The id carries a `tc-` prefix and a per-worker counter,
+   * so an answer is only ever matched to the request that asked for it.
+   */
+  private controlRequest(request: Record<string, unknown>): Promise<ControlResponse | null> {
+    const proc = this.proc;
+    if (!proc) {
+      return Promise.resolve(null);
+    }
+    this.controlSeq += 1;
+    const requestId = `tc-${Date.now().toString(36)}-${this.controlSeq}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingControls.delete(requestId)) {
+          resolve(null);
+        }
+      }, EFFORT_CONTROL_TIMEOUT_MS);
+      timer.unref?.();
+      this.pendingControls.set(requestId, (response) => {
+        clearTimeout(timer);
+        resolve(response);
+      });
+      try {
+        proc.stdin.write(
+          `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`,
+        );
+      } catch (err) {
+        // Write-after-end / EPIPE: the stdin guard and the exit handler own the turn's fate.
+        log.warn(
+          `[effort] control request write failed [${this.sessionKey}]: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        clearTimeout(timer);
+        this.pendingControls.delete(requestId);
+        resolve(null);
+      }
+    });
+  }
+
+  /** Settle the request a `control_response` line answers; request_id is read at either level. */
+  private takeControlResponse(line: unknown): void {
+    const rec = line as { request_id?: unknown; response?: unknown };
+    const inner = (
+      rec.response && typeof rec.response === "object" ? rec.response : {}
+    ) as ControlResponse;
+    const id =
+      typeof inner.request_id === "string"
+        ? inner.request_id
+        : typeof rec.request_id === "string"
+          ? rec.request_id
+          : null;
+    const settle = id === null ? undefined : this.pendingControls.get(id);
+    if (id === null || !settle) {
+      // A late answer (its wait timed out) or one replayed after a restart: nobody waits for it.
+      log.info(
+        `[effort] control_response ${id ?? "(no id)"} has no request waiting; dropped [${this.sessionKey}]`,
+      );
+      return;
+    }
+    this.pendingControls.delete(id);
+    settle(inner);
+  }
+
+  /** The child is gone (exit, spawn error, detach) or replaced: nothing will answer what waits. */
+  private settlePendingControls(): void {
+    const waiting = [...this.pendingControls.values()];
+    this.pendingControls.clear();
+    for (const settle of waiting) {
+      settle(null);
+    }
+  }
+
+  /** Write the prompts steered in while this turn's effort was applied, right after its own. */
+  private flushHeldSteers(): void {
+    const held = this.heldSteers;
+    this.heldSteers = null;
+    if (!held || !this.proc) {
+      return;
+    }
+    for (const line of held) {
+      try {
+        this.proc.stdin.write(line);
+      } catch (err) {
+        log.warn(
+          `[effort] held steer write failed [${this.sessionKey}]: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
+    }
+  }
+
   // ── FORK 2026-09-30 (TINKER_UI_DESIGN_BIBLE/lifecycles.md L4b): restart hold and reattach ─────
   //
   // On the FILE transport a restart does not cut the turn. The drain freezes the unit at the end
@@ -1860,6 +2237,18 @@ export class ClaudeCodeWorker extends EventEmitter {
   /** The canonical session key (`agent:main:…`) this worker serves. */
   get openclawSessionKey(): string | undefined {
     return this.params.openclawSessionKey;
+  }
+
+  /** The conversation (`/new` mints a new one) this worker's CLI session belongs to. */
+  get openclawSessionId(): string | undefined {
+    return this.params.openclawSessionId;
+  }
+
+  /** FORK 2026-10-25: the CLI's live background tasks, oldest first (background-tasks.ts). */
+  backgroundTasks(): LiveBackgroundTask[] {
+    return [...this.bgTasks]
+      .map(([id, t]) => ({ id, description: t.description, startedAt: t.startedAt }))
+      .toSorted((a, b) => a.startedAt - b.startedAt);
   }
 
   isFileTransport(): boolean {
@@ -1984,11 +2373,27 @@ export class ClaudeCodeWorker extends EventEmitter {
     return frozen && reached ? "held" : "unfinished";
   }
 
-  /** The restart was called off, or this process goes on (an in-process restart): thaw. */
-  async releaseHold(): Promise<void> {
-    if (this.channel?.frozen && (await this.channel.thaw())) {
-      this.updateMeta({ frozenAt: null });
+  /** A restart drain holds this worker's unit frozen: its silence is on purpose (stream.ts watchdog). */
+  isHeld(): boolean {
+    return this.channel?.frozen === true;
+  }
+
+  /**
+   * The restart was called off, or this process goes on (an in-process restart): thaw. False when
+   * the unit is still frozen afterwards (FORK 2026-10-18, bug-log `freeze-stuck-freezing`: a refused
+   * thaw used to pass in silence, and the turn on it waited out the idle timeout).
+   */
+  async releaseHold(): Promise<boolean> {
+    const channel = this.channel;
+    if (!channel?.frozen) {
+      return true;
     }
+    if (await channel.thaw()) {
+      this.updateMeta({ frozenAt: null });
+      return true;
+    }
+    log.warn(`[restart-hold] could not thaw ${channel.unit} sessionKey=${this.sessionKey}`);
+    return false;
   }
 
   /**
@@ -2007,6 +2412,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     this.running = false;
     this.proc = null;
     this.flushBoundaryWaiters();
+    this.settlePendingControls();
   }
 
   /**
@@ -2039,7 +2445,14 @@ export class ClaudeCodeWorker extends EventEmitter {
         `[reattach] resuming ${channel.unit} sessionKey=${this.sessionKey} from byte ${turn.startOffset} (turn of run ${typeof turn.runId === "string" && turn.runId ? turn.runId : "?"}, started ${turn.startedAt})`,
       );
       channel.startStdout(turn.startOffset);
-      void this.releaseHold();
+      // A unit nothing can thaw never answers (FORK 2026-10-18, bug-log `freeze-stuck-freezing`).
+      // End the turn now rather than at the idle timeout: SIGKILL is the one signal a frozen cgroup
+      // does not hold, and the exit settles the turn with this cause.
+      void this.releaseHold().then((thawed) => {
+        if (!thawed && this.currentTurn) {
+          this.kill("SIGKILL", "frozen worker could not be thawed");
+        }
+      });
     });
   }
 

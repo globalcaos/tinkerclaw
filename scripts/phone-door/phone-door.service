@@ -1,0 +1,27 @@
+# Phone door: the tailnet-only way in from the Jarvis phone app to tinker-prod-ui.
+# Template. Copy to ~/.config/systemd/user/phone-door.service, replace <repo>, <node> and the bind IP
+# (the Pi's tailnet IP is 100.64.0.10; the laptop's is 100.64.0.20), then:
+#   systemctl --user daemon-reload && systemctl --user enable --now phone-door
+[Unit]
+Description=Jarvis phone door (tailnet :18794 -> tinker-prod-ui 127.0.0.1:18793)
+After=network-online.target tailscaled.service tinker-prod-ui.service
+Wants=network-online.target tinker-prod-ui.service
+# Never give up retrying while the tailnet address is missing.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=<node> <repo>/scripts/phone-door/door.mjs
+WorkingDirectory=<repo>
+Restart=always
+# The tailnet address can appear a few seconds after boot; until then listen fails and we retry.
+RestartSec=5
+Environment=PHONE_DOOR_BIND=100.64.0.10
+Environment=PHONE_DOOR_PORT=18794
+Environment=PHONE_DOOR_UPSTREAM=127.0.0.1:18793
+# Defaults, shown for reference:
+# Environment=PHONE_DOOR_DIR=%h/.openclaw/data/phone-door
+# Environment=TRIP_DIR=%h/.openclaw/data/trip
+
+[Install]
+WantedBy=default.target

@@ -161,7 +161,7 @@ export function listSessionArchives(params: {
 
 // FORK 2026-10-05 (the architect: "Some tabs in tinkerclaw appear without history. I should be able to
 // scroll back until the beginning") — a compaction checkpoint is a snapshot of an append-only
-// transcript, so the transcript still holds every byte of it. AcmeVision's live file (23 MB) had 22
+// transcript, so the transcript still holds every byte of it. OrbisVision's live file (23 MB) had 22
 // checkpoints of 15-23 MB, every one a byte-prefix of it, and its three repair backups differed only
 // in their last line, the entry the repair rewrote. An archive read parsed each copy whole (the
 // legacy loader, the claude-cli merge, the projection: synchronous, 35-63 s per read on the loaded

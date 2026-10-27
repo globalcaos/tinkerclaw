@@ -8,7 +8,8 @@
 // `situation_id`, never by writing into the amygdala's file, so the two plugins keep their own migrations.
 //
 // NO BODIES. Nothing here stores a request or a response: that is what made the LLM ledger 2.6 GB. Decisions keep
-// numbers and route keys; the one place text is kept is `enh_cards` (the cards Jev reads), which is our own data.
+// numbers and route keys; the one place text is kept is `enh_cards` (the cards Jev reads), which is our own data, and the
+// tutors' one-line reasons (`routing_reviews`, `enh_reviews`, 2026-10-25).
 //
 // A FOLDER THAT MAY NOT EXIST. The data folder is created here, with mode 0700, on open; it is never assumed.
 
@@ -27,6 +28,7 @@ import type {
   Shortlist,
   ShortlistEntry,
 } from "openclaw/plugin-sdk/fork-thalamus";
+import type { EnhReviewRow, RoutingReviewRow } from "./tutor.js";
 
 export const SCHEMA_VERSION = 2;
 
@@ -84,6 +86,17 @@ CREATE TABLE IF NOT EXISTS enh_calibration(idx INT PRIMARY KEY, p REAL, mapped R
 CREATE TABLE IF NOT EXISTS enh_replay_set(task_id TEXT PRIMARY KEY, ts INT, text_redacted TEXT);
 CREATE TABLE IF NOT EXISTS enh_pins(id TEXT PRIMARY KEY, task_id TEXT, card_id TEXT, by TEXT, created_at INT);
 CREATE TABLE IF NOT EXISTS enh_proposals(id TEXT PRIMARY KEY, kind TEXT, payload_json TEXT, status TEXT, created_at INT);
+CREATE TABLE IF NOT EXISTS routing_reviews(
+  run_id TEXT PRIMARY KEY, ts INT, session TEXT, ran TEXT, effort TEXT, pick TEXT, had_next INT, status TEXT,
+  reviewer TEXT, verdict TEXT, reason TEXT, confidence TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS routing_reviews_ts ON routing_reviews(ts);
+CREATE TABLE IF NOT EXISTS enh_reviews(
+  task_id TEXT PRIMARY KEY, ts INT, session TEXT, shown_json TEXT, used_off_json TEXT, status TEXT, reviewer TEXT,
+  not_fit_json TEXT, should_suggest_json TEXT, reason TEXT, confidence TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS enh_reviews_ts ON enh_reviews(ts);
+CREATE TABLE IF NOT EXISTS corrections(
+  id TEXT PRIMARY KEY, ts INT, session TEXT, run_id TEXT, class TEXT, via TEXT, cards_json TEXT, words TEXT);
+CREATE INDEX IF NOT EXISTS corrections_ts ON corrections(ts);
 `;
 
 /** Columns added after the first release of a table. A file made before them gains them in place. */
@@ -101,6 +114,11 @@ const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   // an entry from a list made without a ranking has `?` in both.
   ["enh_uses", "shown_modes", "TEXT"],
   ["enh_uses", "shown_sources", "TEXT"],
+  // The anticipation note (2026-10-25): the task's model calls, the note and past-chat pointers found for it (address,
+  // cover, shown or not, the round a tool call first touched it), and why none was looked for.
+  ["enh_uses", "rounds", "INT"],
+  ["enh_uses", "pointers_json", "TEXT"],
+  ["enh_uses", "pointer_skip", "TEXT"],
 ];
 
 const json = (v: unknown): string => JSON.stringify(v);
@@ -144,6 +162,8 @@ export type DecisionRow = {
   chosenEffort: string;
   chosenFeed: string;
   pick: string;
+  /** The effort the router would have picked (absent on a row with none). */
+  pickEffort?: string;
   switchKind: string;
   switchReason: string;
   nStar: number | null;
@@ -226,6 +246,35 @@ export type SubagentCallRow = {
   output?: number;
 };
 
+/** A note or past-chat pointer as the ledger keeps it: the address and the numbers, never the label. */
+/** One owner correction as `correction-capture.ts` read it. `cls` is a `CorrectionClass`; `cards` are the cards he named. */
+export type CorrectionRow = {
+  ts: number;
+  session: string;
+  runId: string;
+  cls: string;
+  via: string;
+  cards: Array<{ id: string; name: string; kind: string }>;
+  words: string;
+};
+
+export type PointerUse = {
+  kind: "note" | "chat";
+  /** A note's path; a chat's session id. */
+  id: string;
+  cover: number;
+  terms: number;
+  /** It was in the note the agent read (`anticipate.mode` inject, in enforce). False: watched only. */
+  injected: boolean;
+  /** The round in which a tool call first touched it; absent when none did. */
+  usedRound?: number;
+  /**
+   * A past chat that cleared the wake bar: what the wake leg did with it (`session-wake.ts` `WakeOutcome`: watched,
+   * started, capped, repeat, busy, follow-up, no-script). Absent for every other pointer.
+   */
+  wake?: string;
+};
+
 export type UseRow = {
   taskId: string;
   ts: number;
@@ -251,6 +300,12 @@ export type UseRow = {
   skipDetail?: string;
   /** How long the Jev call itself took, counted even when the prompt did not wait for it. */
   jevMs?: number;
+  /** The task's model calls (one per round), when the call events were seen. */
+  rounds?: number;
+  /** The note and past-chat pointers found for the task; absent when the legs were off or did not look. */
+  pointers?: PointerUse[];
+  /** Why the pointers were not looked for (a gate's reason, `private-source`, `index-building`, `no-sources`). */
+  pointerSkip?: string;
 };
 
 export class ThalamusStore {
@@ -381,6 +436,7 @@ export class ThalamusStore {
       chosenEffort: r.chosen_effort as string,
       chosenFeed: r.chosen_feed as string,
       pick: r.pick as string,
+      ...(typeof r.pick_effort === "string" && r.pick_effort ? { pickEffort: r.pick_effort } : {}),
       switchKind: r.switch_kind as string,
       switchReason: r.switch_reason as string,
       nStar: (r.n_star as number | null) ?? null,
@@ -478,6 +534,125 @@ export class ThalamusStore {
         o.refused ? 1 : 0,
         o.moneyBasis,
       );
+  }
+
+  /** The decisions of one run, by call index (2026-10-25, the routing tutor). */
+  decisionsForRun(runId: string): DecisionRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM decisions WHERE run_id=? ORDER BY call_index LIMIT 200")
+        .all(runId) as Record<string, unknown>[]
+    ).map(ThalamusStore.decisionRow);
+  }
+
+  // ─── the tutors (2026-10-25) ──────────────────────────────────────────────────────────────
+
+  insertRoutingReview(r: RoutingReviewRow): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO routing_reviews(run_id, ts, session, ran, effort, pick, had_next, status, reviewer, verdict,
+           reason, confidence, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        r.runId,
+        r.ts,
+        r.session,
+        r.ran,
+        r.effort ?? null,
+        r.pick ?? null,
+        r.hadNext ? 1 : 0,
+        r.status,
+        r.reviewer ?? null,
+        r.review?.verdict ?? null,
+        r.review?.reason ?? null,
+        r.review?.confidence ?? null,
+        r.error ?? null,
+      );
+  }
+
+  listRoutingReviews(o: { sinceTs?: number; limit?: number } = {}): RoutingReviewRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM routing_reviews WHERE ts >= ? ORDER BY ts DESC LIMIT ?")
+        .all(o.sinceTs ?? 0, Math.min(5000, Math.max(1, o.limit ?? 200))) as Record<
+        string,
+        unknown
+      >[]
+    ).map((r) => ({
+      runId: r.run_id as string,
+      ts: r.ts as number,
+      session: (r.session as string) ?? "",
+      ran: (r.ran as string) ?? "",
+      ...(r.effort ? { effort: r.effort as string } : {}),
+      ...(r.pick ? { pick: r.pick as string } : {}),
+      hadNext: r.had_next === 1,
+      status: r.status === "done" ? "done" : "failed",
+      ...(r.reviewer ? { reviewer: r.reviewer as string } : {}),
+      ...(r.verdict
+        ? {
+            review: {
+              verdict: r.verdict as NonNullable<RoutingReviewRow["review"]>["verdict"],
+              reason: (r.reason as string) ?? "",
+              confidence:
+                (r.confidence as NonNullable<RoutingReviewRow["review"]>["confidence"]) ?? "medium",
+            },
+          }
+        : {}),
+      ...(r.error ? { error: r.error as string } : {}),
+    }));
+  }
+
+  insertEnhReview(r: EnhReviewRow): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO enh_reviews(task_id, ts, session, shown_json, used_off_json, status, reviewer, not_fit_json,
+           should_suggest_json, reason, confidence, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        r.taskId,
+        r.ts,
+        r.session,
+        json(r.shown),
+        json(r.usedOffList),
+        r.status,
+        r.reviewer ?? null,
+        r.review ? json(r.review.notFit) : null,
+        r.review ? json(r.review.shouldSuggest) : null,
+        r.review?.reason ?? null,
+        r.review?.confidence ?? null,
+        r.error ?? null,
+      );
+  }
+
+  listEnhReviews(o: { sinceTs?: number; limit?: number } = {}): EnhReviewRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM enh_reviews WHERE ts >= ? ORDER BY ts DESC LIMIT ?")
+        .all(o.sinceTs ?? 0, Math.min(5000, Math.max(1, o.limit ?? 200))) as Record<
+        string,
+        unknown
+      >[]
+    ).map((r) => ({
+      taskId: r.task_id as string,
+      ts: r.ts as number,
+      session: (r.session as string) ?? "",
+      shown: parse<string[]>(r.shown_json, []),
+      usedOffList: parse<string[]>(r.used_off_json, []),
+      status: r.status === "done" ? "done" : "failed",
+      ...(r.reviewer ? { reviewer: r.reviewer as string } : {}),
+      ...(r.reason !== null && r.reason !== undefined
+        ? {
+            review: {
+              notFit: parse<string[]>(r.not_fit_json, []),
+              shouldSuggest: parse<string[]>(r.should_suggest_json, []),
+              reason: r.reason as string,
+              confidence:
+                (r.confidence as NonNullable<EnhReviewRow["review"]>["confidence"]) ?? "medium",
+            },
+          }
+        : {}),
+      ...(r.error ? { error: r.error as string } : {}),
+    }));
   }
 
   getOutcome(decisionId: string): Record<string, unknown> | undefined {
@@ -593,8 +768,8 @@ export class ThalamusStore {
   upsertUse(u: UseRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO enh_uses(task_id,ts,session,source,private,shuffled,shown_json,none_fits,list_shown,list_reason,list_source,used_json,outcome,card_versions_json,question_version,mode,task_kind,skip_reason,skip_detail,jev_ms,shown_modes,shown_sources)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO enh_uses(task_id,ts,session,source,private,shuffled,shown_json,none_fits,list_shown,list_reason,list_source,used_json,outcome,card_versions_json,question_version,mode,task_kind,skip_reason,skip_detail,jev_ms,shown_modes,shown_sources,rounds,pointers_json,pointer_skip)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         u.taskId,
@@ -619,6 +794,9 @@ export class ThalamusStore {
         u.jevMs ?? null,
         u.shown.map((e) => e.mode ?? "?").join(","),
         u.shown.map((e) => e.source ?? "?").join(","),
+        u.rounds ?? null,
+        u.pointers ? json(u.pointers) : null,
+        u.pointerSkip ?? null,
       );
   }
 
@@ -644,6 +822,13 @@ export class ThalamusStore {
       ...(typeof r.skip_reason === "string" && r.skip_reason ? { skipReason: r.skip_reason } : {}),
       ...(typeof r.skip_detail === "string" && r.skip_detail ? { skipDetail: r.skip_detail } : {}),
       ...(typeof r.jev_ms === "number" ? { jevMs: r.jev_ms } : {}),
+      ...(typeof r.rounds === "number" ? { rounds: r.rounds } : {}),
+      ...(typeof r.pointers_json === "string"
+        ? { pointers: parse<PointerUse[]>(r.pointers_json, []) }
+        : {}),
+      ...(typeof r.pointer_skip === "string" && r.pointer_skip
+        ? { pointerSkip: r.pointer_skip }
+        : {}),
     };
   }
 
@@ -651,6 +836,16 @@ export class ThalamusStore {
     const r = this.db.prepare("SELECT * FROM enh_uses WHERE task_id=?").get(taskId) as
       | Record<string, unknown>
       | undefined;
+    return r ? ThalamusStore.useRow(r) : undefined;
+  }
+
+  /** The newest finished task of a chat other than `notTaskId`: the one an owner's correction is about. */
+  lastUseOfSession(session: string, notTaskId: string): UseRow | undefined {
+    const r = this.db
+      .prepare(
+        "SELECT * FROM enh_uses WHERE session=? AND task_id<>? ORDER BY ts DESC, task_id DESC LIMIT 1",
+      )
+      .get(session, notTaskId) as Record<string, unknown> | undefined;
     return r ? ThalamusStore.useRow(r) : undefined;
   }
 
@@ -906,6 +1101,33 @@ export class ThalamusStore {
       cardId: String(r.card_id),
       by: String(r.by),
       createdAt: Number(r.created_at),
+    }));
+  }
+
+  /**
+   * One owner correction, for the nightly lesson pass (`lesson-sleep.ts`): the class, the cards he named and his own words,
+   * redacted and capped by the caller. Kept only while `lessons.mode` is not off. The same run and class is one row.
+   */
+  addCorrection(c: CorrectionRow): void {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO corrections(id,ts,session,run_id,class,via,cards_json,words) VALUES(?,?,?,?,?,?,?,?)",
+      )
+      .run(`${c.runId}:${c.cls}`, c.ts, c.session, c.runId, c.cls, c.via, json(c.cards), c.words);
+  }
+
+  listCorrections(o: { sinceTs?: number; limit?: number } = {}): CorrectionRow[] {
+    const rows = this.db
+      .prepare("SELECT * FROM corrections WHERE ts > ? ORDER BY ts, id LIMIT ?")
+      .all(o.sinceTs ?? 0, o.limit ?? 5000) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      ts: Number(r.ts),
+      session: String(r.session),
+      runId: String(r.run_id),
+      cls: String(r.class),
+      via: String(r.via),
+      cards: parse<CorrectionRow["cards"]>(r.cards_json, []),
+      words: String(r.words ?? ""),
     }));
   }
 
@@ -1174,6 +1396,8 @@ export class ThalamusStore {
       this.db.prepare("DELETE FROM fresh_points WHERE ts < ?").run(ts);
       this.db.prepare("DELETE FROM subagent_calls WHERE ts < ?").run(ts);
       this.db.prepare("DELETE FROM units WHERE ts < ?").run(ts);
+      // The owner's words go with the retention window too; the lesson ledger keeps its own short excerpts.
+      this.db.prepare("DELETE FROM corrections WHERE ts < ?").run(ts);
       return this.db.prepare("DELETE FROM decisions WHERE ts < ?").run(ts).changes;
     });
     return tx(olderThanTs);

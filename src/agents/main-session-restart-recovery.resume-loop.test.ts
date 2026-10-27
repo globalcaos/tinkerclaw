@@ -557,7 +557,7 @@ describe("main-session restart recovery - the boot-storm window", () => {
   });
 });
 
-// FORK 2026-10-01 — a freeze and power-off was resumed as "The gateway restarted" (AcmeVision
+// FORK 2026-10-01 — a freeze and power-off was resumed as "The gateway restarted" (OrbisVision
 // worker, interrupted 06:35, back 07:13); the agent recorded the wrong cause and did not know
 // its /tmp files were gone. The turn's newest transcript entry against this boot tells them apart.
 describe("main-session restart recovery - a reboot is not a gateway restart", () => {

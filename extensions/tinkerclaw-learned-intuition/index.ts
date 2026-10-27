@@ -15,13 +15,30 @@
  *   - before_tool_call: evaluate action safety (observe-only unless observeOnly:false)
  *   - llm_output: write personality nudge to shared cognitive file (opt-in: personalityNudge)
  *
+ * Gateway events: `amygdala.hook` — one per bubble-worthy row the PreToolUse hook spools
+ * (deny / owner-intent / owner-pasted-secret / owner-allow), tailed live from
+ * `~/.openclaw/data/amygdala/hook-decisions.jsonl` (FORK 2026-10-15).
+ *
  * Cross-extension discovery: writes `~/.openclaw/cognitive/learned-intuition.json`
  * and `~/.openclaw/cognitive/personality-nudge.json`.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 // FORK 2026-08-04 (FOUNDATION #9 — bounded, replicable) — the observability substrate is reached
 // through DECLARED plugin-SDK surfaces, never through a relative `../../src/infra/*` path. Two
 // independent reasons, either fatal on its own:
@@ -65,6 +82,233 @@ const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
 // ingests them so REAL enforced denials (the strongest feedback signal) appear
 // in the feed instead of being invisible.
 const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
+
+// FORK 2026-10-15 (the architect: "all performed actions from Jev … right where he does it, within its
+// context"): the hook spool used to be read on request only (amygdala.feed), so a REAL enforced
+// denial reached the chat late and nowhere near the tool call it judged. These helpers turn a
+// spool row into the live `amygdala.hook` event the UI pins to the tool row by `toolUseId`.
+// Pure and exported so the row → event mapping is tested without a gateway (hook-event.test.ts).
+
+/** Hook decisions the chat shows as a bubble: the hook DID something. `allow` (a sampled benign
+ * call) and `observe` (a rule matched, nothing done) are "the ones he skips". */
+export const HOOK_BUBBLE_DECISIONS: ReadonlySet<string> = new Set([
+  "deny",
+  "owner-intent",
+  "owner-pasted-secret",
+  "owner-allow",
+]);
+
+/** Payload of the `amygdala.hook` gateway event (CONTRACT.md "Live hook event"). */
+export interface AmygdalaHookEvent {
+  id: string;
+  ts: number;
+  tool: string;
+  target: string;
+  decision: string;
+  rule: string | null;
+  toolUseId: string | null;
+  sessionId: string | null;
+  enforced: boolean;
+}
+
+/** Spool `ts` is ISO (the hook writes `new Date().toISOString()`); the event carries ms. 0 when
+ * the row has no usable timestamp. */
+export function hookRowTs(ts: unknown): number {
+  if (typeof ts === "number" && Number.isFinite(ts)) return ts;
+  if (typeof ts === "string") {
+    const n = Date.parse(ts);
+    if (!Number.isNaN(n)) return n;
+  }
+  return 0;
+}
+
+/** `hook-` + sha1(ts+toolUseId+rule)[0:12] — the same id on the live event and on the feed row,
+ * so the UI dedupes a row it saw live when it later seeds from `amygdala.feed`. */
+export function hookRowId(ts: number, toolUseId: string | null, rule: string | null): string {
+  const h = createHash("sha1")
+    .update(`${ts}${toolUseId ?? ""}${rule ?? ""}`)
+    .digest("hex");
+  return `hook-${h.slice(0, 12)}`;
+}
+
+function optString(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/** A spool row → the live event, or null when the row is not bubble-worthy (or not a row). */
+export function hookEventFromRow(raw: unknown): AmygdalaHookEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const h = raw as Record<string, unknown>;
+  const decision = typeof h.decision === "string" ? h.decision : "";
+  if (!HOOK_BUBBLE_DECISIONS.has(decision)) return null;
+  const ts = hookRowTs(h.ts);
+  const rule = optString(h.rule);
+  const toolUseId = optString(h.toolUseId);
+  return {
+    id: hookRowId(ts, toolUseId, rule),
+    ts,
+    tool: String(h.tool ?? "?"),
+    target: String(h.target ?? "").slice(0, 200),
+    decision,
+    rule,
+    toolUseId,
+    sessionId: optString(h.sessionId),
+    enforced: Boolean(h.enforced),
+  };
+}
+
+export interface HookSpoolTail {
+  start(): void;
+  stop(): void;
+  /** Read whatever was appended since the last read (the watcher and the poll both call it). */
+  pump(): void;
+}
+
+/**
+ * Tail a JSONL spool from its CURRENT end: `fs.watch` on the parent directory (the file may not
+ * exist yet, and a rewrite would orphan a watch on the file itself) plus a slow poll, because
+ * inotify is best-effort. The offset resets when the inode changes (rotation) or the size drops
+ * below the offset (amygdala.feed truncates the file in place to its last 400 lines); the
+ * caller's dedupe decides what is new after a reset. Reads are synchronous, so two triggers can
+ * never interleave, and bounded per pump (MAX_PUMP_BYTES, the rest on the next tick) so a
+ * runaway spool cannot freeze the gateway.
+ */
+export function createHookSpoolTail(opts: {
+  file: string;
+  onRow: (row: Record<string, unknown>) => void;
+  /** Poll interval; the directory watch usually fires first. */
+  pollMs?: number;
+  /** Start at offset 0 and replay existing rows; default: start at the current end. */
+  replay?: boolean;
+  onError?: (message: string) => void;
+}): HookSpoolTail {
+  const { file, onRow } = opts;
+  const pollMs = opts.pollMs ?? 1500;
+  const CHUNK = 64 * 1024;
+  const MAX_PUMP_BYTES = 1024 * 1024;
+  let running = false;
+  let offset = 0;
+  let ino = 0;
+  let carry: Buffer = Buffer.alloc(0);
+  let watcher: FSWatcher | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  function statOf(): { size: number; ino: number } | null {
+    try {
+      const st = statSync(file);
+      return { size: st.size, ino: Number(st.ino) };
+    } catch {
+      return null;
+    }
+  }
+
+  function emitLines(chunk: Buffer): void {
+    const joined = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+    const nl = joined.lastIndexOf(0x0a);
+    if (nl < 0) {
+      carry = joined;
+      return;
+    }
+    carry = Buffer.from(joined.subarray(nl + 1));
+    for (const line of joined.subarray(0, nl).toString("utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let row: unknown;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue; // a torn line is not ours to fix
+      }
+      if (row && typeof row === "object") {
+        try {
+          onRow(row as Record<string, unknown>);
+        } catch (err) {
+          opts.onError?.(`row handler failed: ${(err as Error).message}`);
+        }
+      }
+    }
+  }
+
+  function ensureWatcher(): void {
+    if (watcher) return;
+    const name = basename(file);
+    try {
+      watcher = watch(dirname(file), (_event, changed) => {
+        if (!changed || String(changed) === name) pump();
+      });
+      watcher.on("error", () => undefined);
+    } catch {
+      watcher = null; // directory not there yet: the poll still pumps and retries the watch
+    }
+  }
+
+  function pump(): void {
+    if (!running) return;
+    const st = statOf();
+    if (st === null) {
+      offset = 0;
+      carry = Buffer.alloc(0);
+      return;
+    }
+    if (st.ino !== ino || st.size < offset) {
+      ino = st.ino;
+      offset = 0;
+      carry = Buffer.alloc(0);
+    }
+    if (st.size === offset) return;
+    const stopAt = Math.min(st.size, offset + MAX_PUMP_BYTES);
+    let fd: number;
+    try {
+      fd = openSync(file, "r");
+    } catch (err) {
+      opts.onError?.(`open failed: ${(err as Error).message}`);
+      return;
+    }
+    try {
+      const buf = Buffer.allocUnsafe(CHUNK);
+      while (offset < stopAt) {
+        const n = readSync(fd, buf, 0, Math.min(CHUNK, stopAt - offset), offset);
+        if (n <= 0) break;
+        offset += n;
+        emitLines(Buffer.from(buf.subarray(0, n)));
+      }
+    } catch (err) {
+      opts.onError?.(`read failed: ${(err as Error).message}`);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
+    if (stopAt < st.size) setImmediate(pump); // backlog: yield, then keep going
+  }
+
+  return {
+    start() {
+      if (running) return;
+      running = true;
+      const st = statOf();
+      ino = st?.ino ?? 0;
+      offset = opts.replay ? 0 : (st?.size ?? 0);
+      carry = Buffer.alloc(0);
+      ensureWatcher();
+      timer = setInterval(() => {
+        ensureWatcher();
+        pump();
+      }, pollMs);
+      timer.unref?.();
+      pump();
+    },
+    stop() {
+      running = false;
+      watcher?.close();
+      watcher = null;
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+    pump,
+  };
+}
 
 /**
  * Resolve the amygdala data dir at CALL time rather than at module load.
@@ -150,6 +394,21 @@ function writePersonalityNudge(nudge: PersonalityNudge): void {
     "utf-8",
   );
 }
+
+/**
+ * The git cache counts recent commits per target; its filesystem watcher is OFF (FORK 2026-10-18,
+ * TINKER_UI_DESIGN_BIBLE/bug-log.md `freeze-stuck-freezing`). It used to watch every file under
+ * ~/src (342,100 entries that day, mostly ~/src/tinkerclaw-wt worktrees) in every process that loads
+ * this plugin, and its error handler swallowed the ENOSPC, so it took inotify watches until none
+ * were left: gateway 291,747 + one terminal `openclaw` 226,771 of 524,288. systemd could then not
+ * watch new units, and a restart froze a chat's worker that nothing thawed. All it bought was
+ * marking cached counts stale sooner than the TTL does.
+ */
+export const GIT_CACHE_DEFAULTS: AmygdalaConfig["git_cache"] = {
+  enabled: false,
+  watch_paths: [],
+  ttl_seconds: 300,
+};
 
 function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
   // Load config from amygdala.config.json if it exists alongside models
@@ -237,11 +496,7 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       calibration_window_days: 30,
       calibration_db_path: join(DATA_DIR, "amygdala", "calibration.sqlite"),
     },
-    git_cache: {
-      enabled: true,
-      watch_paths: [join(homedir(), "src")],
-      ttl_seconds: 300,
-    },
+    git_cache: { ...GIT_CACHE_DEFAULTS, watch_paths: [...GIT_CACHE_DEFAULTS.watch_paths] },
     training_log: {
       db_path: join(DATA_DIR, "amygdala", "training.sqlite"),
       max_entries: 100000,
@@ -339,7 +594,10 @@ export default definePluginEntry({
     // every tinker-bridge spawn. Done at register() so the artifacts exist before the
     // next worker spawns. Best-effort: a write failure must not break the gate.
     try {
-      const snap = writePolicySnapshot(dataDir, { hookEnforcement });
+      // One amygdala (2026-10-15, the architect): the pre-execution hook now ships with tinkerclaw-amygdala
+      // (hooks/hard-rules.mjs, registered first in its hook settings). This plugin no longer installs one: two
+      // copies would run the hard rules twice. The snapshot still writes policy.json and drops the old settings.
+      const snap = writePolicySnapshot(dataDir, { hookEnforcement: false });
       log.info(
         `[learned-intuition] policy snapshot written (hookEnforcement=${hookEnforcement}, ` +
           `settings=${snap.settingsWritten}, hook=${snap.staged ?? "none"})`,
@@ -803,6 +1061,57 @@ export default definePluginEntry({
       });
     }
 
+    // FORK 2026-10-15 (the architect: "all performed actions … right where he does it"): tail the hook
+    // spool and broadcast each bubble-worthy row as `amygdala.hook` the moment the hook writes
+    // it. Owned by a plugin service so the gateway's stop closes the watcher and the poll (no
+    // leaked fd/timer across reloads). Dedupe by id (an insertion-ordered Set, oldest evicted),
+    // plus an age floor at service start: after the feed trims the file the tail re-reads its
+    // tail end, and rows from before this service started are history the UI already seeds
+    // from `amygdala.feed`. Same data dir as the policy snapshot (HOME-aware), which is the
+    // dir the hook spools into.
+    const broadcast = (name: string, payload: unknown): void => {
+      try {
+        (api as unknown as { broadcast?: (e: string, p: unknown) => void }).broadcast?.(
+          name,
+          payload,
+        );
+      } catch {
+        /* broadcast is best-effort */
+      }
+    };
+    const hookSpoolFile = join(dataDir, "hook-decisions.jsonl");
+    const seenHookIds = new Set<string>();
+    const MAX_SEEN_HOOK_IDS = 2000;
+    let hookTailStartedAt = 0;
+    const hookTail = createHookSpoolTail({
+      file: hookSpoolFile,
+      onRow: (row) => {
+        const ev = hookEventFromRow(row);
+        if (!ev) return; // allow / observe: the ones he skips
+        // ts 0 = no usable timestamp: it cannot sit on the timeline, so it is skipped too.
+        if (ev.ts < hookTailStartedAt - 5_000) return;
+        if (seenHookIds.has(ev.id)) return;
+        seenHookIds.add(ev.id);
+        if (seenHookIds.size > MAX_SEEN_HOOK_IDS) {
+          const oldest = seenHookIds.keys().next().value;
+          if (oldest !== undefined) seenHookIds.delete(oldest);
+        }
+        broadcast("amygdala.hook", ev);
+      },
+      onError: (message) => log.debug(`[learned-intuition] hook tail: ${message}`),
+    });
+    api.registerService({
+      id: "tinkerclaw-learned-intuition-hook-tail",
+      start() {
+        hookTailStartedAt = Date.now();
+        hookTail.start();
+        log.info(`[learned-intuition] hook spool tail started (${hookSpoolFile})`);
+      },
+      stop() {
+        hookTail.stop();
+      },
+    });
+
     // FORK 2026-06-07 (Amygdala feedback loop / M−1.A): expose the live feed to the
     // Tinker UI — recent gate decisions (most recent first), the current personality
     // nudge, mode/alphas, and rollup counts.
@@ -874,11 +1183,22 @@ export default definePluginEntry({
                 const dcn = String(h.decision ?? "allow");
                 const mapped =
                   dcn === "deny" ? "hard_block" : dcn === "observe" ? "soft_block" : "allow";
+                // FORK 2026-10-15: carry the raw hook decision, the tool call it judged and the
+                // same id the live `amygdala.hook` event uses, so the chat can pin the row to
+                // its tool row and dedupe against what it already saw live. `decision` stays
+                // the mapped value the feed panel reads (hard_block / soft_block / allow).
+                const rule = optString(h.rule);
+                const toolUseId = optString(h.toolUseId);
                 return {
+                  id: hookRowId(hookRowTs(h.ts), toolUseId, rule),
                   ts: h.ts,
                   tool: h.tool,
                   target: h.target,
                   decision: mapped,
+                  hookDecision: dcn,
+                  rule,
+                  toolUseId,
+                  sessionId: optString(h.sessionId),
                   blocked: dcn !== "allow",
                   enforced: Boolean(h.enforced),
                   mode: "hook",

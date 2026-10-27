@@ -13,17 +13,37 @@
  * while the live copy silently eroded from 24.7 KB to 1.4 KB. A prompt file with
  * no loader is a decoy that absorbs work and produces no behaviour change.
  *
- * The fix: app.ts holds FRACTAL_DOCTRINE, generated from the .md, and this check
- * asserts they still match. Edit the .md, re-run `node scripts/sync-fractal-prompt.mjs`,
- * commit both.
+ * FORK 2026-10-09 (Fractal v2, P1) — the doctrine is now a short CORE (fractal-prompt.md) plus
+ * four chapters (chapters/{correction,friction,delivery,channel}.md) that ride along only when
+ * the gate names their trigger: v4's 49.5k chars went out on every call, and two reflections in
+ * three changed nothing. The live copy moved out of app.ts into its own generated module,
+ * tinker-ui/src/fractal-doctrine.generated.ts (FRACTAL_DOCTRINE_CORE, FRACTAL_CHAPTERS), so a
+ * doctrine edit no longer rewrites a 20k-line UI file that other sessions hold dirty (four doctrine
+ * fixes sat unmerged for hours behind one such line on 2026-10-09). This check asserts the module
+ * matches the .md files, that app.ts no longer embeds a copy of its own (that copy would be the
+ * next decoy), and that the user bubble's link still opens the core.
+ *
+ * Edit the .md files, re-run `node scripts/sync-fractal-prompt.mjs`, commit all of them.
+ * `--root <dir>` points both scripts at another tree (tests use a temp copy).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MD = path.join(ROOT, "extensions/tinkerclaw-fractal-reflection/fractal-prompt.md");
-const APP = path.join(ROOT, "tinker-ui/src/app.ts");
+export const EXT_REL = "extensions/tinkerclaw-fractal-reflection";
+export const MD_REL = `${EXT_REL}/fractal-prompt.md`;
+export const GENERATED_REL = "tinker-ui/src/fractal-doctrine.generated.ts";
+export const APP_REL = "tinker-ui/src/app.ts";
+/** Trigger order of contract C1; the page appends chapters in this order. */
+export const CHAPTER_NAMES = ["correction", "friction", "delivery", "channel"];
+
+export const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** `--root <dir>` from argv, else the repo this script lives in. */
+export function rootFromArgv(argv = process.argv) {
+  const i = argv.indexOf("--root");
+  return i !== -1 && argv[i + 1] ? path.resolve(argv[i + 1]) : DEFAULT_ROOT;
+}
 
 /** Strip the parts of the .md that describe the file rather than instruct the model. */
 export function doctrineFromMarkdown(raw) {
@@ -39,58 +59,132 @@ export function doctrineFromMarkdown(raw) {
   return doc.trim();
 }
 
-function doctrineFromApp(src) {
-  const start = src.indexOf("const FRACTAL_DOCTRINE = String.raw`");
-  if (start === -1) return null;
-  const open = src.indexOf("`", start) + 1;
-  let i = open;
-  while (i < src.length) {
-    if (src[i] === "\\") {
-      i += 2;
-      continue;
-    }
-    if (src[i] === "`") break;
-    i++;
-  }
-  return src
-    .slice(open, i)
-    .replace(/\\`/g, "`")
-    .replace(/\\\$\{/g, "${")
-    .replace(/\\\\/g, "\\");
+/** A chapter file is sent whole (its heading tells the model which trigger brought it). */
+export function chapterFromMarkdown(raw) {
+  return raw.trim();
 }
 
-// Only run the check when invoked directly — sync-fractal-prompt.mjs imports
-// doctrineFromMarkdown from here, and top-level process.exit() would kill it.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const expected = doctrineFromMarkdown(fs.readFileSync(MD, "utf-8"));
-  const actual = doctrineFromApp(fs.readFileSync(APP, "utf-8"));
+/** Read the core and the four chapters from `root`. Throws naming a missing file. */
+export function readDoctrineSources(root = DEFAULT_ROOT) {
+  const core = doctrineFromMarkdown(fs.readFileSync(path.join(root, MD_REL), "utf-8"));
+  const chapters = {};
+  for (const name of CHAPTER_NAMES) {
+    chapters[name] = chapterFromMarkdown(
+      fs.readFileSync(path.join(root, EXT_REL, "chapters", `${name}.md`), "utf-8"),
+    );
+  }
+  return { core, chapters };
+}
 
-  if (actual === null) {
-    console.error("FAIL: FRACTAL_DOCTRINE constant not found in tinker-ui/src/app.ts");
+/**
+ * A plain (not String.raw) template literal whose VALUE is exactly `text`. Template literals, unlike
+ * quoted strings, are left alone by oxfmt (it re-picks quotes on strings), so the pre-commit
+ * formatter keeps the generated file byte-identical. FORK 2026-10-09 — the old String.raw literal
+ * in app.ts kept the escaping backslash, so every backtick reached the model as \`.
+ */
+export function templateLiteral(text) {
+  return "`" + text.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${") + "`";
+}
+
+/** The generated module's full text, laid out the way oxfmt prints it. */
+export function renderDoctrineModule({ core, chapters }) {
+  const lines = [
+    "// GENERATED by scripts/sync-fractal-prompt.mjs — do not edit. Source of truth:",
+    `// ${MD_REL} (the core) and ${EXT_REL}/chapters/*.md.`,
+    "// Edit those, re-run the script, commit all of them; scripts/check-fractal-prompt-sync.mjs fails on drift.",
+    "",
+    `export const FRACTAL_DOCTRINE_CORE: string = ${templateLiteral(core)};`,
+    "",
+    'export const FRACTAL_CHAPTERS: Record<"correction" | "friction" | "delivery" | "channel", string> =',
+    "  {",
+    ...CHAPTER_NAMES.map((name) => `    ${name}: ${templateLiteral(chapters[name])},`),
+    "  };",
+    "",
+  ];
+  return lines.join("\n");
+}
+
+function firstDifference(a, b) {
+  const n = Math.min(a.length, b.length);
+  let d = 0;
+  while (d < n && a[d] === b[d]) d++;
+  return d;
+}
+
+/** Which source a drifted byte offset belongs to, for a message that names the file to sync. */
+function driftSource(expected, d, sources) {
+  const span = (name, text) => {
+    const lit = templateLiteral(text);
+    return { name, at: expected.indexOf(lit), len: lit.length };
+  };
+  const spans = [
+    span("fractal-prompt.md (core)", sources.core),
+    ...CHAPTER_NAMES.map((n) => span(`chapters/${n}.md`, sources.chapters[n])),
+  ];
+  const hit = spans.find((s) => s.at !== -1 && d >= s.at && d <= s.at + s.len);
+  return hit ? hit.name : "the module header";
+}
+
+/** Run every check against `root`; returns a list of failure messages (empty = in sync). */
+export function checkDoctrineSync(root = DEFAULT_ROOT) {
+  const failures = [];
+  let sources;
+  try {
+    sources = readDoctrineSources(root);
+  } catch (err) {
+    return [`cannot read the doctrine sources: ${err.message}`];
+  }
+  const expected = renderDoctrineModule(sources);
+  const genPath = path.join(root, GENERATED_REL);
+  if (!fs.existsSync(genPath)) {
+    failures.push(`${GENERATED_REL} is missing → run: node scripts/sync-fractal-prompt.mjs`);
+  } else {
+    const actual = fs.readFileSync(genPath, "utf-8");
+    if (actual !== expected) {
+      const d = firstDifference(expected, actual);
+      failures.push(
+        [
+          `the live FRACTAL doctrine has drifted from ${driftSource(expected, d, sources)}`,
+          `  expected module: ${expected.length} chars, ${GENERATED_REL}: ${actual.length} chars`,
+          `  first difference at char ${d}:`,
+          `    md : …${JSON.stringify(expected.slice(Math.max(0, d - 40), d + 60))}`,
+          `    gen: …${JSON.stringify(actual.slice(Math.max(0, d - 40), d + 60))}`,
+          "  → run: node scripts/sync-fractal-prompt.mjs",
+        ].join("\n"),
+      );
+    }
+  }
+
+  const appPath = path.join(root, APP_REL);
+  const appSrc = fs.existsSync(appPath) ? fs.readFileSync(appPath, "utf-8") : "";
+  // A second embedded copy is the decoy this file exists to catch: it would go on being sent (or
+  // being edited) while the .md files and the generated module say something else.
+  if (/const FRACTAL_DOCTRINE\s*=\s*String\.raw`/.test(appSrc)) {
+    failures.push(
+      `${APP_REL} still embeds its own FRACTAL_DOCTRINE copy → import FRACTAL_DOCTRINE_CORE / FRACTAL_CHAPTERS from ./fractal-doctrine.generated.js instead`,
+    );
+  }
+  // 2026-08-22: the user bubble links straight to the .md via FRACTAL_PROMPT_PATH. A link that
+  // points at a DIFFERENT copy than the one the doctrine is generated from is the same decoy, so pin it.
+  if (!appSrc.includes(`"~/src/tinkerclaw/${MD_REL}"`)) {
+    failures.push(
+      `FRACTAL_PROMPT_PATH in ${APP_REL} does not point at ~/src/tinkerclaw/${MD_REL}\n` +
+        "  → the user bubble's 'fractal prompt' link would open the wrong file",
+    );
+  }
+  return failures;
+}
+
+// Only run the check when invoked directly — sync-fractal-prompt.mjs and the tests import from
+// here, and a top-level process.exit() would kill them.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const root = rootFromArgv();
+  const failures = checkDoctrineSync(root);
+  if (failures.length > 0) {
+    for (const f of failures) console.error(`FAIL: ${f}`);
     process.exit(1);
   }
-  if (actual !== expected) {
-    console.error("FAIL: the live FRACTAL doctrine has drifted from fractal-prompt.md");
-    console.error(`  markdown: ${expected.length} chars`);
-    console.error(`  app.ts:   ${actual.length} chars`);
-    const n = Math.min(expected.length, actual.length);
-    let d = 0;
-    while (d < n && expected[d] === actual[d]) d++;
-    console.error(`  first difference at char ${d}:`);
-    console.error(`    md : …${JSON.stringify(expected.slice(Math.max(0, d - 40), d + 60))}`);
-    console.error(`    app: …${JSON.stringify(actual.slice(Math.max(0, d - 40), d + 60))}`);
-    console.error("  → run: node scripts/sync-fractal-prompt.mjs");
-    process.exit(1);
-  }
-  // 2026-08-22: the user bubble links straight to the .md via FRACTAL_PROMPT_PATH.
-  // A link that points at a DIFFERENT copy of the doctrine than the one generating
-  // FRACTAL_DOCTRINE is the same decoy failure this file exists to catch, so pin it.
-  const appSrc = fs.readFileSync(APP, "utf-8");
-  const rel = path.relative(ROOT, MD);
-  if (!appSrc.includes(`"~/src/tinkerclaw/${rel}"`)) {
-    console.error(`FAIL: FRACTAL_PROMPT_PATH in app.ts does not point at ~/src/tinkerclaw/${rel}`);
-    console.error("  → the user bubble's 'fractal prompt' link would open the wrong file");
-    process.exit(1);
-  }
-  console.log(`OK: FRACTAL doctrine in sync (${expected.length} chars, injected per message)`);
+  const { core, chapters } = readDoctrineSources(root);
+  const sizes = CHAPTER_NAMES.map((n) => `${n} ${chapters[n].length}`).join(", ");
+  console.log(`OK: FRACTAL doctrine in sync (core ${core.length} chars; chapters: ${sizes})`);
 }

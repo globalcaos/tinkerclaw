@@ -25,8 +25,10 @@ import { type AgentEventPayload, onAgentEvent } from "../infra/agent-events.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { ErrorCodes, errorShape } from "./protocol/index.js";
 import {
+  EVICTION_MARKER_CUSTOM_TYPE,
   evictSessionTranscript,
   evictTranscriptTail,
+  insertEvictionMarker,
   resolveContextOwningRuntime,
   resolveEvictionRefusal,
 } from "./session-eviction.js";
@@ -211,6 +213,42 @@ describe("evictTranscriptTail", () => {
     if (harsher.ok && harsher.lines !== null) {
       expect(harsher.evictedTokens).toBeGreaterThanOrEqual(res.evictedTokens);
     }
+  });
+});
+
+describe("insertEvictionMarker (FORK 2026-10-25)", () => {
+  it("names the first and last dropped user words", () => {
+    const result = evictTranscriptTail(transcript(10), 0.5);
+    if (!result.ok || result.lines === null) {
+      throw new Error("expected lines");
+    }
+    expect(result.droppedUserText).toEqual({ first: "question 0", last: "question 4" });
+  });
+
+  it("goes right before the first kept message, hidden, and keeps the chain unbroken", () => {
+    const result = evictTranscriptTail(transcript(10), 0.5);
+    if (!result.ok || result.lines === null) {
+      throw new Error("expected lines");
+    }
+    const out = parse(
+      insertEvictionMarker(result.lines, "[marker]", {
+        id: "mk1",
+        timestamp: "2026-10-25T00:00:00Z",
+      }),
+    );
+    expect(out).toHaveLength(result.lines.length + 1);
+    const at = out.findIndex((e) => e.type === "custom_message");
+    expect(out[at]).toMatchObject({
+      type: "custom_message",
+      customType: EVICTION_MARKER_CUSTOM_TYPE,
+      content: "[marker]",
+      display: false,
+      id: "mk1",
+      parentId: out[at - 1].id,
+    });
+    expect(out[at + 1]).toMatchObject({ type: "message", parentId: "mk1" });
+    expect(out.slice(0, at).some((e) => e.type === "message")).toBe(false);
+    expect(chainIsUnbroken(out)).toBe(true);
   });
 });
 
@@ -465,7 +503,15 @@ describe("evictSessionTranscript", () => {
       expect(outcome.reply).toMatchObject({ ok: true, key: STORE_KEY, compacted: true });
       expect(tokensBefore).toBeGreaterThan(tokensAfter);
       expect(fs.existsSync(archived)).toBe(true);
-      expect(fs.readFileSync(filePath, "utf8")).not.toContain("question 0");
+      // The archive holds the dropped turns; the live transcript holds only a marker that quotes
+      // them and names the archive (FORK 2026-10-25).
+      expect(fs.readFileSync(archived, "utf8")).toContain("question 0");
+      const live = parse(fs.readFileSync(filePath, "utf8").trim().split("\n"));
+      expect(live.some((e) => JSON.stringify(e.message ?? "").includes("question 0"))).toBe(false);
+      const marker = live.find((e) => e.customType === EVICTION_MARKER_CUSTOM_TYPE);
+      expect(marker?.content).toContain('"question 0"');
+      expect(marker?.content).toContain(archived);
+      expect(chainIsUnbroken(live)).toBe(true);
 
       const row = loadSessionStore(storePath, { skipCache: true })[STORE_KEY];
       expect(row?.totalTokens).toBeUndefined();

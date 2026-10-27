@@ -27,6 +27,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+
+const log = createSubsystemLogger("tinkerclaw-tinker-bridge");
 
 export type BridgeTransport = "pipe" | "file";
 
@@ -167,23 +170,163 @@ export const systemctlUser: UnitCommand = (args) =>
     );
   });
 
+// ── the kernel's freezer ─────────────────────────────────────────────────────────────────────────
+//
+// FORK 2026-10-18 (TINKER_UI_DESIGN_BIBLE/bug-log.md `freeze-stuck-freezing`). systemd learns that a
+// freeze or a thaw has finished through an inotify watch on the unit's `cgroup.events`. With the
+// user's inotify budget spent it cannot add that watch ("Failed to add control inotify watch
+// descriptor"): the kernel freezes the unit, systemd keeps `FreezerState=freezing` for good, and
+// systemd 249 refuses every later freeze or thaw of it as still in progress (`unit_freezer_action`
+// → -EALREADY). Live 2026-10-18: a chat's turn frozen by a restart drain was adopted, its thaw was
+// refused in silence, and the run waited out its 600 s idle timeout. So the kernel's `cgroup.freeze`
+// is the truth, systemd is asked first, and writing the file is the fallback (a user unit's cgroup
+// is delegated to the user).
+
+/** Where cgroup v2 is mounted. Tests point it at a temp dir and never touch the host's. */
+export function cgroupRoot(): string {
+  return process.env.TINKERCLAW_CGROUP_ROOT?.trim() || "/sys/fs/cgroup";
+}
+
+/** What the kernel was asked: frozen (true), running (false), or null with no file to read. */
+export function readCgroupFreeze(controlGroup: string | undefined): boolean | null {
+  if (!controlGroup?.startsWith("/")) {
+    return null;
+  }
+  try {
+    const v = fs.readFileSync(path.join(cgroupRoot(), controlGroup, "cgroup.freeze"), "utf8");
+    return v.trim() === "1" ? true : v.trim() === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCgroupFreeze(controlGroup: string, frozen: boolean): boolean {
+  try {
+    fs.writeFileSync(path.join(cgroupRoot(), controlGroup, "cgroup.freeze"), frozen ? "1" : "0");
+  } catch {
+    return false;
+  }
+  return readCgroupFreeze(controlGroup) === frozen;
+}
+
+async function controlGroupOf(unit: string, run: UnitCommand): Promise<string | undefined> {
+  const r = await run(["show", "-p", "ControlGroup", "--value", unit]);
+  const cg = r.stdout.trim();
+  return r.ok && cg.startsWith("/") ? cg : undefined;
+}
+
+/**
+ * Freeze a unit. True when the kernel holds it (with no cgroup file to read: when systemd said so).
+ * A systemctl that timed out waiting for a confirmation systemd could not see usually left the
+ * cgroup frozen: the unit IS held, and calling it "could not freeze" is what let the next gateway
+ * adopt it without knowing.
+ */
+export async function freezeUnit(unit: string, run: UnitCommand = systemctlUser): Promise<boolean> {
+  const r = await run(["freeze", unit]);
+  const cg = await controlGroupOf(unit, run);
+  const asked = readCgroupFreeze(cg);
+  if (asked === null) {
+    return r.ok;
+  }
+  if (asked) {
+    if (!r.ok) {
+      log.warn(`[freezer] systemd did not confirm the freeze of ${unit}; its cgroup is frozen`);
+    }
+    return true;
+  }
+  const ok = writeCgroupFreeze(cg as string, true);
+  log.warn(
+    `[freezer] systemd ${r.ok ? "reported" : "refused"} the freeze of ${unit} but its cgroup was not frozen; wrote cgroup.freeze=1: ${ok ? "frozen" : "FAILED"}`,
+  );
+  return ok;
+}
+
+/** Thaw a unit. True when the kernel no longer holds it (no cgroup file: when systemd said so). */
+export async function thawUnit(unit: string, run: UnitCommand = systemctlUser): Promise<boolean> {
+  const r = await run(["thaw", unit]);
+  const cg = await controlGroupOf(unit, run);
+  const asked = readCgroupFreeze(cg);
+  if (asked === null) {
+    return r.ok;
+  }
+  if (!asked) {
+    return true;
+  }
+  const ok = writeCgroupFreeze(cg as string, false);
+  log.warn(
+    `[freezer] systemd ${r.ok ? "reported" : "refused"} the thaw of ${unit} but its cgroup was still frozen; wrote cgroup.freeze=0: ${ok ? "thawed" : "FAILED"}`,
+  );
+  return ok;
+}
+
 export type UnitState = { active: boolean; frozen: boolean };
 
 export async function readUnitState(
   unit: string,
   run: UnitCommand = systemctlUser,
 ): Promise<UnitState> {
-  const r = await run(["show", "-p", "ActiveState", "-p", "FreezerState", unit]);
+  const r = await run([
+    "show",
+    "-p",
+    "ActiveState",
+    "-p",
+    "FreezerState",
+    "-p",
+    "ControlGroup",
+    unit,
+  ]);
+  return parseUnitState(r.stdout);
+}
+
+/**
+ * The state of several units from ONE `systemctl show`, which prints one block per unit in the
+ * order given, blocks separated by a blank line. Null when the call failed or the blocks do not
+ * line up: an unknown answer, never a "gone" one.
+ *
+ * Why one call: every spawn forks the gateway, and a fork copies its page tables, so the cost grows
+ * with the gateway's memory. One call per worker (18 workers, every 10 s, gateway at 10.8 GB) took
+ * 27% of the main thread in a CPU profile on 2026-10-09.
+ */
+export async function readUnitStates(
+  units: string[],
+  run: UnitCommand = systemctlUser,
+): Promise<Map<string, UnitState> | null> {
+  if (units.length === 0) {
+    return new Map();
+  }
+  const r = await run([
+    "show",
+    "-p",
+    "ActiveState",
+    "-p",
+    "FreezerState",
+    "-p",
+    "ControlGroup",
+    ...units,
+  ]);
+  if (!r.ok) {
+    return null;
+  }
+  const blocks = r.stdout.trim().split(/\n\s*\n/);
+  if (blocks.length !== units.length) {
+    return null;
+  }
+  return new Map(units.map((unit, i) => [unit, parseUnitState(blocks[i])]));
+}
+
+function parseUnitState(stdout: string): UnitState {
   const props = Object.fromEntries(
-    r.stdout
+    stdout
       .split("\n")
       .map((l) => l.split("="))
       .filter((kv) => kv.length === 2),
   ) as Record<string, string>;
   const activeState = props.ActiveState ?? "";
+  // The kernel's word first: FreezerState stops updating when systemd cannot watch the cgroup.
+  const asked = readCgroupFreeze(props.ControlGroup);
   return {
     active: activeState === "active" || activeState === "activating" || activeState === "reloading",
-    frozen: props.FreezerState === "frozen" || props.FreezerState === "freezing",
+    frozen: asked ?? (props.FreezerState === "frozen" || props.FreezerState === "freezing"),
   };
 }
 
@@ -273,7 +416,6 @@ export class FileChannel extends EventEmitter {
   private readonly outTail: FileTail;
   private readonly errTail: FileTail;
   private poll: NodeJS.Timeout | null = null;
-  private unitCheck: NodeJS.Timeout | null = null;
   private inactiveChecks = 0;
   private finished = false;
   private detached = false;
@@ -301,8 +443,45 @@ export class FileChannel extends EventEmitter {
     }
     this.poll = setInterval(() => this.tick(), POLL_MS);
     this.poll.unref?.();
-    this.unitCheck = setInterval(() => void this.checkUnit(), UNIT_CHECK_MS);
-    this.unitCheck.unref?.();
+    FileChannel.watched.add(this);
+    if (!FileChannel.unitTimer) {
+      FileChannel.unitTimer = setInterval(() => void FileChannel.checkUnits(), UNIT_CHECK_MS);
+      FileChannel.unitTimer.unref?.();
+    }
+  }
+
+  // One unit check for every attached channel, not one per channel: see readUnitStates.
+  private static readonly watched = new Set<FileChannel>();
+  private static unitTimer: NodeJS.Timeout | null = null;
+  private static checking = false;
+
+  /** One round of unit checks (the shared timer's job; tests call it directly). */
+  static async checkUnits(): Promise<void> {
+    // A round still waiting on a slow systemctl is not stacked under the next one.
+    if (FileChannel.checking) {
+      return;
+    }
+    FileChannel.checking = true;
+    try {
+      const byRun = new Map<UnitCommand, FileChannel[]>();
+      for (const ch of FileChannel.watched) {
+        byRun.set(ch.run, [...(byRun.get(ch.run) ?? []), ch]);
+      }
+      for (const [run, chans] of byRun) {
+        const states = await readUnitStates(
+          chans.map((ch) => ch.unit),
+          run,
+        );
+        for (const ch of chans) {
+          const state = states?.get(ch.unit);
+          if (state) {
+            ch.applyUnitState(state);
+          }
+        }
+      }
+    } finally {
+      FileChannel.checking = false;
+    }
   }
 
   /** Start a unit on the file transport and attach to it. `argv` is systemd-run's argv. */
@@ -376,17 +555,17 @@ export class FileChannel extends EventEmitter {
   }
 
   async freeze(): Promise<boolean> {
-    const r = await this.run(["freeze", this.unit]);
-    this.frozen = this.frozen || r.ok;
-    return r.ok;
+    const ok = await freezeUnit(this.unit, this.run);
+    this.frozen = this.frozen || ok;
+    return ok;
   }
 
   async thaw(): Promise<boolean> {
-    const r = await this.run(["thaw", this.unit]);
-    if (r.ok) {
+    const ok = await thawUnit(this.unit, this.run);
+    if (ok) {
       this.frozen = false;
     }
-    return r.ok;
+    return ok;
   }
 
   /** Let go of the unit without stopping it: the gateway is going, the worker stays for the next. */
@@ -407,11 +586,10 @@ export class FileChannel extends EventEmitter {
     }
   }
 
-  private async checkUnit(): Promise<void> {
+  private applyUnitState(state: UnitState): void {
     if (this.finished || this.detached) {
       return;
     }
-    const state = await readUnitState(this.unit, this.run);
     // Two misses in a row: a unit killed whole (the OOM killer, a manual stop of the unit) leaves no
     // exit file, and one miss can be a unit that is still starting.
     this.inactiveChecks = state.active ? 0 : this.inactiveChecks + 1;
@@ -461,9 +639,10 @@ export class FileChannel extends EventEmitter {
       clearInterval(this.poll);
       this.poll = null;
     }
-    if (this.unitCheck) {
-      clearInterval(this.unitCheck);
-      this.unitCheck = null;
+    FileChannel.watched.delete(this);
+    if (FileChannel.watched.size === 0 && FileChannel.unitTimer) {
+      clearInterval(FileChannel.unitTimer);
+      FileChannel.unitTimer = null;
     }
     this.outTail.stop();
     this.errTail.stop();

@@ -141,7 +141,7 @@ describe("JevClient.ask", () => {
     const c = t.calls[0];
     expect(c.url).toBe("https://example.invalid/v1/systemone");
     expect(c.headers.Authorization).toBe(`Bearer ${KEY}`);
-    expect(c.timeoutMs).toBe(2000);
+    expect(c.timeoutMs).toBe(1000); // the owner's 1 s rule (JEV_MAX_WAIT_MS, 2026-10-15)
     expect(c.body.model).toBe("jev-latest");
     expect(Object.keys(c.body.questions as object)).toEqual(["q-noul", "q-choice", "q-score"]);
     expect(vs.map((v) => v.questionId)).toEqual(["q-noul", "q-choice", "q-score"]);

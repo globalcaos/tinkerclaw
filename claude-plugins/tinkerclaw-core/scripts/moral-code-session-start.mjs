@@ -25,58 +25,21 @@
  * The same plugin can be loaded twice in one session (installed from the marketplace AND
  * passed with --plugin-dir by the Tinker bridge), which fires every slot twice. The first
  * invocation claims session+source+part with an exclusive lock file; the second stays silent.
+ *
+ * FORK 2026-10-09 — the stdin, state-dir, slot and lock helpers moved to hook-common.mjs, shared
+ * with the harness-context and recipe-hint hooks. What this hook prints is unchanged, and so is
+ * its lock path (<tmp>/tinkerclaw-moral-code/…): a cached older copy of this plugin, loaded
+ * beside the current one, still dedupes against it.
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { claim, partArg, readStdin, stateDir } from "./hook-common.mjs";
 import { PART_SLOTS, splitMoralCode } from "./moral-code-parts.mjs";
-
-const DEDUPE_WINDOW_MS = 10_000;
-
-function readStdin() {
-  try {
-    return JSON.parse(fs.readFileSync(0, "utf8") || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function stateDir() {
-  const override = process.env.OPENCLAW_STATE_DIR?.trim();
-  if (override) {
-    return override.startsWith("~") ? path.join(os.homedir(), override.slice(1)) : override;
-  }
-  return path.join(os.homedir(), ".openclaw");
-}
-
-/** The slot this invocation fills: `--part <n>`, 1-based (no flag: part 1). */
-function partArg() {
-  const at = process.argv.indexOf("--part");
-  const n = at >= 0 ? Number(process.argv[at + 1]) : 1;
-  return Number.isInteger(n) && n >= 1 ? n : 1;
-}
-
-/** True for the first invocation per session+source+part inside the window. */
-function claim(sessionId, source, part) {
-  if (!sessionId) {
-    return true;
-  }
-  const dir = path.join(os.tmpdir(), "tinkerclaw-moral-code");
-  const bucket = Math.floor(Date.now() / DEDUPE_WINDOW_MS);
-  const safe = `${sessionId}-${source}-p${part}-${bucket}`.replace(/[^A-Za-z0-9_-]/g, "_");
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, safe), String(process.pid), { flag: "wx" });
-    return true;
-  } catch (err) {
-    return err?.code !== "EEXIST";
-  }
-}
 
 const input = readStdin();
 const source = typeof input.source === "string" ? input.source : "startup";
 const part = partArg();
-if (!claim(input.session_id, source, part)) {
+if (!claim("moral-code", input.session_id, source, part)) {
   process.exit(0);
 }
 

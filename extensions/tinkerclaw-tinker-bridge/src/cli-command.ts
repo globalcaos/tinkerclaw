@@ -60,6 +60,9 @@ const SEPARATOR = /\n[ \t]*-{3,}[ \t]*\n/;
 const INJECTED_BLOCK_SENTINELS = [
   "append a \u{1F33F} FRACTAL reflection section",
   "FRACTAL reflection section",
+  // FORK 2026-10-09 (Fractal v2, charter C4): new prompts open the doctrine with this neutral marker
+  // instead of "After your reply…" (core: FRACTAL_DOCTRINE_MARKER, src/shared/appended-prompt-blocks.ts).
+  "\u27E6FRACTAL-DOCTRINE\u27E7",
   "Structure this turn's reply as labelled sections",
   "Execute the morning briefing NOW",
   "Read and follow whichever of these briefing files exists",

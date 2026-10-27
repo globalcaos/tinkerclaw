@@ -43,7 +43,11 @@ import {
   maxOutputTokensFor,
   PROVIDER_ID,
 } from "./defaults.js";
+import { forkParentRunId, forkSourceFor, noteRunWorker, type ForkSource } from "./fork-parent.js";
+import type { FractalGuardMode } from "./fractal-guard.js";
+import { scheduleFractalLedger } from "./fractal-ledger.js";
 import { registerInflightWorker, unregisterInflightWorker } from "./inflight-worker-registry.js";
+import { scheduleLimitResume } from "./limit-resume.js";
 import type {
   CcContentBlock,
   CcStreamStdoutAssistantMessage,
@@ -54,10 +58,16 @@ import type {
   CcUsage,
 } from "./protocol.js";
 import { ensureAdoptionScan, markReattachClaimed, resumedTurnFields } from "./restart-reattach.js";
+import { getLatestResumeSessionIdByOpenclawSessionId, getResumeSessionId } from "./session-map.js";
 import { noteThalamusSubagentCall } from "./thalamus-worker-seam.js";
-import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
+import {
+  claudeEffortForTurn,
+  isAdaptiveEffortModel,
+  thinkLevelToMaxThinkingTokens,
+} from "./thinking-budget.js";
 import { recordToolEvent } from "./tool-buffer.js";
 import { resolveTranscriptPath } from "./transcript-path.js";
+import { formatTurnContext, splitWorkerSystemPrompt } from "./turn-context.js";
 import { parseUnpromptedWakeMarker, UNPROMPTED_TURN_GONE_TEXT } from "./unprompted-turn.js";
 import { getPool } from "./worker-pool.js";
 import type { WorkerEvent } from "./worker.js";
@@ -69,6 +79,8 @@ export type CreateStreamFnInput = {
   cwd?: string;
   binary?: string;
   disallowedTools?: string[];
+  /** FORK 2026-10-25 (fractal-guard.ts): the plugin's `fractalGuard` mode. */
+  fractalGuard?: FractalGuardMode;
 };
 
 function buildUsage(cu: CcUsage | undefined): Usage {
@@ -461,11 +473,17 @@ export function shouldFastFailInitStall(args: {
   maxInitLines?: number;
   /** A compaction is running (see above): never a wedge, whatever else holds. */
   compacting?: boolean;
+  /**
+   * A restart drain holds the worker frozen (worker.ts isHeld): silent on purpose, never a wedge.
+   * 2026-10-09: all 20 kills from 10-01 on hit such a worker, among them two of the owner's turns.
+   */
+  held?: boolean;
 }): boolean {
   const initSilentMs = args.initSilentMs ?? FAST_FAIL_INIT_SILENT_MS;
   const maxInitLines = args.maxInitLines ?? FAST_FAIL_MAX_INIT_LINES;
   return (
     args.compacting !== true &&
+    args.held !== true &&
     args.elapsedMs > initSilentMs &&
     args.textLen === 0 &&
     args.thinkingLen === 0 &&
@@ -974,12 +992,19 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         __openclawSessionKey?: string;
         __openclawSessionId?: string;
         __openclawThinkLevel?: string;
+        // FORK 2026-10-09 (effort per turn; core unit effort-plumbing): the turn asks for
+        // ultracode, and who chose its level ("pin" | "thalamus" | "allocator" | "default").
+        __openclawUltracode?: boolean;
+        __openclawThinkSource?: string;
         // FORK 2026-09-30 (lifecycles.md L4b): this call continues a turn a restart interrupted
         // (attempt.ts continueFromTranscript), with the resume text to send if no worker holds it.
         __openclawContinuation?: { fallbackText?: string };
         // FORK 2026-10-02 (channel-reply): the run's normalized message channel ("webchat" for
         // Tinker, "whatsapp", ...). A chat-channel run gets its final message stamped below.
         __openclawMessageChannel?: string;
+        // FORK 2026-10-10 (turn-context.ts): where the system prompt's stable prefix ends; core counts it before the
+        // transport strips the cache-boundary marker.
+        __openclawStablePromptChars?: number;
       };
       const runId = pipedOptions.__openclawRunId;
       const continuation = pipedOptions.__openclawContinuation;
@@ -990,13 +1015,35 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // (mirrors the other __openclaw* fields). The cast is untyped, so this
       // name must match the writer EXACTLY or it silently flatlines.
       const optionThinkLevel = pipedOptions.__openclawThinkLevel;
-      const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt, openclawSessionId);
+      // FORK 2026-10-09 (effort per turn): same untyped cast, same rule: these names must match
+      // core's writer (attempt.ts) exactly. Anything but a literal `true` is no ultracode.
+      const optionUltracode = pipedOptions.__openclawUltracode === true;
+      const optionThinkSource =
+        typeof pipedOptions.__openclawThinkSource === "string"
+          ? pipedOptions.__openclawThinkSource
+          : undefined;
+      // An adaptive-effort model (Claude 5.x, Fable, Opus 4.7+) runs the effort the worker applies
+      // on THIS turn (worker.ts applyTurnEffort), never a budget baked in at spawn.
+      const adaptiveEffort = isAdaptiveEffortModel(model.id);
+      const turnEffort = adaptiveEffort
+        ? claudeEffortForTurn(optionThinkLevel, optionUltracode)
+        : undefined;
+      // FORK 2026-10-10 (turn-context.ts): the worker is keyed and spawned on the stable prefix; the volatile section
+      // (channel, sender, runtime) rides in front of each prompt, so a warm worker is reused across turns and still
+      // reads this turn's metadata.
+      const workerPrompt = splitWorkerSystemPrompt(
+        context.systemPrompt,
+        pipedOptions.__openclawStablePromptChars,
+        { subagent: (openclawSessionKey ?? "").includes(":subagent:") },
+      );
+      const sessionKey = deriveSessionKey(opts.sessionKey, workerPrompt.stable, openclawSessionId);
       // FORK 2026-06-11: per-call EFFORT truth-tuple stream. Computed
       // server-side so it reports the same facts at EVERY UI level (incl
       // Auto), independent of whether the client requested thinking. The
-      // configured budget mirrors worker.ts:628-630 — the actual
+      // configured budget mirrors worker.ts start() — the actual
       // MAX_THINKING_TOKENS the worker pins for this run (undefined for
-      // off/unset → reported as 0). `hadRealThinking` distinguishes a genuine
+      // off/unset → reported as 0; always 0 on an adaptive-effort model, which
+      // gets an `effort` instead). `hadRealThinking` distinguishes a genuine
       // reasoning stream from the lone "[redacted reasoning]" placeholder
       // (≤18 chars) pushed by the redacted_thinking arm.
       let lastEffortEmitAt = 0;
@@ -1020,11 +1067,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // the worker's own pinned level so the event never self-reports a bare "off"
         // when a concrete level was applied. Without this the bridge emitted "" and
         // eeg-trace re-derived the column from thinkingChars (the bogus weave).
-        const effectiveThinkLevel = optionThinkLevel ?? worker.thinkLevel;
-        const configuredBudget = thinkLevelToMaxThinkingTokens(
-          effectiveThinkLevel,
-          maxOutputTokensFor(model.id),
-        );
+        // FORK 2026-10-09 (effort per turn): the worker-level fallback is for older models only.
+        // An adaptive-effort worker runs this turn's own level or, with none, the host's effort,
+        // never the level it was spawned with, so it reports the turn's level and a 0 budget.
+        const effectiveThinkLevel = adaptiveEffort
+          ? optionThinkLevel
+          : (optionThinkLevel ?? worker.thinkLevel);
+        const configuredBudget = adaptiveEffort
+          ? undefined
+          : thinkLevelToMaxThinkingTokens(effectiveThinkLevel, maxOutputTokensFor(model.id));
         emitAgentEvent({
           runId,
           sessionKey: openclawSessionKey,
@@ -1036,6 +1087,12 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             model: model.id,
             thinkLevel: effectiveThinkLevel ?? "off",
             configuredBudget: configuredBudget ?? 0,
+            // FORK 2026-10-09 (effort per turn): the Claude Code effort this turn asked the worker
+            // to apply ("" = none named: the host's own, or an older model on its budget),
+            // ultracode on top of it, and who chose the level (pin | thalamus | allocator | default).
+            effort: turnEffort?.effortLevel ?? "",
+            ultracode: turnEffort?.ultracode ?? false,
+            thinkSource: optionThinkSource ?? "",
             thinkingChars: accumulatedThinking.length,
             hadRealThinking:
               accumulatedThinking.length > 0 &&
@@ -1218,16 +1275,50 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // any turn picks one, or this turn would spawn a second claude on the same CLI session.
       // Once per process; afterwards an already-settled promise.
       await ensureAdoptionScan();
+      // FORK 2026-10-09 (fork-parent.ts): a `fractal-<P>` run on a session with no conversation of
+      // its own starts as a copy of run P's CLI session, so a background Fractal sees the whole turn.
+      // Only Fractal runs look; a lookup that fails starts the run unforked, it never costs the turn.
+      let fork: ForkSource | null = null;
+      if (forkParentRunId(runId)) {
+        try {
+          const hasOwnConversation =
+            pool.get(sessionKey) !== undefined ||
+            getResumeSessionId(sessionKey) !== undefined ||
+            (openclawSessionId !== undefined &&
+              getLatestResumeSessionIdByOpenclawSessionId(openclawSessionId) !== undefined);
+          fork = forkSourceFor({
+            runId,
+            hasOwnConversation,
+            claudeSessionOf: (key) => pool.get(key)?.sessionId ?? getResumeSessionId(key),
+          });
+          if (fork) {
+            log.info(
+              `[fork-parent] run ${runId} forks run ${fork.parentRunId}'s CLI session ${fork.resumeSessionId} (worker ${fork.parentWorkerKey}) sessionKey=${sessionKey}`,
+            );
+          } else if (!hasOwnConversation) {
+            log.warn(
+              `[fork-parent] run ${runId} found no CLI session to fork (parent run unknown to this gateway); starting fresh sessionKey=${sessionKey}`,
+            );
+          }
+        } catch (err) {
+          log.warn(
+            `[fork-parent] lookup failed for run ${runId}; starting unforked: ${formatErrorMessage(err)}`,
+          );
+        }
+      }
       const worker = pool.getOrCreate({
         sessionKey,
         binary: opts.binary,
         cwd,
-        systemPromptAppend: context.systemPrompt,
+        systemPromptAppend: workerPrompt.stable,
         disallowedTools,
         model: model.id,
         // FORK 2026-06-11: thread the per-run think level into the worker so
         // the spawned Claude Code worker can apply the requested reasoning
         // budget for this run (WorkerSpawnParams now accepts thinkLevel).
+        // FORK 2026-10-09: that spawn-time budget is for older models; an
+        // adaptive-effort worker takes the level per turn from send() below,
+        // and the pool no longer respawns it when the level changes.
         thinkLevel: optionThinkLevel,
         // FORK 2026-05-10: thread the openclaw agent sessionId through so
         // session-map can index by it for the across-restart resume path.
@@ -1236,7 +1327,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // (`agent:main:main`) so the worker can export it as TC_SESSION_KEY
         // for the jarvis voice gate + chat.inject routing (see worker.ts).
         openclawSessionKey,
+        ...(fork ? { resumeSessionId: fork.resumeSessionId, forkSession: true } : {}),
+        ...(opts.fractalGuard ? { fractalGuard: opts.fractalGuard } : {}),
       });
+      noteRunWorker(runId, sessionKey);
       // FORK 2026-09-30 (lifecycles.md L4b): the worker still holds the turn a restart froze
       // (adopted at boot, file transport). This run takes it instead of starting a new one.
       const resumingTurn = worker.hasPendingTurn?.() === true;
@@ -1592,6 +1686,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // instead of overshooting by up to a full 45s window. The original 45s
       // silent-WARN still uses lastLineAt so its cadence is unchanged.
       let fastFailFired = false;
+      // FORK 2026-10-09: the init window counts only time the worker could run. While a restart
+      // drain holds the unit frozen the clock restarts on every tick, so a turn the drain releases
+      // in this process (drainRelease) still gets its full window after the thaw.
+      let initClockAt = turnStartedAt;
       const watchdog = setInterval(() => {
         const silentMs = Date.now() - lastLineAt;
         if (silentMs > 45_000) {
@@ -1605,11 +1703,16 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // safe — see shouldFastFailInitStall. Killing the worker reuses the
         // proven SIGTERM teardown so `worker.send` rejects and the existing catch
         // surfaces a normal timeout-style error envelope.
-        const elapsedMs = Date.now() - turnStartedAt;
+        const held = worker.isHeld?.() === true;
+        if (held) {
+          initClockAt = Date.now();
+        }
+        const elapsedMs = Date.now() - initClockAt;
         if (
           !fastFailFired &&
           shouldFastFailInitStall({
             elapsedMs,
+            held,
             textLen: accumulatedText.length,
             thinkingLen: accumulatedThinking.length,
             linesSeen,
@@ -2134,11 +2237,17 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             }
           } else {
             finalLine = await worker.send({
-              userText,
+              userText:
+                (cliCommand === null ? formatTurnContext(workerPrompt.volatile) : "") + userText,
               signal: options?.signal,
               // FORK 2026-10-01: recorded with the turn in meta.json, so that a restart's next
               // gateway can name the run this turn belonged to (resumedTurnFields above).
               ...(runId ? { runId } : {}),
+              // FORK 2026-10-09 (effort per turn): an adaptive-effort worker applies the turn's
+              // level and ultracode on its live process before the prompt (applyTurnEffort).
+              thinkLevel: optionThinkLevel,
+              ultracode: optionUltracode,
+              ...(optionThinkSource ? { thinkSource: optionThinkSource } : {}),
             });
           }
         } finally {
@@ -2175,6 +2284,39 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // the terminal tuple lands on success AND on error/max-turns terminal
         // paths (the is_error arm returns early without reaching turn end).
         emitEffort(true, { output_tokens: usage.output, num_turns: result.num_turns });
+        // FORK 2026-10-09 (Fractal v2 M4, fractal-ledger.ts): a `fractal-<P>` run's result line
+        // writes its ledger row: what it wrote and committed, and a check of every path and commit
+        // its text claims (131 of 536 failed claims in the 10-09 census were never on disk). Here,
+        // before the is_error return and before `done`, so the turn-end drain has not yet cleared
+        // the run's tool events. Every other run skips it; the hook records in the background and
+        // nothing it does, sync or async, reaches the turn.
+        if (forkParentRunId(runId)) {
+          try {
+            scheduleFractalLedger({
+              runId,
+              sessionKey: openclawSessionKey,
+              model: model.id,
+              prompt: rawUserText,
+              finalText:
+                typeof result.result === "string" && result.result.trim()
+                  ? result.result
+                  : accumulatedText,
+              usage: {
+                cacheRead: usage.cacheRead,
+                cacheWrite: usage.cacheWrite,
+                input: usage.input,
+                output: usage.output,
+              },
+              durationMs:
+                typeof result.duration_ms === "number" && result.duration_ms > 0
+                  ? result.duration_ms
+                  : Date.now() - turnStartedAt,
+              cwd: worker.cwd,
+            });
+          } catch (err) {
+            log.warn(`[fractal-ledger] run ${runId}: hook failed (${formatErrorMessage(err)})`);
+          }
+        }
         // FORK 2026-05-29 (truncation diagnostic): if the model stopped because
         // it hit the output-token ceiling, the answer is genuinely cut mid-
         // generation — distinct from a UI/display truncation. Surface it loudly
@@ -2232,6 +2374,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           });
           accumulatedText = `__ERR_ENV__:${JSON.stringify(envelope)}`;
           accumulatedThinking = "";
+          // FORK 2026-10-09: a usage limit that names its reset arms one wake for this Tinker chat
+          // at reset + 2 min (limit-resume.ts). This arm ends the turn as a normal `done`, so the
+          // runner's own rate-limit retry never sees it; without this, the chat waited for a
+          // typed "keep going" (three chats on 2026-10-09, 22 min after the 20:30 reset).
+          scheduleLimitResume({ sessionKey: openclawSessionKey, raw: rawErr });
           const finalMessage: AssistantMessage = {
             role: "assistant",
             content: [{ type: "text", text: accumulatedText }],
@@ -2435,7 +2582,41 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       }
     };
 
-    queueMicrotask(() => void run());
+    // FORK 2026-10-09 — run() picks its worker (pool, adoption scan, spawn, the Fractal fork
+    // lookup) before its try/finally, and `void run()` dropped a rejection there: the stream never
+    // ended and the turn hung until the gateway's timeout (stream.setup-throw.test.ts). A rejection
+    // now ends the turn with the same error envelope a failed turn carries.
+    queueMicrotask(() => {
+      run().catch((err: unknown) => {
+        const rawErr = formatErrorMessage(err);
+        log.error(`claude-code turn failed before it started: ${rawErr}`);
+        const envelope = buildErrorEnvelope({
+          raw: rawErr,
+          sessionKey: (options as { __openclawSessionKey?: string } | undefined)
+            ?.__openclawSessionKey,
+          llm: { provider: model.provider, model: model.id },
+        });
+        try {
+          stream.push({
+            type: "done",
+            reason: "stop",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: `__ERR_ENV__:${JSON.stringify(envelope)}` }],
+              stopReason: "stop",
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: buildUsage(undefined),
+              timestamp: Date.now(),
+            },
+          });
+          stream.end();
+        } catch (pushErr) {
+          log.error(`could not end the failed turn's stream: ${formatErrorMessage(pushErr)}`);
+        }
+      });
+    });
     return stream;
   };
 }

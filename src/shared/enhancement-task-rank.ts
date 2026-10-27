@@ -209,6 +209,6 @@ export function seedableCards(r: RankResult): string[] {
   return r.use.filter((e) => e.source === "jev" && e.score >= SEED_CONFIDENCE).map((e) => e.cardId);
 }
 
-/** The slug a recipe card id (`recipe:acme-coding`) names, or undefined for a card that is not a recipe. */
+/** The slug a recipe card id (`recipe:orbis-coding`) names, or undefined for a card that is not a recipe. */
 export const recipeSlugOf = (cardId: string): string | undefined =>
   cardId.startsWith("recipe:") ? cardId.slice("recipe:".length) : undefined;

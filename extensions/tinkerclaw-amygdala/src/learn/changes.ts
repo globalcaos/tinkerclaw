@@ -2,10 +2,12 @@
  * The change engine (design doc §7.3 items 3-5, C11-C13): every change to a question is replayed two-sided against the
  * must-catch cases and the controls, gated by the always-trust policy, applied, and undoable exactly.
  *
- * Policy (the principal's): a tightening applies at once; a clean loosening applies itself under caps and shows up
- * with Undo; an EXCEPTIONAL loosening (danger 3, data leaving, external effect class) is the only kind that becomes a
- * card (`pending`); hard rules are code and are never proposable. Retune and the nightly lane reach questions only
- * through `propose`.
+ * Policy (the principal's): a tightening applies at once; an EXCEPTIONAL loosening (danger 3, data leaving, external
+ * effect class) becomes a card (`pending`), and so does any loosening proposed `ownerOnly` (the reviewers' evidence,
+ * 2026-10-25) and, with `autoLoosen` off (the default since 2026-10-25, "only the owner loosens a rule"), every other
+ * loosening. With `autoLoosen` on, a clean loosening applies itself under caps and shows up with Undo. A loosening that
+ * waits only because `autoLoosen` is off returns the card already open on its scope, if any. Hard rules are code and are
+ * never proposable. Retune and the nightly lane reach questions only through `propose`.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { loadReplayCorpus } from "../cases.js";
@@ -344,6 +346,14 @@ export class ChangeEngine implements ChangeEngineApi {
     );
   }
 
+  /** The card already waiting for the owner on this question and scope, if any. */
+  private openCard(p: Proposal): Change | undefined {
+    return this.o.store.listChanges({ questionId: p.questionId, status: "pending" }).find((c) => {
+      const cp = (c.replay as StoredReplay).proposal;
+      return isProposal(cp) && scopeOf(cp) === scopeOf(p);
+    });
+  }
+
   private blocked(p: Proposal): boolean {
     const now = this.now();
     for (const c of this.o.store.listChanges({ questionId: p.questionId })) {
@@ -358,7 +368,7 @@ export class ChangeEngine implements ChangeEngineApi {
 
   async propose(
     p: Proposal,
-    o: { proposedBy?: Change["proposedBy"] } = {},
+    o: { proposedBy?: Change["proposedBy"]; ownerOnly?: boolean } = {},
   ): Promise<ChangeOutcome> {
     const by = o.proposedBy ?? "code";
     const { store, book } = this.o;
@@ -396,7 +406,11 @@ export class ChangeEngine implements ChangeEngineApi {
     // 5. Loosening (mixed counts as loosening).
     if (this.blocked(p)) return { outcome: "rejected", change: null, reason: "blocked" };
     const now = this.now();
-    if (a.exceptional) {
+    // A loosening the owner must approve waits as a card: exceptional, ownerOnly, or any one with autoLoosen off.
+    if (a.exceptional || o.ownerOnly || !this.o.autoLoosen) {
+      // Waiting only because autoLoosen is off: one card per scope, since retune proposes it again every night.
+      const open = a.exceptional || o.ownerOnly ? undefined : this.openCard(p);
+      if (open) return { outcome: "pending", change: open };
       const change = this.makeChange(p, r, "pending", true, by);
       store.saveChange(change);
       if (now - this.lastPendingEvent >= DAY_MS) {
@@ -405,7 +419,6 @@ export class ChangeEngine implements ChangeEngineApi {
       }
       return { outcome: "pending", change };
     }
-    if (!this.o.autoLoosen) return { outcome: "deferred", reason: "auto-loosen-off" };
     const clean = (sinceTs: number) =>
       store
         .listChanges({ status: "applied", sinceTs })

@@ -14,6 +14,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
+import { emitJConsolidationRun } from "../../infra/events/j-rows.js";
 import { createArtifactStore } from "./artifact-store.js";
 import type { ConsolidationState } from "./episode-detection.js";
 import { createEventStore } from "./event-store.js";
@@ -65,6 +66,8 @@ async function main() {
   const artifactStore = createArtifactStore({ baseDir: ENGRAM_DIR });
   let totalEpisodes = 0;
   let totalEvents = 0;
+  let totalSkills = 0;
+  const cycleStartedAt = Date.now();
 
   for (const sessionKey of sessions) {
     const store = createEventStore({ baseDir: ENGRAM_DIR, sessionKey });
@@ -82,7 +85,10 @@ async function main() {
       continue;
     }
 
-    const result = await runSleepConsolidation(store, artifactStore, sessionState);
+    // This CLI owns the cycle: one j.consolidation.run row after the loop, not one per store.
+    const result = await runSleepConsolidation(store, artifactStore, sessionState, {
+      emitCycleRow: false,
+    });
 
     if (result.newEpisodes.length > 0) {
       console.log(
@@ -96,9 +102,17 @@ async function main() {
     allState[sessionKey] = sessionState;
     totalEpisodes += result.newEpisodes.length;
     totalEvents += result.eventsProcessed;
+    totalSkills += result.skillsExtracted ?? 0;
   }
 
   if (!dryRun) {
+    emitJConsolidationRun({
+      durMs: Date.now() - cycleStartedAt,
+      eventsScanned: totalEvents,
+      skillsExtracted: totalSkills,
+      skillsDeprecated: 0,
+      sessionKey: null,
+    });
     saveState(allState);
     console.log(`\nTotal: ${totalEpisodes} episodes from ${totalEvents} events.`);
   }

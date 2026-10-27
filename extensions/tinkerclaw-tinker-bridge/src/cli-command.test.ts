@@ -89,6 +89,10 @@ const STAMP = "[Fri 2026-09-25 10:00 GMT+2] ";
 const UI_FRACTAL_SUFFIX =
   "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it). This is the doctrine that governs it:\n\n" +
   "# 🌿 FRACTAL\n\nYou are the reflection layer.";
+// FORK 2026-10-09 (Fractal v2, charter C4) — the same injection as new prompts write it: a neutral
+// marker opens the doctrine in place of "After your reply…"; old transcripts keep the literal above.
+const UI_FRACTAL_MARKER_SUFFIX =
+  "\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n# 🌿 FRACTAL\n\nYou are the reflection layer.";
 // The bridge's own chat-row contract, as stream.ts appends it (opening lines).
 const CHAT_ROW_SUFFIX = [
   "",
@@ -164,6 +168,12 @@ describe("extractCliCommand (A6 (i), pure)", () => {
     ["owner instructions kept", "/compact keep the ORCA plan", "/compact keep the ORCA plan"],
     ["the gateway's stamp", `${STAMP}/compact`, "/compact"],
     ["the UI's fractal injection", `/compact${UI_FRACTAL_SUFFIX}`, "/compact"],
+    ["the UI's fractal injection, new marker", `/compact${UI_FRACTAL_MARKER_SUFFIX}`, "/compact"],
+    [
+      "all three wrappers, new marker",
+      `${STAMP}/compact keep the ORCA plan${UI_FRACTAL_MARKER_SUFFIX}${CHAT_ROW_SUFFIX}`,
+      "/compact keep the ORCA plan",
+    ],
     ["the bridge's chat-row contract", `/compact${CHAT_ROW_SUFFIX}`, "/compact"],
     [
       "all three wrappers: instructions kept, doctrine dropped",
@@ -205,6 +215,10 @@ describe("extractCliCommand (A6 (i), pure)", () => {
     [
       "an appended block it does not recognise",
       `/compact\n\n---\n\nalso remember the auth work${UI_FRACTAL_SUFFIX}`,
+    ],
+    [
+      "an unrecognised block before the new marker",
+      `/compact\n\n---\n\nalso remember the auth work${UI_FRACTAL_MARKER_SUFFIX}`,
     ],
     ["empty", ""],
     ["not a string", undefined],

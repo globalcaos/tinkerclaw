@@ -37,6 +37,8 @@ const FIELDS = [
   "candidates",
   "scheduledJobs",
   "contextCounts",
+  "turnKind",
+  "ownedTargets",
 ];
 const ACTING_KINDS = ["hold", "proof", "ask", "send-back", "note"];
 const RESPONSE_KINDS = [...ACTING_KINDS, "refusal", "proceed"];

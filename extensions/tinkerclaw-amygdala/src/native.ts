@@ -74,16 +74,44 @@ async function toBlock(runtime: NativeRuntime, hook: HookAction): Promise<Block 
   }
 }
 
+/** A shadow decision still running after this long is logged: it no longer holds the call, so it would hang unseen. */
+export const SLOW_SHADOW_DECIDE_MS = 60_000;
+
+function recordInBackground(decision: Promise<unknown>, session: string, tool: unknown): void {
+  const slow = setTimeout(() => {
+    console.warn(
+      `[amygdala] shadow pre-tool decision still running after ${SLOW_SHADOW_DECIDE_MS / 1000} s (session=${session} tool=${String(tool)})`,
+    );
+  }, SLOW_SHADOW_DECIDE_MS);
+  slow.unref?.();
+  decision.then(
+    () => clearTimeout(slow),
+    (err) => {
+      clearTimeout(slow);
+      console.error("[amygdala] native handler failed", err);
+    },
+  );
+}
+
 export function registerNativeHandlers(api: OpenClawPluginApi, runtime: NativeRuntime): void {
   api.on("before_tool_call", async (event, ctx) => {
     if (internal(ctx)) return undefined;
+    const input = {
+      session_id: sessionOf(ctx),
+      tool_name: event.toolName,
+      tool_input: event.params,
+      tool_use_id: event.toolCallId,
+    };
+    // FORK 2026-10-22 (JarvisPi): in shadow mode the decision never changes the call (toBlock returns nothing),
+    // yet the call waited for it. Twice in one chat the decision never came back, and the tool call hung until
+    // the run timeout (three hours), then until the host's 10-minute hook bound named this plugin. The
+    // decision is still recorded, in the background; the call goes on at once.
+    if (runtime.mode === "shadow") {
+      recordInBackground(runtime.decide("pre-tool", input), input.session_id, input.tool_name);
+      return undefined;
+    }
     try {
-      const r = await runtime.decide("pre-tool", {
-        session_id: sessionOf(ctx),
-        tool_name: event.toolName,
-        tool_input: event.params,
-        tool_use_id: event.toolCallId,
-      });
+      const r = await runtime.decide("pre-tool", input);
       return await toBlock(runtime, r.hook);
     } catch (err) {
       console.error("[amygdala] native handler failed", err);

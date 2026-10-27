@@ -217,3 +217,22 @@ describe("envelope hygiene", () => {
     expect(env.details?.killCause).toBe("user-abort");
   });
 });
+
+describe("provider safeguard refusal (2026-10-16)", () => {
+  // Real producer string, gateway journal 2026-10-16 10:39 and 10:41.
+  const raw =
+    "API Error: Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup). This sometimes happens with safe, normal conversations. Claude Code can't respond to this message with Opus 5.5.";
+
+  it("classifies as provider_safeguard, not provider_generic", () => {
+    expect(classifyRawErrorMessage(raw)).toBe("provider_safeguard");
+  });
+
+  it("builds a fatal shield card that names the provider and never claims a retry", () => {
+    const env = buildErrorEnvelope({ raw });
+    expect(env.category).toBe("safeguard");
+    expect(env.fatal).toBe(true);
+    expect(env.headline).toMatch(/Anthropic's safety filter/);
+    expect(env.explanation).toMatch(/not Amygdala/);
+    expect(env.explanation).not.toMatch(/I'm retrying/);
+  });
+});

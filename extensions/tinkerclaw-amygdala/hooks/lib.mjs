@@ -155,6 +155,9 @@ export function evalFloor(policy, toolName, toolInput) {
     const allText = `${name} ${safeStringify(toolInput)}`;
     for (const r of policy.rules) {
       if (!r || !r.source || !r.enforce) continue;
+      // Owner-intent rules (DELETE_UNREQUESTED, 2026-10-13) need the owner's latest words,
+      // read by the learned-intuition pre-execution hook; this floor cannot see them.
+      if (r.ownerIntent) continue;
       const text = r.scope === "all" ? allText : execText;
       if (!text) continue;
       let re;
@@ -219,6 +222,12 @@ const EVENT_NAME = {
 const BUDGET_MS = { prompt: 2000, "pre-tool": 3000, "post-tool": 2000, stop: 5000 };
 /** Shadow hooks hang up after this long; the gateway keeps processing the request it already received. */
 const SHADOW_WAIT_MS = 150;
+/**
+ * In shadow the Stop hook waits this long for one thing only: a send-back whose rule EARNED the right to act from its
+ * reviews (src/earned.ts, 2026-10-15). Jev answers within 1 s by the owner's rule; 200 ms more for the loopback. A
+ * slower answer is recorded and changes nothing, as before.
+ */
+const STOP_SHADOW_WAIT_MS = 1200;
 
 /**
  * The whole body of one hook script (design doc section 6, C19, C20). Floor first (pre-tool only, local, no gateway),
@@ -272,6 +281,19 @@ export async function runSeam(seam) {
     },
     BUDGET_MS[seam],
   );
+
+  if (shadow && seam === "stop") {
+    const res = await Promise.race([call, new Promise((r) => setTimeout(r, STOP_SHADOW_WAIT_MS))]);
+    const action = res && res.status === 200 && res.json && res.json.hook;
+    if (action && action.kind === "block" && typeof action.reason === "string") {
+      row("block", { earned: true });
+      emitBlock(action.reason);
+      return;
+    }
+    if (res && res.status !== 200) row("refused", { status: res.status });
+    else row("shadow");
+    return;
+  }
 
   if (shadow) {
     // A family the gateway enforces while the rest is shadow (personality, 2026-10-03) leaves its notes for the next

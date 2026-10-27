@@ -687,7 +687,11 @@ describe("app.ts wires the CLI route (source check; CONTROL: fails on the parent
     const bare = body.indexOf("if (isCompactCommand(userText)) {\n    return trimmed;\n  }");
     expect(trimmed).toBeGreaterThan(-1);
     expect(bare).toBeGreaterThan(trimmed);
-    expect(body.indexOf("FRACTAL_DOCTRINE")).toBeGreaterThan(bare);
+    // FORK 2026-10-08 — no doctrine rides a prompt any more: Fractal is its own turn, armed by
+    // wantsFractalTurn, which keeps /compact (and /new) out of it, so the command still goes bare.
+    expect(body).not.toContain("FRACTAL_DOCTRINE");
+    const wants = slice("function wantsFractalTurn(", "\n}\n");
+    expect(wants).toContain("!isCompactCommand(userText)");
   });
 
   it("the button's send leaves the composer draft alone", () => {

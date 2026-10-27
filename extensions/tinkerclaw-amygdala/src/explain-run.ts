@@ -53,7 +53,9 @@ export function embeddedExplainRun(api: EmbeddedRunApi, timeoutMs: number): RunO
     try {
       const result = await api.runEmbeddedPiAgent({
         sessionId: runId,
-        sessionKey: EXPLAIN_SESSION_KEY,
+        // One session per run: a shared key put every review on one serial lane, where they waited ~150 s and then
+        // hit their own clock (all failing "timeout", 2026-10-13). Still `temp:*`, so Jev and restart recovery skip it.
+        sessionKey: `${EXPLAIN_SESSION_KEY}:${runId}`,
         agentId,
         sessionFile: join(dir, "run.jsonl"),
         workspaceDir: api.resolveAgentWorkspaceDir(cfg, agentId),
@@ -72,6 +74,11 @@ export function embeddedExplainRun(api: EmbeddedRunApi, timeoutMs: number): RunO
         runId,
         abortSignal: signal,
         cleanupBundleMcpOnRunEnd: true,
+        // 2026-10-15 (bug-log `pre-reply-stall-invisible`): beside the shared `sessions` lane, never in it. Chat turns
+        // wait for that lane's slots, and ~100 explanations in 10 minutes made them wait 17-55 s. The explainer and
+        // the reviewer already bound themselves (2 + 1 at a time); a lane of their own would put the 2026-10-13 queue
+        // wait back on their 180 s clock.
+        enqueue: (task: () => Promise<unknown>) => task(),
       });
       return firstText(result);
     } finally {

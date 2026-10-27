@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SessionTracker } from "../src/session-tracker.js";
 
@@ -28,6 +31,22 @@ describe("SessionTracker", () => {
     expect(t.sessionContext("tab").request).toBeUndefined();
   });
 
+  // 2026-10-09 (J-series plan 1.1): the shared cleaner knows every turn the gateway, a job or an agent writes, not only
+  // `⟦AGENT:…⟧`. A restart resume or a 🤖 self-wake is not the owner's new request.
+  it("a gateway resume and a 🤖 self-wake keep the owner's last request", () => {
+    const t = new SessionTracker();
+    t.notePrompt("tab", "[Fri 2026-10-09 11:00 GMT+2] give Alex a working token");
+    t.setRequest("tab", "give Alex a working token");
+    for (const wake of [
+      "[Fri 2026-10-09 11:07 GMT+2] [System] The gateway restarted and interrupted your previous turn. Resume it.",
+      "[Wed 2026-09-30 06:30 GMT+2] 🤖 [longjob] second model-rank-refresh run ended (exit 0 = ok, 1 = error).",
+      "[Fri 2026-10-09 08:33 GMT+2] <<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\nOpenClaw runtime context (internal):",
+    ]) {
+      t.notePrompt("tab", wake);
+      expect(t.sessionContext("tab").request).toBe("give Alex a working token");
+    }
+  });
+
   it("with no request from the owner yet, an agent's prompt stays the request (a subagent's task)", () => {
     const t = new SessionTracker();
     t.notePrompt("sub", "[Day 2026-09-29 17:45 GMT+2] ⟦AGENT:main⟧ please fix it");
@@ -35,6 +54,46 @@ describe("SessionTracker", () => {
     t.setRequest("sub", "please fix it");
     t.notePrompt("sub", "⟦AGENT:main⟧ now the tests");
     expect(t.sessionContext("sub").request).toBeUndefined();
+  });
+
+  it("a file a call creates is the agent's own; one that existed is only edited (2026-10-25)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amy-owned-"));
+    try {
+      const old = join(dir, "old.txt");
+      writeFileSync(old, "x");
+      const t = new SessionTracker({ homeDir: dir });
+      const call = (id: string, tool: string, input: Record<string, unknown>, ok = true) => {
+        const hook = { tool_name: tool, tool_input: input, tool_use_id: id, cwd: dir };
+        t.notePreTool("tab", hook);
+        if (ok) writeFileSync(join(dir, "made.txt"), "y");
+        t.recordToolResult("tab", {
+          ...hook,
+          tool_response: ok ? { stdout: "" } : { is_error: true, error: "no" },
+        });
+      };
+      call("1", "Write", { file_path: join(dir, "made.txt") });
+      call("2", "Edit", { file_path: old });
+      call("3", "Bash", { command: "echo z > never.txt" }, false);
+      call("4", "Edit", { file_path: join(dir, "made.txt") });
+      const c = t.sessionContext("tab");
+      expect(c.createdPaths).toEqual([join(dir, "made.txt")]);
+      expect(c.editedPaths).toEqual([old]);
+      expect(c.scratchDirs).toEqual(["/tmp/jarvis"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("remembers who started the turn for the later seams (2026-10-25)", () => {
+    const t = new SessionTracker();
+    expect(t.sessionContext("tab").turnKind).toBeUndefined();
+    t.notePrompt("tab", "[Sat 2026-10-25 00:10 GMT+2] what changed?");
+    expect(t.sessionContext("tab").turnKind).toBe("owner");
+    t.notePrompt("tab", "⟦AGENT:🌿 Fractal · prompt 1⟧ reflect");
+    expect(t.sessionContext("tab").turnKind).toBe("reflection");
+    t.notePrompt("tab", "⟦AGENT:⏳ Longjob · x⟧ done");
+    expect(t.sessionContext("tab").turnKind).toBe("agent");
+    expect(t.sessionContext("agent:main:fractal:z").turnKind).toBe("reflection");
   });
 
   it("a record entry carries the result's shape, never its text: lines and failure (2026-10-03)", () => {

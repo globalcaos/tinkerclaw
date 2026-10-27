@@ -1,0 +1,148 @@
+/* The ask-session card (FORK 2026-10-21, the architect: "a purple box, following our theme a bit … all still with the purpled
+   theme"). An agent woke a past Claude Code session and asked it one question: the card says which session, what was
+   asked and what it answered; opened, it holds that session's own thinking and tool calls. The purple is --purple, the
+   Jarvis voice line's colour; the frame is the woody surface the feed already uses, so the card reads on the dark and
+   the cream theme alike through --text/--muted/--surface. Tool rows inside keep the feed's .tool-row/.tool-detail
+   rules and only take a purple tint. */
+.ask-card {
+  /* One knob for the card's colour (2026-10-21: the architect wants it apart from the voice purple, between pink
+     and purple, never the error red). */
+  --ask: #a847c6; /* Amethyst, the architect 2026-10-21, picked from the palette-gap candidates */
+  margin: 6px 0 8px;
+  max-width: 760px;
+  border: 1px solid color-mix(in srgb, var(--ask) 55%, var(--border));
+  border-left: 4px solid var(--ask);
+  border-radius: 4px 10px 10px 4px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ask) 16%, var(--surface)) 0%,
+    color-mix(in srgb, var(--ask) 8%, var(--surface)) 100%
+  );
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.45;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.ask-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 10px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.ask-card-head:hover,
+.ask-card-toggle:hover {
+  background: color-mix(in srgb, var(--ask) 14%, transparent);
+}
+.ask-card-icon {
+  font-size: 14px;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--ask) 60%, transparent));
+}
+.ask-card-kind {
+  color: var(--ask);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ask-card-who {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ask-card-meta,
+.ask-card-status {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.ask-card-failed .ask-card-status,
+.ask-card-refused .ask-card-status {
+  color: var(--red);
+}
+.ask-card-running .ask-card-status {
+  font-style: italic;
+}
+.ask-card-chev {
+  margin-left: auto;
+  color: var(--ask);
+}
+.ask-card-field {
+  display: flex;
+  gap: 8px;
+  padding: 2px 10px 4px;
+}
+.ask-card-label {
+  flex: none;
+  width: 52px;
+  padding-top: 2px;
+  color: var(--ask);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ask-card-q {
+  min-width: 0;
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ask-card-a,
+.ask-card-note {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.ask-card-a > :first-child {
+  margin-top: 0;
+}
+.ask-card-a > :last-child {
+  margin-bottom: 0;
+}
+.ask-card-note {
+  color: var(--muted);
+}
+.ask-card-toggle {
+  padding: 3px 10px 5px;
+  border-top: 1px dashed color-mix(in srgb, var(--ask) 35%, transparent);
+  color: var(--ask);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+.ask-card-trail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--ask) 35%, transparent);
+  background: color-mix(in srgb, var(--ask) 6%, var(--bg));
+}
+.ask-trail-thinking,
+.ask-trail-text {
+  padding: 3px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--ask) 60%, transparent);
+  overflow-wrap: anywhere;
+}
+.ask-trail-thinking {
+  color: var(--muted);
+  font-style: italic;
+}
+.ask-trail-thinking .thinking-label {
+  color: var(--ask);
+}
+.ask-card-trail .tool-row:hover {
+  background: color-mix(in srgb, var(--ask) 16%, var(--surface2));
+}
+.ask-card-trail .tool-detail {
+  border-color: color-mix(in srgb, var(--ask) 45%, var(--border));
+}
+.ask-card-empty {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11.5px;
+}

@@ -132,6 +132,17 @@ function unwrapErrorCause(err: unknown): unknown {
   return err;
 }
 
+/**
+ * The hook runner's fail-closed rethrow names the plugin in its own message ("[hooks]
+ * before_tool_call handler from <plugin> failed: …") and keeps the original error as the cause.
+ * Logging only the cause dropped the plugin: a handler that timed out would read "timed out after
+ * 600000ms" with no word on which one never answered.
+ */
+function describeHookFailure(err: unknown): string {
+  const cause = unwrapErrorCause(err);
+  return err instanceof Error && cause !== err ? err.message : String(cause);
+}
+
 async function requestPluginToolApproval(params: {
   approval: PluginApprovalRequest;
   toolName: string;
@@ -558,8 +569,9 @@ export async function runBeforeToolCallHook(args: {
     return { blocked: false, params: policyAdjustedParams };
   } catch (err) {
     const toolCallId = args.toolCallId ? ` toolCallId=${args.toolCallId}` : "";
-    const cause = unwrapErrorCause(err);
-    log.error(`before_tool_call hook failed: tool=${toolName}${toolCallId} error=${String(cause)}`);
+    log.error(
+      `before_tool_call hook failed: tool=${toolName}${toolCallId} error=${describeHookFailure(err)}`,
+    );
     return {
       blocked: true,
       kind: "failure",
@@ -721,6 +733,7 @@ export function consumeAdjustedParamsForToolCall(toolCallId: string, runId?: str
 export const __testing = {
   BEFORE_TOOL_CALL_WRAPPED,
   buildAdjustedParamsKey,
+  describeHookFailure,
   adjustedParamsByToolCallId,
   runBeforeToolCallHook,
   mergeParamsWithApprovalOverrides,

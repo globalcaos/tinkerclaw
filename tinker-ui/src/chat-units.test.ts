@@ -69,6 +69,31 @@ describe("buildChatUnits", () => {
     expect(group).not.toContain('data-uid="a2"');
   });
 
+  it("draws a folded group's ask-session cards right under it, and none once the group is open", () => {
+    const seen: unknown[][] = [];
+    const askCardsInFold = (rows: readonly unknown[]) => {
+      seen.push([...rows]);
+      return `<div class="ask-card"></div>`;
+    };
+    const units = buildChatUnits(turn(), deps({ askCardsInFold }));
+    expect(units.map((u) => u.key)).toEqual([
+      "u:u1",
+      "g:u:a1",
+      "ask:u:a1",
+      "u:a2",
+      THINKING_UNIT_KEY,
+    ]);
+    expect(units[2].html).toBe(`<div class="ask-card"></div>`);
+    expect(seen[0].map((r) => (r as Row)._uid)).toEqual(["a1", "r1"]);
+    const open = buildChatUnits(
+      turn(),
+      deps({ askCardsInFold, expandedTools: new Set(["rg-a1"]) }),
+    );
+    expect(open.map((u) => u.key)).not.toContain("ask:u:a1");
+    const none = buildChatUnits(turn(), deps({ askCardsInFold: () => "" }));
+    expect(none.map((u) => u.key)).toEqual(["u:u1", "g:u:a1", "u:a2", THINKING_UNIT_KEY]);
+  });
+
   it("renders a streaming run flat: one unit per row", () => {
     const rows = turn();
     rows[1]._temporary = true;
@@ -123,6 +148,34 @@ describe("buildChatUnits", () => {
       ["u1", "u2"],
       ["u2", null],
     ]);
+  });
+
+  // FORK 2026-10-09 — the background Fractal's card sits under the reply it reflects on, so a prompt
+  // he sent while it worked stays below it.
+  it("draws a prompt's Fractal card right after its run, above the amygdala and the next prompt", () => {
+    const rows = [...turn(), user("u2", "again"), say("a3", "second answer")];
+    const units = buildChatUnits(
+      rows,
+      deps({
+        fractalAfterRun: (prompt) =>
+          (prompt as Row | null)?._uid === "u1" ? `<details class="fractal-card"></details>` : "",
+        amygdalaAfterRun: (a) =>
+          (a as Row | null)?._uid === "u1" ? `<div class="amy"></div>` : "",
+      }),
+    );
+    expect(units.map((u) => u.key)).toEqual([
+      "u:u1",
+      "g:u:a1",
+      "u:a2",
+      "fractal:u:u1",
+      "amy:u:u1",
+      "u:u2",
+      "u:a3",
+      THINKING_UNIT_KEY,
+    ]);
+    expect(buildChatUnits(rows, deps({ fractalAfterRun: () => "" }))).toEqual(
+      buildChatUnits(rows, deps()),
+    );
   });
 
   it("puts the amygdala's tail above the thinking indicator, and nothing when both hooks are absent or empty", () => {

@@ -11,6 +11,7 @@ import { createArtifactStore } from "./artifact-store.js";
 import { createEventStore, estimateTokens } from "./event-store.js";
 import type { EventKind, MemoryEvent } from "./event-types.js";
 import { createAlwaysAddReconciler, type MemoryReconciler } from "./reconciliation.js";
+import { eventContentKey, storedEventKey } from "./store-content-index.js";
 
 /**
  * Minimal structural interface for conversation messages that can be bulk-ingested.
@@ -165,12 +166,43 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
   let ingestedCount = 0;
   let turnCounter = 0;
 
+  // FORK 2026-10-10 — idempotent by CONTENT, not by array position. The cursor above was the only
+  // guard against storing a message twice, and it lives in memory and counts positions: every new
+  // pipeline starts it at 0 (a gateway restart, a respawned worker, each compaction run's own
+  // runtime), and compaction shrinks the array it counts. Measured on the stores: up to 75% of a
+  // chat store and 40% of `compaction` were exact copies, written in bursts of 20-561 events in one
+  // second, i.e. a whole snapshot re-ingested by a fresh pipeline (attempt-hooks.ts after each turn,
+  // total-recall's before_compaction). So an event whose kind + content the store already holds is
+  // not written again; the stored one is returned. The index is built once from the store itself,
+  // so it survives restarts. Trade-off, on purpose: a message repeated word for word ("continue")
+  // is stored once — identical text carries no new information for retrieval.
+  let known: Map<string, MemoryEvent> | null = null;
+  const keyOf = eventContentKey;
+  function knownEvents(): Map<string, MemoryEvent> {
+    if (known === null) {
+      known = new Map();
+      for (const e of eventStore.readAll()) {
+        // An externalised tool result is keyed on its raw output (rawKey), not on its reference.
+        const k = storedEventKey(e);
+        if (!known.has(k)) {
+          known.set(k, e);
+        }
+      }
+    }
+    return known;
+  }
+
   function append(
     kind: EventKind,
     content: string,
     turnId: number,
     extraMetadata: Record<string, unknown> = {},
+    dedupeKey: string = keyOf(kind, content),
   ): MemoryEvent {
+    const already = knownEvents().get(dedupeKey);
+    if (already) {
+      return already;
+    }
     const draft: Omit<MemoryEvent, "id" | "timestamp"> = {
       turnId,
       sessionKey,
@@ -207,7 +239,9 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
       }
     }
 
-    return eventStore.append(draft);
+    const stored = eventStore.append(draft);
+    knownEvents().set(dedupeKey, stored);
+    return stored;
   }
 
   return {
@@ -228,6 +262,13 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
 
     ingestToolResult(name, output, turnId) {
       if (output.length > artifactThresholdBytes) {
+        // The reference's content carries a fresh artifactId every time, so it can never repeat:
+        // dedupe on the raw output instead, kept in metadata.rawKey so a later pipeline knows it.
+        const rawKey = keyOf("tool_result", JSON.stringify({ tool: name, output }));
+        const already = knownEvents().get(rawKey);
+        if (already) {
+          return already;
+        }
         // Externalise to artifact store; store a reference event.
         const artifact = artifactStore.store(output, "text");
         const refContent = JSON.stringify({
@@ -236,9 +277,13 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
           preview: artifact.preview,
           totalSize: artifact.totalSize,
         });
-        return append("artifact_reference", refContent, turnId, {
-          artifactId: artifact.artifactId,
-        });
+        return append(
+          "artifact_reference",
+          refContent,
+          turnId,
+          { artifactId: artifact.artifactId, rawKey },
+          rawKey,
+        );
       }
       const content = JSON.stringify({ tool: name, output });
       return append("tool_result", content, turnId);

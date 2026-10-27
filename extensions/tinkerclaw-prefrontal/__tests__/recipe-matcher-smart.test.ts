@@ -289,7 +289,7 @@ describe("loadRecipeIndex — extraDirs (bridged-skills) scan", () => {
 });
 
 // FORK 2026-10-06 (Broca retrieval v2, review 2026-10-05): the matcher never scanned the
-// overlay `~/.openclaw/recipes`, so 10 recipes the runner can run (acme-coding,
+// overlay `~/.openclaw/recipes`, so 10 recipes the runner can run (orbis-coding,
 // review-site, plan-family-trip …) were invisible to it. recipeIndexExtraDirs is the one
 // place that lists the roots beyond the shipped dir, used by the turn hook and both RPCs.
 describe("recipeIndexExtraDirs — the overlay recipes root is indexed", () => {

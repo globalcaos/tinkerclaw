@@ -312,7 +312,7 @@ describe("createExplainer", () => {
 });
 
 describe("embeddedExplainRun", () => {
-  it("runs the rung with no tools as temp:jev-explain and returns the first text", async () => {
+  it("runs the rung with no tools on its own temp:jev-explain:<runId> session and returns the first text", async () => {
     let seen: Record<string, unknown> = {};
     const run = embeddedExplainRun(
       {
@@ -329,13 +329,17 @@ describe("embeddedExplainRun", () => {
     const text = await run("p", "xai/grok-4.6", new AbortController().signal);
     expect(text).toBe(GOOD);
     expect(seen).toMatchObject({
-      sessionKey: "temp:jev-explain",
       provider: "xai",
       model: "grok-4.6",
       disableTools: true,
       promptMode: "none",
       agentId: "main",
     });
+    // Each run gets its own session: one shared key serialised every review onto one lane (2026-10-13).
+    expect(seen.sessionKey).toBe(`temp:jev-explain:${String(seen.runId)}`);
+    const first = seen.sessionKey;
+    await run("p", "xai/grok-4.6", new AbortController().signal);
+    expect(seen.sessionKey).not.toBe(first);
     expect(firstText({ payloads: [{ text: "x", isError: true }] })).toBeNull();
     expect(defaultAgentId(undefined)).toBe("main");
   });

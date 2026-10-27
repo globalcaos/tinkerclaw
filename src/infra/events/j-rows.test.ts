@@ -43,6 +43,7 @@ import {
   emitJBoundDerived,
   emitJConsolidationRun,
   emitJCuriosityGap,
+  emitJFractalRun,
   emitJLimbicAttempt,
   emitJMnemoContradiction,
   emitJRecallResolve,
@@ -116,6 +117,11 @@ const WIRED: Readonly<Record<string, { readonly file: string; readonly call: str
   "j.route.decision": {
     file: "../../auto-reply/reply/model-selection.ts",
     call: "emitJRouteDecisionFromPlan(",
+  },
+  // The background Fractal turn, beside run.done (turn-events.ts recordRunDone → this module).
+  "j.fractal.run": {
+    file: "./fractal-run-tally.ts",
+    call: "emitJFractalRun(",
   },
 };
 
@@ -220,6 +226,26 @@ describe("j.* row shapes (logging.md §4.12)", () => {
     expect(onlyRow().record).toMatchObject({ label: "resolved", n1: 86_400_000 });
   });
 
+  it("rows a background Fractal run with its files written and tool calls", () => {
+    emitJFractalRun({
+      outcome: "durable",
+      durMs: 120_000,
+      filesWritten: 2,
+      toolCalls: 9,
+      runId: "fractal-run-1",
+    });
+    const { name, record } = onlyRow();
+    expect(name).toBe("j.fractal.run");
+    expect(record).toMatchObject({
+      label: "durable",
+      durMs: 120_000,
+      n1: 2,
+      n2: 9,
+      runId: "fractal-run-1",
+    });
+    expect(record.n3).toBeUndefined();
+  });
+
   it("rows a contradiction check by outcome alone", () => {
     emitJMnemoContradiction({ outcome: "flagged" });
     const { name, record } = onlyRow();
@@ -275,7 +301,10 @@ describe("j.* row shapes (logging.md §4.12)", () => {
   it("every wired producer really calls its helper — a shipped shape nobody calls is silent", () => {
     for (const [name, { file, call }] of Object.entries(WIRED)) {
       const source = readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
-      expect(source, `${name}: ${file} does not import j-rows`).toContain("infra/events/j-rows.js");
+      // A producer inside src/infra/events imports its sibling as "./j-rows.js".
+      const importsHelpers =
+        source.includes("infra/events/j-rows.js") || source.includes('from "./j-rows.js"');
+      expect(importsHelpers, `${name}: ${file} does not import j-rows`).toBe(true);
       expect(source, `${name}: ${file} imports the helper but never calls it`).toContain(call);
     }
   });

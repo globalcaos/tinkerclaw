@@ -289,6 +289,7 @@ test("package.json — ./plugin-sdk/fork-telemetry export survives an upstream m
     "./plugin-sdk/fork-jev",
     "./plugin-sdk/fork-thalamus",
     "./plugin-sdk/fork-thalamus-runtime",
+    "./plugin-sdk/fork-prompt-envelope",
     "./extension-api",
   ]);
 
@@ -314,7 +315,12 @@ test("package.json — ./plugin-sdk/fork-jev and fork-thalamus exports survive a
   });
   const first = runWiring(root);
   const after = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
-  for (const name of ["fork-jev", "fork-thalamus", "fork-thalamus-runtime"]) {
+  for (const name of [
+    "fork-jev",
+    "fork-thalamus",
+    "fork-thalamus-runtime",
+    "fork-prompt-envelope",
+  ]) {
     assert.deepEqual(
       after.exports[`./plugin-sdk/${name}`],
       { types: `./dist/plugin-sdk/${name}.d.ts`, default: `./dist/plugin-sdk/${name}.js` },
@@ -328,6 +334,7 @@ test("package.json — ./plugin-sdk/fork-jev and fork-thalamus exports survive a
     "./plugin-sdk/fork-jev",
     "./plugin-sdk/fork-thalamus",
     "./plugin-sdk/fork-thalamus-runtime",
+    "./plugin-sdk/fork-prompt-envelope",
     "./extension-api",
   ]);
   const raw = fs.readFileSync(path.join(root, "package.json"), "utf-8");
@@ -354,6 +361,10 @@ test("package.json — a tree that already carries both exports is left byte-ide
       types: "./dist/plugin-sdk/fork-thalamus-runtime.d.ts",
       default: "./dist/plugin-sdk/fork-thalamus-runtime.js",
     },
+    "./plugin-sdk/fork-prompt-envelope": {
+      types: "./dist/plugin-sdk/fork-prompt-envelope.d.ts",
+      default: "./dist/plugin-sdk/fork-prompt-envelope.js",
+    },
   };
   const root = freshRoot({ "package.json": pkgWith(exportsObj) });
   const before = fs.readFileSync(path.join(root, "package.json"), "utf-8");
@@ -375,6 +386,7 @@ test("plugin-sdk-entrypoints.json — the two entries come back beside fork-tele
     "fork-jev",
     "fork-thalamus",
     "fork-thalamus-runtime",
+    "fork-prompt-envelope",
     "z",
   ]);
   const raw = fs.readFileSync(path.join(root, rel), "utf-8");

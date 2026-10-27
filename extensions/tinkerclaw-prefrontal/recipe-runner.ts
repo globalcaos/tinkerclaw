@@ -1667,8 +1667,8 @@ async function runRecipeInner(opts: RecipeRunOptions): Promise<RecipeRunResult> 
       planId: "",
       errorMessage:
         `recipe-runner: missing required variable(s): ${list}. ` +
-        `Set them with \`openclaw recipe set-var ${opts.kitRef} <name> <value>\` ` +
-        `(values stay private in ~/.openclaw/recipe-vars.json).`,
+        `Set them in ~/.openclaw/recipe-vars.json under scopes."${opts.kitRef}" ` +
+        `(or scopes.global); values stay private there.`,
       error: classifyError("missing-var", `missing required variable(s): ${list}`, {
         missingVars: missing,
       }),

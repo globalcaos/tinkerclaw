@@ -24,6 +24,7 @@ import fs from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { parse as parseYaml } from "yaml";
+import { publishRecipeIndex } from "./recipe-index-publish.js";
 import { collectRecipeTargets, type RecipeFileTarget } from "./recipe-locate.js";
 import { parseKitStepsAndParallelism, resolveRecipeOverlayDir } from "./recipe-runner.js";
 import type { EmbedFn } from "./semantic-matcher.js";
@@ -52,6 +53,13 @@ export interface RecipeIndexEntry {
   antiTriggers?: string[];
   /** Other kit slugs this kit composes (frontmatter `composes:`). */
   composes: string[];
+  /**
+   * FORK 2026-10-09: frontmatter `category:` / `subdivision:` (the library's shelf,
+   * e.g. coding/review). Not scored; carried through so the published catalog
+   * (recipe-index-publish.ts) can list recipes by shelf for Claude Code sessions.
+   */
+  category?: string;
+  subdivision?: string;
   /** Absolute path to the kit.md, for lazy step parsing on a match. */
   path: string;
 }
@@ -256,6 +264,12 @@ async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeInd
       tags,
       antiTriggers,
       composes,
+      ...(typeof parsed.category === "string" && parsed.category
+        ? { category: parsed.category }
+        : {}),
+      ...(typeof parsed.subdivision === "string" && parsed.subdivision
+        ? { subdivision: parsed.subdivision }
+        : {}),
       path,
     });
   }
@@ -338,6 +352,12 @@ export async function loadRecipeIndex(
   }
   const index = [...bySlug.values()].map((v) => v.entry);
   cache = { sig, index };
+  // FORK 2026-10-09: a REBUILT catalog is published for Claude Code sessions
+  // (`<stateDir>/prefrontal/recipe-index.json`, recipe-index-publish.ts). Fire-and-
+  // forget: not awaited on the turn's hot path, never throws (the publisher swallows
+  // and logs), and a cache hit above returned before reaching here, so the file only
+  // moves when the catalog did.
+  void publishRecipeIndex(index, { log });
   return index;
 }
 

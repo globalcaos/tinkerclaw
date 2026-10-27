@@ -2,7 +2,7 @@
 file: memory-layout.md
 purpose: Where memory lives under the workspace + the ENGRAM root, who writes it, retention policy
 audience: AI
-last_verified: 2026-09-07
+last_verified: 2026-10-09
 last_verified_commit: bbb34ec2530
 single_owner: yes — directory map + writer + retention + the W/R path diagrams (WHERE a turn's data lands, sync vs deferred, evictable vs not) live here (both workspace/memory/ AND ~/.openclaw/engram/). Call ORDER is flows.md; state machines are lifecycles.md; the duplicate-implementation ledger is canonical-derivations.md.
 see_also: topology.md (workspace symlinks), flows.md (sequence-of-calls — this optic owns WHERE data lands, not the call order), canonical-derivations.md (duplicate ledger + the plugin-SDK boundary crossing), crons.md (engram-consolidate writer), subagents-and-recipes.md (recipe/skill BEHAVIOR — selection, fitness scoring, never-delete), pii-boundary.md (everything under workspace/memory is PRIVATE), failures.md (what a dead vector index looks like from outside — "Faults that surface as silence")
@@ -50,6 +50,8 @@ verify:
     cmd: python3 -c 'import os; root=os.path.expanduser("~/src/tinkerclaw"); d=os.path.join(root,"extensions/tinkerclaw-total-recall/src"); assert not os.path.isdir(d), "the vendored ENGRAM twin under extensions/tinkerclaw-total-recall/src/ is BACK — diagram R in memory-layout.md draws src/memory/engram/ as the single implementation"; assert os.path.isfile(os.path.join(root,"src/plugin-sdk/memory-engram.ts")), "the plugin-SDK crossing is gone — deleting it is what pushed the plugin into vendoring the first time"'
   - name: DIAGRAM E — NON_EVICTABLE_KINDS is exactly compaction_marker + persona_state + system_event, tokens are ceil of chars over 4, and eviction stays lossless
     cmd: python3 -c 'import os,re; base=os.path.expanduser("~/src/tinkerclaw/src/memory/engram"); t=open(base + "/event-types.ts").read(); m=re.search(r"NON_EVICTABLE_KINDS[^=]*=\s*new Set\(\[(.*?)\]\)", t, re.S); assert m, "NON_EVICTABLE_KINDS not found in src/memory/engram/event-types.ts"; got=sorted(set(re.findall(r"[a-z_]{4,}", m.group(1)))); assert got == ["compaction_marker", "persona_state", "system_event"], "NON_EVICTABLE_KINDS changed to " + repr(got) + " — update the Retention and eviction table in memory-layout.md"; es=open(base + "/event-store.ts").read(); assert "Math.ceil(text.length / 4)" in es, "estimateTokens is no longer ceil of chars over 4 — the Retention and eviction section quotes that as the eviction accounting unit"; pc=open(base + "/pointer-compaction.ts").read(); assert "Compaction invariant violated" in pc and "store.readById" in pc, "the pointerCompact store-readback guard is gone — eviction is no longer provably lossless and diagram E in memory-layout.md is wrong"'
+  - name: MEMORY.md index budget ships watch-only at 8000 chars, and the shipped template calls MEMORY.md an index (2026-10-25)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'export const DEFAULT_MEMORY_INDEX_MAX_CHARS = 8_000;' src/agents/embedded-agent-helpers/bootstrap.ts && grep -qF 'export const DEFAULT_MEMORY_INDEX_WARNING_MODE = "watch";' src/agents/embedded-agent-helpers/bootstrap.ts && grep -qF 'It is an index, not the memory itself.' docs/reference/templates/AGENTS.md
 ---
 
 # Memory layout — workspace directory map
@@ -176,7 +178,7 @@ flowchart TD
     CCS[("engram/events/cc-experience.jsonl<br/>distilled Claude Code experience<br/>getCcExperienceStore index.ts:344")]
   end
 
-  OUT["sections — Retrieved Memory Context<br/>plus Learned From Claude Code Sessions"]
+  OUT["sections — Retrieved Memory Context<br/>plus From the Shared Memory Bank"]
   CACHE[("packCache index.ts:574 + persistPack index.ts:316<br/>~/.openclaw/engram/packs/SESSION_KEY.json<br/>the assembled pack lands HERE, never in THIS turn prompt")]
   MERGE["prependSystemContext merged<br/>src/plugins/hooks.ts:292"]
   SP["composed onto the system prompt<br/>attempt.ts:2592"]
@@ -187,7 +189,7 @@ flowchart TD
   FRESH -->|yes| REUSE --> MERGE
   FRESH -->|"no, a pack is held"| STALE --> MERGE
   FRESH -->|"no, nothing in memory"| SEED
-  SEED -->|"only if a persisted pack existed"| MERGE
+  SEED -->|"a persisted pack, else the shared-bank seed (2026-10-09)"| MERGE
   STALE --> REFRESH
   SEED --> REFRESH
   REFRESH --> SB
@@ -202,6 +204,8 @@ flowchart TD
   CACHE -.->|"read by the NEXT turn"| FRESH
   MERGE --> SP
 ```
+
+**2026-10-09 — cold sessions, query size, `engram.search`.** A brand-new session used to get nothing on its first turn (190 of 230 measured empty packs). The SEED branch now serves the latest shared-bank section when no persisted pack exists (`renderSharedBankSection`, persisted at `packs/_shared-bank.json`, logged `source=shared-bank`), still marked `seeded` so the rebuild replaces it. The refresh queries `packQuery(prompt)`, the prompt's last 2,000 chars, not the whole prompt (full-text cost on the 93 MB bank: ~3 s at 1K chars, 71-85 s at 45K). The `engram.search` RPC searches one store, `events/<sessionKey>.jsonl` (`agent:main:main` when omitted), returns at most 20 hits cut by count and clips each at 4,000 chars; the library packer now skips an oversized hit instead of stopping (bug-log `[engram-search-empty]`).
 
 **⚠️ The whole INLINE retrieval lane is DEAD — and its instrument reads NEVER by construction** (verified at HEAD `e57d22f5fcf`). This is exactly the "registered means running" conflation `src/infra/instrument-liveness.ts` exists to catch, so read it carefully before touching retrieval:
 
@@ -317,7 +321,7 @@ flowchart TD
 
 ## Engram + compaction state
 
-- `consolidation-state.json` — top-level pointer for the memory consolidation engine (engram pointer-mode, ENGRAM_POINTER_COMPACTION=1). (Lives under `workspace/memory/`; a per-session copy also lives at the ENGRAM root — see next section.)
+- `consolidation-state.json` — top-level pointer for the memory consolidation engine (engram pointer-mode, `compaction.pointerMode`). (Lives under `workspace/memory/`; a per-session copy also lives at the ENGRAM root — see next section.)
 - See J1 (ENGRAM) and J14 (MNEMOSYNE) for the full memory-engine theory.
 
 ## ENGRAM root — `~/.openclaw/engram/` (OSS-harness stores)
@@ -380,11 +384,41 @@ Convention shared by these stores: **atomic write = write-temp-then-rename** (`f
 - **Output target (when wired):** the user's `MEMORY.md` digest. Bounding mirrors MEMORY.md's own "one-line index entry; move detail to a topic file" discipline — when facts + summaries exceed `maxLines`, the LOWEST-importance facts are DEMOTED to a linked detail-file reference (never dropped). Deterministic/idempotent: facts sorted by (importance desc, key asc) → byte-identical output; re-serializing the bounded survivor set is a fixpoint.
 - **Retention/authorship:** suggest-only by default PRESERVES MEMORY.md's hand-edited authorship — reconciliation can only _suggest_ prunes, never silently rewrite.
 
+### MEMORY.md as the index — soft budget, **watch-only** (FORK 2026-10-25)
+
+- **The shape:** the root `MEMORY.md` is the memory palace's index: one line per topic, the detail in `memory/<topic>.md`, opened with `memory_get`. The shipped template says so (`docs/reference/templates/AGENTS.md` § MEMORY.md, and `docs/concepts/memory.md` § The memory index). No code writes the index; the agent keeps it by hand.
+- **Budget:** `agents.defaults.memoryIndexMaxChars` (default 8000) is checked by `analyzeMemoryIndexBudget` (`src/agents/bootstrap-budget.ts`) on the bootstrap stats both runners already build (embedded `run/attempt.ts`, CLI `cli-runner/prepare.ts`). It never truncates; truncation stays with `bootstrapMaxChars`/`bootstrapTotalMaxChars`.
+- **Mode:** `agents.defaults.memoryIndexWarning`, default `watch` = one gateway log line per size step (a tenth of the budget), deduped through the persisted bootstrap warning signatures. `once`/`always` also append a `[Memory index over budget]` block to the turn prompt (the user turn, so the system prompt cache is untouched). `off` = no check anywhere. `/context` and `openclaw doctor` report it in every mode but `off`; doctor (`src/commands/doctor-memory-index.ts`) also flags index lines over 200 chars and pointers to missing topic files.
+- **Not seen by:** subagent and cron sessions. `MINIMAL_BOOTSTRAP_ALLOWLIST` drops `MEMORY.md` there, so they get neither the index nor the notice.
+
+### The memory write gate — one door for note writes, **watch by default** (FORK 2026-10-25)
+
+- **What it guards:** tool writes of Markdown notes under a memory root: the Claude Code auto-memory folder (`autoMemoryDirectory`), `~/.claude/projects/*/memory`, and each agent workspace's `MEMORY.md` and `memory/` (skipping `archive`, `consolidation-logs`, `co-access`). Not the ENGRAM event JSONL: that is the transcript record, append-only by design (the `reconciliation-ledger` above stays the only reconciler there, and stays dark).
+- **The gate:** `claude-plugins/tinkerclaw-core/scripts/memory-write-gate.mjs` decides (pure), `memory-gate-door.mjs` reads the folder's other notes and the always-loaded rule files, applies the outcome and logs. Labels and their one outcome: new → saved with `source:`/`date:`/`from:` stamped; repeat → skipped; update/correction → saved with the old line kept, struck and dated (or, for a replacing note, `supersedes:` plus a dated stamp on the old note); clash with a rule → refused, owner asked, row in `asks.jsonl`; unsourced rule (a `feedback` note whose source is not `owner`) → refused; third-party → saved as a blockquote, type `reference`. Lexical, no model call.
+- **Two doors:** the tinkerclaw-core PreToolUse hook (`memory-gate-hook.mjs`, Write/Edit/MultiEdit: deny or `updatedInput`) and the tinkerclaw-memory-enhancements `before_tool_call` (embedded `write`/`edit`: block or params), the latter through `runMemoryGate` in `openclaw/plugin-sdk/memory-engram` (`src/memory/engram/write-gate.ts` re-exports the .mjs).
+- **Config:** `plugins.entries.tinkerclaw-memory-enhancements.config.contradictionGate` (`warn` = watch, the default; `block` = enforce; `enabled: false` = off). The plugin publishes it on register to `~/.openclaw/memory-gate/config.json`; no file = the hook does nothing. Decisions: `~/.openclaw/data/memory-gate/gate.jsonl` (labels, files, line numbers, never note text).
+- **Measured before shipping (2026-10-25, 953 live notes):** 150 recent notes replayed as new writes → 0 repeats, 0 clashes, 50 unsourced rules (no live note declares a source yet); 61 real Edits from two weeks of transcripts → 3 updates, each a fact that changed. About 70 ms per write over a 950-note folder, plus 50 ms to read it.
+- **Not seen:** shell redirects into a note, `apply_patch`, and code that writes `MEMORY.md` directly (memory-core's short-term promotion).
+
+### The nightly lesson pass — a repeated correction climbs a four-rung ladder, **watch by default** (FORK 2026-10-25)
+
+- **Input:** Thalamus's correction capture (`extensions/tinkerclaw-thalamus/src/correction-capture.ts`) keeps each class it finds in table `corrections` of `thalamus.sqlite`, with the owner's words redacted and capped at 240 characters. `lessons.mode: off` keeps none. The `j.correction` event row is unchanged.
+- **The pass:** `thalamus.lessons.run` (`src/lesson-sleep.ts` reads, `src/lesson-ladder.ts` decides, pure). Lesson = class, or class + named card. Rungs: 0 nowhere, 1 saved note (`lessons.noteDirs`), 2 task notes (`lessons.taskDirs`), 3 always-read (`lessons.alwaysRead`), 4 drafted check. The rung is read from disk every night, never trusted from the ledger. Causes and repairs: not loaded (rung < 3) → the rule line where it is read; contradicted (an opposing line on rung 2-3) → strike or scope it, always the owner's; vague (no directive, or a hedge) → the concrete line beside it. Only in view + clear + unopposed + a slip after the always-read files last changed → rung 4: a draft in `<dataDir>/lessons/checks/` with the slips as must-catch cases, built later as an amygdala question that starts watch-only (shadow + `earned`). A deleted draft is a decline and is not redrafted.
+- **What it may change:** `watch` writes only `<dataDir>/lessons/` (ledger, reports, drafts). `apply` also appends a rule line under `## Lessons from the nightly pass` in `lessons.target` (default the workspace AGENTS.md); it never strikes or rewrites a line. The same asymmetry in amygdala: `learn.autoLoosen` defaults to false, so every loosening of a question waits as an owner card (`src/learn/changes.ts`).
+- **Schedule:** none of its own. The bundled sleep routine (`extensions/tinkerclaw-tinker-bridge/crons/memory-consolidation/routine.md`, step 8a) calls it and copies its `## Lessons` section into the one morning report.
+
+### Forget — one fact out of every store, with a receipt, **preview by default** (FORK 2026-10-25)
+
+- **Door:** tool `forget` (owner, unsandboxed, optional: `tools.alsoAllow`) and gateway method `memory.forget` (`operator.admin`), both in `extensions/tinkerclaw-forget`. Two calls: a preview finds every copy and writes nothing; in `mode: apply` it returns a one-time confirm code (15 min, memory only, bound to the fact) and the second call redacts.
+- **Places (the receipt's rows):** notes (workspace `*.md`, `memory/`, `memorySearch.extraPaths`, auto-memory, `~/.claude/projects/*/memory`, `<stateDir>/memory`); old versions (`archive/`, `.bak`, transcript checkpoint/reset/deleted copies, redacted; git history and remotes, counted with `git log -S`, never rewritten); search index (engram transcript index: `forgetFile` with `secure_delete` + re-read + `compact`; memory-core: `sync`, then a full rebuild if a search still finds it; any other binary store that still holds it is out of reach); summaries (`.dreams/`, consolidation logs, `<stateDir>/wiki`, engram packs/reflections/artifacts); chat record (gateway transcripts, engram events, Claude Code transcripts and `history.jsonl`, swept again 1 and 10 min after an apply); backups (`backupDirs` text redacted, archives and `remoteCopies` out of reach); the provider, always out of reach.
+- **Redaction:** each copy → `[forgotten YYYY-MM-DD]`, byte-exact elsewhere, JSONL kept valid, temp file + one rename, restarted if the file moved meanwhile; no backup copy. Receipts in `<stateDir>/data/forget/` name files and counts, never the fact or its hash.
+- **Not seen:** paraphrases (it matches the fact as written, plus up to 5 variants), anything outside the swept folders (the receipt lists them), channel archives such as the WhatsApp history database, logs and the journal.
+
 ## Retention and eviction
 
 Two different mechanisms, routinely confused:
 
-- **Retention** — does the row ever leave DISK? Across this optic the answer is essentially always **no**.
+- **Retention** — does the row ever leave DISK? Across this optic the answer is essentially always **no**. The one exception is an owner-confirmed forget (above), which redacts one fact in place in every store it reaches.
 - **Eviction** — does the row stay in the model's CONTEXT? Often no. Eviction is a context-window operation performed by `pointerCompact` (`src/memory/engram/pointer-compaction.ts:161`): it splices events out of the in-memory `ContextCache` and leaves a `TimeRangeMarker` in their place. **The event JSONL is never touched.** Eviction is lossless by construction — `pointerCompact` reads every victim back out of the store first (`:182`) and throws `Compaction invariant violated` (`:184`) if one is missing.
 
 ### What is evictable
@@ -425,6 +459,16 @@ flowchart TD
   M --> C
   M -.-> EVJ
 ```
+
+### Tool-output eviction and the markers it leaves (FORK 2026-10-25)
+
+The diagram above is the engram `ContextCache` engine. What the embedded runner runs on the model's real message list is separate:
+
+- **Junk-first** (`evictOldToolResults`, `src/fork/attempt-hooks.ts`, called from `run/attempt.ts` before each prompt; on by default, `ENGRAM_TOOL_EVICTION=0` turns it off). Past 80% of the window, old tool results (outside the last 3 user turns, over 200 tokens) are swapped, oldest first, for a marker until the desk is under 60%. Only `agent.state.messages` changes; every toolCallId pairing is kept and the transcript is not edited.
+- **The marker** (`src/memory/engram/eviction-marker.ts`) quotes the result's exact first and last lines and names its toolCallId. It renders the same bytes for the same result, so the prompt-cache prefix moves once per eviction.
+- **The way back**: `recall({id})` (total-recall plugin, via `findTranscriptItem` in `src/memory/engram/transcript-item.ts`) reads the caller's own transcript and returns the whole result, paged by `offset`/`length`. The record is the transcript, so nothing is copied to a second store.
+- **Pointer compaction** manifests also quote the user's first and last words in the range and give the transcript path and first kept entry id. The **EVICT button** leaves a hidden `custom_message` (`openclaw.evicted-turns`) where it cut, quoting the dropped user words and naming the `.bak` archive.
+- **Not covered**: CLI lanes (claude-code, cli backends) own their context, so none of this reaches them.
 
 ### Retention by store
 

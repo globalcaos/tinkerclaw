@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { handleEntryUncaughtException } from "./infra/entry-uncaught-exception.js";
 import { formatUncaughtError } from "./infra/errors.js";
 import { runFatalErrorHooks } from "./infra/fatal-error-hooks.js";
 import { isMainModule } from "./infra/is-main.js";
@@ -90,13 +91,24 @@ if (isMain) {
   // These log the error and exit gracefully instead of crashing without trace.
   installUnhandledRejectionHandler();
 
+  // FORK 2026-10-19 (the gateway crash-looped 18 times): the WhatsApp whatsmeow Go child could
+  // not execute and died, a later write to its stdin raised EPIPE as an 'error' event with no
+  // listener, and this handler exited the gateway. run-main.ts keeps going on EPIPE/EIO and on
+  // errors a registered handler claims, but its listener never gets a turn: the gateway starts
+  // as `dist/index.js gateway`, which goes through tryRunGatewayRunFastPath and never reaches
+  // the line that installs it, and on the other CLI paths this listener runs first and exits.
+  // It now makes the same two checks first; the fatal path is unchanged. console is looked up
+  // on each call because run-main's enableConsoleCapture() swaps console.warn/error after this
+  // listener is added.
   process.on("uncaughtException", (error) => {
-    console.error("[openclaw] Uncaught exception:", formatUncaughtError(error));
-    for (const message of runFatalErrorHooks({ reason: "uncaught_exception", error })) {
-      console.error("[openclaw]", message);
-    }
-    restoreTerminalState("uncaught exception", { resumeStdinIfPaused: false });
-    process.exit(1);
+    handleEntryUncaughtException(error, {
+      warn: (...args) => console.warn(...args),
+      error: (...args) => console.error(...args),
+      exit: (code) => process.exit(code),
+      formatUncaughtError,
+      runFatalErrorHooks,
+      restoreTerminalState,
+    });
   });
 
   void runLegacyCliEntry(process.argv).catch((err) => {

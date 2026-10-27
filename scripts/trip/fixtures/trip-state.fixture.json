@@ -1,0 +1,22 @@
+{
+  "segments": {
+    "f1": {
+      "status": "delayed",
+      "schedDep": "2025-10-21T14:05:00.000Z",
+      "schedArr": "2025-10-22T02:20:00.000Z",
+      "estDep": "2025-10-21T14:45:00.000Z",
+      "actDep": null,
+      "estArr": "2025-10-22T02:50:00.000Z",
+      "actArr": null,
+      "depTerminal": "1",
+      "depGate": "E77",
+      "arrTerminal": "I",
+      "arrGate": null,
+      "baggage": null,
+      "source": "fixture",
+      "fetchedAt": "2025-10-20T15:00:00.000Z",
+      "alertedDelayMin": 40
+    }
+  },
+  "notified": { "f1:remind:checkin": "2025-10-20T14:00:00.000Z" }
+}

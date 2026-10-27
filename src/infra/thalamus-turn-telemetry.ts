@@ -9,6 +9,9 @@
 //
 // THE CONTRACT, two phases on one stream:
 //   decision  once per Auto turn, at model selection: what runs (model + effort), the dial tier, and WHY.
+//             FORK 2026-10-09: the effort is the TASK's choice under the stop's suggestion
+//             (src/shared/thalamus-effort.ts); `effortWhy` says why and `ultracode` whether the
+//             fan-out was asked for. The stop's own effort stays visible as `suggestion.effort`.
 //   fallback  a model failed mid-turn and another took over: from, to, and the failure reason.
 //
 // WHY, as data, never prose the UI must parse (FORK 2026-10-02: the architect's picks are SUGGESTIONS, one per dial stop):
@@ -59,6 +62,10 @@ export interface ThalamusTurnDecision {
   model: string;
   /** Effort rung the turn runs at; "" when the model has no effort ladder. */
   effort: string;
+  /** Why the task read chose `effort` under the stop's suggestion ("low: greeting"); "" = no ladder. */
+  effortWhy: string;
+  /** The task asked for the fan-out composition (hard, many-part build work at a max stop). */
+  ultracode: boolean;
   tier: ThalamusTurnTier;
   biasIdx: number;
   /** The prompt's classified domain ("general" when nothing specific). */
@@ -103,6 +110,9 @@ export function thalamusTurnTier(biasIdx: number): ThalamusTurnTier {
 export interface ThalamusTurnDecisionInput {
   routedKey: string;
   effort: string;
+  /** From `taskEffort` (src/shared/thalamus-effort.ts); absent on a route with no ladder. */
+  effortWhy?: string;
+  ultracode?: boolean;
   biasIdx: number;
   domain: string;
   subject?: string;
@@ -180,6 +190,8 @@ export function buildThalamusTurnDecision(i: ThalamusTurnDecisionInput): Thalamu
     phase: "decision",
     model: i.routedKey,
     effort: i.effort,
+    effortWhy: i.effortWhy ?? "",
+    ultracode: i.ultracode ?? false,
     tier: thalamusTurnTier(i.biasIdx),
     biasIdx: i.biasIdx,
     domain: i.domain || "general",

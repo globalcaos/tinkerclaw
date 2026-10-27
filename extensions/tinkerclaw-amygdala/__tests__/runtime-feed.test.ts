@@ -157,7 +157,7 @@ describe("feed helpers", () => {
       id: "c1",
       ts: 5,
       questionId: "danger-level",
-      fromVersion: 1,
+      fromVersion: book.get("danger-level")?.version ?? 0,
       toVersion: null,
       kind: "context-loosen",
       exceptional: false,

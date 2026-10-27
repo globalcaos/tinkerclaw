@@ -5,6 +5,7 @@ import {
   collectUsage,
   isUsageMark,
   mergeUsageMarks,
+  placeUsage,
   recipeMark,
   renderAdviceLine,
   renderUsageChip,
@@ -21,8 +22,8 @@ const SKILL = {
 };
 const RECIPE = {
   kind: "recipe",
-  name: "acme-coding",
-  path: "/home/u/.openclaw/recipes/acme-coding/recipe.md",
+  name: "orbis-coding",
+  path: "/home/u/.openclaw/recipes/orbis-coding/recipe.md",
   via: "recipe-cli",
 };
 const PLUGIN = { kind: "plugin", name: "tinkerclaw-prefrontal", via: "plugin-tool" };
@@ -54,7 +55,7 @@ describe("collectUsage", () => {
   it("dedupes on kind+name and keeps first-seen order", () => {
     expect(collectUsage([SKILL, RECIPE], [SKILL]).map((m) => m.name)).toEqual([
       "orca",
-      "acme-coding",
+      "orbis-coding",
     ]);
   });
 
@@ -124,7 +125,7 @@ describe("renderUsageChips", () => {
     expect(renderUsageChips([RECIPE])).toBe(
       `<div class="msg-recipe-notice">` +
         `<span class="msg-recipe-notice-icon">\u{1F373}</span>` +
-        `<span class="msg-recipe-notice-text">Using recipe <strong>acme-coding</strong></span>` +
+        `<span class="msg-recipe-notice-text">Using recipe <strong>orbis-coding</strong></span>` +
         `<code class="fs-link msg-recipe-notice-link" data-path="${RECIPE.path}" ` +
         `title="Open ${RECIPE.path}">recipe.md ↗</code>` +
         `</div>`,
@@ -132,8 +133,8 @@ describe("renderUsageChips", () => {
   });
 
   it("labels a recipe link with the real basename when the file is not recipe.md", () => {
-    expect(renderUsageChips([{ ...RECIPE, path: "/r/acme-article-code.md" }])).toContain(
-      ">acme-article-code.md ↗</code>",
+    expect(renderUsageChips([{ ...RECIPE, path: "/r/orbis-article-code.md" }])).toContain(
+      ">orbis-article-code.md ↗</code>",
     );
   });
 
@@ -186,9 +187,9 @@ describe("legacy adapters (rows served before the gateway ships usage — review
       name: "orca",
       via: "skill-tool",
     });
-    expect(recipeMark({ title: "acme-coding", path: "/r/recipe.md" })).toEqual({
+    expect(recipeMark({ title: "orbis-coding", path: "/r/recipe.md" })).toEqual({
       kind: "recipe",
-      name: "acme-coding",
+      name: "orbis-coding",
       via: "recipe-cli",
       path: "/r/recipe.md",
     });
@@ -197,7 +198,7 @@ describe("legacy adapters (rows served before the gateway ships usage — review
   it("a row with no typed usage still renders, from the adapters alone", () => {
     const html = renderUsageChips(
       collectUsage(undefined, undefined, [
-        recipeMark({ title: "acme-coding", path: "/r/recipe.md" }),
+        recipeMark({ title: "orbis-coding", path: "/r/recipe.md" }),
         skillMark({ name: "orca", path: SKILL.path }),
       ]),
     );
@@ -253,18 +254,22 @@ describe("app.ts usage-chip wiring", () => {
     expect(appSrc.slice(at, end)).toMatch(/stampUsageOnCurrentTurn\(\s*d\.usage\s*\)/);
   });
 
-  it("the `Skill` call site suppresses its row but no longer draws a second chip", () => {
+  // FORK 2026-10-22 — chips moved from the prompt row to the call that used them. One chip per
+  // run is now `placeUsage`'s job, so the call site may draw ONLY what it was assigned: a chip of its
+  // own here is what made one `Skill` call paint two (2026-09-29).
+  it("a tool call site draws only the chips placeUsage assigned to it", () => {
     const at = appSrc.indexOf("const skillChip = skillNoticeFromTool(block.name");
     expect(at, "the Skill call-site suppression moved or was renamed").toBeGreaterThan(-1);
     const body = appSrc.slice(at, appSrc.indexOf("continue;", at));
+    expect(body).toMatch(/renderUsageChips\(inlineUsageByTool\.get\(block\.id/);
     expect(body).not.toContain("renderSkillNotice");
-    expect(body).not.toContain("renderUsageChip");
+    expect(body).not.toContain("renderUsageChip(");
   });
 });
 
 // FORK 2026-10-06 (Broca retrieval v2, phase E)
 describe("renderAdviceLine", () => {
-  const LINE = "Use: acme-coding · Inspiration: review-site (§ Build the page) · source: Jev";
+  const LINE = "Use: orbis-coding · Inspiration: review-site (§ Build the page) · source: Jev";
 
   it("draws one muted line with the text, and nothing that looks like a message or a button", () => {
     const html = renderAdviceLine(LINE);
@@ -291,5 +296,38 @@ describe("renderAdviceLine", () => {
 
   it("keeps the line on one line", () => {
     expect(renderAdviceLine("Use: a\n\nb  c")).toContain("Use: a b c");
+  });
+});
+
+describe("placeUsage", () => {
+  it("puts each chip above the FIRST call of the run that used it, once", () => {
+    const placed = placeUsage(
+      [
+        [{ ...SKILL, toolCallId: "t3" }],
+        [
+          { ...SKILL, toolCallId: "t1" },
+          { ...PLUGIN, toolCallId: "t2" },
+        ],
+      ],
+      ["t1", "t2", "t3"],
+    );
+    expect([...placed.byTool.keys()]).toEqual(["t1", "t2"]);
+    expect(placed.byTool.get("t1")?.map((m) => m.name)).toEqual(["orca"]);
+    expect(placed.byTool.get("t2")?.map((m) => m.name)).toEqual(["tinkerclaw-prefrontal"]);
+    expect(placed.leftover).toEqual([]);
+  });
+
+  it("leaves a mark with no call in the run under the prompt", () => {
+    const placed = placeUsage([[RECIPE, { ...SKILL, toolCallId: "gone" }]], ["t1"]);
+    expect(placed.byTool.size).toBe(0);
+    expect(placed.leftover.map((m) => m.name)).toEqual(["orbis-coding", "orca"]);
+  });
+
+  it("keeps a path a later duplicate brings", () => {
+    const placed = placeUsage(
+      [[{ kind: "skill", name: "orca", toolCallId: "t1" }], [SKILL]],
+      ["t1"],
+    );
+    expect(placed.byTool.get("t1")?.[0]).toMatchObject({ name: "orca", path: SKILL.path });
   });
 });

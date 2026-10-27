@@ -492,9 +492,11 @@ describe("CN supplier × model matrix", () => {
     for (const id of [
       "qwen/qwen3.8-max-0902",
       "z-ai/glm-5.3",
+      "moonshotai/kimi-k3.1-pro", // 2026-10-24: Kimi's newest and best AA score (Moonshot is its only standard seat)
       "moonshotai/kimi-k3",
       "xiaomi/mimo-v2.6-pro",
       "minimax/minimax-m3",
+      "minimax/minimax-m3.1-flash", // 2026-10-23: first paid seller; MiniMax's newest and best AA score
       "deepseek/deepseek-v4-pro-0813",
       "stepfun/step-5-preview",
     ]) {

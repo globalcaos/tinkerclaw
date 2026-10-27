@@ -31,6 +31,7 @@ import {
 import { getUsageSnapshot } from "../../infra/usage-snapshot-store.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { taskEffort } from "../../shared/thalamus-effort.js";
 import {
   classifyTaskDomain,
   type TaskDomain,
@@ -44,6 +45,7 @@ import {
   type RungVeto,
 } from "../../shared/thalamus-plan.js";
 import { type SupplyId, type SupplyState } from "../../shared/thalamus-supply.js";
+import { userTaskText } from "../../shared/user-task-text.js";
 import { formatProviderModelRef } from "../model-runtime.js";
 import type { ThinkLevel } from "./directives.js";
 export {
@@ -111,8 +113,17 @@ export type ThalamusAutoRoute = {
   /** The routed rung's provider/model, already normalized. */
   provider: string;
   model: string;
-  /** Vendor effort for the rung; "" when the route has no graded ladder. */
+  /**
+   * Vendor effort the turn runs at; "" when the route has no graded ladder. FORK 2026-10-09: the
+   * TASK chooses it (src/shared/thalamus-effort.ts), capped at the stop's suggested effort; the
+   * model is still the dial's and the domain's. `OPENCLAW_THALAMUS_TASK_EFFORT=off` restores the
+   * rung's own effort.
+   */
   effort: string;
+  /** The task read asks for the fan-out composition (hard, many-part build work at a max stop). */
+  ultracode: boolean;
+  /** Why this effort, one human phrase ("low: greeting"); "" when the route has no ladder. */
+  effortWhy: string;
   /** What `classifyTaskDomain` made of the prompt; "general" when it saw no signal. */
   domain: TaskDomain;
   /** AA Intelligence Index of the routed rung (measured, estimated or headline). */
@@ -198,7 +209,8 @@ type ModelSelectionState = {
   quotaSubstitution?: QuotaAwareAutoSubstitution;
   /** Present when THALAMUS chose this turn's (model, effort) rung from the BIAS
    *  dial and the task domain. `thalamusRoute.effort` is the effort the turn
-   *  SHOULD run at — see the rung argument in get-reply-directives.ts. */
+   *  SHOULD run at — the task's choice under the stop's suggestion (2026-10-09) —
+   *  see the rung argument in get-reply-directives.ts. */
   thalamusRoute?: ThalamusAutoRoute;
 };
 
@@ -661,6 +673,33 @@ export async function createModelSelectionState(params: {
         const slash = routedKey.indexOf("/");
         if (route && slash > 0 && slash < routedKey.length - 1) {
           const rungEffort = route.rung.effort ?? "";
+          // THE TASK CHOOSES THE EFFORT (owner, 2026-10-09: "Auto is supposed to mean that Thalamus
+          // should take over deciding which effort is best for each task. A complex coding task would
+          // need ultracode, whereas a hello would only need low."). The rung above is the dial's and
+          // the domain's choice of MODEL at the effort the stop suggests; that effort is now the
+          // CEILING, and the local task read (no Jev wait on the reply path) picks the level at or
+          // below it. The ladder is the routed model's own rungs on this board, so the level is always
+          // one the model has. A route with no graded ladder has nothing to choose, and neither does
+          // a call with no words to read (`/status` builds this state with no prompt; an image-only
+          // message has none either): there the stop's effort stands, rather than an empty task
+          // reading as "routine" and dropping to low.
+          // `OPENCLAW_THALAMUS_TASK_EFFORT=off` keeps the rung's effort byte for byte.
+          const taskText = userTaskText(params.promptText);
+          const chosenEffort =
+            process.env.OPENCLAW_THALAMUS_TASK_EFFORT !== "off" && rungEffort && taskText
+              ? taskEffort({
+                  text: taskText,
+                  ceiling: rungEffort,
+                  ladder: rungs.filter((r) => r.key === route.rung.key).map((r) => r.effort),
+                })
+              : undefined;
+          const turnEffort = chosenEffort?.level ?? rungEffort;
+          // smart and cost belong to the RUNG that runs, not to the one the frontier priced.
+          const turnRung =
+            turnEffort === rungEffort
+              ? route.rung
+              : (rungs.find((r) => r.key === route.rung.key && r.effort === turnEffort) ??
+                route.rung);
           const chainKeys = (plan?.chain ?? []).map((r) => r.key);
           const routeReason = plan?.reason ?? route.reason ?? "";
           const routeBias = route?.biasIdx ?? biasNow ?? THALAMUS_DEFAULT_BIAS_IDX;
@@ -683,10 +722,12 @@ export async function createModelSelectionState(params: {
               thalamusRoute = {
                 provider: normalized.provider,
                 model: normalized.model,
-                effort: rungEffort,
+                effort: turnEffort,
+                ultracode: chosenEffort?.ultracode ?? false,
+                effortWhy: chosenEffort?.why ?? "",
                 domain: routeDomain,
-                smart: route.rung.smart ?? 0,
-                cost: route.rung.cost ?? 0,
+                smart: turnRung.smart ?? 0,
+                cost: turnRung.cost ?? 0,
                 biasIdx: routeBias,
                 reason: routeReason,
                 notice: formatThalamusRouteNotice({
@@ -694,7 +735,7 @@ export async function createModelSelectionState(params: {
                   domain: routeDomain,
                   provider: normalized.provider,
                   model: normalized.model,
-                  effort: rungEffort,
+                  effort: turnEffort,
                   reason: routeReason,
                 }),
                 chain: chainKeys,
@@ -711,7 +752,9 @@ export async function createModelSelectionState(params: {
                 params.sessionKey,
                 buildThalamusTurnDecision({
                   routedKey: routeKey,
-                  effort: rungEffort,
+                  effort: turnEffort,
+                  ultracode: chosenEffort?.ultracode ?? false,
+                  effortWhy: chosenEffort?.why ?? "",
                   biasIdx: routeBias,
                   domain: routeDomain,
                   subject: plan?.subject,
@@ -733,7 +776,8 @@ export async function createModelSelectionState(params: {
               model = normalized.model;
               logStage(
                 "thalamus-routed",
-                `to=${routeKey} effort=${rungEffort || "(none)"} bias=${routeBias} domain=${routeDomain}` +
+                `to=${routeKey} effort=${turnEffort || "(none)"} bias=${routeBias} domain=${routeDomain}` +
+                  (chosenEffort ? ` task-effort="${chosenEffort.why}" ceiling=${rungEffort}` : "") +
                   (plan?.suggestion ? ` suggestion=${plan.suggestion.state}` : "") +
                   (plan?.coolingShift ? ` cooling=${plan.coolingShift.supply}` : ""),
               );

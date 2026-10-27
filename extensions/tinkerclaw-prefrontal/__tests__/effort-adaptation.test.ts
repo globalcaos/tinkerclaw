@@ -45,6 +45,21 @@ describe("buildEffortGuidance", () => {
     expect(buildEffortGuidance("thanks")).toBeNull();
   });
 
+  // 2026-10-09 (J-series plan 1.1): the hook hands over the prompt as the gateway built it. The stamp and the doctrine
+  // the chat appended to his prompts from 10-01 to 10-08 are not the task; a one-word thanks stays trivial.
+  it("scores his words, not the stamp or the appended doctrine", () => {
+    const doctrine =
+      "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it). This is the doctrine that governs it:\n\n## Who Fractal is\n\nThe main turn is the fast thinker: it does the work. Fractal is the slow thinker in the shadows:\nafter the work is done, it asks what the work _meant_ — what it taught, what it broke, what should\nnever happen again — and it leaves **durable change on disk**, not commentary. ";
+    expect(
+      buildEffortGuidance(`[Thu 2026-10-01 05:21 GMT+2] thanks${doctrine}`, "neutral"),
+    ).toBeNull();
+    const g = buildEffortGuidance(
+      `[Thu 2026-10-01 05:21 GMT+2] investigate and debug the failing auth flow, then refactor and optimize the session store module${doctrine}`,
+      "neutral",
+    );
+    expect(g).toContain('level="deep"');
+  });
+
   it("emits a level-tagged block for non-trivial turns", () => {
     const g = buildEffortGuidance(
       "investigate and debug the failing auth flow, then refactor and optimize the session store module",

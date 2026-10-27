@@ -35,3 +35,13 @@ trunk strokes. The oldest row comes from the proxy, which keys rows exactly as
 `history-reconcile.ts historyRowIdentity` does (an import by `__openclaw.externalId`). Keyed by
 `__openclaw.id` alone, most rows went unrecognised and three healthy tabs read as broken. Check
 `known` against `rows` before trusting `oldest`.
+
+## Looking at a control that only shows on hover (2026-10-13)
+
+Used to check the pin dock: a Playwright script hovers `#messages .msg.assistant`, screenshots the
+bubble, clicks the control and screenshots the page, against this proxy serving the build under test.
+Two traps: run the script from this folder (ESM resolves `playwright` from the script's location and
+ignores `NODE_PATH`; a script in `/tmp` fails with `ERR_MODULE_NOT_FOUND`), and a worktree build needs
+both `tinker-ui/node_modules` and the repo-root `node_modules` linked (vite fails on `dompurify`
+otherwise). Seed `tinker-tabs` in `localStorage` from `tinker-ui-state.json` as `drive.mjs` does, then
+click `[data-tab-id=…]` to open the tab.

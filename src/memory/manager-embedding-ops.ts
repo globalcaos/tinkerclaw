@@ -1171,6 +1171,10 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     // === "true", so memory-write behavior is unchanged until explicitly enabled (then it
     // is one env var to soak and one to revert). Never throws into the write path.
     //
+    // 2026-10-09: no judge is passed here, so the writer HOLDS every closure it decides
+    // (supersede-writer.ts SupersedeJudge). The env var alone no longer closes anything; the
+    // chunk-identity trigger made 22,340 false sibling closures 08-04 → 09-03, reopened that day.
+    //
     // skipSupersede (2026-09-03): indexFile already proved, with ONE indexed probe, that no
     // prior currently-valid row exists for this (source, path) strictly before `now`. That
     // probe's WHERE is this SELECT's WHERE minus the span/model/hash conjuncts, so an empty

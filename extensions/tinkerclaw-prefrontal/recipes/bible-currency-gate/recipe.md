@@ -74,6 +74,23 @@ Keep the project's design docs (`{{design_docs_dir}}`) current with what the tas
 
 Run `{{invariants_cmd}}` from `{{repo_root}}`. Fix any verify block your change broke.
 
+The full suite outlasts one five-minute tool call. Run it through skill `longjob`, or, when the change
+sits in one optic's domain, run that optic alone (11 s for `subagents-and-recipes.md` on 2026-10-07):
+
+```
+D=$(mktemp -d {{repo_root}}/.bible-scope-XXXX); cp TINKER_UI_DESIGN_BIBLE/<optic>.md "$D"/
+BIBLE_DIR="$D" node scripts/test-invariants.mjs; rm "$D"/<optic>.md && rmdir "$D"
+```
+
+The scope folder has to sit inside the repo, because some checks run `cd "${BIBLE_DIR}/.."`. In a
+one-file scope the four meta checks (INDEX.md, see_also, the single-owner count, design-principles.md)
+always fail; every other line must pass.
+
+Several optics: copy each one you touched into the same scope folder. To tell your red checks from
+ones already red, run the same scope a second time on the committed copies
+(`git show HEAD:TINKER_UI_DESIGN_BIBLE/<optic>.md > "$D"/<optic>.md`) and compare the two `✗` lists.
+Only the lines that are new are yours to fix; name the rest as pre-existing.
+
 ### 5. Claim
 
 **Done when:** "done" is stated WITH the bible updated + invariants evidence — or the actual gap is reported honestly.
@@ -87,5 +104,8 @@ Run `{{invariants_cmd}}` from `{{repo_root}}`. Fix any verify block your change 
 
 ## Failures Overcome
 
+- 2026-10-16: two bible entries (bug-log, tinker-ui §5.8AE) were checked without this recipe being opened: the full suite was cut at 280 s again, a second run took 7 min, and 13 red checks had to be sorted by hand into 1 mine and 12 already there. Step 4 now covers several optics and the `HEAD` baseline; next time 2 runs of minutes become 2 scoped runs of seconds.
+
+- 2026-10-07: after authoring a recipe, the full suite was cut at 280 s with no output, and a retry scoped to a folder in `/tmp` failed three recipe checks that pass in the repo (they `cd` to the bible folder's parent). Step 4 now says how to run one optic in seconds and which failures that scope always shows.
 - 2026-06-19: a chat-rendering fix changed the §5.8 grouping behavior, but the owning optic (`tinker-ui.md`) still described the old position-only collapse — drift caught only on review. This gate makes the bible update a REQUIRED completion step of any code-changing BROCA task.
 - 2026-08-28 / 2026-09-01: a chat-visible recipe notice shipped as a bug-log aside; the skill line never made the bible; the architect had to ask where the spec was. ORCA's `DOC_REQUIREMENT` treated stale-entry updates as "also consider". Widened to a duty (annotate new principles/features/requirements; update old entries in the same run) and added `MECHANISM_REQUIREMENT` — programmatic rules beat prompting for chat consistency. design-principles #21/#22.

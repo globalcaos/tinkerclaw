@@ -115,6 +115,10 @@ export const AgentDefaultsSchema = z
     bootstrapPromptTruncationWarning: z
       .union([z.literal("off"), z.literal("once"), z.literal("always")])
       .optional(),
+    memoryIndexMaxChars: z.number().int().positive().optional(),
+    memoryIndexWarning: z
+      .union([z.literal("off"), z.literal("watch"), z.literal("once"), z.literal("always")])
+      .optional(),
     userTimezone: z.string().optional(),
     startupContext: z
       .object({

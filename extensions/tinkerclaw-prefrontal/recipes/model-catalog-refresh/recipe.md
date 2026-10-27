@@ -80,6 +80,32 @@ A model needs **BOTH halves** to be plottable — a measured AA index (y) and a 
 provider id + price (x) — and **neither may be inferred**. One half missing means the
 model is REPORTED, not plotted.
 
+**Coverage: no model is left out (the architect, 2026-10-13).** _"The ai analysis post is for the whole
+humanity to see, so no model should be left out. All models, without exception, should show in
+tinkerclaw as well. … Even if we had no api, I want to know there is a new model in town anyway."_
+
+- **Scope:** every one of the **top 50 base rows** on today's AA table (`effort == null`), ranked
+  by index. Ordinal on purpose, so an AA rescale cannot shrink it. Each must be on the public
+  page AND in TinkerClaw (config, picker data, chart, dossier). A dated snapshot of a model we
+  already carry (`qwen3-8-max-0803` next to Qwen3.8 Max) is a twin: name it in the report, no row.
+- **The route never decides inclusion.** "We do not route through that provider", "the key has
+  no credit", "OpenRouter is not active" are ROUTING facts. They decide the billing label, never
+  whether the model appears. The OpenRouter key exists; activating a model is one card payment.
+- **Route order:** subscription seat → a direct API key we hold (Google via `GEMINI_API_KEY`,
+  xAI, DeepInfra; list the provider's own model endpoint, do not assume) → OpenRouter (metered).
+- **No seller anywhere** (AA scores it, no catalog sells it yet): add the score anyway and give
+  it a dossier row marked "no public price yet". If a surface cannot draw a model without a
+  price, that is a code gap to fix in this run, never a reason to drop it.
+- **Census in one call:** `python3 -I ~/.openclaw/workspace/skills/model-rank-refresh/scripts/coverage_census.py` (today's `/tmp/aa-*.json` + `/tmp/or-*.json`; exit 1 = models missing, each with its OpenRouter seller). The run is not done while it exits 1, twins excepted. 2026-10-13 the hand count took 8 calls and stopped at 11; the script found 13.
+- **Where an unsellable model lives (built 2026-10-13):** `tinker-ui/src/panels/aa-unrouted-models.ts`
+  (`AA_UNROUTED_MODELS`). It feeds the dossier rows and the chart's "not plotted" note, and stays out of
+  `AA_INTELLIGENCE_INDEX` (a dot source: no cost row draws at the false default 2.58) and out of
+  `openclaw.json` (the picker would offer a model that fails). Add the entry, and drop it the day a
+  seller exists and the model is onboarded for real. A model OpenRouter lists under a different name
+  ("Step 5 Preview" for AA's "step-5") is not matched without proof. A family with no `SC_DOSSIER_RULES`
+  rule gets a row reading "no dossier entry yet", and the report names it; do not invent graded cells.
+- **Every new arrival leads the FOUND line**, plotted or not: name, score, vendor, seller, price.
+
 ### 2. Re-price everything that is already on the panel
 
 **Done when:** every configured model's cost has been diffed against the live catalog and
@@ -91,8 +117,8 @@ every cost comparison it appeared in. Prices move weekly; between 2026-08-13 and
 glm-5.2 fell 27% and deepseek-v4-flash rose 56%.
 
 **Some catalog prices are TIME-WINDOWED — read `pricing.overrides` before calling a move.**
-OpenRouter's top-level `prompt`/`completion` is the price of the window that is open *when you
-fetch*, and some models carry an `overrides` array (`utc_days`, `utc_start`/`utc_end` in HHMM).
+OpenRouter's top-level `prompt`/`completion` is the price of the window that is open _when you
+fetch_, and some models carry an `overrides` array (`utc_days`, `utc_start`/`utc_end` in HHMM).
 DeepSeek V4.1 Flash is $0.30/$1.20 on weekdays 01:00-04:00 and 06:00-10:00 UTC and $0.15/$0.60
 otherwise, all weekend. This cron fires 03:45 UTC, inside the dear window on weekdays, so a
 Friday-to-Saturday diff shows a "-50%" that is only the clock (2026-09-12). Diff like against like
@@ -117,6 +143,20 @@ node {{skill_dir}}/scripts/fetch_cn_provider_prices.mjs
 It regenerates `{{ui_src}}/panels/cn-provider-prices.generated.ts` (DO-NOT-EDIT banner —
 regenerate, never hand-edit) and prints `models=N/14`. If it exits non-zero or reports
 `errors>0`, **say so** rather than shipping a partial matrix.
+
+### 2b. Re-measure the subscription seats, and hold every typed claim to them
+
+The prepaid circles are priced from `SEAT_MEASURED` in `src/shared/rel-cost-table.ts`. When its
+dated measurement is older than 14 days, re-run it: read the seat's weekly meter
+(`python3 ~/.openclaw/workspace/scripts/claude-usage.py`, name the account), start the window at
+`max(resets_at − 7 d, the moment the CLI moved to that account)`, run
+`python3 scripts/measure-seat-burn.py <start> <start>`, set `weeklyListUsd = burn / meter`, and
+re-base the pins the tests report (every one moves by the same factor; one that does not is a bug).
+Then grep every place a seat multiple is TYPED rather than computed and hold it to
+`seatValueMultiple()`: `{{ui_src}}/app.ts` legend, the hero card
+(`~/.openclaw/workspace/artifacts/ai-analysis/hero/hero.html` → `render-hero.mjs`, upload as a new
+media item), the static WordPress sentence on post 485, and the memory notes that quote it. A typed
+number off by more than ~20% is a gap this run closes, not a note.
 
 ### 3. Re-rank
 
@@ -192,7 +232,7 @@ superseded scale with zero OpenRouter models).
 | smart × cost Y axis                        | `tinker-ui/src/app.ts` → `AA_INTELLIGENCE_INDEX`                   | every score this run; append new ids                                                                     |
 | smart × cost X axis + envelope price       | `src/shared/rel-cost-table.ts`                                     | one verified row per new id, on the right billing basis                                                  |
 | measured effort ladder                     | `src/shared/aa-effort-index.ts`                                    | every effort AA actually scored                                                                          |
-| measured effort SIDECAR (estimator input)  | `~/.openclaw/workspace/memory/aa-effort-index.json`                | the SAME cells as the .ts above — `estimate_effort_index.py` reads this file, not the .ts (2026-09-13)     |
+| measured effort SIDECAR (estimator input)  | `~/.openclaw/workspace/memory/aa-effort-index.json`                | the SAME cells as the .ts above — `estimate_effort_index.py` reads this file, not the .ts (2026-09-13)   |
 | estimated effort ladder                    | `src/shared/aa-effort-estimate.ts` (GENERATED)                     | regenerated after every AA refresh; a new AA measurement retires an estimate and re-fits every benchmark |
 | THALAMUS task routing + dossier best marks | `src/shared/domain-strength.generated.ts` (GENERATED)              | measured Epoch AI percentiles by domain                                                                  |
 | dossier rows                               | `tinker-ui/src/app.ts` → `openDossier`                             | dynamic from every configured scored model; no score floor                                               |
@@ -264,3 +304,16 @@ and, for each addition, its **cost and its billing route** — subscription or c
   data but because AA files them under an `-adaptive` slug our family key never matched. A
   join miss is visually identical to missing data, so it survived every previous audit.
   → Step 4c.
+- **2026-10-10** — the 09-23 re-measurement cut the Max 20× multiple from ~340× to ~59×, but the
+  chart legend, the hero card (">100×") and a memory note kept the typed 340×; it reached a public
+  post in Matt Berman's community before anyone checked. the architect: "redo all the numbers you need,
+  and revise the graph that we have online." → Step 2b; the legend now computes it.
+
+- **2026-10-13** — Meta's Muse Wonder (AA 52.39) and Muse Wonder Full (55.80) and Gemini 4 Argon
+  (52.56) had a live OpenRouter price ($4/$20) and were left off because "that route is retired
+  for us". the architect: "Did our cron fail to recognize it or since we have no access to openrouter for
+  now you decided to ignore it?" Then: "no model should be left out … even if we had no api, I
+  want to know there is a new model in town anyway." → Step 1, the coverage rule (top 50 base
+  rows, route never decides inclusion). The same census found 8 older gaps the cron had never
+  flagged (Fable 5, step-5, Ling 3.1 Flash, Qwen3.8-Flash-Next, Gemini 3.7 Flash, GPT-5.4,
+  Mistral Large 4 Preview, plus the 0803 Qwen twin).

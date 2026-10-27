@@ -152,10 +152,9 @@ export default definePluginEntry({
   id: "tinkerclaw-fractal-reflection",
   name: "Fractal Reflection",
   description:
-    "Opt-in parallel post-turn reflection — a read-only triage lane judges every " +
-    "finished main turn off-channel (one billed subagent run per turn); every turn " +
-    "yields exactly one ledger row. Drop 1 is COLD-arm only: findings are flagged, " +
-    "never fixed (bible §5.67a/§5.67b).",
+    "The Fractal doctrine the background reflection reads, plus the legacy opt-in " +
+    "triage lane: a read-only lane judges every finished main turn off-channel (one " +
+    "billed subagent run per turn) and flags findings, never fixes (bible §5.67a/§5.67b).",
   register(api: OpenClawPluginApi) {
     const log = api.logger;
 

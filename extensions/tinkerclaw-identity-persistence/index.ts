@@ -10,7 +10,8 @@
  * 1. `before_prompt_build` (priority 100) -- Persona injection into the system
  *    context of EVERY prompt, AMYGDALA personality nudge, and mid-context
  *    re-injection when EWMA drifts.
- * 2. `llm_output` -- SyncScore evaluation every N turns (EWMA smoothing).
+ * 2. `llm_output` -- the spoken-line marker probe on every finished home-chat
+ *    answer (`j.cortex.probe`), then SyncScore evaluation every N turns.
  * 3. `llm_output` -- Observation extraction, appended to disk.
  *
  * Writes shared state to `~/.openclaw/cognitive/identity-persistence.json`
@@ -31,6 +32,7 @@ import {
   createObservationExtractor,
   type ObservationExtractor,
 } from "./src/observation-runtime.js";
+import { personaDeclaresSpokenLine, probeSpokenLine } from "./src/spoken-line-probe.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -94,6 +96,24 @@ function resolveAgentName(config: unknown): string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The `llm_output` event as the host sends it (src/plugins/hook-types.ts PluginHookLlmOutputEvent):
+ * the answer is `assistantTexts`. Both handlers below read `payload.text ?? payload.content` until
+ * 2026-10-09, fields the event never had, so every turn returned early and CORTEX observed nothing
+ * (the twin of Total Recall's 08-04 fix). `text`/`content` stay as a fallback for older hosts.
+ */
+type LlmOutputPayload = { assistantTexts?: string[]; text?: string; content?: string };
+type LlmOutputContext = { sessionKey?: string; runId?: string; trigger?: string };
+
+function assistantText(payload: LlmOutputPayload): string {
+  return (
+    payload.assistantTexts?.join("\n\n").trim() ||
+    payload.text ||
+    payload.content ||
+    ""
+  ).trim();
+}
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
@@ -261,6 +281,17 @@ export default definePluginEntry({
     };
     const cortex: CortexRuntime = createCortexRuntime(runtimeOpts);
 
+    // J4 Level 1: probe the spoken line only where the persona file itself declares it.
+    let declaresSpokenLine = false;
+    try {
+      declaresSpokenLine = personaDeclaresSpokenLine(
+        readFileSync(soulPath, "utf8"),
+        cortex.persona.name,
+      );
+    } catch {
+      // unreadable now: no probe rows, the rest of the plugin is unaffected
+    }
+
     // -- Initialize observation extractor --
     const observer: ObservationExtractor = createObservationExtractor();
 
@@ -307,94 +338,98 @@ export default definePluginEntry({
           ? `\n[Identity Reinforcement — SyncScore ${reinjectResult.ewmaScore.toFixed(3)}]\n${personaBlock}\n`
           : "";
 
+        // FORK 2026-10-10 (J-series Phase 1.5): the persona is stable and stays in the system prompt; the nudge
+        // changes whenever Learned Intuition rewrites its file, so it rides the turn with the reinforcement block.
         return {
-          prependSystemContext: personaBlock + nudgeBlock,
-          prependContext: reinjectBlock,
+          prependSystemContext: personaBlock,
+          prependContext: nudgeBlock + reinjectBlock,
         };
       },
       { priority: 100 },
     );
 
     // -----------------------------------------------------------------------
-    // Hook 2: llm_output — SyncScore evaluation
+    // Hook 2: llm_output — spoken-line probe, then SyncScore evaluation
     // -----------------------------------------------------------------------
-    api.on(
-      "llm_output",
-      async (payload: { text?: string; content?: string }, _context: { sessionKey: string }) => {
-        turnCounter++;
+    api.on("llm_output", async (payload: LlmOutputPayload, context: LlmOutputContext) => {
+      turnCounter++;
 
-        // Only evaluate every N turns
-        if (turnCounter % evaluationInterval !== 0) {
-          return;
-        }
+      if (declaresSpokenLine) {
+        probeSpokenLine({
+          assistantTexts: payload.assistantTexts,
+          name: cortex.persona.name,
+          context,
+        });
+      }
 
-        const text = payload.text ?? payload.content ?? "";
-        if (!text) {
-          return;
-        }
+      // Only evaluate every N turns
+      if (turnCounter % evaluationInterval !== 0) {
+        return;
+      }
 
-        const result = cortex.evaluateSyncScore([text], turnCounter);
+      const text = assistantText(payload);
+      if (!text) {
+        return;
+      }
 
-        // Log to cortex sync-score log
-        try {
-          ensureDir(CORTEX_LOG_DIR);
-          appendFileSync(
-            SYNC_SCORE_LOG_PATH,
-            JSON.stringify({
-              turn: turnCounter,
-              rawScore: result.rawScore,
-              ewmaScore: result.ewmaScore,
-              needsReinjection: result.needsReinjection,
-              timestamp: result.timestamp,
-            }) + "\n",
-            "utf8",
-          );
-        } catch {
-          // Non-fatal
-        }
+      const result = cortex.evaluateSyncScore([text], turnCounter);
 
-        if (result.needsReinjection) {
-          api.logger.info(
-            `[identity-persistence] SyncScore drift: ewma=${result.ewmaScore.toFixed(3)} < ${threshold} (turn=${turnCounter})`,
-          );
-        }
-      },
-    );
+      // Log to cortex sync-score log
+      try {
+        ensureDir(CORTEX_LOG_DIR);
+        appendFileSync(
+          SYNC_SCORE_LOG_PATH,
+          JSON.stringify({
+            turn: turnCounter,
+            rawScore: result.rawScore,
+            ewmaScore: result.ewmaScore,
+            needsReinjection: result.needsReinjection,
+            timestamp: result.timestamp,
+          }) + "\n",
+          "utf8",
+        );
+      } catch {
+        // Non-fatal
+      }
+
+      if (result.needsReinjection) {
+        api.logger.info(
+          `[identity-persistence] SyncScore drift: ewma=${result.ewmaScore.toFixed(3)} < ${threshold} (turn=${turnCounter})`,
+        );
+      }
+    });
 
     // -----------------------------------------------------------------------
     // Hook 3: llm_output — Observation extraction
     // -----------------------------------------------------------------------
-    api.on(
-      "llm_output",
-      async (payload: { text?: string; content?: string }, _context: { sessionKey: string }) => {
-        const text = payload.text ?? payload.content ?? "";
-        if (!text) {
-          return;
-        }
+    api.on("llm_output", async (payload: LlmOutputPayload, _context: LlmOutputContext) => {
+      const text = assistantText(payload);
+      if (!text) {
+        return;
+      }
 
-        const observations = observer.extractObservations([text]);
-        if (observations.length === 0) {
-          return;
-        }
+      const observations = observer.extractObservations([text]);
+      if (observations.length === 0) {
+        return;
+      }
 
-        // Persist observations
-        try {
-          persistObservations(
-            observations.map((o) => ({
-              type: o.type,
-              content: o.content,
-              confidence: o.confidence,
-            })),
-          );
-        } catch (err) {
-          api.logger.warn(`[identity-persistence] observation persistence failed: ${err}`);
-        }
-
-        api.logger.info(
-          `[identity-persistence] extracted ${observations.length} observation(s) (total=${observer.totalExtracted})`,
+      // Persist observations
+      try {
+        persistObservations(
+          observations.map((o) => ({
+            type: o.type,
+            content: o.content,
+            confidence: o.confidence,
+          })),
         );
-      },
-    );
+      } catch (err) {
+        api.logger.warn(`[identity-persistence] observation persistence failed: ${err}`);
+      }
+
+      api.logger.info(
+        `[identity-persistence] extracted ${observations.length} observation(s) (total=${observer.totalExtracted})`,
+      );
+    });
 
     api.logger.info(
       `[identity-persistence] ready (persona=${cortex.persona.name}, source=${soulPath}, ` +

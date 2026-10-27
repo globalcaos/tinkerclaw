@@ -17,6 +17,7 @@ import path from "node:path";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
 import { resolveStateDir } from "../config/paths.js";
 import { getUsageSnapshot } from "../infra/usage-snapshot-store.js";
+import { userTaskText } from "../shared/user-task-text.js";
 
 // ── tunable bounds (design-principles #19: derived/documented, NOT frozen working values) ──
 /** Anthropic weekly quota window — the burn-down target; `seven_day.resets_at` anchors its end. */
@@ -240,22 +241,13 @@ function recordAllocation(
 // Rather than hardcode that one boilerplate, strip the standard appended sections: the
 // injected trailer starts at the first section marker we control. Anything left is what
 // the user actually typed.
-const APPENDED_SECTION_MARKERS = [
-  "\n\n---\n\n**After your reply, append",
-  "\n\n---\n\n**After your reply",
-  "🌿 FRACTAL",
-  "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
-];
+//
+// FORK 2026-10-09: the stripping itself lives in src/shared/user-task-text.ts (`userTaskText`),
+// shared with THALAMUS's task effort (src/shared/thalamus-effort.ts), so the two readers of
+// "what did the user type" cannot drift. The markers and the measure are unchanged.
 /** Length of the user's own request, with our standard injected trailer removed. */
 export function userTaskLength(prompt: string | undefined): number {
-  let text = prompt ?? "";
-  for (const marker of APPENDED_SECTION_MARKERS) {
-    const at = text.indexOf(marker);
-    if (at >= 0) {
-      text = text.slice(0, at);
-    }
-  }
-  return text.trim().length;
+  return userTaskText(prompt).length;
 }
 
 /** Entry point for the `?? chooseAutoEffort(...)` tails (true-Auto primary turns only). */

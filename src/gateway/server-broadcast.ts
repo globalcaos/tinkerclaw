@@ -48,7 +48,17 @@ const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
   "sessions.changed": [READ_SCOPE],
   "session.message": [READ_SCOPE],
   "session.tool": [READ_SCOPE],
+  // FORK 2026-10-22: Amygdala's live events (Jev decisions, the refusal strip with its Rewind, the hook bubbles, the
+  // retry pick). Unlisted, they reached no client at all, so an open page drew a refusal only after a reload. ADMIN,
+  // because `amygdala2.feed` serving the same rows is unclassified and so already needs ADMIN.
+  "amygdala.hook": [ADMIN_SCOPE],
+  "thalamus.refusal": [ADMIN_SCOPE],
 };
+
+/** Families matched by prefix when no exact entry exists, so a new event of the family is not silently dropped. */
+const EVENT_PREFIX_SCOPE_GUARDS: Array<[prefix: string, scopes: string[]]> = [
+  ["amygdala2.", [ADMIN_SCOPE]],
+];
 
 // Events that node-role sessions must receive even when the event's operator
 // scope would otherwise reject non-operator roles. Nodes act on these updates
@@ -64,7 +74,8 @@ export type {
 } from "./server-broadcast-types.js";
 
 function hasEventScope(client: GatewayWsClient, event: string): boolean {
-  const required = EVENT_SCOPE_GUARDS[event];
+  const required =
+    EVENT_SCOPE_GUARDS[event] ?? EVENT_PREFIX_SCOPE_GUARDS.find(([p]) => event.startsWith(p))?.[1];
   // Plugin-defined gateway broadcast events (plugin.* namespace) are allowed
   // for operator.write and operator.admin scopes. Explicit plugin.* entries
   // in EVENT_SCOPE_GUARDS take precedence (e.g., plugin.approval.*).

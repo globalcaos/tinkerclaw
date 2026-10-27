@@ -49,6 +49,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { emitJConsolidationRun } from "../../infra/events/j-rows.js";
 import { createArtifactStore } from "../../memory/engram/artifact-store.js";
 import {
   type ConsolidationState,
@@ -197,6 +198,7 @@ export async function runEngramConsolidate(
   const baseDir = engramRoot(opts.baseDir);
   const log = opts.log ?? (() => {});
   const eventsDir = join(baseDir, "events");
+  const cycleStartedAt = Date.now();
 
   const result: EngramConsolidateResult = {
     sessionsProcessed: 0,
@@ -279,6 +281,8 @@ export async function runEngramConsolidate(
         skillExtraction,
         recipeEvolution,
         ...(reconciliation ? { reconciliation } : {}),
+        // This job owns the cycle: one j.consolidation.run row below, not one per store.
+        emitCycleRow: false,
       },
     );
 
@@ -298,6 +302,13 @@ export async function runEngramConsolidate(
   // Persist both cursors atomically.
   saveConsolidationState(baseDir, consolidationState);
   saveFailureStateMap(failureState, baseDir);
+  emitJConsolidationRun({
+    durMs: Date.now() - cycleStartedAt,
+    eventsScanned: result.eventsProcessed,
+    skillsExtracted: result.skillsExtracted,
+    skillsDeprecated: 0,
+    sessionKey: null,
+  });
 
   log(
     `[engram-consolidate] sessions=${result.sessionsProcessed} episodes=${result.episodes} events=${result.eventsProcessed} switches=${result.strategySwitchesProposed} skills=${result.skillsExtracted} recipeMutations=${result.recipeMutationsProposed} reconcile=${result.reconciliationDecisions.updated}/${result.reconciliationDecisions.deleted}`,

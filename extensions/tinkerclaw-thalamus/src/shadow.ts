@@ -37,6 +37,11 @@ import type { ThalamusStore } from "./store.js";
 
 /** A model call's expected output, until measured time and length per rung exist (phase F). */
 export const EXPECTED_OUTPUT_TOKENS = 600;
+// Module level on purpose. The run state keeps these parameters for up to 256 runs, and an arrow written inside
+// observe() would share observe()'s closure context, which holds `call` (the deferred write reads it): the whole
+// conversation and the tools, which reach the agent session and its parsed transcript. Measured on a gateway copy
+// 2026-10-10: ~17 MB per turn kept that way, a heap floor of several GB.
+const expectedOutputTokens = (): number => EXPECTED_OUTPUT_TOKENS;
 /** A decision that takes longer than this to compute is counted as slow. */
 export const SLOW_MS = 5;
 /** How long a board or a hand-picked answer is reused. */
@@ -228,7 +233,7 @@ export function createShadowRouter(d: ShadowDeps): {
         dialIdx: b.dialIdx,
         dialBar,
         feedTokens: { thread: threadTokens, brief: Math.min(4000, threadTokens) },
-        expectedOutputTokens: () => EXPECTED_OUTPUT_TOKENS,
+        expectedOutputTokens,
         approvedProviders: cfg.privacy.approvedProviders,
         policy: cfg.policy.table,
         contextWindowFor: b.contextWindowFor,

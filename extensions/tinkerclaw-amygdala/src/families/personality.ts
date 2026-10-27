@@ -14,6 +14,12 @@ const CURIOSITY_GAP = 10;
 /** Habituation: after this many sightings a thing is no longer new and novelty is not asked. */
 const HABITUATED_AT = 3;
 
+/** Every target of the step is one the agent created, edited, keeps in scratch, or the owner named (2026-10-25). */
+function familiar(s: Situation): boolean {
+  const n = s.targets.value?.length ?? 0;
+  return n > 0 && (s.ownedTargets?.value?.length ?? 0) >= n;
+}
+
 function subject(s: Situation): string {
   return clip(s.targets.value?.[0]?.path ?? s.tool.value ?? "") || "this step";
 }
@@ -44,7 +50,7 @@ function pickNote(
 ): "surprise" | "novelty" | "worth-knowing" | null {
   if (s.seam !== "post-tool") return null;
   if (crossesId(asked, verdicts, "surprise")) return "surprise";
-  if (crossesId(asked, verdicts, "novelty")) return "novelty";
+  if (crossesId(asked, verdicts, "novelty") && !familiar(s)) return "novelty";
   if (crossesId(asked, verdicts, "worth-knowing")) return "worth-knowing";
   return null;
 }
@@ -59,8 +65,11 @@ export function createPersonalityFamily(_deps: FamilyDeps): Family {
       if ((s.expectation.value ?? "") !== "") ids.push("surprise");
       // No count yet means nothing has been seen: first contact is exactly what novelty is for. Only a step that
       // touches something (a file, a folder, a host) can meet a new thing; a bare "Bash" is not one (2026-10-03).
+      // A file the agent created or edited itself, keeps in scratch, or the owner named is not new to it (2026-10-25:
+      // 89 % of the reviewed novelty notes were noise).
       if (
         (s.targets.value?.length ?? 0) > 0 &&
+        !familiar(s) &&
         (s.contextCounts.value?.seen ?? 0) < HABITUATED_AT
       ) {
         ids.push("novelty");

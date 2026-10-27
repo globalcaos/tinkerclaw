@@ -99,19 +99,25 @@ describe("buildHookSettings", () => {
     ]);
     expect(s.hooks.PreToolUse[0].matcher).toBe("*");
     expect(s.hooks.PostToolUse[0].matcher).toBe("*");
-    const cmd = s.hooks.PreToolUse[0].hooks[0].command;
+    // 2026-10-15: the hard-rule layer (AEGIS) runs first, in every mode, on this plugin's policy.
+    const hard = s.hooks.PreToolUse[0].hooks[0];
+    expect(hard.command).toContain("hard-rules.mjs");
+    expect(hard.command).toContain("AMYGDALA_POLICY_PATH='/d/policy.json'");
+    expect(hard.timeout).toBe(10);
+    const cmd = s.hooks.PreToolUse[1].hooks[0].command;
     expect(cmd).toContain("AMYGDALA2_DATA_DIR");
     expect(cmd).toContain("AMYGDALA2_SHADOW=1");
     expect(cmd).toContain("pre-tool.mjs");
     expect(s.hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(5);
-    expect(s.hooks.PreToolUse[0].hooks[0].timeout).toBe(330);
+    expect(s.hooks.PreToolUse[1].hooks[0].timeout).toBe(330);
     expect(s.hooks.PostToolUse[0].hooks[0].timeout).toBe(5);
     expect(s.hooks.Stop[0].hooks[0].timeout).toBe(8);
   });
   it("enforce omits the shadow env; timeouts overridable", () => {
     const s = buildHookSettings("/d", { mode: "enforce", timeouts: { pre: 9 } }) as S;
     expect(s.hooks.Stop[0].hooks[0].command).not.toContain("AMYGDALA2_SHADOW");
-    expect(s.hooks.PreToolUse[0].hooks[0].timeout).toBe(9);
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toContain("hard-rules.mjs");
+    expect(s.hooks.PreToolUse[1].hooks[0].timeout).toBe(9);
   });
   it("writeHookSettings returns the path of an atomic write", () => {
     const dir = tmp();

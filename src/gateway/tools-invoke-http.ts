@@ -122,6 +122,23 @@ function isRefusedMediaError(err: object): boolean {
   );
 }
 
+// FORK 2026-10-08 — the browser control service refused the CALLER's request (the page threw inside
+// evaluate, a targetId did not match). The reason is about the tab and action the caller named, so
+// it goes back: masked as "tool execution failed", it cost two blind retries and a detour through
+// the CLI while the gateway log held "page.evaluate: TypeError: Failed to fetch" and "action
+// targetId must match request targetId". 422: the gateway is fine, the request could not be done.
+function isBrowserServiceError(err: object): boolean {
+  const { name, message } = err as { name?: unknown; message?: unknown };
+  if (name === "BrowserServiceError") {
+    return true;
+  }
+  return (
+    name === "GatewayClientRequestError" &&
+    typeof message === "string" &&
+    message.startsWith("BrowserServiceError:")
+  );
+}
+
 function resolveToolInputErrorStatus(err: unknown): number | null {
   if (err instanceof ToolInputError) {
     const status = (err as { status?: unknown }).status;
@@ -132,6 +149,9 @@ function resolveToolInputErrorStatus(err: unknown): number | null {
   }
   if (isRefusedMediaError(err)) {
     return 400;
+  }
+  if (isBrowserServiceError(err)) {
+    return 422;
   }
   const name = (err as { name?: unknown }).name;
   if (name !== "ToolInputError" && name !== "ToolAuthorizationError") {

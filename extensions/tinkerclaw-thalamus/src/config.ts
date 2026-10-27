@@ -2,8 +2,50 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PolicyTable } from "openclaw/plugin-sdk/fork-thalamus";
+import { DEFAULT_TUTOR_LADDER } from "./tutor.js";
 
 export type ThalamusMode = "off" | "shadow" | "enforce";
+
+/** The memory pointers of the anticipation note: `off` finds nothing, `watch` finds and records them, `inject` also shows them. */
+export type AnticipateMode = "off" | "watch" | "inject";
+
+/** The harness wake of a matching past chat (`src/session-wake.ts`): `watch` decides and records, `on` also wakes. */
+export type WakeMode = "off" | "watch" | "on";
+
+export type WakeConfig = {
+  mode: WakeMode;
+  /** A past chat must cover at least this share of the prompt's information to be woken (a pointer needs 0.45). */
+  minCover: number;
+  /** ...and share at least this many distinct rare words with it (a pointer needs 3). */
+  minTerms: number;
+  /** Wakes the harness starts per local day, counted on disk. */
+  dailyCap: number;
+  /** Seconds before the skill stops a wake. */
+  timeoutS: number;
+};
+
+/** The nightly lesson pass: `off` keeps no corrections, `watch` drafts the repairs, `apply` also makes the ones that only tighten. */
+export type LessonsMode = "off" | "watch" | "apply";
+
+/**
+ * The nightly lesson pass (2026-10-25, `src/lesson-sleep.ts`). Empty lists and an empty `target` mean the agent
+ * workspace's defaults: its always-read files, its `skills` folder, the anticipation note's note folders, its AGENTS.md.
+ */
+export type LessonsConfig = {
+  mode: LessonsMode;
+  /** Corrections of the same thing that make a lesson: the second one means the first lesson failed. */
+  minSlips: number;
+  /** How far back the first pass reads. Later passes read from the last one. */
+  windowHours: number;
+  /** Files read with every turn (rung 3). */
+  alwaysRead: string[];
+  /** Folders of task notes, skills and recipes (rung 2), two levels deep. */
+  taskDirs: string[];
+  /** Folders of saved notes (rung 1), two levels deep. */
+  noteDirs: string[];
+  /** The always-read file `apply` adds a rule line to. */
+  target: string;
+};
 
 export type ThalamusConfig = {
   mode: ThalamusMode;
@@ -71,6 +113,48 @@ export type ThalamusConfig = {
     /** Characters of a redacted task kept for replay. */
     replayMaxChars: number;
   };
+  /**
+   * The tutors (2026-10-25, `src/tutor.ts`): a second model judges, after the fact, whether the model that ran a task
+   * fit it and whether the enhancement list fit it. Records only. `sampleRate` spreads each day's cap over the day;
+   * `followUpMs` is how long a routing review waits for the owner's next prompt.
+   */
+  tutor: {
+    enabled: boolean;
+    ladder: string[];
+    timeoutMs: number;
+    routingDailyCap: number;
+    enhDailyCap: number;
+    sampleRate: number;
+    followUpMs: number;
+  };
+  /**
+   * The note and past-chat legs of the anticipation note (2026-10-25, `src/pointer-sources.ts`). For an owner's prompt
+   * in a Tinker tab or the main chat, find up to `maxNotes` note files and `maxChats` past chats that may already hold
+   * what it needs. `watch` (the default) records them in the ledger and shows the agent nothing; `inject` adds them, one
+   * line each, to the short list's note, in enforce with `enforce.shortlist` on; `off` does nothing. Local matching only:
+   * nothing here is sent to Jev or any other model.
+   */
+  anticipate: {
+    mode: AnticipateMode;
+    /** Folders of note files (Markdown, a frontmatter `description` is the use key). Empty: the agent workspace's `memory` folder. */
+    noteDirs: string[];
+    /** The chat catalogue, the ask-session skill's SQLite file. An empty string switches the past-chat leg off. */
+    chatCatalog: string;
+    maxNotes: number;
+    maxChats: number;
+    /**
+     * The harness wakes a strongly matching past chat itself, with the owner's prompt as the question, and hands its
+     * answer over as testimony (`src/session-wake.ts`). `watch` (the default) decides and records; `on` also wakes,
+     * and only when the pointer is shown (enforce, `enforce.shortlist`, `anticipate.mode` inject).
+     */
+    wake: WakeConfig;
+    /**
+     * The gateway refreshes the default past-chat catalogue once a night with the skill's own incremental scan, and
+     * builds it once when there is none (`src/catalog-refresh.ts`). No model, no wake. Default on.
+     */
+    refreshCatalog: boolean;
+  };
+  lessons: LessonsConfig;
   /** The charter's ruling C2: `model: "auto"` mixes only models of these providers until the owner widens the list. */
   orchestrate: { allowedLeafProviders: string[] };
   hedge: { margin: number };
@@ -86,6 +170,20 @@ export type ThalamusConfig = {
 };
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".openclaw", "data", "thalamus-v4");
+
+/** The ask-session skill's state folder: `$OPENCLAW_STATE_DIR/ask-session`, default `~/.openclaw/ask-session`. */
+export function askSessionStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  const state = env.OPENCLAW_STATE_DIR?.trim() || join(homedir(), ".openclaw");
+  return join(state, "ask-session");
+}
+
+/** Where the ask-session skill keeps its catalogue: `$OPENCLAW_STATE_DIR/ask-session/catalog.sqlite`, default `~/.openclaw`. */
+export function defaultChatCatalog(env: NodeJS.ProcessEnv = process.env): string {
+  return join(askSessionStateDir(env), "catalog.sqlite");
+}
+
+const expandHome = (p: string): string =>
+  p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p;
 
 type Raw = Record<string, unknown> | undefined | null;
 
@@ -113,6 +211,30 @@ const caps = (v: unknown): Record<string, number> => {
   return out;
 };
 
+/** A misspelt mode is `off`, as for `mode`: a typo must never switch something on. A missing one is `watch`. */
+export function parseAnticipateMode(v: unknown): AnticipateMode {
+  if (v === undefined) {
+    return "watch";
+  }
+  return v === "watch" || v === "inject" ? v : "off";
+}
+
+/** Absent: `watch`. A misspelt value is `off`, like the other modes. */
+export function parseWakeMode(v: unknown): WakeMode {
+  if (v === undefined) {
+    return "watch";
+  }
+  return v === "watch" || v === "on" ? v : "off";
+}
+
+/** A misspelt mode is `off`. A missing one is `watch`: the pass drafts and records, and changes no rule file. */
+export function parseLessonsMode(v: unknown): LessonsMode {
+  if (v === undefined) {
+    return "watch";
+  }
+  return v === "watch" || v === "apply" ? v : "off";
+}
+
 /** Anything but the two named modes is `off`: a typo must never switch routing on. A missing mode is `shadow`. */
 export function parseMode(v: unknown): ThalamusMode {
   return v === "shadow" || v === "enforce" ? v : "off";
@@ -136,6 +258,14 @@ export function parseConfig(raw: Raw): ThalamusConfig {
   const orchestrate = obj(r.orchestrate);
   const learning = obj(r.learning);
   const hedge = obj(r.hedge);
+  const tutor = obj(r.tutor);
+  const anticipate = obj(r.anticipate);
+  const wake = obj(anticipate.wake);
+  const lessons = obj(r.lessons);
+  const paths = (v: unknown): string[] =>
+    strs(v, [])
+      .map((d) => expandHome(d.trim()))
+      .filter(Boolean);
   const preferred = obj(finish.preferred);
   return {
     mode: r.mode === undefined ? "shadow" : parseMode(r.mode),
@@ -180,6 +310,44 @@ export function parseConfig(raw: Raw): ThalamusConfig {
       explore: bool(learning.explore, false),
       shuffle: bool(learning.shuffle, false),
       replayMaxChars: Math.min(8000, Math.max(200, num(learning.replayMaxChars, 2000))),
+    },
+    tutor: {
+      enabled: bool(tutor.enabled, true),
+      ladder: strs(tutor.ladder, [...DEFAULT_TUTOR_LADDER]).filter((x) => x.includes("/")),
+      timeoutMs: Math.max(1000, num(tutor.timeoutMs, 180_000)),
+      routingDailyCap: Math.max(0, num(tutor.routingDailyCap, 30)),
+      enhDailyCap: Math.max(0, num(tutor.enhDailyCap, 30)),
+      sampleRate: Math.min(1, Math.max(0, num(tutor.sampleRate, 0.25))),
+      followUpMs: Math.max(0, num(tutor.followUpMs, 600_000)),
+    },
+    anticipate: {
+      mode: parseAnticipateMode(anticipate.mode),
+      noteDirs: strs(anticipate.noteDirs, [])
+        .map((d) => expandHome(d.trim()))
+        .filter(Boolean),
+      chatCatalog:
+        typeof anticipate.chatCatalog === "string"
+          ? expandHome(anticipate.chatCatalog.trim())
+          : defaultChatCatalog(),
+      maxNotes: Math.min(3, Math.max(0, Math.floor(num(anticipate.maxNotes, 2)))),
+      maxChats: Math.min(3, Math.max(0, Math.floor(num(anticipate.maxChats, 1)))),
+      wake: {
+        mode: parseWakeMode(wake.mode),
+        minCover: Math.min(1, Math.max(0.45, num(wake.minCover, 0.65))),
+        minTerms: Math.min(8, Math.max(3, Math.floor(num(wake.minTerms, 5)))),
+        dailyCap: Math.min(50, Math.max(0, Math.floor(num(wake.dailyCap, 5)))),
+        timeoutS: Math.min(300, Math.max(20, Math.floor(num(wake.timeoutS, 110)))),
+      },
+      refreshCatalog: bool(anticipate.refreshCatalog, true),
+    },
+    lessons: {
+      mode: parseLessonsMode(lessons.mode),
+      minSlips: Math.max(2, Math.floor(num(lessons.minSlips, 2))),
+      windowHours: Math.min(24 * 30, Math.max(1, num(lessons.windowHours, 24))),
+      alwaysRead: paths(lessons.alwaysRead),
+      taskDirs: paths(lessons.taskDirs),
+      noteDirs: paths(lessons.noteDirs),
+      target: typeof lessons.target === "string" ? expandHome(lessons.target.trim()) : "",
     },
     orchestrate: { allowedLeafProviders: strs(orchestrate.allowedLeafProviders, ["claude-code"]) },
     hedge: { margin: Math.max(1, num(hedge.margin, 1.5)) },

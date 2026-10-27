@@ -10,7 +10,7 @@
  * real module's types.
  */
 
-import { statSync } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
@@ -92,7 +92,8 @@ function resolveWhatsmeowBinaryPath(): string | undefined {
  * The override is spawned as a subprocess with the WhatsApp session store, so
  * only accept a binary the gateway user controls: an absolute path to a regular
  * executable file, owned by the current user (or root), and not writable by
- * group or others. Returns a reason string when the path is not acceptable.
+ * group or others. It must also be built for this host's CPU (see
+ * elfMachineMismatch). Returns a reason string when the path is not acceptable.
  */
 export function checkWhatsmeowBinaryOverride(binaryPath: string): string | null {
   if (!path.isAbsolute(binaryPath)) {
@@ -117,7 +118,95 @@ export function checkWhatsmeowBinaryOverride(binaryPath: string): string | null 
   if (uid !== undefined && st.uid !== uid && st.uid !== 0) {
     return "file is not owned by the gateway user or root";
   }
-  return null;
+  // FORK 2026-10-19 (JarvisPi EPIPE crash loop): refuse a binary built for another CPU. An
+  // x86-64 override copied from a laptop to the arm64 Pi passed every check above; glibc's
+  // execvp then ran it through /bin/sh, the child exited 2, and the gateway died 18 times on
+  // the EPIPE that followed. A header that cannot be read means "cannot tell", never a refusal.
+  const head = readFileHead(binaryPath, ELF_HEADER_PROBE_BYTES);
+  return head ? elfMachineMismatch(head, process.arch) : null;
+}
+
+// FORK 2026-10-19 (JarvisPi EPIPE crash loop): ELF header probe for checkWhatsmeowBinaryOverride.
+const ELF_HEADER_PROBE_BYTES = 20; // e_machine sits at offset 18 in both ELF32 and ELF64
+const ELF_MAGIC = [0x7f, 0x45, 0x4c, 0x46] as const; // "\x7fELF"
+const ELF_DATA_OFFSET = 5; // EI_DATA
+const ELF_DATA_LITTLE_ENDIAN = 1; // ELFDATA2LSB
+const ELF_MACHINE_OFFSET = 18; // e_machine, a uint16 in the file's byte order
+
+const EM_386 = 0x03;
+const EM_ARM = 0x28;
+const EM_X86_64 = 0x3e;
+const EM_AARCH64 = 0xb7;
+
+const ELF_MACHINE_NAMES = new Map<number, string>([
+  [EM_386, "x86 (32-bit)"],
+  [EM_ARM, "arm (32-bit)"],
+  [EM_X86_64, "x86-64"],
+  [EM_AARCH64, "arm64"],
+]);
+
+type ElfHost = { name: string; goarch: string; machines: readonly number[] };
+
+/**
+ * The hosts the probe knows, keyed by Node's `process.arch`; other arches are not checked. Each
+ * host also accepts its 32-bit sibling: a 64-bit kernel usually runs 32-bit binaries (the Pi 5
+ * runs AArch32), and a 32-bit Node can sit on a 64-bit kernel. So a binary is refused only when
+ * its machine is outside the host's family (x86 or ARM).
+ */
+const ELF_HOSTS = new Map<string, ElfHost>([
+  ["x64", { name: "x86-64", goarch: "amd64", machines: [EM_X86_64, EM_386] }],
+  ["ia32", { name: "x86 (32-bit)", goarch: "386", machines: [EM_386, EM_X86_64] }],
+  ["arm64", { name: "arm64", goarch: "arm64", machines: [EM_AARCH64, EM_ARM] }],
+  ["arm", { name: "arm (32-bit)", goarch: "arm", machines: [EM_ARM, EM_AARCH64] }],
+]);
+
+/**
+ * FORK 2026-10-19 (JarvisPi EPIPE crash loop): why a binary with this ELF header cannot run on a
+ * host whose Node reports `arch`, fix included, or null. Null also means "cannot tell": not an
+ * ELF file, a big-endian one, fewer than ELF_HEADER_PROBE_BYTES bytes, or an arch missing from
+ * ELF_HOSTS. Pure, so it can be tested without a file.
+ */
+export function elfMachineMismatch(header: Uint8Array, arch: string): string | null {
+  const host = ELF_HOSTS.get(arch);
+  if (!host || header.length < ELF_HEADER_PROBE_BYTES) {
+    return null;
+  }
+  const isElf = ELF_MAGIC.every((byte, index) => header[index] === byte);
+  if (!isElf || header[ELF_DATA_OFFSET] !== ELF_DATA_LITTLE_ENDIAN) {
+    return null;
+  }
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  const machine = view.getUint16(ELF_MACHINE_OFFSET, true);
+  if (host.machines.includes(machine)) {
+    return null;
+  }
+  const builtFor = ELF_MACHINE_NAMES.get(machine) ?? `ELF machine 0x${machine.toString(16)}`;
+  return (
+    `file is built for ${builtFor} but this host is ${host.name}; rebuild it: run ` +
+    "scripts/build-whatsmeow-node.sh on this host, or cross-compile with " +
+    `CGO_ENABLED=0 GOOS=linux GOARCH=${host.goarch} go build ./cmd/whatsmeow-node`
+  );
+}
+
+/** The first `length` bytes of a file, or null when it cannot be opened or read. */
+function readFileHead(filePath: string, length: number): Uint8Array | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(filePath, "r");
+    const head = new Uint8Array(length);
+    const bytesRead = readSync(fd, head, 0, length, 0);
+    return head.subarray(0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // The bytes are already read; a failed close changes nothing here.
+      }
+    }
+  }
 }
 
 /**
@@ -139,6 +228,90 @@ export interface CreateWmClientOptions {
   storePath?: string;
   onQr?: (code: string) => void;
   verbose?: boolean;
+}
+
+const WM_CHILD_STREAMS = ["stdin", "stdout", "stderr"] as const;
+
+type WmStreamLike = { on?: (event: "error", listener: (err: unknown) => void) => unknown };
+
+/**
+ * FORK 2026-10-19 (JarvisPi EPIPE crash loop): 'error' listeners on the whatsmeow Go child's
+ * stdio pipes.
+ *
+ * whatsmeow-node writes each command to the child's stdin with no error callback (GoProcess.send
+ * in its dist/index.js). If the child is already dead, node raises the EPIPE on a later tick as
+ * an 'error' event on the stdin socket, and with no listener that is an uncaught exception. On
+ * 2026-10-19 that killed the JarvisPi gateway 18 times: an x86-64 override binary on the arm64
+ * Pi exited 2 at once, and the next write hit the closed pipe. inbound/lifecycle.ts named this
+ * cure on 2026-09-03, but it was never wired in.
+ *
+ * Attaches one listener to each stream that is present and passes the error to `onError`. A
+ * throwing `onError` is swallowed too: an error handler that throws is the crash this prevents.
+ * Returns how many streams were guarded. tinkerclaw-tinker-bridge/src/child-stream-guards.ts has
+ * the same shape; extensions do not import from each other, hence this local copy.
+ */
+export function guardWmChildStreams(
+  child: unknown,
+  onError: (stream: string, err: unknown) => void,
+): number {
+  if (!child || typeof child !== "object") {
+    return 0;
+  }
+  const stdio = child as Partial<Record<(typeof WM_CHILD_STREAMS)[number], unknown>>;
+  let guarded = 0;
+  for (const name of WM_CHILD_STREAMS) {
+    const stream = stdio[name] as WmStreamLike | null | undefined;
+    if (!stream || typeof stream.on !== "function") {
+      continue;
+    }
+    stream.on("error", (err: unknown) => {
+      try {
+        onError(name, err);
+      } catch {
+        // Never let the error handler become the next uncaught exception.
+      }
+    });
+    guarded += 1;
+  }
+  return guarded;
+}
+
+/** The parts of @whatsmeow-node/whatsmeow-node's GoProcess that the guard below relies on. */
+type WmGoProcessInternals = { start?: () => void; proc?: unknown };
+
+/**
+ * FORK 2026-10-19 (JarvisPi EPIPE crash loop): spawn the Go child before init() and guard its
+ * stdio. init() calls GoProcess.start() and writes its first command to stdin in the same tick,
+ * so the listeners must exist before init() runs; start() returns early once a child exists, so
+ * init() reuses this one. Checked against @whatsmeow-node/whatsmeow-node dist/index.js:
+ * `client.proc` is the GoProcess wrapper (start(), proc) and `client.proc.proc` the ChildProcess.
+ * If those internals move, this logs at debug level and init() runs exactly as it did before.
+ */
+function startAndGuardWmChild(client: WhatsmeowClient): void {
+  let warned = false;
+  const onStreamError = (stream: string, err: unknown) => {
+    const rawCode = (err as { code?: unknown } | null | undefined)?.code;
+    const code = typeof rawCode === "string" ? rawCode : undefined;
+    const fields = { stream, code, error: String(err) };
+    const message = `whatsmeow Go child ${stream} error (${code ?? "no code"}) swallowed`;
+    // One warning per child: a dying child can fail several writes in a row.
+    if (warned) {
+      logger.debug(fields, `${message} again`);
+      return;
+    }
+    warned = true;
+    logger.warn(fields, `${message}; the child has probably exited`);
+  };
+  try {
+    const goProcess = (client as unknown as { proc?: WmGoProcessInternals | null }).proc;
+    goProcess?.start?.();
+    if (guardWmChildStreams(goProcess?.proc, onStreamError) === 0) {
+      logger.debug("whatsmeow: Go child stdio not found; stream guards skipped");
+    }
+  } catch (err) {
+    // A spawn that throws here throws again inside init(), which reports it as before.
+    logger.debug({ error: String(err) }, "whatsmeow: could not start the Go child early");
+  }
 }
 
 /**
@@ -217,6 +390,10 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
   } catch (err) {
     logger.warn({ error: String(err) }, "whatsmeow history capture failed to bind");
   }
+
+  // FORK 2026-10-19 (JarvisPi EPIPE crash loop): guard the Go child's stdio before init() writes
+  // to it, so a child that dies at once cannot take the gateway down with an uncaught EPIPE.
+  startAndGuardWmChild(client);
 
   // Init (loads store, but does not connect). InitResult carries the stored
   // self JID for already-paired sessions — this is DETERMINISTIC, unlike the

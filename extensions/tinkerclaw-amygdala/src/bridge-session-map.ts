@@ -68,6 +68,22 @@ export interface BridgeSessionMapOptions {
   now?: () => number;
 }
 
+/**
+ * FORK 2026-10-22 (Rewind): the tinker-bridge publishes this on globalThis (extensions cannot import each other).
+ * Rewriting `session-map.json` alone changes nothing the bridge uses: it reads the file once into a cache and keeps
+ * the warm worker (a live `claude` holding the whole conversation) for 15 minutes. The seam moves the cache and
+ * retires the idle worker, so the next turn resumes the fork. Absent = no bridge loaded: the file rewrite below stays.
+ */
+export const BRIDGE_REWIND_SLOT = "openclaw.bridgeRewind";
+interface BridgeRewindSeam {
+  busy(claudeSessionId: string): boolean;
+  rebind(from: string, to: string): { ok: boolean; reason?: string };
+}
+function bridgeSeam(): BridgeRewindSeam | undefined {
+  const s = (globalThis as Record<symbol, unknown>)[Symbol.for(BRIDGE_REWIND_SLOT)];
+  return s && typeof s === "object" ? (s as BridgeRewindSeam) : undefined;
+}
+
 export class BridgeSessionMap implements SessionMap {
   private readonly file: () => string;
   private readonly now: () => number;
@@ -92,9 +108,38 @@ export class BridgeSessionMap implements SessionMap {
     return this.o.seen.get(tabKey)?.sessionId ?? null;
   }
 
+  busy(tabKey: string): boolean {
+    const seen = this.o.seen.get(tabKey);
+    if (!seen) return false;
+    try {
+      return bridgeSeam()?.busy(seen.sessionId) === true;
+    } catch (err) {
+      console.error("[amygdala] bridge busy check failed", err);
+      return true; // cannot tell: do not cut under a live worker
+    }
+  }
+
   point(tabKey: string, sessionId: string): boolean {
     const seen = this.o.seen.get(tabKey);
     if (!seen) return false;
+    const seam = bridgeSeam();
+    if (seam) {
+      try {
+        if (!seam.rebind(seen.sessionId, sessionId).ok) return false;
+      } catch (err) {
+        console.error("[amygdala] bridge rebind failed", err);
+        return false;
+      }
+      this.o.seen.set(tabKey, {
+        ...seen,
+        sessionId,
+        transcriptPath: seen.transcriptPath
+          ? join(dirname(seen.transcriptPath), `${sessionId}.jsonl`)
+          : null,
+        ts: this.now(),
+      });
+      return true;
+    }
     const file = this.file();
     try {
       const map = JSON.parse(readFileSync(file, "utf-8")) as Record<

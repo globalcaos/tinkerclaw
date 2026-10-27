@@ -19,6 +19,7 @@ import type { SkillSnapshot } from "../../skills.js";
 import type { SilentReplyPromptMode } from "../../system-prompt.types.js";
 import type { PromptMode } from "../../system-prompt.types.js";
 import type { AuthProfileFailurePolicy } from "./auth-profile-failure-policy.types.js";
+import type { ThinkSource } from "./types.js";
 export type { ClientToolDefinition } from "../../command/shared-types.js";
 
 export type EmbeddedRunTrigger = "cron" | "heartbeat" | "manual" | "memory" | "overflow" | "user";
@@ -117,6 +118,13 @@ export type RunEmbeddedPiAgentParams = {
   authProfileId?: string;
   authProfileIdSource?: "auto" | "user";
   thinkLevel?: ThinkLevel;
+  /**
+   * FORK 2026-10-09 (effort slider): who chose `thinkLevel` and Thalamus's ultracode call. They are
+   * declared on the attempt (run/types.ts) and must ride this hop too: the live probe showed both
+   * dropped here, so the bridge saw `source=default` and no ultracode on a Thalamus max+ultracode turn.
+   */
+  thinkSource?: ThinkSource;
+  ultracode?: boolean;
   fastMode?: boolean;
   verboseLevel?: VerboseLevel;
   reasoningLevel?: ReasoningLevel;

@@ -1,0 +1,4 @@
+<resources>
+    <!-- FORK 2026-10-19 (the architect: phone app) — dark wood behind the Tinker Zone sign. -->
+    <color name="jarvis_launcher_background">#1C140F</color>
+</resources>

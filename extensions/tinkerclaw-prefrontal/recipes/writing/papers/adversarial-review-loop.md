@@ -339,6 +339,15 @@ Kill switch: `systemctl --user stop review-wake-<paper>.service`.
 **Fallback, only if the tab path is down** and the principal agrees: `codex exec --model gpt-6-astra
 --sandbox read-only -i <sheets> -o <round-dir>/astra-review.md - < turn.md`. It runs off-channel,
 so the principal sees nothing in the slave tab; say so in the round report.
+**Use codex 0.163 or newer** (2026-10-21, JarvisPi): the codex bundled in tinkerclaw's `node_modules` is 0.145 and
+OpenAI refuses `gpt-6-astra` on it ("requires a newer version of Codex"). Install once with
+`npm install -g --prefix ~/.local/codex-cli @openai/codex@latest` and call `~/.local/codex-cli/bin/codex exec --model gpt-6-astra
+-c model_reasoning_effort='"max"' --skip-git-repo-check …`; "max" was tested working. Next time: 4 probe calls → 0.
+**An unchained tab never takes this fallback on its own** (principal, 2026-10-15: Astra's post-631
+rounds ran as hidden background jobs, their finish dropped blue "prompts" into the post's own chat,
+and the reviews never reached a tab). No chain (Step 0 exit 2) means STOP and ask him to draw the
+pair; the fallback needs his explicit yes in this conversation, every time. Contract: bible
+`tinker-ui.md` §5.8AK; the gateway refuses `⟦AGENT⟧` text between tabs that are not a chain pair.
 
 ### 4. Adjudication (master)
 
@@ -460,6 +469,21 @@ but the inputs line.
 > is automatically right. Escalate only differences that change the promised contribution or the reader's
 > understanding.
 
+## Variant: series round (several papers, one system)
+
+When the principal asks to rewrite a GROUP of papers that describe one system (first run: the memory series J1, J14,
+J2, J5, 2026-10-12, "Papers should keep without overlap as much as possible"), write an `ownership.md` in a series
+folder (`~/Documents/AI_reports/Papers/_series-<name>/`) before any rewrite: one stage per paper, what each owns, what it
+leaves to the others, one shared vocabulary. Every rewrite reads it, a cross-paper critic checks overlap before Astra,
+and Astra gets one turn with all the packets so she can also score the series. The principal's round cap replaces the
+safety cap of 8 when he names one.
+
+**A rewrite fan-out run with the Workflow tool lives inside the chat's worker process**: a gateway restart or worker
+recycle kills it without a wake. In the same turn that launches it, write `RESUME.md` in the series folder with the
+script path, the run id, the resume call and a liveness check (newest mtime of the run's `agent-*.jsonl`). Never tell the
+principal "I'm notified when it finishes" without that file on disk (2026-10-12: a Fractal fork saw the run reported
+"stopped" and had no way to tell a live run from a dead one until it read the transcript mtimes).
+
 ## Variant: content round (no rubric, no score)
 
 Used when the principal asks Astra about the **meaning** rather than the page (first run: J11, 2026-09-29):
@@ -509,6 +533,11 @@ rewritten and axis 9 added on 29 Sep 2026 by the principal; rounds scored before
 - Keep each round's PDF (`reviews/rN/`) so a regression can be undone.
 
 ## Failures Overcome
+
+- **Truncated rubric copy (memory series r5, 2026-10-21):** the series' `tools/rubric.md` held axes 1-5 of nine, so
+  every r5 brief asked for five axes and Astra replied "The nine-axis overall cannot yet be calculated"; J1's 8.00 looked
+  like a regression from r4's 8.83 but measured a different rubric. Before sending, `grep -c '^| \*\*[0-9]' brief.md`
+  must print 9 (one row per axis); a brief built from a local rubric copy is checked against this file's table.
 
 - **Eight readability rounds before anyone asked what the paper was for (J11, 28–29 Sep 2026):** rounds 1–8
   raised the score from 5.x to 8.6 while the paper grew to 54 functions; the first content round (r9) found

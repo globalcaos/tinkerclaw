@@ -36,6 +36,15 @@ describe("method scope resolution", () => {
     ["sessions.messages.subscribe", ["operator.read"]],
     ["sessions.messages.unsubscribe", ["operator.read"]],
     ["diagnostics.stability", ["operator.read"]],
+    // FORK 2026-10-09: the Fractal gate and ledger are READ (Fractal v2 charter C1/C3).
+    ["fractal.gate", ["operator.read"]],
+    ["fractal.ledger", ["operator.read"]],
+    // FORK 2026-10-25: the page's Fractal decisions into the journal are WRITE, like logs.ingest.
+    ["fractal.clientLog", ["operator.write"]],
+    // FORK 2026-10-25: the chat's live background tasks are READ.
+    ["ccBridge.backgroundTasks", ["operator.read"]],
+    // FORK 2026-10-21: the ask-session card reads a transcript slice; READ.
+    ["askSession.slice", ["operator.read"]],
     ["node.pair.approve", ["operator.pairing"]],
     ["poll", ["operator.write"]],
     ["update.status", ["operator.admin"]],
@@ -190,6 +199,30 @@ describe("core gateway method classification", () => {
       (method) => !isGatewayMethodClassified(method),
     );
     expect(unclassified).toEqual([]);
+  });
+
+  it("serves and lists the ask-session slice as a core method", () => {
+    expect(Object.keys(coreGatewayHandlers)).toContain("askSession.slice");
+    expect(listGatewayMethods()).toContain("askSession.slice");
+  });
+
+  it("serves and lists the Fractal gate, ledger and client log as core methods", () => {
+    expect(Object.keys(coreGatewayHandlers)).toEqual(
+      expect.arrayContaining([
+        "fractal.gate",
+        "fractal.ledger",
+        "fractal.clientLog",
+        "ccBridge.backgroundTasks",
+      ]),
+    );
+    expect(listGatewayMethods()).toEqual(
+      expect.arrayContaining([
+        "fractal.gate",
+        "fractal.ledger",
+        "fractal.clientLog",
+        "ccBridge.backgroundTasks",
+      ]),
+    );
   });
 
   it("classifies every listed gateway method name", () => {

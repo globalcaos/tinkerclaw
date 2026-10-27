@@ -324,6 +324,111 @@ describe("chat.history usage marks (U7)", () => {
   });
 });
 
+// FORK 2026-10-21 (audit 2026-10-21, scripts/usage-attribution-audit.ts).
+describe("chat.history usage marks: subagents and late skills", () => {
+  it("adds a Workflow's agents' skills to the turn that launched it, via subagent", () => {
+    const claudeDir = path.join(root, "claude-config");
+    const wfDir = path.join(claudeDir, "projects", "-w", "sess", "subagents", "workflows", "wf_t1");
+    fs.mkdirSync(wfDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(wfDir, "agent-a1.jsonl"),
+      `${JSON.stringify({
+        type: "assistant",
+        cwd: root,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "c1", name: "Bash", input: { command: `sh ${skillScript}` } },
+          ],
+        },
+      })}\n`,
+    );
+    const prior = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = claudeDir;
+    try {
+      const result = (id: string, text: string): Entry => ({
+        type: "custom",
+        customType: "tinker-bridge-tool",
+        data: {
+          runId: "run-bridge",
+          phase: "result",
+          toolCallId: id,
+          result: text,
+          isError: false,
+        },
+      });
+      const { rows } = readTree("wf-usage", [
+        user("fan it out"),
+        bridgeStart("toolu_w", "Workflow", { script: "export const meta = {}" }),
+        result(
+          "toolu_w",
+          `Workflow launched in background. Task ID: w1\nTranscript dir: ${wfDir}\nScript file: /x.js`,
+        ),
+        say("launched"),
+        user("next"),
+        bridgeStart("toolu_x", "Workflow", { script: "x" }),
+        result("toolu_x", "Transcript dir: /etc/subagents/elsewhere"),
+        say("ok"),
+      ]);
+      const prompts = promptRows(rows);
+      expect(prompts[0].__openclaw?.usage).toEqual([
+        { kind: "skill", name: "demo-skill", path: skillMd, via: "subagent" },
+      ]);
+      expect(prompts[1].__openclaw?.usage).toBeUndefined();
+    } finally {
+      if (prior === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = prior;
+      }
+    }
+  });
+
+  it("re-asks an empty skill-path answer once the registry is rebuilt", () => {
+    const skillsRoot = path.join(root, "late", "skills");
+    const lateDir = path.join(skillsRoot, "late-skill");
+    fs.mkdirSync(path.join(lateDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(lateDir, "scripts", "go.sh"), "echo\n");
+    const registry = () => createUsageRegistry({ skillRoots: [skillsRoot], recipeRoots: [] });
+    const restore = createUsageRegistry({
+      skillRoots: [path.join(root, "claude", "skills")],
+      recipeRoots: [path.join(root, "recipes")],
+      pluginToolOwner: (tool) =>
+        tool === "memory_search" ? { pluginId: "tinkerclaw-memory" } : undefined,
+    });
+    __setHistoryUsageRegistryForTest(registry());
+    try {
+      const sessionId = "late-skill";
+      const file = writeFile(
+        sessionId,
+        treeJsonl(sessionId, [
+          user("build a skill and run it"),
+          bridgeStart("toolu_l", "Bash", { command: `sh ${lateDir}/scripts/go.sh` }),
+          bridgeResult("toolu_l"),
+          say("ran"),
+        ]),
+      );
+      const usage = () =>
+        promptRows(readSessionMessagesWithCursor(sessionId, storePath(), file).messages as Row[])[0]
+          .__openclaw?.usage;
+      expect(usage()).toBeUndefined();
+      fs.writeFileSync(path.join(lateDir, "SKILL.md"), "---\nname: late-skill\n---\n");
+      __setHistoryUsageRegistryForTest(registry(), { keepMemo: true });
+      expect(usage()).toEqual([
+        {
+          kind: "skill",
+          name: "late-skill",
+          path: path.join(lateDir, "SKILL.md"),
+          via: "exec",
+          toolCallId: "toolu_l",
+        },
+      ]);
+    } finally {
+      __setHistoryUsageRegistryForTest(restore);
+    }
+  });
+});
+
 describe("chat.history prompt errors (U7)", () => {
   it("serves a prompt error that ended its run as a typed assistant row", () => {
     const { rows } = readTree("pe-served", [user("hello?"), promptError("run-a", IDLE_TIMEOUT, 5)]);

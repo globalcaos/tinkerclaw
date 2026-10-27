@@ -880,10 +880,14 @@ export const EVENT_CATALOG: readonly CatalogEvent[] = [
     retention: "research",
     paper: "J3",
     question: "What is the fractal success rate — the number that sat at zero for eight weeks?",
-    label: "outcome (success, docked, failed)",
+    // clean / durable / failed: the background Fractal turn, one row per `fractal-*` run
+    // (fractal-run-tally.ts, beside run.done). success / docked: the triage lane in
+    // extensions/tinkerclaw-fractal-reflection, off since 09-19, which also writes failed and
+    // leaves n1/n2 empty.
+    label: "outcome (clean, durable, failed, success, docked)",
     durMs: "run",
-    n1: null,
-    n2: null,
+    n1: "files_written",
+    n2: "tool_calls",
     n3: null,
     n4: null,
     fields: {},
@@ -1007,6 +1011,23 @@ export const EVENT_CATALOG: readonly CatalogEvent[] = [
     n3: null,
     n4: null,
     fields: { delivered: "boolean", answered: "boolean" },
+    uiIngestable: false,
+  },
+  {
+    name: "j.correction",
+    kind: "outcome",
+    retention: "research",
+    paper: "J19",
+    question:
+      "Which rules does the owner have to give again, and how often does he name an enhancement the agent skipped?",
+    // One row per class a typed owner prompt carries (extensions/tinkerclaw-thalamus/src/correction-capture.ts).
+    label: "class (use_existing, dont_ask, simpler, reply_language, purple_line, keep_going)",
+    durMs: null,
+    n1: "pins_written",
+    n2: null,
+    n3: null,
+    n4: null,
+    fields: { via: "enum" },
     uiIngestable: false,
   },
   {

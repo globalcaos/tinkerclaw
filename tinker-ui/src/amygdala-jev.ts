@@ -24,6 +24,10 @@ import {
  *
  * Pure HTML-string builders; app.ts handles the `data-amy-act` attributes by delegation. A question's wording never
  * appears: names, ids, versions and answers only.
+ *
+ * FORK 2026-10-15 (the architect: "I don't need to see the jev boxes at the end of the turn anymore"): amygdala-ui.ts no longer
+ * draws the two windows; it draws each action as a pink Amygdala bubble next to its tool row (amygdala-inline.ts), using
+ * `renderAction` (exported, markup unchanged). The window builders stay for their tests and for any page that still wants them.
  */
 import type {
   CodeDid,
@@ -45,7 +49,8 @@ const CHANGE_WORDS: Record<Change, [string, string]> = {
     "Would have sent the reply back to be finished",
     "Sent the reply back to be finished",
   ],
-  refusal: ["Would have marked the reply as a refusal", "Marked the reply as a refusal"],
+  // A refusal is a detection, not a withheld action: in shadow too Jev did mark it, and its strip offers a real Rewind.
+  refusal: ["Marked the reply as a refusal", "Marked the reply as a refusal"],
 };
 
 /** Counted in the WOULD HAVE line: singular, plural. */
@@ -427,6 +432,15 @@ export function actionsOf(turns: TurnView[]): JevAction[] {
   return out.sort((a, b) => a.ts - b.ts);
 }
 
+/**
+ * Whether an action belongs in the chat (2026-10-15, the architect: "I don't want to see so many pink stuff"): one of its
+ * decisions reached the agent, or its card still waits for an answer. Shadow records ("would have") stay out; the
+ * reviewer judges them and the panel keeps them.
+ */
+export function actionActed(a: JevAction): boolean {
+  return a.reasons.some((d) => d.enforced === true) || a.iv?.state === "open";
+}
+
 /** "4 to review: 1 sent back · 3 notes", or "nothing to review". */
 export function actionsSummary(actions: JevAction[]): string {
   if (actions.length === 0) return "nothing to review";
@@ -466,7 +480,7 @@ function voteTarget(a: JevAction): { id: string; kind: "decision" | "verdict" } 
   return undefined;
 }
 
-function renderAction(a: JevAction, o: JevActionsOptions): string {
+export function renderAction(a: JevAction, o: JevActionsOptions): string {
   const target = voteTarget(a);
   const x = o.explain?.(a);
   const words = x?.status === "done" ? x.explanation : undefined;

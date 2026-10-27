@@ -38,6 +38,7 @@
 import { getAgentRunContext } from "../agent-events.js";
 import { diagnosticErrorCategory } from "../diagnostic-error-metadata.js";
 import { emitEvent } from "./emit.js";
+import { recordFractalRunDone } from "./fractal-run-tally.js";
 
 /** The §4.6 rows this module owns. */
 export const TURN_EVENT_NAMES = [
@@ -131,6 +132,8 @@ export interface RunDoneFacts {
  *
  * Known gap, inherited from the bus: the closure is assigned after skill resolution, so a run that
  * throws before it writes `turn.span` rows and no `run.done`.
+ *
+ * A `fractal-*` run also writes its J3 `j.fractal.run` row here (fractal-run-tally.ts).
  */
 export function recordRunDone(
   run: RunDoneFacts,
@@ -138,12 +141,13 @@ export function recordRunDone(
   outcome: RunDoneOutcome,
   err?: unknown,
 ): void {
+  const durMs = Date.now() - startedAtMs;
   bestEffort(() => {
     emitEvent("run.done", {
       runId: run.runId,
       sessionKey: run.sessionKey,
       label: outcome,
-      durMs: Date.now() - startedAtMs,
+      durMs,
       fields: {
         provider: run.provider,
         model: run.model,
@@ -153,6 +157,7 @@ export function recordRunDone(
       },
     });
   });
+  bestEffort(() => recordFractalRunDone(run, outcome, durMs));
 }
 
 /** The ids a tool call's hook context carries (pi-tools.before-tool-call.ts `HookContext`). */

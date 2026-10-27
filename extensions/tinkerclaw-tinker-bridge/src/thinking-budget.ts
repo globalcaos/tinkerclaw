@@ -19,6 +19,13 @@
  * thinking room rather than a negative/zero budget.
  *
  * Pure + dependency-free (level is a plain string) so it is trivially testable.
+ *
+ * FORK 2026-10-09 (effort per turn): the budget above is for OLDER models only. On a model with
+ * adaptive effort (isAdaptiveEffortModel: Claude 5.x, Fable, Opus 4.7+) a MAX_THINKING_TOKENS > 0
+ * swaps the effort for a legacy fixed budget, and the effort the CLI then runs comes from the
+ * host's own settings, whatever the slider says (measured on CLI 2.1.295). Those models get the
+ * level as a Claude Code EFFORT instead (thinkLevelToClaudeEffort), applied per turn on the live
+ * process (worker.ts applyTurnEffort).
  */
 
 /** Token budget per lowercased think level. Unknown keys -> undefined (omit). */
@@ -114,4 +121,89 @@ export function thinkLevelToMaxThinkingTokens(
   // Reserve 4k headroom for the answer; 1k floor for tiny-ceiling models.
   const ceiling = Math.max(1000, modelMaxOutput - 4000);
   return Math.min(base, ceiling);
+}
+
+/**
+ * FORK 2026-10-09 (effort per turn) — the effort levels Claude Code takes as `effortLevel`
+ * (`apply_flag_settings`, the `--effort` flag, settings.json).
+ */
+export type ClaudeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** What one `apply_flag_settings` sets. `effortLevel: null` hands the effort back to the host. */
+export type ClaudeEffortSettings = { effortLevel: ClaudeEffortLevel | null; ultracode: boolean };
+
+/** OpenClaw think level -> Claude Code effort. `minimal` has no effort of its own: it rounds up. */
+const CLAUDE_EFFORT_BY_LEVEL: Record<string, ClaudeEffortLevel> = {
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  // Legacy 'adaptive' level, as in thinkLevelToMaxThinkingTokens.
+  adaptive: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
+};
+
+/**
+ * FORK 2026-10-09 (effort per turn) — map an OpenClaw think level to a Claude Code effort.
+ * Falsy, "off" or unknown -> `undefined`: the turn names no effort, and the host's own applies.
+ */
+export function thinkLevelToClaudeEffort(
+  level: string | undefined | null,
+): ClaudeEffortLevel | undefined {
+  if (!level) {
+    return undefined;
+  }
+  const key = level.trim().toLowerCase();
+  return Object.hasOwn(CLAUDE_EFFORT_BY_LEVEL, key) ? CLAUDE_EFFORT_BY_LEVEL[key] : undefined;
+}
+
+/**
+ * FORK 2026-10-09 (effort per turn) — what one turn asks of an adaptive-effort model: its level as
+ * an effort, and ultracode on top of it (at `max` when the turn names no level: ultracode is asked
+ * for the hardest work). Both keys are always set, because a request that leaves `ultracode` out
+ * keeps an earlier `ultracode: true` on. `undefined` when the turn asks for neither.
+ */
+export function claudeEffortForTurn(
+  level: string | undefined | null,
+  ultracode: boolean | undefined,
+): { effortLevel: ClaudeEffortLevel; ultracode: boolean } | undefined {
+  const effortLevel = thinkLevelToClaudeEffort(level);
+  if (ultracode === true) {
+    return { effortLevel: effortLevel ?? "max", ultracode: true };
+  }
+  return effortLevel ? { effortLevel, ultracode: false } : undefined;
+}
+
+/**
+ * FORK 2026-10-09 (effort per turn) — does this model run Claude Code's adaptive EFFORT? True for
+ * every Claude 5.x family (Opus, Sonnet, Haiku and any newer one), Fable, and Opus 4.7 and later;
+ * false for Opus 4.6 and older, Sonnet 4.x and Haiku 4.5, which keep the MAX_THINKING_TOKENS
+ * budget. A provider prefix (`claude-code/`), a context suffix (`[1m]`) and date or version
+ * suffixes are ignored. The bare aliases follow defaults.ts MODEL_ALIASES (opus and sonnet are
+ * 5.5, haiku is 4.5). An id it cannot read is NOT adaptive, so an unknown model keeps today's
+ * behaviour.
+ */
+export function isAdaptiveEffortModel(modelId: string | undefined | null): boolean {
+  if (!modelId) {
+    return false;
+  }
+  const lower = modelId.trim().toLowerCase();
+  const id = lower.slice(lower.lastIndexOf("/") + 1).replace(/\[[^\]]*\]$/, "");
+  if (id === "opus" || id === "sonnet" || id === "fable") {
+    return true;
+  }
+  // `claude-<family>-<major>[-<minor>]`. A minor is one or two digits, so a date suffix
+  // (`claude-opus-4-20250514`) is never read as one.
+  const m = /claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?/.exec(id);
+  if (!m) {
+    return false;
+  }
+  const family = m[1];
+  const major = Number(m[2]);
+  const minor = m[3] === undefined ? 0 : Number(m[3]);
+  if (family === "fable" || major >= 5) {
+    return true;
+  }
+  return family === "opus" && major === 4 && minor >= 7;
 }

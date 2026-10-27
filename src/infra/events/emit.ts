@@ -32,9 +32,10 @@
  */
 
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdir, readFile, rename, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -46,7 +47,7 @@ import {
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { declareInstrument, noteInstrumentFired } from "../instrument-liveness.js";
 import { type CatalogEvent, EVENT_CATALOG } from "./catalog.js";
-import { resolveEventsDbBudgetBytes, resolveEventsDbPath } from "./paths.js";
+import { resolveEventsDbBudgetBytes, resolveEventsDbPath, resolveEventsSpoolDir } from "./paths.js";
 import type { EventsQueryResult, SavedQueryBoundParams } from "./query.js";
 
 // ─── §7.5 constants ─────────────────────────────────────────────────────────
@@ -1325,6 +1326,10 @@ type SharedWriterState = {
    * clear it: a later start in the same process must still leave out the rows memory holds.
    */
   bootIds: string[];
+  /** Set by startEventSpool in a process that runs no writer: where its emits go instead. */
+  spoolFile: string | null;
+  /** The ingest pass in flight (ingestEventSpool), so two callers never read one file twice. */
+  spoolIngest: Promise<EventSpoolIngest> | null;
 };
 
 const SHARED_WRITER_STATE_KEY = Symbol.for("openclaw.eventsWriter.state");
@@ -1334,6 +1339,8 @@ function sharedWriterState(): SharedWriterState {
     writer: null,
     preStartDropped: 0,
     bootIds: [],
+    spoolFile: null,
+    spoolIngest: null,
   }));
 }
 
@@ -1356,18 +1363,193 @@ export function startEventWriter(options: EventWriterOptions = {}): EventWriter 
     shared.writer = writer;
     shared.preStartDropped = 0;
     shared.bootIds.push(writer.stats().bootId);
+    // What standalone scripts spooled while no writer ran lands now, with its own timestamps.
+    void ingestEventSpool();
   }
   return writer;
 }
 
-/** §7.5: THE emit. Synchronous, O(1), never throws. Before start, records are counted and dropped. */
+/**
+ * §7.5: THE emit. Synchronous, O(1), never throws. Before start, records are counted and dropped,
+ * except in a process that opted into the spool (startEventSpool), where they are kept for the
+ * gateway.
+ */
 export function emitEvent(name: string, record: EmitEventRecord = {}): void {
   const shared = sharedWriterState();
   if (shared.writer === null) {
-    shared.preStartDropped += 1;
+    if (shared.spoolFile === null || !appendToSpool(shared.spoolFile, name, record)) {
+      shared.preStartDropped += 1;
+    }
     return;
   }
   shared.writer.emit(name, record);
+}
+
+// ─── the spool: events from a process that runs no writer ───────────────────
+
+/** Spooled records handed to the writer between two flushes (the events-backfill chunking). */
+export const EVENTS_SPOOL_INGEST_CHUNK = 1_000;
+
+export interface EventSpoolIngest {
+  readonly files: number;
+  readonly rows: number;
+  /** Lines that did not parse (a torn last line, a hand edit): skipped, counted in the journal. */
+  readonly unreadable: number;
+}
+
+/**
+ * Opts a process that never runs a writer (a standalone script such as scripts/engram-sleep.mjs,
+ * the nightly consolidation) into the spool. From here on an emit with no writer is appended as one
+ * JSON line to `<logs>/events-spool/<pid>-<uuid>.jsonl` instead of being dropped, and the gateway
+ * hands those lines to its writer when the writer starts (ingestEventSpool). The writer still does
+ * every check (catalog, L4 session hashing), so a spooled row is the row a live emit would have
+ * made, stamped with the time of the emit. The raw record waits on disk in a 0600 file under the
+ * 0700 state directory until then.
+ *
+ * A spooled emit touches the disk, so this is opt-in: the gateway never calls it (L3 binds the
+ * writer's process). Returns the spool file, or null where the writer would be refused too
+ * (OPENCLAW_EVENTS_DB=0, a test runner with no explicit database). Idempotent.
+ */
+export function startEventSpool(env: NodeJS.ProcessEnv = process.env): string | null {
+  const shared = sharedWriterState();
+  if (shared.spoolFile !== null) {
+    return shared.spoolFile;
+  }
+  const resolution = resolveEventsDbPath(env);
+  if (!resolution.enabled) {
+    return null;
+  }
+  const dir = resolveEventsSpoolDir(resolution.dbPath);
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch (err) {
+    log.warn(`events spool unavailable, emits stay dropped: ${String(err)}`);
+    return null;
+  }
+  shared.spoolFile = join(dir, `${process.pid}-${randomUUID()}.jsonl`);
+  return shared.spoolFile;
+}
+
+/** One spooled line; false when it could not be written, so the caller counts the drop. */
+function appendToSpool(file: string, name: string, record: EmitEventRecord): boolean {
+  try {
+    const line = JSON.stringify({ name, record: { ...record, tsMs: record.tsMs ?? Date.now() } });
+    appendFileSync(file, `${line}\n`, { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseSpoolLine(line: string): { name: string; record: EmitEventRecord } | null {
+  try {
+    const value: unknown = JSON.parse(line);
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+    const { name, record } = value as { name?: unknown; record?: unknown };
+    if (typeof name !== "string" || typeof record !== "object" || record === null) {
+      return null;
+    }
+    return { name, record: record as EmitEventRecord };
+  } catch {
+    return null;
+  }
+}
+
+async function drainSpool(writer: EventWriter, dir: string): Promise<EventSpoolIngest> {
+  let files = 0;
+  let rows = 0;
+  let unreadable = 0;
+  const current = (): boolean => sharedWriterState().writer === writer;
+  try {
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      return { files, rows, unreadable }; // no script has spooled yet
+    }
+    for (const entry of entries.toSorted()) {
+      if (!current()) {
+        break; // the gateway is stopping: the rest waits for the next start
+      }
+      let claimed: string;
+      if (entry.endsWith(".jsonl")) {
+        // Claimed by rename, so a script still appending starts a fresh file for its later lines.
+        claimed = join(dir, `${entry}.ingesting`);
+        try {
+          await rename(join(dir, entry), claimed);
+        } catch {
+          continue;
+        }
+      } else if (entry.endsWith(".jsonl.ingesting")) {
+        // Left by a gateway that stopped mid-pass: taken again, so its rows land at least once.
+        claimed = join(dir, entry);
+      } else {
+        continue;
+      }
+      const text = await readFile(claimed, "utf8");
+      let sinceFlush = 0;
+      for (const line of text.split("\n")) {
+        if (line.length === 0) {
+          continue;
+        }
+        const parsed = parseSpoolLine(line);
+        if (parsed === null) {
+          unreadable += 1;
+          continue;
+        }
+        writer.emit(parsed.name, parsed.record);
+        rows += 1;
+        sinceFlush += 1;
+        if (sinceFlush >= EVENTS_SPOOL_INGEST_CHUNK) {
+          sinceFlush = 0;
+          await writer.flush();
+        }
+      }
+      await writer.flush();
+      if (!current()) {
+        break; // stopped mid-file: keep the file, a duplicate beats a loss
+      }
+      await unlink(claimed);
+      files += 1;
+    }
+  } catch (err) {
+    log.warn(`events spool ingest stopped: ${String(err)}`);
+  }
+  if (files > 0 || unreadable > 0) {
+    log.info(`events spool ingested: files=${files} rows=${rows} unreadable=${unreadable}`);
+  }
+  return { files, rows, unreadable };
+}
+
+/**
+ * Hands every spooled line to the process-wide writer. startEventWriter starts one pass; a caller
+ * asking while it runs gets that same pass. Lines go through writer.emit, in chunks with a flush
+ * between so a large night never fills the queue. Delivery is at least once: a file is deleted
+ * only after its lines were flushed, and a gateway that stops mid-file leaves it to the next start.
+ * Never rejects; resolves an empty count when no writer runs or the database is off.
+ */
+export function ingestEventSpool(): Promise<EventSpoolIngest> {
+  const shared = sharedWriterState();
+  if (shared.spoolIngest !== null) {
+    return shared.spoolIngest;
+  }
+  const writer = shared.writer;
+  const dbPath = writer?.stats().dbPath ?? null;
+  if (writer === null || dbPath === null) {
+    return Promise.resolve({ files: 0, rows: 0, unreadable: 0 });
+  }
+  const pass: Promise<EventSpoolIngest> = drainSpool(writer, resolveEventsSpoolDir(dbPath)).then(
+    (result) => {
+      if (shared.spoolIngest === pass) {
+        shared.spoolIngest = null;
+      }
+      return result;
+    },
+  );
+  shared.spoolIngest = pass;
+  return pass;
 }
 
 export function getEventWriterStats(): EventWriterStats {
@@ -1466,10 +1648,13 @@ export async function stopEventWriter(): Promise<void> {
   }
 }
 
-/** A fresh process, as far as this module knows: no writer, no pre-start drops, no boot ids. */
+/** A fresh process, as far as this module knows: no writer, no pre-start drops, no boot ids, no spool. */
 export async function resetEventWriterForTest(): Promise<void> {
-  await stopEventWriter();
   const shared = sharedWriterState();
+  await shared.spoolIngest;
+  await stopEventWriter();
   shared.preStartDropped = 0;
   shared.bootIds.length = 0;
+  shared.spoolFile = null;
+  shared.spoolIngest = null;
 }

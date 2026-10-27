@@ -567,7 +567,7 @@ describe("readSessionMessages", () => {
     "",
     "[Internal task completion event]",
     "source: subagent",
-    "task: customerco-video-audit",
+    "task: customer-video-audit",
     "status: completed successfully",
     "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
   ].join("\n");
@@ -602,7 +602,7 @@ describe("readSessionMessages", () => {
     const out = readSessionMessages(sessionId, storePath);
     const texts = markerTexts(out);
     expect(texts.join("\n")).not.toContain("BEGIN_OPENCLAW_INTERNAL_CONTEXT");
-    expect(texts.join("\n")).not.toContain("customerco-video-audit");
+    expect(texts.join("\n")).not.toContain("customer-video-audit");
     // The real conversation is untouched.
     expect(texts).toContain("what is the plan?");
     expect(texts).toContain("here it is");

@@ -20,6 +20,7 @@ import { routingCompanion } from "./companion.js";
 import type { AmygdalaConfig } from "./config.js";
 import { TurnContexts } from "./context.js";
 import { decide, type DecideDeps, type DecideResult } from "./decide.js";
+import { createEarned, type Earned } from "./earned.js";
 import type { DecisionEvent, InterventionEvent } from "./events.js";
 import {
   buildExplainInput,
@@ -62,7 +63,13 @@ import {
 } from "./policy.js";
 import { QuestionBook } from "./question-book.js";
 import { redactForSend } from "./redact.js";
-import { buildReviewInput, createReviewer, type Reviewer } from "./review.js";
+import {
+  buildPassReviewInput,
+  buildReviewInput,
+  createReviewer,
+  PASS_REVIEW_MAX,
+  type Reviewer,
+} from "./review.js";
 import type { SessionMap } from "./rewind.js";
 import { evaluateRules } from "./rules.js";
 import { SessionTracker, type HookPayload } from "./session-tracker.js";
@@ -72,7 +79,7 @@ import { buildStatus, readSpool, type StatusEvent } from "./status.js";
 import { AmygdalaStore } from "./store.js";
 import { narrationBefore, stepsAfter, stepsBefore } from "./transcript.js";
 import type { Intervention, Question, Seam, Situation, Verdict } from "./types.js";
-import { probeV31, type V31ProbeInput } from "./v31-probe.js";
+import type { V31ProbeInput } from "./v31-probe.js";
 import { WaitRegistry, type WaitAnswer } from "./wait-registry.js";
 
 export interface RuntimeLogger {
@@ -178,11 +185,15 @@ export interface Runtime {
    * the paper places it "before the next step" anyway. Taking them empties the queue.
    */
   takeNotes(sessionKey: string): string[];
-  /** What the usefulness reviews say since `sinceTs`: per rule, Grok's verdicts beside the owner's votes. */
+  /**
+   * What the usefulness reviews say since `sinceTs`: per rule, the judge's verdicts beside the owner's votes, and which
+   * note / send-back rules have earned the right to act (earned.ts).
+   */
   reviewReport(sinceTs?: number): {
     since: number;
     rules: ReturnType<AmygdalaStore["reviewReport"]>;
     recent: ReturnType<AmygdalaStore["reviewsSince"]>;
+    earned: ReturnType<Earned["report"]>;
   };
   /** The owner voted on a decision: if it was explained, keep whether the vote matched the suggestion. */
   explanationVote(decisionId: string, vote: number): void;
@@ -243,6 +254,26 @@ function processToken(endpointPath: string): string {
   return t;
 }
 
+const TRACKERS = Symbol.for("tinkerclaw.amygdala.sessionTrackers");
+
+/**
+ * One turn tracker per gateway process and data dir, for the same reason as `processToken`: the gateway runs
+ * register() several times (four starts in 100 s on 2026-10-22), the Claude Code hooks reach the first runtime's
+ * route and `agent_end` reaches a later one. With a tracker per start, the stop seam of a provider safeguard block
+ * counted turns in a tracker that never saw a prompt, so every refusal was filed under an old turn (`#<epoch>.0`)
+ * and the page drew no Rewind beside the blocked prompt.
+ */
+function processTracker(dataDir: string, now: () => number): SessionTracker {
+  const g = globalThis as { [TRACKERS]?: Map<string, SessionTracker> };
+  const trackers = (g[TRACKERS] ??= new Map<string, SessionTracker>());
+  let t = trackers.get(dataDir);
+  if (!t) {
+    t = new SessionTracker({ now, epoch: Date.now().toString(36) });
+    trackers.set(dataDir, t);
+  }
+  return t;
+}
+
 export function createRuntime(o: RuntimeOptions): Runtime {
   const { config, logger } = o;
   const dataDir = o.dataDir ?? config.dataDir;
@@ -254,7 +285,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
   const effectivePath = join(dataDir, effectiveName);
 
   // The epoch keeps a tab's turn ids apart across gateway restarts (2026-10-02: three turns merged into "#1").
-  const tracker = new SessionTracker({ now, epoch: Date.now().toString(36) });
+  const tracker = processTracker(dataDir, now);
   const seen = new SeenSessions();
   const sessionMap: SessionMap | undefined =
     o.sessionMap ??
@@ -278,6 +309,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
   let deps: DecideDeps | null = null;
   let explainer: Explainer | null = null;
   let reviewer: Reviewer | null = null;
+  let earned: Earned | null = null;
   let started = false;
   let startError: string | null = null;
   let floorActive = true;
@@ -353,14 +385,9 @@ export function createRuntime(o: RuntimeOptions): Runtime {
    */
   function refreshEffective(): boolean {
     if (!config.hooks.enabled || !existsSync(newSettingsPath)) return false;
-    let v31Json: object | null = null;
-    if (config.mode === "shadow" && existsSync(v31Path)) {
-      try {
-        v31Json = JSON.parse(readFileSync(v31Path, "utf-8")) as object;
-      } catch {
-        v31Json = null;
-      }
-    }
+    // One amygdala (2026-10-15): the v3.1 hook now ships as this plugin's hooks/hard-rules.mjs, registered first by
+    // buildHookSettings, so v3.1's own settings are no longer merged in (that would run the hard rules twice).
+    const v31Json: object | null = null;
     const merged = v31Json !== null;
     const eff = mtimeOf(effectivePath);
     const sources = [mtimeOf(newSettingsPath), mtimeOf(v31Path)].filter(
@@ -546,13 +573,16 @@ export function createRuntime(o: RuntimeOptions): Runtime {
             ? createReviewer({
                 store,
                 run: o.explainRun,
-                ladder: config.explain.ladder,
+                ladder: config.review.ladder,
                 timeoutMs: config.explain.timeoutMs,
                 dailyCap: config.review.dailyCap,
+                passDailyCap: config.review.passDailyCap,
                 now,
                 logger,
               })
             : null;
+        earned = createEarned(store, config.earned, now);
+        const earnedNow = earned;
         deps = {
           jev: tracked,
           book,
@@ -571,6 +601,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           cutoffFor: learn.cutoffFor,
           precedents: learn.precedents,
           companion: routingCompanion,
+          earned: (family, kind, reasonCode) => earnedNow.has(family, kind, reasonCode),
         };
 
         if (sharedSource) {
@@ -581,7 +612,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           stopJevWatch = startJevWatch();
         }
 
-        v31On = probeV31({ readPluginConfig: o.v31.readPluginConfig, settingsPath: v31Path });
+        // The hard-rule layer is our own hooks/hard-rules.mjs since 2026-10-15; it enforces whenever hooks are on.
+        v31On = config.hooks.enabled;
         floorActive = computeFloorActive(config.mode, v31On);
         writePolicyNow();
         stageHooks(dataDir, join(o.extensionRoot, "hooks"));
@@ -619,19 +651,21 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       learn = null;
       explainer = null;
       reviewer = null;
+      earned = null;
       deps = null;
       started = false;
     },
 
     heartbeat(): void {
       if (!started) return;
-      v31On = probeV31({ readPluginConfig: o.v31.readPluginConfig, settingsPath: v31Path });
+      // The hard-rule layer is our own hooks/hard-rules.mjs since 2026-10-15; it enforces whenever hooks are on.
+      v31On = config.hooks.enabled;
       const next = computeFloorActive(config.mode, v31On);
       if (next !== floorActive) {
         floorActive = next;
         writePolicyNow();
         logger.info(
-          `[amygdala] hard-rule floor is now ${floorActive ? "ON" : "OFF"} (v3.1 enforcing: ${v31On})`,
+          `[amygdala] hard-rule floor is now ${floorActive ? "ON" : "OFF"} (hard-rules hook on: ${v31On})`,
         );
       }
       try {
@@ -653,6 +687,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       const sessionKey = tabKey ?? str(hook.session_id) ?? "unknown";
       if (tabKey) seen.note(tabKey, hook, t);
       if (seam === "prompt") tracker.notePrompt(sessionKey, str(hook.prompt));
+      else if (seam === "pre-tool") tracker.notePreTool(sessionKey, hook);
       else if (seam === "post-tool") tracker.recordToolResult(sessionKey, hook);
       // stop_hook_active is read for logging only.
       if (seam === "stop" && hook.stop_hook_active === true) {
@@ -700,9 +735,11 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       }
       learn?.observe(result);
       // The explainer's own one-shots run as temp:* sessions; never explain those (it would explain itself).
+      // Only a flag that acted is shown, so only it is worded (2026-10-15: the shadow ones left the chat).
       if (
         explainer &&
         result.decision.response.kind !== "proceed" &&
+        result.decision.enforced &&
         !sessionKey.startsWith("temp:")
       ) {
         const book = deps.book;
@@ -763,6 +800,36 @@ export function createRuntime(o: RuntimeOptions): Runtime {
               }),
           });
         }
+        // FORK 2026-10-15 (the architect: "grok should keep evaluating every action taken or not taken"): the steps Jev let
+        // pass are judged too, as ONE job for the whole turn (2,761 passes by 10-15; a call each is too many). Same
+        // queue, ladder and redaction as the flag review; its own cap, in turns.
+        const turnId = result.situation.turnId;
+        const passes = st.unjudgedPassesForTurn(turnId, PASS_REVIEW_MAX).flatMap((d) => {
+          const sit = st.situationRecord(d.situationId);
+          return sit ? [{ decision: d, situation: sit }] : [];
+        });
+        if (passes.length > 0) {
+          const startTs = st.turnStartTs(turnId) ?? passes[0].situation.ts;
+          reviewer.observePass({
+            turnId,
+            sessionKey: result.situation.sessionKey,
+            ts: result.situation.ts,
+            decisionIds: passes.map((p) => p.decision.id),
+            input: () =>
+              buildPassReviewInput({
+                passes: passes.map((p) => ({
+                  ...p,
+                  verdicts: st.queryVerdicts({ situationId: p.decision.situationId }),
+                })),
+                book,
+                did: transcriptPath
+                  ? stepsAfter(transcriptPath, startTs, { max: PASS_REVIEW_MAX })
+                  : [],
+                finalReply,
+                homeDir: homedir(),
+              }),
+          });
+        }
       }
       return { decisionId: result.id, hook: result.hook };
     },
@@ -770,7 +837,12 @@ export function createRuntime(o: RuntimeOptions): Runtime {
     reviewReport(sinceTs) {
       const s = need();
       const since = sinceTs ?? now() - 7 * 86_400_000;
-      return { since, rules: s.reviewReport(since), recent: s.reviewsSince(since, 100) };
+      return {
+        since,
+        rules: s.reviewReport(since),
+        recent: s.reviewsSince(since, 100),
+        earned: earned?.report() ?? [],
+      };
     },
 
     explanationVote(decisionId, vote) {

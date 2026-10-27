@@ -35,7 +35,7 @@ mkdirSync(OUT, { recursive: true });
 
 const LINE_JEV =
   "Use: plan-family-trip, flight-scan · Inspiration: review-site (§ Build the page) · source: Jev";
-const LINE_LOCAL = "Use: acme-coding · source: local";
+const LINE_LOCAL = "Use: orbis-coding · source: local";
 const LINE_LIVE = "Use: torrent-scout · Inspiration: flight-scan (§ Compare prices) · source: Jev";
 
 const failures = [];

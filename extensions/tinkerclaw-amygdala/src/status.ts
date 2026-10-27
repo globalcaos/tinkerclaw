@@ -45,7 +45,16 @@ export interface StatusEvent {
   askedToday: number;
   waitingForYou: number;
   notesDropped: number;
+  /**
+   * FORK 2026-10-22: what a Rewind does on this gateway. From 2 it hands back the owner's words (not the transcript's
+   * 11 KB prompt) and the bridge moves its session cache and retires the warm worker, so the model really forgets the
+   * exchange. The page offers Rewind on an ordinary shadow refusal only from 2 (tinker-ui amygdala-ui.ts runHtml).
+   */
+  rewind: number;
 }
+
+/** 3 (2026-10-22): `amygdala2.rewind` takes `fromPrompt` and cuts from that exchange to the end, not only the last one. */
+export const REWIND_LEVEL = 3;
 
 export function buildStatus(i: StatusInputs): StatusEvent {
   const seenTimes = Object.values(i.seams).filter((n): n is number => typeof n === "number");
@@ -108,6 +117,7 @@ export function buildStatus(i: StatusInputs): StatusEvent {
     askedToday: i.counts.asked,
     waitingForYou: i.waitingForYou,
     notesDropped: i.notesDropped ?? 0,
+    rewind: REWIND_LEVEL,
   };
 }
 

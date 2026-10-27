@@ -94,8 +94,8 @@ Named locations with haversine distance queries.
 
 ```bash
 # Add a place
-node scripts/places.mjs add "Home" 0.0000 0.0000 home "Home"
-node scripts/places.mjs add "Gym" 0.0000 0.0000 gym "Gym"
+node scripts/places.mjs add "Home" 41.3200 1.8900 home "Townsville"
+node scripts/places.mjs add "Gym" 40.4168 -3.7038 gym "City Gym"
 
 # Where am I? (reads OwnTracks latest + finds nearest named place)
 node scripts/places.mjs where

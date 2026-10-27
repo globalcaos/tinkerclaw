@@ -108,12 +108,104 @@ describe("rewind targets only the newest exchange (2026-09-30)", () => {
   });
 });
 
+// 2026-10-22, the architect: "Rewind should get attached to the turn, so I can remove from history more than one turn".
+describe("rewind to an older turn, named by its prompt", () => {
+  it("drops that exchange and every later one, and hands back that turn's prompt", () => {
+    const { path, registry } = setup();
+    const map = new FakeMap(path);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "k#1",
+      newestTurnId: "k#2",
+      fromPrompt: "first question",
+      now: 5,
+    });
+    // "first question" is the first exchange: cutting there would leave nothing, which is a reset.
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/whole conversation/);
+  });
+
+  it("an older turn in a longer chat rewinds, with both later exchanges gone from the fork", () => {
+    const { d, path, registry } = setup();
+    writeFileSync(
+      path,
+      transcript() +
+        [
+          line({ type: "user", uuid: "u3", message: { content: "no rewind button shows" } }),
+          line({
+            type: "assistant",
+            uuid: "r3",
+            message: { content: [{ type: "text", text: "checking" }] },
+          }),
+        ].join("\n") +
+        "\n",
+    );
+    const map = new FakeMap(path);
+    const before = sha(path);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "k#2",
+      newestTurnId: "k#3",
+      fromPrompt: "the  refused request",
+      now: 5,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.restoredPrompt).toBe("the refused request");
+    const fork = readFileSync(join(d, `${r.forkSessionId}.jsonl`), "utf-8");
+    expect(fork).toContain("first question");
+    expect(fork).not.toContain("the refused request");
+    expect(fork).not.toContain("no rewind button shows");
+    expect(sha(path)).toBe(before);
+    expect([...registry.rewoundTurns("k")]).toEqual(["k#2"]);
+  });
+
+  it("a prompt the transcript does not hold is refused: no fork, no re-point", () => {
+    const { d, path, registry } = setup();
+    const map = new FakeMap(path);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "k#1",
+      fromPrompt: "words the page shows but the model never got",
+      now: 5,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/not in the model's transcript/);
+    expect(map.pointed).toEqual([]);
+    expect(readdirSync(d).filter((f) => f.endsWith(".jsonl"))).toEqual([`${S}.jsonl`]);
+  });
+});
+
 describe("amygdala2.rewind against an injected session map", () => {
   it("inert with no session map: nothing is read or written", () => {
     const { registry } = setup();
     const r = rewindTurn({ registry, sessionKey: "k", turnId: "t", now: 1 });
     expect(r).toMatchObject({ ok: false, capability: "unsupported" });
     expect(registry.latestFor("k")).toBeUndefined();
+  });
+
+  it("a reply still running in the tab: refused before anything is forked or re-pointed (Rewind and Undo)", () => {
+    const { d, path, registry } = setup();
+    const map = Object.assign(new FakeMap(path), { busy: () => true });
+    for (const undo of [false, true]) {
+      const r = rewindTurn({
+        sessionMap: map,
+        registry,
+        sessionKey: "k",
+        turnId: "t",
+        undo,
+        now: 1,
+      });
+      expect(r).toMatchObject({ ok: false, capability: "claude-fork" });
+      expect(r.reason).toMatch(/still running/);
+    }
+    expect(map.pointed).toEqual([]);
+    expect(readdirSync(d).filter((f) => f.endsWith(".jsonl"))).toEqual([`${S}.jsonl`]);
   });
 
   it("unsupported runner: no fork, no re-point", () => {

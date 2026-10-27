@@ -128,7 +128,7 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Last path segment — `SKILL.md`, `recipe.md`, `acme-coding.md`, … */
+/** Last path segment — `SKILL.md`, `recipe.md`, `orbis-coding.md`, … */
 function basename(path: string): string {
   const seg = path.replace(/[\\/]+$/, "").split(/[\\/]/);
   return seg[seg.length - 1] || path;
@@ -188,13 +188,77 @@ export function renderUsageChips(marks: unknown): string {
 }
 
 /** Adapter: the legacy `SkillNotice` producers in injected-prompt.ts speak `{name, path}`. */
-export function skillMark(n: { name: string; path?: string }, via = "read"): UsageMark {
-  return { kind: "skill", name: n.name, via, ...(n.path ? { path: n.path } : {}) };
+export function skillMark(
+  n: { name: string; path?: string },
+  via = "read",
+  toolCallId?: string,
+): UsageMark {
+  return {
+    kind: "skill",
+    name: n.name,
+    via,
+    ...(n.path ? { path: n.path } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
+  };
 }
 
 /** Adapter: the legacy recipe producers speak `{title, path}`. */
 export function recipeMark(n: { title: string; path?: string }): UsageMark {
   return { kind: "recipe", name: n.title, via: "recipe-cli", ...(n.path ? { path: n.path } : {}) };
+}
+
+/** Where a run's chips go: above a tool row (by tool_use id), or in the row under the prompt. */
+export interface PlacedUsage {
+  byTool: Map<string, UsageMark[]>;
+  leftover: UsageMark[];
+}
+
+/**
+ * FORK 2026-10-22 (the architect: "I want to see the bubble about its use right where it is used, in between
+ * the reasoning and the tool calls"). Each distinct kind+name still draws ONE chip per run, but it now
+ * sits above the FIRST tool call of the run that used it, not in the row under the prompt.
+ *
+ * `sources` are mark lists in any carrier shape (`collectUsage` merges them and upgrades a pathless
+ * mark with a later path). `toolIds` are the run's tool_use ids in render order. A mark whose
+ * `toolCallId` is not one of them (a recipe matched from the prompt text, a mark stamped before its
+ * tool row arrived) goes to `leftover`, which the prompt row still draws.
+ */
+export function placeUsage(sources: readonly unknown[], toolIds: readonly string[]): PlacedUsage {
+  const pos = new Map<string, number>();
+  toolIds.forEach((id, i) => {
+    if (!pos.has(id)) {
+      pos.set(id, i);
+    }
+  });
+  const firstAt = new Map<string, string>();
+  for (const src of sources) {
+    if (!Array.isArray(src)) {
+      continue;
+    }
+    for (const raw of src) {
+      if (!isUsageMark(raw) || !raw.toolCallId || !pos.has(raw.toolCallId)) {
+        continue;
+      }
+      const key = `${raw.kind}\u0000${raw.name.trim()}`;
+      const seen = firstAt.get(key);
+      if (seen === undefined || pos.get(raw.toolCallId)! < pos.get(seen)!) {
+        firstAt.set(key, raw.toolCallId);
+      }
+    }
+  }
+  const byTool = new Map<string, UsageMark[]>();
+  const leftover: UsageMark[] = [];
+  for (const m of collectUsage(...sources)) {
+    const id = firstAt.get(`${m.kind}\u0000${m.name}`);
+    if (id === undefined) {
+      leftover.push(m);
+      continue;
+    }
+    const list = byTool.get(id) ?? [];
+    list.push({ ...m, toolCallId: id });
+    byTool.set(id, list);
+  }
+  return { byTool, leftover };
 }
 
 /**

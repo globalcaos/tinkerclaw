@@ -1,11 +1,13 @@
 /**
  * THALAMUS v4 (J19) — plugin entry.
  *
- * The plugin ships DISABLED (`enabledByDefault: false`), and even when an owner enables it the mode defaults to
- * `off`: `register()` then registers nothing and opens nothing. All logic lives in `src/runtime.ts`; this file is the
- * thin wiring into the gateway plugin API. Nothing here runs at import time.
+ * The plugin loads by default (`enabledByDefault: true` since 2026-10-06) in mode `shadow`: it computes and records the
+ * per-call decision, the short list and the memory pointers, and hands the agent nothing. Only `enforce` adds the short
+ * list to the prompt, and the memory pointers also need `anticipate.mode` `inject`. Mode `off` registers nothing and
+ * opens nothing. All logic lives in `src/runtime.ts`; this file is the thin wiring into the gateway plugin API. Nothing
+ * here runs at import time.
  */
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { onAgentEvent } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
@@ -24,6 +26,7 @@ import {
   SHORTLIST_PATH,
 } from "./src/http.js";
 import { createRuntime, type ThalamusRuntime } from "./src/runtime.js";
+import { defaultAgentId, embeddedTutorRun } from "./src/tutor-run.js";
 
 const HEARTBEAT_MS = 60_000;
 
@@ -42,7 +45,7 @@ export default definePluginEntry({
   id: "tinkerclaw-thalamus",
   name: "Thalamus v4",
   description:
-    "Routes each model call, ranks the assistant's skills, recipes and plugins for each task, and records what it would have done. Ships disabled; mode off by default.",
+    "Routes each model call, ranks the assistant's skills, recipes and plugins for each task, finds the notes and past chats that may hold what it needs, and records what it would have done. Loads in shadow: only enforce hands the agent anything.",
   register(api: OpenClawPluginApi) {
     if (api.registrationMode !== "full") return;
     const cfg = parseConfig(api.pluginConfig as Record<string, unknown> | undefined);
@@ -96,6 +99,49 @@ export default definePluginEntry({
         onAgentEvent: (l) => onAgentEvent((evt) => l(evt as never)),
         broadcast,
         logger: api.logger,
+        // The note folder when `anticipate.noteDirs` is empty: the default agent's workspace `memory` folder.
+        defaultNoteDirs: () => {
+          try {
+            const c = gatewayCfg();
+            return [
+              join(
+                api.runtime.agent.resolveAgentWorkspaceDir(
+                  c as typeof api.config,
+                  defaultAgentId(c),
+                ),
+                "memory",
+              ),
+            ];
+          } catch {
+            return [];
+          }
+        },
+        // The lesson pass's default files: the default agent's workspace.
+        workspaceDir: () => {
+          try {
+            const c = gatewayCfg();
+            return api.runtime.agent.resolveAgentWorkspaceDir(
+              c as typeof api.config,
+              defaultAgentId(c),
+            );
+          } catch {
+            return undefined;
+          }
+        },
+        tutorRun: embeddedTutorRun(
+          {
+            currentConfig: gatewayCfg,
+            runEmbeddedPiAgent: (p) =>
+              api.runtime.agent.runEmbeddedPiAgent(
+                p as unknown as Parameters<typeof api.runtime.agent.runEmbeddedPiAgent>[0],
+              ),
+            resolveAgentDir: (c, id) =>
+              api.runtime.agent.resolveAgentDir(c as typeof api.config, id),
+            resolveAgentWorkspaceDir: (c, id) =>
+              api.runtime.agent.resolveAgentWorkspaceDir(c as typeof api.config, id),
+          },
+          cfg.tutor.timeoutMs,
+        ),
       });
     if (!shared) {
       live.set(cfg.dataDir, runtime);
@@ -107,6 +153,7 @@ export default definePluginEntry({
 
     // The embedded runner: work out the short list before the prompt is built. Only `enforce` adds anything to it.
     api.on("before_prompt_build", async (event, ctx) => {
+      runtime.notePrompt(ctx.sessionKey, event.prompt);
       const seam = runtime.shortlist();
       if (!seam) return undefined;
       try {
@@ -133,6 +180,7 @@ export default definePluginEntry({
     const handler = createShortlistHandler(
       {
         prepare: async (i) => {
+          runtime.notePrompt(i.sessionKey, i.text);
           const seam = runtime.shortlist();
           if (!seam)
             return {
@@ -230,6 +278,20 @@ export default definePluginEntry({
       }
     });
     method("thalamus.learning.report", () => runtime.learningReport());
+    // The nightly lesson pass. Dry unless `dryRun: false`, like learning.run.
+    api.registerGatewayMethod("thalamus.lessons.run", async ({ params, respond }) => {
+      try {
+        const dry = (params as Record<string, unknown> | undefined)?.dryRun !== false;
+        respond(true, await runtime.lessonsRun({ dry }));
+      } catch (err) {
+        console.error("[thalamus] thalamus.lessons.run failed", err);
+        respond(true, { ok: false, error: String(err) });
+      }
+    });
+    // Do the memory pointers save rounds? Reads the ledger, sends nothing.
+    method("thalamus.anticipate.report", (p) =>
+      runtime.anticipateReport(typeof p.sinceTs === "number" ? { sinceTs: p.sinceTs } : {}),
+    );
     method("thalamus.panel", () => runtime.panel());
     method("thalamus.learning.pin", (p) =>
       typeof p.taskId === "string" && typeof p.cardId === "string"

@@ -29,6 +29,7 @@ import {
   readWorkerMeta,
   removeWorkerDir,
   systemctlUser,
+  thawUnit,
   type UnitCommand,
   type WorkerMeta,
   workersRoot,
@@ -171,7 +172,7 @@ export async function adoptLeftoverWorkers(
         `[reattach] ${meta.unit}: its session already has a live worker; stopping the leftover`,
       );
       if (state.frozen) {
-        await run(["thaw", meta.unit]);
+        await thawUnit(meta.unit, run); // a stop's SIGTERM waits on a frozen cgroup
       }
       await run(["stop", "--no-block", meta.unit]);
       removeWorkerDir(dir);
@@ -185,6 +186,9 @@ export async function adoptLeftoverWorkers(
       log.warn(`[reattach] could not adopt ${meta.unit}: ${String(err)}`);
       continue;
     }
+    // FORK 2026-10-09 (effort per turn): the effort the last gateway applied to this process is not
+    // recorded; the adopted worker starts as "nothing applied" (worker.ts wireChild), so its first
+    // turn that names a level applies it on the live process, with no respawn.
     pool.adopt(worker, { model: meta.model, thinkLevel: meta.thinkLevel });
     report.adopted += 1;
     if (meta.turn) {

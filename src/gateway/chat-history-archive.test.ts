@@ -161,7 +161,7 @@ describe("listSessionArchives", () => {
   });
 });
 
-// FORK 2026-10-05 — a copy its base transcript holds whole is passed over unread (AcmeVision's 22
+// FORK 2026-10-05 — a copy its base transcript holds whole is passed over unread (OrbisVision's 22
 // compaction checkpoints were all byte-prefixes of its live file).
 describe("copyHeldByBase", () => {
   beforeEach(() => __resetCopyHeldMemoForTest());

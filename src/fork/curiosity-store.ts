@@ -35,6 +35,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { emitJCuriosityGap } from "../infra/events/j-rows.js";
+import { ownerWords } from "../shared/prompt-envelope.js";
 
 export type GapSource =
   | "lcm-entropy"
@@ -445,11 +446,15 @@ const STOPWORDS = new Set([
  * Pick a topic for a detected gap: prefer a salient noun-phrase from the user's
  * last message (that's what they actually wanted to know); fall back to tokens near
  * the hedge in the reply. Returns a short topic string, never a stopword.
+ *
+ * FORK 2026-10-09 (J8 §7): only his own words count. The raw message carries the gateway's stamp, so 296 of 319
+ * topics were "fri 2026-10-09"; a turn an agent or the gateway wrote is not what he wanted to know.
  */
 export function extractTopic(spans: string[], lastUserMessage?: string): string {
   const candidates: string[] = [];
-  if (lastUserMessage) {
-    candidates.push(...salientTerms(lastUserMessage));
+  const own = ownerWords(lastUserMessage);
+  if (own) {
+    candidates.push(...salientTerms(own));
   }
   if (candidates.length === 0 && spans.length > 0) {
     candidates.push(...salientTerms(spans.join(" ")));

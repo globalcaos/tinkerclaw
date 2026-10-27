@@ -236,6 +236,15 @@ export function resolveProviderEffortLadder(provider: string, modelId: string): 
   if (p === "google") {
     // extensions/google/provider-hooks.ts:12 — "adaptive" dropped per the note
     // at the top of this file.
+    // 2026-10-10: Gemini 4 Argon. Google has not published its API thinking levels; the Gemini app
+    // offers Low / Medium / High and AA measured High only. No "minimal" until a vendor page shows one.
+    if (/gemini-4/.test(id)) {
+      return {
+        kind: "graded",
+        levels: ["low", "medium", "high"],
+        note: "Gemini 4: Low / Medium / High as in the Gemini app (API levels unpublished)",
+      };
+    }
     return /gemini-3.*pro/.test(id)
       ? {
           kind: "graded",

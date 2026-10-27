@@ -31,7 +31,7 @@ const SESSION = "agent:main:tinker:advice1";
 
 export const LINE_JEV =
   "Use: plan-family-trip, flight-scan · Inspiration: review-site (§ Build the page) · source: Jev";
-export const LINE_LOCAL = "Use: acme-coding · source: local";
+export const LINE_LOCAL = "Use: orbis-coding · source: local";
 
 const tag = (source, line) => `<recipe_advice source="${source}">${line}</recipe_advice>`;
 const t0 = Date.parse("2026-10-06T08:00:00Z");
@@ -57,7 +57,7 @@ const messages = [
   // 3. a prompt with a local list and an active recipe
   text(
     "user",
-    `Code the new commit diagram\n\n---\n\n<active_recipe kits="globalcaos/acme-coding" steps="4" title="Acme coding" path="/home/u/.openclaw/recipes/acme-coding/recipe.md">A plan was auto-seeded.</active_recipe>\n\n${tag("local", LINE_LOCAL)}`,
+    `Code the new commit diagram\n\n---\n\n<active_recipe kits="globalcaos/orbis-coding" steps="4" title="Orbis coding" path="/home/u/.openclaw/recipes/orbis-coding/recipe.md">A plan was auto-seeded.</active_recipe>\n\n${tag("local", LINE_LOCAL)}`,
     5,
   ),
   text("assistant", "Starting with the diagram.", 6),

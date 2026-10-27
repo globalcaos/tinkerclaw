@@ -41,6 +41,12 @@ describe("buildStatus", () => {
     expect(s.seams.stop.lastTs).toBeNull();
   });
 
+  it("says what its Rewind does, in every state, so the page can tell an older gateway from this one (2026-10-22)", () => {
+    expect(buildStatus(inputs()).rewind).toBe(3);
+    expect(buildStatus(inputs({ mode: "shadow", floorActive: false })).rewind).toBe(3);
+    expect(buildStatus(inputs({ startError: "boom" })).rewind).toBe(3);
+  });
+
   it("a failed start says Not running, never watching", () => {
     const st = buildStatus(
       inputs({

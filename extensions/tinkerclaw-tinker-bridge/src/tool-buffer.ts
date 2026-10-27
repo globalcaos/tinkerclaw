@@ -49,6 +49,15 @@ export function consumeToolEventsForRun(runId: string): ToolBufferedEvent[] {
   return arr;
 }
 
+/**
+ * FORK 2026-10-09 (fractal-ledger.ts): read a run's buffered events WITHOUT clearing them. The
+ * Fractal ledger snapshots a `fractal-<P>` run's tool calls at its result line, before the
+ * turn-end drain above persists and clears them; the drain must still find every event.
+ */
+export function peekToolEventsForRun(runId: string): ToolBufferedEvent[] {
+  return [...(buffers.get(runId) ?? [])];
+}
+
 /** Drop a buffer without reading it (called when a turn aborts). */
 export function discardToolEventsForRun(runId: string): void {
   buffers.delete(runId);

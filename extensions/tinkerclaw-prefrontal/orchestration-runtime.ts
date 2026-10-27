@@ -58,6 +58,13 @@ export interface OrchestrationDeps {
   spawn: (prompt: string, opts?: AgentOpts) => Promise<{ finalText: string }>;
   /** Phase-transition sink (wired to onRecipeState in production). */
   onPhase?: (title: string) => void;
+  /**
+   * Most units in flight at once, on top of the core-count cap. The production runtime passes the
+   * gateway's subagent limits: at most `agents.defaults.subagents.maxConcurrent` run at once, and a
+   * requester with `maxChildrenPerAgent` active children gets its next spawn REFUSED, not queued
+   * (src/agents/subagent-spawn.ts). Omit for no extra cap. (2026-10-09)
+   */
+  maxInFlight?: number;
 }
 
 /** Concurrency cap for parallel(): min(16, cores-2), at least 1.
@@ -69,6 +76,10 @@ export function concurrencyCap(): number {
 }
 
 export function createOrchestrationRuntime(deps: OrchestrationDeps) {
+  const cap =
+    typeof deps.maxInFlight === "number" && Number.isFinite(deps.maxInFlight)
+      ? Math.max(1, Math.min(concurrencyCap(), Math.floor(deps.maxInFlight)))
+      : concurrencyCap();
   /**
    * Spawn one subagent. Without a schema → its final text. With a schema → the
    * validated object (typed self-correction via SS1's bounded re-dispatch).
@@ -118,7 +129,7 @@ export function createOrchestrationRuntime(deps: OrchestrationDeps) {
         }
       }
     };
-    const workerCount = Math.min(concurrencyCap(), thunks.length);
+    const workerCount = Math.min(cap, thunks.length);
     await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
     return results;
   }
@@ -134,24 +145,48 @@ export function createOrchestrationRuntime(deps: OrchestrationDeps) {
     items: T[],
     ...stages: Array<(prev: unknown, item: T, index: number) => Promise<unknown>>
   ): Promise<Array<Settled<unknown>>> {
+    // At most `cap` items in flight; an item keeps its slot through all its stages. Before
+    // 2026-10-09 every item started at once, so a 20-item pipeline asked for 20 subagents.
+    let free = cap;
+    const waiting: Array<() => void> = [];
+    const acquire = (): Promise<void> => {
+      if (free > 0) {
+        free--;
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => waiting.push(resolve));
+    };
+    const release = (): void => {
+      const next = waiting.shift();
+      if (next) {
+        next();
+      } else {
+        free++;
+      }
+    };
     return Promise.all(
       items.map(async (item, index): Promise<Settled<unknown>> => {
-        let cur: unknown = item;
-        for (const stage of stages) {
-          try {
-            cur = await stage(cur, item, index);
-          } catch (err) {
-            // drop this item (skip its remaining stages) but classify + attribute
-            // the failure instead of dropping a silent null.
-            const e = err as { kind?: ClassifiedError["kind"] };
-            return {
-              ok: false,
-              error: classifyError(e && e.kind ? e.kind : "execution-error", String(err)),
-              index,
-            };
+        await acquire();
+        try {
+          let cur: unknown = item;
+          for (const stage of stages) {
+            try {
+              cur = await stage(cur, item, index);
+            } catch (err) {
+              // drop this item (skip its remaining stages) but classify + attribute
+              // the failure instead of dropping a silent null.
+              const e = err as { kind?: ClassifiedError["kind"] };
+              return {
+                ok: false,
+                error: classifyError(e && e.kind ? e.kind : "execution-error", String(err)),
+                index,
+              };
+            }
           }
+          return { ok: true, value: cur };
+        } finally {
+          release();
         }
-        return { ok: true, value: cur };
       }),
     );
   }

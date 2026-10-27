@@ -24,6 +24,8 @@ vi.mock("../agents/bootstrap-files.js", () => ({
 vi.mock("../agents/embedded-agent-helpers.js", () => ({
   resolveBootstrapMaxChars,
   resolveBootstrapTotalMaxChars,
+  resolveMemoryIndexMaxChars: () => 8_000,
+  resolveMemoryIndexWarningMode: () => "watch",
 }));
 
 import { noteBootstrapFileSize } from "./doctor-bootstrap-size.js";

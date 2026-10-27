@@ -66,7 +66,7 @@
           },
           "timeoutMs": {
             "type": "number",
-            "default": 2600
+            "default": 1000
           },
           "sendRealSituations": {
             "type": "boolean",
@@ -104,7 +104,8 @@
         "properties": {
           "autoLoosen": {
             "type": "boolean",
-            "default": true
+            "default": false,
+            "description": "A clean loosening (a question that would hold less) applies itself under the caps and shows up with Undo. Off (the default since 2026-10-25): every loosening waits as a card for the owner, because only the owner loosens a rule. A tightening always applies at once."
           },
           "capsPerWeek": {
             "type": "number",
@@ -147,7 +148,27 @@
         "description": "After each turn, a second model judges whether each Jev flag of that turn would have helped, from what the agent did next.",
         "properties": {
           "enabled": { "type": "boolean", "default": true },
-          "dailyCap": { "type": "number", "default": 150 }
+          "dailyCap": { "type": "number", "default": 150 },
+          "passDailyCap": { "type": "number", "default": 150 },
+          "ladder": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["claude-code/claude-sonnet-5-5", "claude-code/claude-haiku-4-5"],
+            "description": "Models that judge the flags, first that answers wins. Earned activation counts only the `earned.judge` model's reviews."
+          }
+        }
+      },
+      "earned": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Progressive activation: a note or send-back rule acts on its own once the judge's reviews over the last `days` show at least `minReviews`, a `minUseful` share useful and at most a `maxHarmful` share harmful. Holds and questions never activate this way.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "days": { "type": "number", "default": 14 },
+          "minReviews": { "type": "number", "default": 20 },
+          "minUseful": { "type": "number", "default": 0.5 },
+          "maxHarmful": { "type": "number", "default": 0.1 },
+          "judge": { "type": "string", "default": "claude-code/claude-sonnet" }
         }
       }
     }

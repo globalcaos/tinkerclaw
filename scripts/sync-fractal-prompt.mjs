@@ -1,44 +1,40 @@
 #!/usr/bin/env node
 /**
- * sync-fractal-prompt.mjs — regenerate the live FRACTAL_DOCTRINE constant in
- * tinker-ui/src/app.ts from its source of truth,
- * extensions/tinkerclaw-fractal-reflection/fractal-prompt.md.
+ * sync-fractal-prompt.mjs — regenerate tinker-ui/src/fractal-doctrine.generated.ts
+ * (FRACTAL_DOCTRINE_CORE, FRACTAL_CHAPTERS) from its sources of truth:
+ * extensions/tinkerclaw-fractal-reflection/fractal-prompt.md (the core) and
+ * extensions/tinkerclaw-fractal-reflection/chapters/{correction,friction,delivery,channel}.md.
  *
- * Edit the .md, run this, commit both. `scripts/check-fractal-prompt-sync.mjs`
- * enforces that they never drift (see that file for why this matters).
+ * FORK 2026-10-09 (Fractal v2, P1) — was: rewrite the FRACTAL_DOCTRINE literal inside
+ * tinker-ui/src/app.ts. It now writes its own module and never touches app.ts, which imports
+ * from it (see check-fractal-prompt-sync.mjs for why).
+ *
+ * Edit the .md files, run this, commit them with the generated file.
+ * `scripts/check-fractal-prompt-sync.mjs` enforces that they never drift.
+ * `--root <dir>` works on another tree (tests use a temp copy).
  */
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { doctrineFromMarkdown } from "./check-fractal-prompt-sync.mjs";
+import {
+  GENERATED_REL,
+  readDoctrineSources,
+  renderDoctrineModule,
+  rootFromArgv,
+} from "./check-fractal-prompt-sync.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MD = path.join(ROOT, "extensions/tinkerclaw-fractal-reflection/fractal-prompt.md");
-const APP = path.join(ROOT, "tinker-ui/src/app.ts");
+const root = rootFromArgv();
+const sources = readDoctrineSources(root);
+const next = renderDoctrineModule(sources);
+const out = path.join(root, GENERATED_REL);
 
-const doctrine = doctrineFromMarkdown(fs.readFileSync(MD, "utf-8"));
-const escaped = doctrine.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
-
-const src = fs.readFileSync(APP, "utf-8");
-const start = src.indexOf("const FRACTAL_DOCTRINE = String.raw`");
-if (start === -1) {
-  console.error("FAIL: FRACTAL_DOCTRINE constant not found in app.ts — add it first");
-  process.exit(1);
-}
-const open = src.indexOf("`", start) + 1;
-let i = open;
-while (i < src.length) {
-  if (src[i] === "\\") {
-    i += 2;
-    continue;
-  }
-  if (src[i] === "`") break;
-  i++;
-}
-const next = src.slice(0, open) + escaped + src.slice(i);
-if (next === src) {
+const prev = fs.existsSync(out) ? fs.readFileSync(out, "utf-8") : null;
+if (prev === next) {
   console.log("already in sync — nothing to do");
   process.exit(0);
 }
-fs.writeFileSync(APP, next);
-console.log(`synced: ${doctrine.length} chars written into FRACTAL_DOCTRINE`);
+fs.writeFileSync(out, next);
+const total =
+  sources.core.length + Object.values(sources.chapters).reduce((n, c) => n + c.length, 0);
+console.log(
+  `synced: ${GENERATED_REL} (core ${sources.core.length} chars, core + chapters ${total} chars)`,
+);

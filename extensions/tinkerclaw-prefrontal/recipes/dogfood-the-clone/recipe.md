@@ -36,6 +36,9 @@ years of hand-configuration that never entered the artifact. The only reliable w
 difference is to **stand up a clone and use it**, then treat each gap as testimony about the
 distribution path.
 
+Sibling: when the thing to test is a guide (setup, install, restore) rather than the distribution path, use
+recipe `run-the-docs`, which runs the guide on a real target and corrects the pages while the run goes on.
+
 This is a LOOP, not a checklist. It is also the cheapest quality process available: the clone
 finds real defects in the order a real user would hit them.
 

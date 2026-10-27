@@ -78,6 +78,34 @@ describe("gateway broadcaster", () => {
     expect(readSocket.send).toHaveBeenCalledTimes(0);
   });
 
+  // 2026-10-22: every amygdala2.* event fell through the scope gate, so an open page never drew a refusal's Rewind live.
+  it("sends Amygdala's live events to an admin page, not to a read-only client; unknown events still go nowhere", () => {
+    const admin = makeRecordingSocket();
+    const read = makeRecordingSocket();
+    const clients = new Set<GatewayWsClient>([
+      {
+        ...makeReadClient("c-admin", admin),
+        connect: { role: "operator", scopes: ["operator.admin"] } as GatewayWsClient["connect"],
+      },
+      makeReadClient("c-read", read),
+    ]);
+    const { broadcast } = createGatewayBroadcaster({ clients });
+
+    broadcast("amygdala2.intervention", { id: "iv" });
+    broadcast("amygdala2.decision", { id: "d" });
+    broadcast("amygdala.hook", { id: "h" });
+    broadcast("thalamus.refusal", { turnId: "t" });
+    broadcast("not.a.known.event", {});
+
+    expect(admin.frames.map((f) => f.event)).toEqual([
+      "amygdala2.intervention",
+      "amygdala2.decision",
+      "amygdala.hook",
+      "thalamus.refusal",
+    ]);
+    expect(read.frames).toEqual([]);
+  });
+
   // FORK 2026-08-26 (chat-deliver): the broadcaster used to return nothing and
   // swallow send failures, so "this chat final reached zero sockets" looked
   // exactly like a healthy delivery. These pin the counters that replaced it.

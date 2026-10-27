@@ -272,6 +272,20 @@ export type AgentDefaultsConfig = {
    * - always: inject on every run with truncation
    */
   bootstrapPromptTruncationWarning?: "off" | "once" | "always";
+  /**
+   * Soft budget for the root MEMORY.md, the memory index loaded every main-session
+   * turn (default: 8000 chars). Over it, the runtime asks for detail to move into
+   * topic files; it never truncates the index.
+   */
+  memoryIndexMaxChars?: number;
+  /**
+   * MEMORY.md index budget notice:
+   * - off: no check
+   * - watch: gateway log line once per size step, no prompt text (default)
+   * - once: also tell the agent once per size step
+   * - always: tell the agent on every run while over budget
+   */
+  memoryIndexWarning?: "off" | "watch" | "once" | "always";
   /** Optional IANA timezone for the user (used in system prompt; defaults to host timezone). */
   userTimezone?: string;
   /** Runtime-owned first-turn startup context for bare /new and /reset. */

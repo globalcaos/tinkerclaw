@@ -155,6 +155,33 @@ describe("Plugin Registration", () => {
     expect(result.prependSystemContext).toContain("TestAgent");
   });
 
+  it("keeps the persona in the system prompt and sends the nudge with the turn (Phase 1.5)", async () => {
+    mkdirSync(join(dir, ".openclaw", "cognitive"), { recursive: true });
+    writeFileSync(
+      join(dir, ".openclaw", "cognitive", "personality-nudge.json"),
+      JSON.stringify({ nudge: "Shorter sentences today." }),
+    );
+    let promptBuildHandler: Function | null = null;
+    const { api } = createMockApi({
+      pluginConfig: { enabled: true, personaPath, personalityNudge: true },
+      on: vi.fn((name: string, handler: Function) => {
+        if (name === "before_prompt_build") {
+          promptBuildHandler = handler;
+        }
+      }),
+    });
+    await registerWith(api);
+
+    const result = await promptBuildHandler!(
+      { prompt: "Hello" },
+      { sessionKey: "agent:main:main" },
+    );
+
+    expect(result.prependSystemContext).toContain("TestAgent");
+    expect(result.prependSystemContext).not.toContain("Personality Nudge");
+    expect(result.prependContext).toContain("[Personality Nudge] Shorter sentences today.");
+  });
+
   it("injects no hard rules that the owner did not write", async () => {
     let promptBuildHandler: Function | null = null;
     const { api } = createMockApi({

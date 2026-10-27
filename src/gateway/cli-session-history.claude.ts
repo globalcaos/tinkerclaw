@@ -805,6 +805,87 @@ export function readClaudeCliSessionMessages(params: {
   return serveCachedClaudeCliTranscript(fresh);
 }
 
+// ── FORK 2026-10-21: one byte range of a transcript (the ask-session card) ───────────────────
+//
+// The ask-session skill wakes a past Claude Code session IN PLACE, so the wake's whole exchange is
+// the bytes it appended to that session's transcript. `sessions.py ask` prints the range
+// (`[ask-session] {"transcript":{"fromByte","toByte"}}`), and the Tinker UI's purple ask card
+// lazy-loads it through `askSession.slice` to show the woken session's thinking and tool calls.
+// The parse is the one chat.history uses (same entry filter, same tool-call/result coalescing), so
+// the card shows the blocks the main feed would. Only the session id is taken from the client: the
+// file is found under ~/.claude/projects by `resolveClaudeCliSessionFilePath`, never by a path.
+
+/** The most a slice reads. A wake is one question; a range larger than this is cut, not refused. */
+export const CLAUDE_CLI_SLICE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** A Claude Code session id as it appears in a transcript file name (no path separators, no dots). */
+export function isClaudeCliSessionId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+}
+
+export type ClaudeCliTranscriptSlice = {
+  messages: TranscriptLikeMessage[];
+  fromByte: number;
+  toByte: number;
+  /** The range ran past CLAUDE_CLI_SLICE_MAX_BYTES and was cut at the last whole line before it. */
+  truncated: boolean;
+  /** The file's size when read; a range past it is clamped. */
+  size: number;
+};
+
+export function readClaudeCliTranscriptSlice(params: {
+  cliSessionId: string;
+  fromByte: number;
+  toByte?: number;
+  homeDir?: string;
+  maxBytes?: number;
+}): ClaudeCliTranscriptSlice | null {
+  if (!isClaudeCliSessionId(params.cliSessionId)) {
+    return null;
+  }
+  const filePath = resolveClaudeCliSessionFilePath(params);
+  if (!filePath) {
+    return null;
+  }
+  let size: number;
+  try {
+    size = fs.statSync(filePath).size;
+  } catch {
+    return null;
+  }
+  const maxBytes = params.maxBytes ?? CLAUDE_CLI_SLICE_MAX_BYTES;
+  let start = Math.min(Math.max(0, Math.floor(params.fromByte) || 0), size);
+  const wanted =
+    typeof params.toByte === "number" && Number.isFinite(params.toByte)
+      ? Math.min(Math.max(start, Math.floor(params.toByte)), size)
+      : size;
+  const end = Math.min(wanted, start + maxBytes);
+  const truncated = end < wanted;
+  let chunk: Buffer;
+  try {
+    chunk = readFileByteRange(filePath, start, end);
+  } catch {
+    return null;
+  }
+  // A start inside a line (the file was rewritten, or the range is wrong) skips that line's rest.
+  if (start > 0 && !byteBeforeIsNewline(filePath, start)) {
+    const nl = chunk.indexOf(NEWLINE_BYTE);
+    start += nl < 0 ? chunk.length : nl + 1;
+    chunk = nl < 0 ? chunk.subarray(chunk.length) : chunk.subarray(nl + 1);
+  }
+  // A cut range ends on the last whole line; an uncut one may end on a line still being written.
+  const text = (truncated ? splitCompleteLines(chunk).complete : chunk).toString("utf8");
+  const messages: TranscriptLikeMessage[] = [];
+  parseClaudeCliTranscriptLines(text, params.cliSessionId, new Map(), messages);
+  return {
+    messages: coalesceClaudeCliToolMessages(messages),
+    fromByte: start,
+    toByte: end,
+    truncated,
+    size,
+  };
+}
+
 /** Test seam for the transcript cache (never used by production code paths). */
 export const __claudeCliTranscriptCacheTesting = {
   reset(): void {

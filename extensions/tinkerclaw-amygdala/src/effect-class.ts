@@ -500,6 +500,44 @@ function pathLike(w: string): boolean {
   return w.includes("/") || w.startsWith("~") || w.startsWith(".") || w.startsWith("$HOME");
 }
 
+const WRITE_ALL_OPERANDS = new Set(["tee", "touch", "mkdir"]);
+const WRITE_LAST_OPERAND = new Set(["cp", "mv"]);
+
+/**
+ * The files a shell command writes, as far as its text shows (2026-10-25, for the owned targets): redirect targets, the
+ * operands of `tee`/`touch`/`mkdir`, the destination of `cp`/`mv`. Text processing only, like `resolveTargets`; a
+ * command that writes through a program (`python3 -c …`) shows nothing here.
+ */
+export function writtenByCommand(command: string, cwd: string, home: string): string[] {
+  const out = new Set<string>();
+  let dir = cwd;
+  for (const seg of scan(stripHeredocs(command))) {
+    const parsed = parseSegment(seg);
+    const name = parsed.words.length > 0 ? path.basename(parsed.words[0]) : "";
+    const operands = parsed.words.slice(1).filter((w) => !w.startsWith("-") && !ASSIGNMENT.test(w));
+    if (name === "cd") {
+      const to = makeTarget(operands[0] ?? "~", dir, home, false);
+      if (to && (to.kind === "unknown" || to.kind === "dir")) {
+        dir = to.path;
+      }
+      continue;
+    }
+    const add = (w: string): void => {
+      const t = makeTarget(w, dir, home, true);
+      if (t && (t.kind === "file" || t.kind === "dir")) {
+        out.add(t.path);
+      }
+    };
+    parsed.writes.forEach(add);
+    if (WRITE_ALL_OPERANDS.has(name)) {
+      operands.forEach(add);
+    } else if (WRITE_LAST_OPERAND.has(name) && operands.length >= 2) {
+      add(operands[operands.length - 1]);
+    }
+  }
+  return [...out];
+}
+
 export function resolveTargets(
   command: string | null,
   args: Record<string, unknown> | undefined,

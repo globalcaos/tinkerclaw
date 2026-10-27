@@ -28,6 +28,8 @@ export type LoadedQuestions = {
   task: RoutingQuestion[];
   step: RoutingQuestion[];
   outcome: RoutingQuestion[];
+  /** Phase 1.3: which repeated rule an owner's correction carries, asked only when the rules cannot place it. */
+  correction: RoutingQuestion[];
   enhancement: EnhancementTemplate;
   parallel: ParallelTemplate;
 };
@@ -49,6 +51,7 @@ export function loadQuestions(dir: string): LoadedQuestions {
     task: readQuestions(join(dir, "task.json")),
     step: readQuestions(join(dir, "step.json")),
     outcome: readQuestions(join(dir, "outcome.json")),
+    correction: readQuestions(join(dir, "correction.json")),
     enhancement: readJson<EnhancementTemplate>(join(dir, "templates", "enhancement.json")),
     parallel: readJson<ParallelTemplate>(join(dir, "templates", "step-parallel.json")),
   };

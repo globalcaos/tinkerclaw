@@ -247,9 +247,24 @@ export async function attachWebInboxToSocket(
   >();
   const GROUP_META_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const lidLookup = sock.signalRepository?.lidMapping;
+  // FORK 2026-10-13: the whatsmeow adapter's lookup (lid-map-whatsmeow-db.ts)
+  // is marked directChatsOnly. WhatsApp hides members' phone numbers from each
+  // other in LID-addressed groups; resolving group participants through it
+  // would put those numbers into GroupMembers, sender labels and the
+  // third-party guard, where the agent could repeat them into the group. Group
+  // participants keep resolving as before (reverse-mapping files, or a real
+  // Baileys LID store, which carries no such flag).
+  const groupLidLookup =
+    lidLookup && (lidLookup as { directChatsOnly?: boolean }).directChatsOnly === true
+      ? undefined
+      : lidLookup;
 
   const resolveInboundJid = async (jid: string | null | undefined): Promise<string | null> =>
     resolveJidToE164(jid, { authDir: options.authDir, lidLookup });
+  const resolveGroupParticipantJid = async (
+    jid: string | null | undefined,
+  ): Promise<string | null> =>
+    resolveJidToE164(jid, { authDir: options.authDir, lidLookup: groupLidLookup });
 
   const rememberOutboundMessage = (remoteJid: string, result: unknown) => {
     const messageId =
@@ -323,7 +338,7 @@ export async function attachWebInboxToSocket(
         (
           await Promise.all(
             meta.participants?.map(async (p) => {
-              const mapped = await resolveInboundJid(p.id);
+              const mapped = await resolveGroupParticipantJid(p.id);
               return mapped ?? p.id;
             }) ?? [],
           )
@@ -427,19 +442,26 @@ export async function attachWebInboxToSocket(
     // store (`whatsmeow_device.lid` column) via the auth-store.ts fallback in
     // `mergeWithWhatsmeowFallback`. Path (a) is the primary check on any
     // whatsmeow-backed account; (b) remains as the safety net.
-    // If neither matches, do NOT rescue — `from` stays null, and the
-    // standard `if (!from)` guard drops the message. That is the correct
-    // outcome for an unknown LID DM.
+    // If no signal matches, do NOT rescue.
+    //
+    // FORK 2026-10-13: peer LIDs now resolve (the whatsmeow adapter reads
+    // whatsmeow_lid_map), and the owner's own LID is in that table too, so
+    // `from` can already be self.e164 here. The rescue therefore no longer
+    // waits for `from` to be null; it runs on any of:
+    //   (a) fromMe and `self.lid` matches `remoteJid`;
+    //   (b) fromMe, the LID did not resolve, and config lists it as the
+    //       owner's alias (whatsmeow's own map outranks config when it has a row);
+    //   (c) the LID resolved to self.e164 — whatsmeow's map says this chat is
+    //       the owner's own number.
+    // Without this the self-chat would route as <own-lid>@lid: dedupe, echo
+    // tracking, the reply target and the history thread would all key on the
+    // LID instead of the phone JID.
     let from = group ? remoteJid : await resolveInboundJid(remoteJid);
-    const isOwnerLidCandidate =
-      !from &&
-      !group &&
-      msg.key?.fromMe === true &&
-      typeof remoteJid === "string" &&
-      /(@lid|@hosted\.lid)$/i.test(remoteJid) &&
-      self.e164;
-    if (isOwnerLidCandidate) {
+    const isLidDm =
+      !group && typeof remoteJid === "string" && /(@lid|@hosted\.lid)$/i.test(remoteJid);
+    if (isLidDm && self.e164) {
       const lidString = remoteJid as string;
+      const isFromMe = msg.key?.fromMe === true;
       // (a) authoritative — owner's LID known and matches.
       const matchesSelfLid =
         typeof self.lid === "string" && self.lid.length > 0 && self.lid === lidString;
@@ -453,37 +475,38 @@ export async function attachWebInboxToSocket(
       const allowFrom = wa?.allowFrom ?? [];
       const matchesConfiguredOwnerLid =
         noPrefixChats.includes(lidString) && allowFrom.includes(lidString);
-      if (matchesSelfLid || matchesConfiguredOwnerLid) {
+      // (c) whatsmeow's lid map resolved this chat to the owner's own number.
+      const resolvesToSelf = from === self.e164;
+      const isSelfDm =
+        resolvesToSelf || (isFromMe && (matchesSelfLid || (!from && matchesConfiguredOwnerLid)));
+      if (isSelfDm) {
         const originalLid = lidString;
         from = self.e164;
-        const selfPhoneJid = `${self.e164!.replace(/^\+/, "")}@s.whatsapp.net`;
+        const selfPhoneJid = `${self.e164.replace(/^\+/, "")}@s.whatsapp.net`;
         remoteJid = selfPhoneJid;
         if (msg.key) {
           (msg.key as { remoteJid?: string }).remoteJid = selfPhoneJid;
         }
         console.log(
-          `[wa-debug] self-DM via LID rescue: chat=${originalLid} → owner e164=${self.e164} jid=${selfPhoneJid} id=${id} (matchesSelfLid=${matchesSelfLid} matchesConfig=${matchesConfiguredOwnerLid})`,
+          `[wa-debug] self-DM via LID rescue: chat=${originalLid} → owner e164=${self.e164} jid=${selfPhoneJid} id=${id} (matchesSelfLid=${matchesSelfLid} matchesConfig=${matchesConfiguredOwnerLid} viaLidMap=${resolvesToSelf})`,
         );
-      } else {
-        // FORK 2026-05-04 (post-rescue-fix): still let owner's prefixed
-        // messages through. The previous version of this branch left `from`
-        // null, which dropped at the guard below — meaning the user literally
-        // could not say "Jarvis …" in a non-self LID chat (e.g. a peer DM
-        // delivered as <their-lid>@lid). Use the LID itself as the chat
-        // identifier so the standard pipeline runs:
-        //   - access-control: owner-fromMe fast-paths to allowed; the peer's
-        //     own (fromMe=false) messages already dropped above because
-        //     resolveInboundJid returned null, so they never reach this
-        //     branch.
+      } else if (!from && isFromMe) {
+        // FORK 2026-05-04 (post-rescue-fix): the owner typed in a peer's chat
+        // whose LID did not resolve. Use the LID itself as the chat identifier
+        // so the owner's "Jarvis …" still works there:
+        //   - access-control: owner-fromMe fast-paths to allowed.
         //   - trigger gate: chat (LID) is NOT in `noPrefixChats`, so the
         //     body-prefix gate decides — silent without "Jarvis …", fires
         //     with it.
-        //   - reply routing: `msg.from` is the LID, so the reply lands back
-        //     in the same chat (the peer sees it). This honours the user's
-        //     "always reply in the same chat that triggered him" rule.
+        //   - reply routing: the reply lands back in the same LID chat.
+        // FORK 2026-10-13: a peer LID that whatsmeow can map no longer gets
+        // here — `from` is the peer's +E.164 and the peer's own (fromMe=false)
+        // messages go through the normal allowlist. Only a LID with no row in
+        // whatsmeow_lid_map still takes this path; the peer's own messages on
+        // such a LID still drop at the `!from` guard below.
         from = lidString;
         console.log(
-          `[wa-debug] LID rescue SKIPPED: chat=${lidString} fromMe=true but LID not in self.lid (${self.lid ?? "null"}) and not in noPrefixChats∩allowFrom — using LID as chat identifier (owner-prefix path open) id=${id}`,
+          `[wa-debug] LID rescue SKIPPED: chat=${lidString} fromMe=true, LID unresolved and not the owner's — using LID as chat identifier (owner-prefix path open) id=${id}`,
         );
       }
     }
@@ -499,7 +522,7 @@ export async function attachWebInboxToSocket(
     // message, group or DM.
     const senderE164 = group
       ? participantJid
-        ? await resolveInboundJid(participantJid)
+        ? await resolveGroupParticipantJid(participantJid)
         : Boolean(msg.key?.fromMe) && self.e164
           ? self.e164 // FORK: fromMe group messages lack participant — use own E164
           : null

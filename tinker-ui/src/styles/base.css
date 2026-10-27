@@ -3,6 +3,11 @@
   padding: 0;
   box-sizing: border-box;
 }
+/* FORK 2026-10-20: a class `display` outranks the user agent's [hidden]; six controls stayed on
+   screen that way (last: the phone header's trip/settings buttons). One rule ends the class. */
+[hidden] {
+  display: none !important;
+}
 :root {
   --bg: #1a1510;
   --surface: #2a2318;
@@ -1659,6 +1664,34 @@ code.fs-link.fs-link-error {
   border-radius: 0 0 6px 6px;
   margin-top: 0;
 }
+/* FORK 2026-10-09 — the background Fractal's card (fractal-card.ts): the measured trail it was
+   given, under its text, quieter than the reflection itself. */
+.fractal-card-digest {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(107, 142, 35, 0.35);
+  font-size: 11px;
+  opacity: 0.75;
+}
+.fractal-card-digest-head {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.fractal-card-running > .fractal-summary {
+  font-style: italic;
+}
+/* FORK 2026-10-09 (Fractal v2, charter M4) — the bridge's check of what the reflection says it did:
+   one quiet ✓ line, and a red line per claim it could not find on disk. */
+.fractal-check {
+  margin-top: 8px;
+  font-size: 11px;
+}
+.fractal-check-ok {
+  opacity: 0.75;
+}
+.fractal-check-missing {
+  color: #fca5a5;
+}
 .retry-provider-btn {
   position: absolute;
   top: 3px;
@@ -1683,6 +1716,46 @@ code.fs-link.fs-link-error {
 .msg .jarvis-voice {
   color: var(--purple);
   font-style: italic;
+}
+/* FORK 2026-10-10 (plan Phase 1.4): one-tap reaction on the purple line. Quiet until hovered or pressed. */
+.msg .voice-react {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.msg:hover .voice-react,
+.msg .voice-react:has(.is-on),
+.msg .voice-react.is-error {
+  opacity: 1;
+}
+.msg .voice-react.is-sending {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.voice-react-chip {
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.voice-react-chip:hover {
+  border-color: var(--purple);
+  color: var(--text);
+}
+.voice-react-chip.is-on {
+  border-color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 22%, transparent);
+  color: var(--text);
+}
+.msg .voice-react.is-error .voice-react-chip {
+  border-color: var(--red);
 }
 .msg pre {
   background: var(--surface);
@@ -1732,6 +1805,28 @@ code.fs-link.fs-link-error {
   margin: 4px 0;
   padding: 2px 8px;
   color: var(--muted);
+}
+/* FORK 2026-10-15: Copy button at the bottom right of every quote (paste-ready drafts). */
+blockquote:has(> .bq-copy) {
+  position: relative;
+  padding-bottom: 26px;
+}
+.bq-copy {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.bq-copy:hover {
+  color: var(--text, inherit);
+  border-color: currentColor;
 }
 .msg h1,
 .msg h2,
@@ -2272,12 +2367,14 @@ code.fs-link.fs-link-error {
   border-radius: 50%;
   background: var(--thinking-dot-color, var(--muted));
   animation: thinking-bounce 1.4s ease-in-out infinite;
+  /* phase from the wall clock (thinkingDotsPhase in app.ts), so a repaint does not restart the bounce */
+  animation-delay: var(--thinking-phase, 0ms);
 }
 .thinking-dots span:nth-child(2) {
-  animation-delay: 0.2s;
+  animation-delay: calc(var(--thinking-phase, 0ms) + 0.2s);
 }
 .thinking-dots span:nth-child(3) {
-  animation-delay: 0.4s;
+  animation-delay: calc(var(--thinking-phase, 0ms) + 0.4s);
 }
 @keyframes thinking-bounce {
   0%,
@@ -2322,6 +2419,49 @@ code.fs-link.fs-link-error {
   animation: none;
   background: rgba(220, 38, 38, 0.1);
   border: 1px solid rgba(220, 38, 38, 0.3);
+}
+/* FORK 2026-10-25 (the architect) — a running long job: the thinking row's markup and type, stacked under it,
+   with NO background of its own (no glow, no shimmer, no hover box: there is no Stop here), so the
+   chat's brown shows through. Renderer: longjob-rows.ts. */
+.thinking-run.job-run,
+.thinking-indicator .thinking-run.job-run:hover {
+  background: none;
+  border: none;
+  animation: none;
+  cursor: default;
+}
+/* A process job's percentage: a 3px line under the row, in the dots' colour. Absent when the total
+   is unknown. */
+.job-run-line {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 3px;
+}
+.job-run-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--thinking-dot-color, var(--muted));
+  transition: width 0.6s;
+}
+/* No progress for a while: the row's text goes amber. */
+.job-run-stalled .thinking-model,
+.job-run-stalled .thinking-elapsed {
+  color: var(--yellow);
+}
+/* FORK 2026-10-25 (the architect, 00:48) — the indicator stacks its rows by age, oldest at the bottom. Each
+   newer layer sits one step deeper: a small left offset and a thin guide line in the chat's muted
+   brown, nothing else (no background, no box). The wrappers nest (stackIndicatorLayers in
+   longjob-rows.ts), so a layer's guide runs up through every newer layer above it; past four steps
+   the depth stops growing. */
+.thinking-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 12px;
+  padding-left: 2px;
+  border-left: 1px solid rgba(154, 142, 122, 0.35);
 }
 
 /* Chat header */
@@ -4600,6 +4740,36 @@ code.fs-link.fs-link-error {
   min-width: 0;
   max-width: 155px;
 }
+/* FORK 2026-10-25 (the architect: "its icon should replace the tab's title") — the chat Zen Mail hands its card
+   prompts to shows the Zen Mail drawing instead of its title. Same line weight as the phone tool row
+   (phone.css .phone-sheet-tool svg); the words stay in the DOM for screen readers and the hover hint. */
+.tab-title-zen {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.zen-title-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.zen-title-icon * {
+  vector-effect: non-scaling-stroke;
+}
+.zen-title-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 /* FORK 2026-07-29 — TWO tab-title states that must never read as the same thing.
    They are kept adjacent deliberately: they were previously in different files
    (rename injected from JS in app.ts, activity nowhere) and both were a ~1s
@@ -4747,6 +4917,10 @@ code.fs-link.fs-link-error {
   padding: 0 4px;
   border-radius: 3px;
   cursor: help;
+  /* One line, always. Absolutely placed and anchored only on the right, its width is capped by
+     the bubble's, so on a short prompt ("how is it going?") "added to the current turn" wrapped
+     into three lines and covered the text (the architect 2026-10-18). Unwrapped, it grows leftwards. */
+  white-space: nowrap;
 }
 .prompt-badge.prompt-tone-grey {
   color: var(--muted);
@@ -8763,6 +8937,26 @@ body.tab-chain-picking #tab-bar-scroll .tab:not(.tab-chain-master-picking):hover
   background: #0a84ff;
   vertical-align: baseline;
 }
+/* FORK 2026-10-25 (the architect: a finished long job leaves "one quiet line" in the transcript) — the wake
+   that ends a long job is that line: the blue name badge and the status sentence, no bubble. */
+.msg.user.msg-agent.msg-longjob-line {
+  align-self: stretch;
+  max-width: 100%;
+  padding: 2px 10px;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+.msg-longjob-line .msg-agent-badge {
+  font-size: 10px;
+}
+.msg-longjob-line .msg-system-auto-detail,
+.msg-longjob-line .msg-system-auto-detail > summary {
+  display: inline;
+  margin: 0 0 0 8px;
+  font-size: 10px;
+}
 
 /* FORK 2026-08-24 (the architect: the post-restart wake-up "should be clearly identified as coming
    from an automated system and be encased in blue"). Same blue as .msg-agent — the house colour for
@@ -12658,34 +12852,146 @@ td.sd-sorted {
   color: var(--muted);
   border-bottom: 1px solid var(--border);
 }
-#hive-users-body { padding: 6px 8px 10px; font-size: 12px; }
-.hive-add { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
-.hive-add input[name="name"] { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; font-size: 12px; }
-.hive-add-admin { display: flex; gap: 3px; align-items: center; color: var(--muted); font-size: 11px; }
-.hive-person { padding: 6px 4px; border-top: 1px solid var(--border); }
-.hive-person--off { opacity: 0.6; }
-.hive-person-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.hive-person-meta { color: var(--muted); font-size: 10.5px; margin: 2px 0 4px; }
-.hive-person-actions { display: flex; gap: 4px; flex-wrap: wrap; }
-.hive-btn { font-size: 10.5px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
-.hive-btn:hover { border-color: var(--accent); }
-.hive-btn--primary { border-color: var(--accent); }
-.hive-chip { font-size: 9.5px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); }
-.hive-chip--ok { color: var(--green); border-color: var(--green); }
-.hive-chip--off { color: var(--red); border-color: var(--red); }
-.hive-chip--admin { color: var(--accent); border-color: var(--accent); }
-.hive-you { color: var(--muted); font-size: 10px; }
-.hive-reveal { border: 1px solid var(--accent); border-radius: 6px; padding: 6px; margin-bottom: 8px; }
-.hive-token { display: block; margin: 4px 0; padding: 4px; word-break: break-all; font-size: 11px; user-select: all; }
-.hive-note { color: var(--muted); margin-bottom: 6px; }
-.hive-note--err { color: var(--red); }
+#hive-users-body {
+  padding: 6px 8px 10px;
+  font-size: 12px;
+}
+.hive-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.hive-add input[name="name"] {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+.hive-add-admin {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+.hive-person {
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+}
+.hive-person--off {
+  opacity: 0.6;
+}
+.hive-person-line {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.hive-person-meta {
+  color: var(--muted);
+  font-size: 10.5px;
+  margin: 2px 0 4px;
+}
+.hive-person-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.hive-btn {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.hive-btn:hover {
+  border-color: var(--accent);
+}
+.hive-btn--primary {
+  border-color: var(--accent);
+}
+.hive-chip {
+  font-size: 9.5px;
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.hive-chip--ok {
+  color: var(--green);
+  border-color: var(--green);
+}
+.hive-chip--off {
+  color: var(--red);
+  border-color: var(--red);
+}
+.hive-chip--admin {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.hive-you {
+  color: var(--muted);
+  font-size: 10px;
+}
+.hive-reveal {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px;
+  margin-bottom: 8px;
+}
+.hive-token {
+  display: block;
+  margin: 4px 0;
+  padding: 4px;
+  word-break: break-all;
+  font-size: 11px;
+  user-select: all;
+}
+.hive-note {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.hive-note--err {
+  color: var(--red);
+}
 /* FORK 2026-10-07 — the Users tab (left rail): same rows as the right-rail panel, at reading size. */
-.hive-users-tab { max-width: 760px; font-size: 13px; }
-.hive-users-tab .hive-person { padding: 10px 6px; }
-.hive-users-tab .hive-person-meta { font-size: 12px; }
-.hive-users-tab .hive-btn { font-size: 12px; padding: 3px 10px; }
-.hive-users-tab .hive-add input[name="name"] { font-size: 13px; padding: 6px 8px; }
-.hive-signout { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.hive-users-tab {
+  max-width: 760px;
+  font-size: 13px;
+}
+.hive-users-tab .hive-person {
+  padding: 10px 6px;
+}
+.hive-users-tab .hive-person-meta {
+  font-size: 12px;
+}
+.hive-users-tab .hive-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.hive-users-tab .hive-add input[name="name"] {
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.hive-signout {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
 /* FORK 2026-10-07 — deleted people fold away at the bottom of the people list. */
-.hive-deleted { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
-.hive-deleted > summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+.hive-deleted {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.hive-deleted > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}

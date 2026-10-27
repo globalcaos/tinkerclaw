@@ -51,6 +51,17 @@ import {
   unionClosedTabs,
   flushPendingUiStateMirror,
   MAX_CLOSED_TABS,
+  adoptServerTabList,
+  peekUiStateTabs,
+  uiStateMirrorEpoch,
+  uiStateMirrorPending,
+  noteServerTabList,
+  tabListCanon,
+  TAB_STALE_GIVE_UP_MS,
+  TAB_STALE_GRACE_MS,
+  uiStateFileTabs,
+  uiStateTabsMayBeStale,
+  watchTabStaleness,
   type UiStateSnapshot,
 } from "./ui-state";
 
@@ -1283,9 +1294,9 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
         collapsed: {},
         flags: { "topbar:exec": true },
         choices: { "exec:tab": "sessions" },
-        // Always on the wire, even when this store has no tabs — a POST that omitted the
-        // section would leave the file's tab list frozen forever.
-        tabs: [],
+        // FORK 2026-10-19 — no `tabs`: the first POST landed `[]`, so the file already holds this
+        // page's list and the server keeps it. A list that CHANGES is on the wire again (the
+        // "live tab re-sync — the writer side" block below), so the file never freezes.
       });
     });
 
@@ -1698,6 +1709,232 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
       expect(callAt(fetchMock, 0)[1]?.keepalive).toBe(true);
       const body = JSON.parse(String((callAt(fetchMock, 0)[1] as RequestInit).body));
       expect(Object.keys(body.closedTabs)).toEqual(["tab-a"]);
+    });
+  });
+
+  // FORK 2026-10-19 (the architect: phone app) — the live tab re-sync reads the file WITHOUT applying it,
+  // and must be able to tell whether a local write is still on its way.
+  describe("live tab re-sync — peek, pending, adopt", () => {
+    const tabsAB = () => [{ id: "tab-main" }, { id: "tab-a" }, { id: "tab-b" }];
+
+    it("peek returns the file's tabs and tombstones and leaves the store untouched", async () => {
+      const s = fakeStorage();
+      writeTabList([{ id: "tab-main" }], s);
+      const before = snapshot(s);
+      setFetch(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse({ ...sampleSnapshot(), tabs: tabsAB(), closedTabs: { "tab-x": 7 } }),
+          ),
+        ),
+      );
+      await expect(peekUiStateTabs()).resolves.toEqual({
+        tabs: tabsAB(),
+        closedTabs: { "tab-x": 7 },
+      });
+      expect(snapshot(s)).toEqual(before);
+    });
+
+    it("peek answers null for a store without tabs, a degraded body, an error or a 500", async () => {
+      const { tabs: _omit, ...preTabsStore } = sampleSnapshot();
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse(preTabsStore))));
+      await expect(peekUiStateTabs()).resolves.toBeNull();
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse({ ...sampleSnapshot(), degraded: true }))));
+      await expect(peekUiStateTabs()).resolves.toBeNull();
+      setFetch(vi.fn(() => Promise.reject(new Error("offline"))));
+      await expect(peekUiStateTabs()).resolves.toBeNull();
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse({}, 500))));
+      await expect(peekUiStateTabs()).resolves.toBeNull();
+    });
+
+    it("peek drops junk entries exactly like hydrate does", async () => {
+      setFetch(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse({ ...sampleSnapshot(), tabs: [{ id: "tab-main" }, 3, null] }),
+          ),
+        ),
+      );
+      await expect(peekUiStateTabs()).resolves.toEqual({
+        tabs: [{ id: "tab-main" }],
+        closedTabs: {},
+      });
+    });
+
+    it("pending is true from schedule until the POST is answered, and the epoch moves", async () => {
+      const s = fakeStorage();
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(uiStateMirrorPending()).toBe(false);
+      const epoch = uiStateMirrorEpoch();
+      let answer: (r: Response) => void = () => {};
+      setFetch(vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))));
+      setFlag("topbar:exec", true, false, s);
+      expect(uiStateMirrorEpoch()).toBe(epoch + 1);
+      expect(uiStateMirrorPending()).toBe(true); // debounce armed
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(uiStateMirrorPending()).toBe(true); // POST in flight
+      answer(jsonResponse({ ok: true }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(uiStateMirrorPending()).toBe(false);
+    });
+
+    it("a peek does not hold a mirror back", async () => {
+      const s = fakeStorage();
+      let answerGet: (r: Response) => void = () => {};
+      const calls: string[] = [];
+      setFetch(
+        vi.fn((_url: unknown, init?: RequestInit) => {
+          calls.push(init?.method ?? "GET");
+          if (init?.method === "GET") return new Promise<Response>((r) => (answerGet = r));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }),
+      );
+      const peek = peekUiStateTabs(60_000);
+      setFlag("topbar:exec", true, false, s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(calls).toEqual(["GET", "POST"]);
+      answerGet(jsonResponse({ ...sampleSnapshot(), tabs: tabsAB() }));
+      await peek;
+    });
+
+    it("adopt writes the list through the tombstones and schedules NO mirror", async () => {
+      const s = fakeStorage();
+      recordClosedTab("tab-a", s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      fetchMock.mockClear();
+      const epoch = uiStateMirrorEpoch();
+      adoptServerTabList(tabsAB(), { "tab-b": 5 }, s);
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main"]);
+      expect(Object.keys(loadClosedTabs(s)).toSorted()).toEqual(["tab-a", "tab-b"]);
+      expect(uiStateMirrorEpoch()).toBe(epoch);
+      expect(uiStateMirrorPending()).toBe(false);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // FORK 2026-10-19 (review: a hidden page re-posted its old tab list at every turn end and the
+  // other device took it back) — the writer only puts `tabs` on the wire when it has news.
+  describe("live tab re-sync — the writer side", () => {
+    const tabsAB = () => [
+      { id: "tab-main", sessionKey: "agent:main:main", title: "Main" },
+      { id: "tab-a", sessionKey: "agent:main:tinker:a", title: "Alpha" },
+    ];
+    const hydrateWith = async (s: Storage, tabs: Array<Record<string, unknown>>) => {
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve(jsonResponse({ ...sampleSnapshot(), tabs })),
+      );
+      await expect(hydrateUiState(s)).resolves.toBe(true);
+      fetchMock.mockClear();
+    };
+    const posted = (i: number) => bodyOf(callAt(fetchMock, i)[1]) as Record<string, unknown>;
+    const fakeDoc = () => {
+      const listeners: Array<() => void> = [];
+      const doc = {
+        visibilityState: "visible",
+        addEventListener: (_t: string, fn: () => void) => listeners.push(fn),
+      };
+      const set = (v: "visible" | "hidden") => {
+        doc.visibilityState = v;
+        for (const fn of listeners) fn();
+      };
+      return { doc: doc as unknown as Document, set };
+    };
+
+    it("a save of the list the file already holds posts no tabs", async () => {
+      const s = fakeStorage();
+      await hydrateWith(s, tabsAB());
+      // loadSessions' unconditional saveTabs: same list, other key order, a transient flag
+      writeTabList(
+        tabsAB().map((t) => ({
+          title: t.title,
+          titleGenerating: undefined,
+          sessionKey: t.sessionKey,
+          id: t.id,
+        })),
+        s,
+      );
+      scheduleUiStateMirror(s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(bodyOf(callAt(fetchMock, 0)[1])).not.toHaveProperty("tabs");
+    });
+
+    it("a changed list is posted, and becomes the new baseline once it lands", async () => {
+      const s = fakeStorage();
+      await hydrateWith(s, tabsAB());
+      writeTabList([...tabsAB(), { id: "tab-b", sessionKey: "tinker:b", title: "Bravo" }], s);
+      scheduleUiStateMirror(s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect((posted(0).tabs as unknown[]).length).toBe(3);
+      scheduleUiStateMirror(s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(bodyOf(callAt(fetchMock, 1)[1])).not.toHaveProperty("tabs");
+    });
+
+    it("a page hidden past the grace holds a changed list back until a re-sync read the file", async () => {
+      const s = fakeStorage();
+      await hydrateWith(s, tabsAB());
+      const { doc, set } = fakeDoc();
+      watchTabStaleness(doc);
+      set("hidden");
+      await vi.advanceTimersByTimeAsync(TAB_STALE_GRACE_MS + 10);
+      // a turn end on the hidden page renames tab-a: held back, the close tombstone still goes
+      writeTabList([tabsAB()[0], { ...tabsAB()[1], title: "Alpha renamed" }], s);
+      recordClosedTab("tab-z", s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      const held = posted(0);
+      expect(held).not.toHaveProperty("tabs");
+      expect(Object.keys(held.closedTabs as object)).toEqual(["tab-z"]);
+      // visible again, the re-sync reads the file and merges: the hold ends
+      set("visible");
+      noteServerTabList(tabsAB(), s);
+      scheduleUiStateMirror(s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect((posted(1).tabs as Array<{ title: string }>)[1].title).toBe("Alpha renamed");
+    });
+
+    it("the hold gives up a minute after the page is visible again", async () => {
+      const s = fakeStorage();
+      await hydrateWith(s, tabsAB());
+      const { doc, set } = fakeDoc();
+      watchTabStaleness(doc);
+      set("hidden");
+      await vi.advanceTimersByTimeAsync(TAB_STALE_GRACE_MS + 10);
+      expect(uiStateTabsMayBeStale()).toBe(true);
+      set("visible");
+      expect(uiStateTabsMayBeStale()).toBe(true);
+      await vi.advanceTimersByTimeAsync(TAB_STALE_GIVE_UP_MS + 10);
+      expect(uiStateTabsMayBeStale()).toBe(false);
+    });
+
+    it("a quick hide (a reload, an app switch) is not stale", async () => {
+      const s = fakeStorage();
+      await hydrateWith(s, tabsAB());
+      const { doc, set } = fakeDoc();
+      watchTabStaleness(doc);
+      set("hidden");
+      expect(uiStateTabsMayBeStale()).toBe(false);
+    });
+
+    it("adopt records the FILE's list as the baseline, so a merged edit is pushed", async () => {
+      const s = fakeStorage();
+      await hydrateWith(s, tabsAB());
+      const merged = [tabsAB()[0], { ...tabsAB()[1], title: "mine" }];
+      adoptServerTabList(merged, {}, s, tabsAB());
+      expect(uiStateFileTabs()).toEqual(tabsAB());
+      scheduleUiStateMirror(s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect((posted(0).tabs as Array<{ title: string }>)[1].title).toBe("mine");
+    });
+
+    it("tabListCanon ignores key order and titleGenerating, not values", () => {
+      expect(tabListCanon([{ id: "a", title: "x", titleGenerating: true }])).toBe(
+        tabListCanon([{ title: "x", id: "a" }]),
+      );
+      expect(tabListCanon([{ id: "a", title: "x" }])).not.toBe(
+        tabListCanon([{ id: "a", title: "y" }]),
+      );
     });
   });
 

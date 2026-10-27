@@ -3,6 +3,7 @@ import {
   prependSystemPromptAdditionAfterCacheBoundary,
   splitSystemPromptCacheBoundary,
   stripSystemPromptCacheBoundary,
+  systemPromptStableChars,
   SYSTEM_PROMPT_CACHE_BOUNDARY,
 } from "./system-prompt-cache-boundary.js";
 
@@ -40,5 +41,19 @@ describe("system prompt cache boundary helpers", () => {
     ).toBe(
       `Stable prefix${SYSTEM_PROMPT_CACHE_BOUNDARY}Per-turn lab context\nSecond line\n\nDynamic suffix\n\nMore detail`,
     );
+  });
+});
+
+describe("systemPromptStableChars", () => {
+  it("counts the prefix above the boundary, and the stripped prompt keeps it in place", () => {
+    const prompt = `stable part${SYSTEM_PROMPT_CACHE_BOUNDARY}## Runtime\nthinking=high`;
+    const n = systemPromptStableChars(prompt);
+    expect(n).toBe("stable part".length);
+    expect(stripSystemPromptCacheBoundary(prompt).slice(0, n)).toBe("stable part");
+  });
+
+  it("has no answer without a boundary", () => {
+    expect(systemPromptStableChars("no boundary here")).toBeUndefined();
+    expect(systemPromptStableChars(undefined)).toBeUndefined();
   });
 });

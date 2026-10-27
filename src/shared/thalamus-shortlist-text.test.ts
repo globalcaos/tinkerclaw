@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { seedCards, type EnhancementCard, type Shortlist } from "./thalamus-enhancements.js";
-import { MAX_CHARS, PURPOSE_CHARS, shortlistContext } from "./thalamus-shortlist-text.js";
+import {
+  MAX_CHARS,
+  POINTER_CHARS,
+  POINTER_MAX,
+  pointerLines,
+  PURPOSE_CHARS,
+  shortlistContext,
+} from "./thalamus-shortlist-text.js";
 
 const cards = seedCards([
   {
@@ -200,5 +207,56 @@ describe("the note for a list from the ranking (Broca retrieval v2)", () => {
     expect(lines[2]).toMatch(
       /^2\. recipe Photo sorter; not made for this, but it works the same way \(the "Decide" part\):/,
     );
+  });
+});
+
+describe("the note with memory pointers (2026-10-25)", () => {
+  const note = {
+    kind: "note" as const,
+    label: "Pi journal is empty; use --user-unit",
+    where: "/m/pi.md",
+  };
+  const chat = {
+    kind: "chat" as const,
+    label: "Find jobs for Robin",
+    where: "95c8c758-1111-2222-3333-444455556666",
+    date: "2026-10-24",
+  };
+
+  it("is byte for byte the old note when no pointer is given", () => {
+    expect(shortlistContext(list(), byId, [])).toBe(shortlistContext(list(), byId));
+  });
+
+  it("puts one line per pointer between the tools and the closing line", () => {
+    const t = shortlistContext(list(), byId, [note, chat])!;
+    const lines = t.split("\n");
+    const at = lines.findIndex((l) => l.startsWith("Earlier work that may already hold"));
+    expect(at).toBeGreaterThan(2);
+    expect(lines[at + 1]).toBe("- note: Pi journal is empty; use --user-unit (/m/pi.md)");
+    expect(lines[at + 2]).toBe(
+      '- past chat 2026-10-24: "Find jobs for Robin" (session 95c8c758; the ask-session skill can ask it)',
+    );
+    expect(lines.at(-1)).toBe("None of these may fit; use your own judgment.");
+  });
+
+  it("speaks with the pointers alone when no tool fits", () => {
+    const t = shortlistContext(list({ shown: false, entries: [] }), byId, [note])!;
+    expect(t.split("\n")).toEqual([
+      "Earlier work that may already hold what this needs (a pointer, not a summary; open it only if it fits):",
+      "- note: Pi journal is empty; use --user-unit (/m/pi.md)",
+      "None of these may fit; use your own judgment.",
+    ]);
+  });
+
+  it("keeps the pointers to a few short lines however many are offered", () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({
+      kind: "note" as const,
+      label: `${"a long use key that goes on and on ".repeat(6)}${i}`,
+      where: `/m/${"deep/".repeat(10)}note-${i}.md`,
+    }));
+    expect(pointerLines(many).length).toBeLessThanOrEqual(POINTER_MAX);
+    expect(pointerLines(many).join("\n").length).toBeLessThanOrEqual(POINTER_CHARS);
+    const t = shortlistContext(list({ shown: false, entries: [] }), byId, many)!;
+    expect(t.length).toBeLessThanOrEqual(POINTER_CHARS + 60);
   });
 });

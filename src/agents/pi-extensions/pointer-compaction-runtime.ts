@@ -10,6 +10,7 @@
 
 import type { EventStore } from "../../memory/engram/event-store.js";
 import type { MemoryEvent } from "../../memory/engram/event-types.js";
+import { quoteFirstLine } from "../../memory/engram/eviction-marker.js";
 import {
   pointerCompact,
   type ContextCache,
@@ -41,6 +42,16 @@ export interface CompactionManifest {
   eventCount: number;
   /** Estimated token count of evicted events. */
   tokenCount: number;
+  /**
+   * FORK 2026-10-25 — the user's exact words at the start and end of the range (first line of the
+   * first and last user message, a verbatim prefix), so the marker carries text to search for and
+   * not only ids and topic tags. Absent when the range holds no user message.
+   */
+  quotes?: string[];
+  /** FORK 2026-10-25 — the transcript that still holds every evicted turn (pi never edits it). */
+  transcriptPath?: string;
+  /** FORK 2026-10-25 — the first entry the compaction KEPT; the evicted turns are the ones before it. */
+  firstKeptEntryId?: string;
 }
 
 export interface CompactionResult {
@@ -80,9 +91,20 @@ export function renderManifest(manifest: CompactionManifest): string {
     manifest.topicHints.length > 0 ? ` Topics: ${manifest.topicHints.join(", ")}.` : "";
   const artifacts =
     manifest.artifactRefs.length > 0 ? ` Artifacts: ${manifest.artifactRefs.join(", ")}.` : "";
+  const quotes = manifest.quotes ?? [];
+  const said =
+    quotes.length > 1
+      ? ` The user's words ran from ${quotes[0]} to ${quotes[quotes.length - 1]}.`
+      : quotes.length === 1
+        ? ` The user said ${quotes[0]}.`
+        : "";
+  const address = manifest.transcriptPath
+    ? ` Every evicted turn is still in ${manifest.transcriptPath}` +
+      (manifest.firstKeptEntryId ? `, before entry ${manifest.firstKeptEntryId}.` : ".")
+    : "";
   return (
     `[Pointer manifest: events ${range} (${manifest.eventCount} events, ~${manifest.tokenCount} tokens).` +
-    `${topics}${artifacts} Use recall(query) to retrieve.]`
+    `${topics}${artifacts}${said}${address} Use recall(query) with those words to retrieve.]`
   );
 }
 
@@ -122,12 +144,18 @@ export function buildManifest(evictedEvents: MemoryEvent[]): CompactionManifest 
     }
   }
 
+  const userTurns = evictedEvents.filter((e) => e.kind === "user_message");
+  const quotes = [userTurns[0], userTurns[userTurns.length - 1]]
+    .map((e) => (e ? quoteFirstLine(e.content) : undefined))
+    .filter((q): q is string => Boolean(q));
+
   return {
     eventIdRange: [evictedEvents[0].id, evictedEvents[evictedEvents.length - 1].id],
     artifactRefs: [...new Set(artifactRefs)],
     topicHints: [...new Set(hints)].slice(0, 3),
     eventCount: evictedEvents.length,
     tokenCount: evictedEvents.reduce((s, e) => s + e.tokens, 0),
+    ...(quotes.length > 0 ? { quotes: [...new Set(quotes)] } : {}),
   };
 }
 

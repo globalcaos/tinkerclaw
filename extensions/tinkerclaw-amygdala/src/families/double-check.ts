@@ -26,6 +26,12 @@ const PROBLEM: Record<string, string> = {
 };
 
 const replyOf = (s: Situation): string => (typeof s.reply?.value === "string" ? s.reply.value : "");
+/** A provider failure in the reply slot (Claude Code's "API Error: …" or the gateway envelope), not agent prose.
+ *  2026-10-16: two safeguard refusals were judged as dodged work; there was no work to dodge. */
+const PROVIDER_ERROR_RE = /^\s*(?:__ERR_ENV__:|API Error:)/;
+/** The provider's own safety classifier refused the turn ("Opus 5.5's safeguards flagged this message").
+ *  2026-10-18, the owner: this IS a refusal for the strip. Rewind and Rewind-and-retry stay buttons he presses. */
+const PROVIDER_SAFEGUARD_RE = /safeguards flagged|anthropic\.com\/legal\/aup/i;
 const recordOf = (s: Situation): ToolRecordEntry[] => s.toolRecord?.value ?? [];
 
 /** Done claims; when the splitter found none but a sentence still carries a completion verb, the whole reply. */
@@ -85,11 +91,15 @@ export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
     questionsFor(seam: Seam, s: Situation): string[] {
       if (seam === "pre-tool") return weakensCheckRelevant(s) ? ["weakens-own-check"] : [];
       if (seam !== "stop") return [];
+      if (PROVIDER_ERROR_RE.test(replyOf(s))) return [];
       const ids: string[] = [];
       if (replyOf(s)) ids.push("refusal");
-      ids.push("dodged-work");
+      // A reflection turn (the background Fractal one) leaves notes for later, not an answer to the owner: an open
+      // question or an unverified fix in it is the point of the note (2026-10-25, 395 of 458 such flags noise/harmful).
+      const reflection = s.turnKind?.value === "reflection";
+      if (!reflection) ids.push("dodged-work");
       if (doneClaims(s).length > 0) ids.push("claim-record", "claim-support", "claim-source");
-      if (stateClaims(s).length > 0) ids.push("stale-state-claim");
+      if (!reflection && stateClaims(s).length > 0) ids.push("stale-state-claim");
       return ids;
     },
 
@@ -114,6 +124,14 @@ export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
           : null;
       }
       if (seam !== "stop") return null;
+
+      // Deterministic, no Jev call: the reply slot holds the provider's refusal, not agent prose.
+      const reply = replyOf(s);
+      if (PROVIDER_ERROR_RE.test(reply)) {
+        return PROVIDER_SAFEGUARD_RE.test(reply)
+          ? { response: { kind: "refusal" }, drivers: [], reasonCode: "provider-safeguard" }
+          : null;
+      }
 
       const cands: FamilyResult[] = [];
       const record = recordOf(s);
@@ -159,7 +177,13 @@ export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
         if (dodge) {
           const ignorePromise = (s.scheduledJobs?.value ?? []).length > 0;
           const option = dodgeOption(dodge, asked, ignorePromise);
-          if (option && PROBLEM[option]) {
+          if (option === "false-blocker") {
+            cands.push({
+              response: sendBack("send-back-blocker", {}),
+              drivers: ["dodged-work"],
+              reasonCode: "false-blocker",
+            });
+          } else if (option && PROBLEM[option]) {
             cands.push({
               response: sendBack("send-back-dodged", { problem: PROBLEM[option] }),
               drivers: ["dodged-work"],

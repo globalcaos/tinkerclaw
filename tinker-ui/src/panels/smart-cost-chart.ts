@@ -778,6 +778,7 @@ export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   { match: /sonnet-5[.-]5/i, out: 10 }, // Sonnet 5.5 $2/$10 (OpenRouter 2026-09-29)
   { match: /sonnet-5(?![.\d])/i, out: 10 }, // Sonnet 5 $2/$10
   { match: /sonnet/i, out: 15 }, // Sonnet 4.5/4.6 $3/$15
+  { match: /haiku-5[.-]5/i, out: 0.5 }, // Haiku 5.5 $0.10/$0.50 (anthropic.com pricing 2026-10-08, prompts up to 100k)
   { match: /haiku/i, out: 5 },
   // OpenAI — developers.openai.com/api/docs/pricing. Specific before generic.
   // All three gpt-5.6 rows carry OpenAI's SHORT-context standard rate. Sol read $30
@@ -791,6 +792,8 @@ export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   // on 09-23, so neither drew a triangle or a plan ladder. Prices from the live OpenRouter
   // catalog 2026-09-30: gpt-6.1-sol and gpt-6-sol $2/$10, gpt-6-luna $0.10/$0.50.
   { match: /gpt-6\.1-sol/i, out: 10 },
+  // FORK 2026-10-27: gpt-6.1-terra, $1/$5 (OpenRouter live catalog 2026-10-27).
+  { match: /gpt-6\.1-terra/i, out: 5 },
   { match: /gpt-6-sol/i, out: 10 },
   { match: /gpt-6-luna/i, out: 0.5 },
   { match: /5\.6-sol/i, out: 20 },
@@ -1011,7 +1014,9 @@ const MB = 66;
 const PW = W - ML - MR;
 const PH = H - MT - MB;
 
-const R_MAX = 12; // largest context window → this radius; all others ∝ √ctx
+// 2026-10-10 the architect: "make all the bubbles a 30% smaller, the scene is too crowded" — 12 → 8.4, floor 2 → 1.4.
+const R_MAX = 8.4; // largest context window → this radius; all others ∝ √ctx
+const R_MIN = 1.4;
 // Task mode shifts dots by up to ~0.5 decades; the domain grows so nothing
 // lands outside the plot.
 const TASK_PAD = 0.55;
@@ -1197,7 +1202,7 @@ export function scY(index: number, s: ScScales): number {
  *  chart. See SC_NONANCHOR_STROKE below. */
 export function scRadius(ctxTokens: number, s: ScScales): number {
   if (s.sqrtCtxMax <= 0) return R_MAX / 2;
-  return Math.max(2, R_MAX * (Math.sqrt(ctxTokens) / s.sqrtCtxMax));
+  return Math.max(R_MIN, R_MAX * (Math.sqrt(ctxTokens) / s.sqrtCtxMax));
 }
 
 /** Fraction of its mark's resting stroke-opacity that a NON-anchor effort stop
@@ -1231,9 +1236,9 @@ export const SC_NONANCHOR_STROKE = 0.6;
  *  table since 2026-09-23 so the circle and the table cannot disagree about it. */
 export const SC_PLAN_UTIL = PLAN_UTIL;
 
-/** Sample windows for the on-plot size legend. Area ∝ ctx, so these three
+/** Sample windows for the on-plot size legend. Area ∝ ctx, so these four
  *  sizes are the visual dictionary for every circle on the chart. */
-export const SC_CTX_LEGEND = [128_000, 256_000, 1_000_000] as const;
+export const SC_CTX_LEGEND = [128_000, 256_000, 500_000, 1_000_000] as const; // 500k added 2026-10-10 (the architect)
 
 /** Prepaid seats whose circle is an amortised plan price and whose triangle is
  *  list. Copilot is excluded: its factor is 0.5571 credits, not 75% quota. */
@@ -1330,14 +1335,18 @@ export function scIdxTag(
   p: { smart: number; measured: boolean; label: string; estimate?: ScEstimateTag },
   measuredSuffix = "",
 ): string {
-  if (p.measured) return `idx ${p.smart.toFixed(1)} at ${p.label}${measuredSuffix}`;
+  // 2026-10-10 the architect: "add (Estimated Intelligence Index) if you have just guessed it, nothing if
+  // the data is public". A public AA number prints bare; anything we inferred says so in those words.
+  // The headline rail counts as a guess: AA's one score, put on an effort AA never ran.
+  void measuredSuffix;
+  if (p.measured) return `idx ${p.smart.toFixed(1)}`;
   if (p.estimate) {
     return (
-      `idx ≈${p.smart.toFixed(1)} ±${p.estimate.sd.toFixed(1)} at ${p.label}` +
-      ` (ESTIMATE, ${p.estimate.method}: ${p.estimate.basis.join("; ")} — not an AA measurement)`
+      `idx ≈${p.smart.toFixed(1)} ±${p.estimate.sd.toFixed(1)} (Estimated Intelligence Index` +
+      ` — ${p.estimate.method}: ${p.estimate.basis.join("; ")})`
     );
   }
-  return `idx ${p.smart.toFixed(1)} (headline — AA published no per-effort split)`;
+  return `idx ${p.smart.toFixed(1)} (Estimated Intelligence Index — AA's single headline score, not measured at this effort)`;
 }
 
 /**
@@ -1876,8 +1885,11 @@ export function renderSmartCostChart(
       // the dot: an OUTLINE circle carrying the model logo (the architect 2026-08-06 #2),
       // positioned by CSS custom properties so the task-mode toggle can glide it.
       const tokens = scTokensPerTask(m.id, c.p.lvl);
+      // 2026-10-10 the architect: "on mouseover each bubble, make the effort show" — the stop label read as a
+      // bare "High" / "Minimal" that nobody took for the thinking effort. Name it.
+      const effortTxt = /effort/i.test(c.p.label) ? c.p.label : `${c.p.label} effort`;
       const tip =
-        `${m.name} · ${c.p.label} — €${fmt(c.p.cost)}/Mtok` +
+        `${m.name} · ${effortTxt} — €${fmt(c.p.cost)}/Mtok` +
         ` · ~${scFmtTokens(tokens)}/task · ${scFmtCtx(m.ctx)} ctx` +
         ` · ${scIdxTag(c.p, " (AA)")}` +
         // Two dots with the same name are two SELLERS of one brain — say which
@@ -1886,7 +1898,7 @@ export function renderSmartCostChart(
           ? ` · via ${scRouteTag(m)} · ${m.twinN} routes${m.twinSpread ? "" : ", same price"}`
           : "") +
         // The plan-vs-list gap, stated on the circle itself. Without it the only way
-        // to read the discount is to eyeball the dashed bridge, and a ~340x gap on a
+        // to read the discount is to eyeball the dashed bridge, and a ~50x gap on a
         // log axis is easy to under-read by an order of magnitude.
         (() => {
           const list = scApiPrice(m.id);

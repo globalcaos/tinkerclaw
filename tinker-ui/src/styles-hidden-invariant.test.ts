@@ -75,3 +75,15 @@ describe("a hidden-toggled container must defeat its own display rule", () => {
     });
   }
 });
+
+// FORK 2026-10-20 (the architect: "remove the redundant plane and config icons"): the sixth sighting.
+// #phone-trip-btn / #phone-settings-btn carried `hidden` and stayed on screen because
+// `.phone-hbtn` sets `display`. Per-class lines above only cover classes someone already listed,
+// so the column fix is one global rule that no class `display` can outrank.
+describe("one global [hidden] rule beats every class display", () => {
+  it("base.css declares [hidden] { display: none !important }", () => {
+    expect(CSS_NO_COMMENTS).toMatch(
+      /(^|\n)\s*\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important/u,
+    );
+  });
+});

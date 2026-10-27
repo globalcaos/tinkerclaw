@@ -308,7 +308,7 @@ export function hostBootedAtMs(now: number = Date.now(), uptimeS: number = os.up
 
 /**
  * FORK 2026-10-01 — a reboot is not a gateway restart. The plain resume said "The gateway
- * restarted" after a freeze and power-off as well (AcmeVision worker, interrupted 06:35, back
+ * restarted" after a freeze and power-off as well (OrbisVision worker, interrupted 06:35, back
  * 07:13): the agent wrote that cause into a status file, and its earlier probes and /tmp files
  * were gone without it knowing why. When the interrupted turn's newest transcript entry is older
  * than this boot, the machine went down: returns the boot time, else null.

@@ -10,6 +10,16 @@
 //
 // NEVER LATE. The prompt waits at most `budgetMs` for the list. Jev off (the default) means local matching, which is
 // instant; if Jev is on and slow, the local list is used instead of holding the prompt.
+//
+// MEMORY POINTERS (2026-10-25). The same note may carry one line each to a note file or a past chat that may already
+// hold what the task needs (`pointer-sources.ts`), so round 1 knows where to look. Only for the owner's own prompt (the
+// gate the shared ranking uses), never for a private source, matched locally and in memory: nothing is sent anywhere.
+// `anticipate.mode` `watch` records them and shows nothing; `inject` shows them, again only in `enforce`.
+//
+// THE WAKE (2026-10-25). A past chat that matches strongly may be asked by the harness itself (`session-wake.ts`,
+// `anticipate.wake`): the wake starts in the background, the note gets one line with the command that prints its
+// answer, and an answer the agent never read is handed over at the start of that chat's next turn, once. In `watch`
+// the decision is only recorded on the pointer's ledger row.
 
 import {
   classifyTaskDomain,
@@ -17,26 +27,43 @@ import {
   isRuntimeNotice,
   localShortlist,
   notAsked,
+  rankTextFor,
+  recommendable,
   shortlistContext,
   shortlistFromResult,
   type EnhancementCard,
+  type MemoryPointer,
+  type PointerHit,
   type Shortlist,
   shouldShuffle,
   shuffleList,
   type TaskRankInput,
   type TaskRanking,
 } from "openclaw/plugin-sdk/fork-thalamus";
-import type { ThalamusMode } from "./config.js";
+import type { AnticipateMode, ThalamusMode } from "./config.js";
+import type { PointerFind } from "./pointer-sources.js";
 import type { ReadInput, RoutingReader } from "./reads/routing-reader.js";
+import type { SessionWaker, WakeConsider } from "./session-wake.js";
 import type { UseTracker } from "./use-tracker.js";
 
 export type Prepared = {
   list: Shortlist;
-  /** The note for the agent. Present only when the mode is `enforce` and the list is shown. */
+  /** The note for the agent. Present only when the mode is `enforce` and the list is shown or a pointer fits. */
   text?: string;
   injected: boolean;
   usedJev: boolean;
+  /** The note and past-chat pointers found for this prompt, shown to the agent or not. */
+  pointers?: readonly PointerHit[];
+  /** What the wake leg did with the best past-chat match; absent when no match cleared its bar. */
+  wake?: WakeConsider;
 };
+
+/** The note with `line` put before its closing "None of these may fit" line. */
+function beforeLastLine(note: string, line: string): string {
+  const lines = note.split("\n");
+  lines.splice(Math.max(0, lines.length - 1), 0, line);
+  return lines.join("\n");
+}
 
 const timeout = <T>(p: Promise<T>, ms: number): Promise<T | undefined> =>
   new Promise((resolve) => {
@@ -93,13 +120,61 @@ export function createShortlistSeam(d: {
     replayAllowed: (input: ReadInput) => boolean;
     recordReplay: (taskId: string, text: string) => void;
   };
+  /** Phase 1.3: reads the owner's words for a correction and records it. Absent: nothing is read. Never awaited. */
+  corrections?: { observe: (input: PrepareInput) => unknown };
+  /** The note and past-chat legs. Absent, or `mode()` off: no pointers, and the note is what it was before them. */
+  pointers?: { mode: () => AnticipateMode; find: (text: string) => PointerFind };
+  /** The harness wake of a matching past chat. Absent: pointers only, exactly as before. */
+  wake?: SessionWaker;
 }) {
+  /**
+   * The pointers for this prompt, or why there are none, and the prompt's own words when the match was made on them
+   * (not on the previous turn's). Synchronous: the indexes are in memory.
+   */
+  const findPointers = (
+    input: PrepareInput,
+    priv: boolean,
+  ): { hits: PointerHit[]; skip?: string; own?: string } => {
+    const gate = recommendable({
+      text: input.text,
+      sessionKey: input.sessionKey,
+      trigger: input.trigger,
+      provenanceKind: input.provenanceKind,
+    });
+    if (!gate.ok) {
+      return { hits: [], skip: gate.why };
+    }
+    if (priv) {
+      return { hits: [], skip: "private-source" };
+    }
+    const text = rankTextFor(input.text, input.previousUserText, () => false);
+    if ("skip" in text) {
+      return { hits: [], skip: text.skip };
+    }
+    const found = d.pointers?.find(text.text);
+    if (!found) {
+      return { hits: [] };
+    }
+    if ("skip" in found) {
+      return { hits: [], skip: found.skip };
+    }
+    return {
+      hits: [...found.notes, ...found.chats],
+      ...(text.basis === "own" ? { own: text.text } : {}),
+    };
+  };
+
   return {
     async prepare(input: PrepareInput): Promise<Prepared> {
       const mode = d.mode();
       if (mode === "off") return { list: notAsked("local"), injected: false, usedJev: false };
       if (INJECTED_PROMPT.test(input.text) || isRuntimeNotice(input.text))
         return { list: notAsked("local"), injected: false, usedJev: false };
+      try {
+        d.corrections?.observe(input);
+      } catch {
+        /* a label is a convenience; it never breaks a prompt */
+      }
       const cards = d.cards();
       const byId = new Map(cards.map((c) => [c.id, c]));
 
@@ -202,6 +277,39 @@ export function createShortlistSeam(d: {
         shuffled = true;
       }
 
+      // ONLY `enforce` hands the agent anything; memory pointers also need `anticipate.mode` inject.
+      const inject = mode === "enforce" && (d.inject?.() ?? true);
+      const pointerMode = d.pointers?.mode() ?? "off";
+      // A wake this chat started on an earlier prompt that finished unread: handed over once, before this turn's own.
+      let handover: string | undefined;
+      try {
+        handover = d.wake?.collect(input.sessionKey);
+      } catch {
+        handover = undefined;
+      }
+      let pointers: { hits: PointerHit[]; skip?: string; own?: string } | undefined;
+      if (pointerMode !== "off") {
+        try {
+          pointers = findPointers(input, priv);
+        } catch {
+          pointers = { hits: [], skip: "error" };
+        }
+      }
+      const showPointers = inject && pointerMode === "inject" && (pointers?.hits.length ?? 0) > 0;
+      let wake: WakeConsider = {};
+      if (d.wake && pointers && pointers.hits.length > 0) {
+        try {
+          wake = d.wake.consider({
+            sessionKey: input.sessionKey,
+            hits: pointers.hits,
+            ownText: pointers.own,
+            canStart: showPointers,
+          });
+        } catch {
+          wake = {};
+        }
+      }
+
       d.tracker.noteShown(input.runId, {
         sessionKey: input.sessionKey,
         source: input.source,
@@ -212,6 +320,19 @@ export function createShortlistSeam(d: {
         ...(d.learning ? { taskKind: classifyTaskDomain(input.text) } : {}),
         ...(skip ? { skip } : {}),
         ...(skipDetail ? { skipDetail } : {}),
+        ...(pointers
+          ? {
+              pointers: pointers.hits.map((h) => ({
+                kind: h.kind,
+                id: h.id,
+                cover: h.cover,
+                terms: h.terms,
+                injected: showPointers,
+                ...(wake.outcome && wake.id === h.id ? { wake: wake.outcome } : {}),
+              })),
+              ...(pointers.skip ? { pointerSkip: pointers.skip } : {}),
+            }
+          : {}),
       });
       shownNoted = true;
       if (jevMs !== undefined) d.tracker.noteJevMs(input.runId, jevMs);
@@ -223,10 +344,31 @@ export function createShortlistSeam(d: {
         }
       }
 
-      const note = shortlistContext(list, byId);
-      // ONLY `enforce` hands the agent anything. In shadow the list is recorded and the context stays untouched.
-      const inject = mode === "enforce" && (d.inject?.() ?? true) && note !== undefined;
-      return { list, ...(inject ? { text: note } : {}), injected: inject, usedJev };
+      const shown: MemoryPointer[] = showPointers
+        ? (pointers?.hits ?? []).map((h) => {
+            const p: MemoryPointer = { kind: h.kind, label: h.label, where: h.id };
+            if (h.date) {
+              p.date = h.date;
+            }
+            return p;
+          })
+        : [];
+      let note = shortlistContext(list, byId, shown);
+      if (note && wake.line) {
+        note = beforeLastLine(note, wake.line);
+      }
+      const parts = [inject ? handover : undefined, note].filter((p): p is string => Boolean(p));
+      const text = parts.length > 0 ? parts.join("\n\n") : undefined;
+      // In shadow the list and the pointers are recorded and the context stays untouched.
+      const injected = inject && text !== undefined;
+      return {
+        list,
+        ...(injected ? { text } : {}),
+        injected,
+        usedJev,
+        ...(pointers?.hits.length ? { pointers: pointers.hits } : {}),
+        ...(wake.outcome ? { wake } : {}),
+      };
     },
   };
 }

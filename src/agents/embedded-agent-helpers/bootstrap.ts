@@ -87,6 +87,9 @@ export function stripThoughtSignatures<T>(
 export const DEFAULT_BOOTSTRAP_MAX_CHARS = 12_000;
 export const DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS = 60_000;
 export const DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE = "once";
+// MEMORY.md is the memory index, loaded every turn; past this it should shed detail into topic files.
+export const DEFAULT_MEMORY_INDEX_MAX_CHARS = 8_000;
+export const DEFAULT_MEMORY_INDEX_WARNING_MODE = "watch";
 const MIN_BOOTSTRAP_FILE_BUDGET_CHARS = 64;
 // Ratios split `contentBudget` (= maxChars − marker.length − join separators), not `maxChars`.
 // The marker and "\n" separators are already reserved before this split runs; these ratios
@@ -127,6 +130,24 @@ export function resolveBootstrapPromptTruncationWarningMode(
     return raw;
   }
   return DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE;
+}
+
+export function resolveMemoryIndexMaxChars(cfg?: OpenClawConfig): number {
+  const raw = cfg?.agents?.defaults?.memoryIndexMaxChars;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return DEFAULT_MEMORY_INDEX_MAX_CHARS;
+}
+
+export function resolveMemoryIndexWarningMode(
+  cfg?: OpenClawConfig,
+): "off" | "watch" | "once" | "always" {
+  const raw = cfg?.agents?.defaults?.memoryIndexWarning;
+  if (raw === "off" || raw === "watch" || raw === "once" || raw === "always") {
+    return raw;
+  }
+  return DEFAULT_MEMORY_INDEX_WARNING_MODE;
 }
 
 function trimBootstrapContent(

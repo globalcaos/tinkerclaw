@@ -2,13 +2,23 @@
 <html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- FORK 2026-10-19 (the architect: phone app): viewport-fit=cover for the notch insets phone.css reads;
+         resizes-content so the on-screen keyboard shrinks the layout instead of covering the input. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <title>Tinker — Command Center</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="stylesheet" href="/src/styles/base.css" />
     <link rel="stylesheet" href="/src/styles/amy-jev.css" />
+    <link rel="stylesheet" href="/src/styles/amy-inline.css" />
     <link rel="stylesheet" href="/src/styles/amy-cards.css" />
     <link rel="stylesheet" href="/src/styles/amy-panel.css" />
+    <!-- FORK 2026-10-21: the purple ask-session card (src/ask-session-card.ts). -->
+    <link rel="stylesheet" href="/src/styles/ask-session.css" />
+    <!-- FORK 2026-10-19 (the architect: phone app): every rule scoped under body.phone (src/phone/phone-mode.ts). -->
+    <link rel="stylesheet" href="/src/styles/phone.css" />
   </head>
   <body>
     <div id="app"></div>

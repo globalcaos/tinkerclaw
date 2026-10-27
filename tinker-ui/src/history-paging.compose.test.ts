@@ -396,7 +396,7 @@ describe("C2 — an older page never re-adds a run the page watched live", () =>
 
 // FORK 2026-10-05 (the architect: "Some tabs appear without history. I should be able to scroll back until
 // the beginning") — app.ts loadOlderPage no longer refuses a scroll to the top while the session
-// runs (AcmeVision's turns run 30-45 min). What makes that safe is here, in the helpers it calls.
+// runs (OrbisVision's turns run 30-45 min). What makes that safe is here, in the helpers it calls.
 describe("an older page under a live run", () => {
   it("pages all the way up while the run writes; its server copies stay out, its bubbles stay put", () => {
     const gw = new FakeGateway(locals(1, 400), "e0");

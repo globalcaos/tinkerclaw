@@ -62,12 +62,23 @@ The only thing that reaches the provider is your **request content** (system pro
 
 Optional knobs in `openclaw.json` under `plugins.entries.tinkerclaw-tinker-bridge.config`:
 
-| key               | default                        | description                                                                                             |
-| ----------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `binary`          | `claude` (PATH)                | Absolute path to the claude CLI binary.                                                                 |
-| `cwd`             | `~/.openclaw/jarvis-workspace` | Working dir for each subprocess. Used for `CLAUDE.md` loading + transcript persistence.                 |
-| `disallowedTools` | (permissive; see uiHint)       | Tools to disable inside claude (OpenClaw owns the tool loop). Your value replaces the default entirely. |
-| `warmOnBoot`      | `[]`                           | Session keys to pre-spawn at gateway start (removes ~10s cold-start on the first turn).                 |
+| key               | default                        | description                                                                                                |
+| ----------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `binary`          | `claude` (PATH)                | Absolute path to the claude CLI binary.                                                                    |
+| `cwd`             | `~/.openclaw/jarvis-workspace` | Working dir for each subprocess. Used for `CLAUDE.md` loading + transcript persistence.                    |
+| `disallowedTools` | (permissive; see uiHint)       | Tools to disable inside claude (OpenClaw owns the tool loop). Your value replaces the default entirely.    |
+| `warmOnBoot`      | `[]`                           | Session keys to pre-spawn at gateway start (removes ~10s cold-start on the first turn).                    |
+| `fractalGuard`    | `enforce`                      | What a background Fractal reflection may do on its own: `enforce`, `watch` (log only) or `off`. See below. |
+
+### The Fractal guard
+
+A Fractal reflection runs after each turn in its own session, `agent:<id>:fractal:<P>`, as a fork of the chat, with every tool. It fixes files, notes and code on its own, but a send, a delete, a publish, a spend or a restart comes back as a proposal. The bridge gives only that worker `TC_FRACTAL_GUARD=<mode>` (and `TC_FRACTAL_GUARD_SINCE`, when it started), and the tinkerclaw-core plugin's PreToolUse hook (`claude-plugins/tinkerclaw-core/scripts/fractal-guard.mjs`) acts on it:
+
+- `enforce` (default): the call is denied. The model is told to write the exact command on a `Proposed:` line of its 🌿 card, so you can run it.
+- `watch`: every call runs, and what would have been denied is logged.
+- `off`: no guard.
+
+Held: `git push`, `gh` writes, package publishes, the messaging CLIs and the gateway's `message`/`tts`/`chat.send`, `rm` and the git calls that throw edits away, `systemctl restart|stop`, `openclaw gateway restart`, reload signals, cron installs and paid generation tools. Still the reflection's: its own scratch (`/tmp`, `mktemp`, files born after its worker started, symlinks), `trash`, commits, merges into develop, `git branch -d`, `git worktree remove` without `--force`, and the `gateway-restart` and `tinker-rebuild` skills. Every match goes to `<state dir>/data/fractal/guard.jsonl` (kind, tool, the short phrase that matched; never the command text). It reads the command text, so a script that sends or deletes inside itself is not seen: it is a pattern list, not a sandbox.
 
 ## Models
 

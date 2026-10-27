@@ -93,6 +93,14 @@ describe("splitInjectedPrompt", () => {
     expect(s?.visible).toBe("hi");
   });
 
+  it("labels the Fractal v2 seam as the fractal doctrine (2026-10-09)", () => {
+    const s = splitInjectedPrompt(
+      "hi\n\n---\n\n⟦FRACTAL-DOCTRINE⟧\n# How this turn works\n\nYou are Fractal, the slow thinker.",
+    );
+    expect(s?.kind).toBe("fractal");
+    expect(s?.visible).toBe("hi");
+  });
+
   // --- the rule that outranks coverage: never mislabel a human -------------------------------
 
   it("leaves an ordinary message alone", () => {
@@ -244,7 +252,7 @@ describe("skillNoticeFromTool", () => {
 // FORK 2026-10-06 (Broca retrieval v2, phase E): the advice line survives a reload in the `<recipe_advice>` tag.
 describe("the advice line in a stored turn", () => {
   const LINE =
-    "Use: acme-coding, human-voice · Inspiration: review-site (§ Build the page) · source: Jev";
+    "Use: orbis-coding, human-voice · Inspiration: review-site (§ Build the page) · source: Jev";
   const stored = (block: string) => `Plan the family trip\n\n---\n\n${block}`;
 
   it("folds an advice-only block and hands back the line", () => {

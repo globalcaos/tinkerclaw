@@ -28,6 +28,7 @@
  * from the base.css tokens (--text, --muted, --border, --red), read once. No hex lives here.
  */
 
+import { isFractalRunId } from "../fractal-run-id.js";
 import {
   BREAK_CSS_PX,
   COLUMN_FLOOR_CSS_PX,
@@ -36,6 +37,7 @@ import {
   columnSlots,
   describeCall,
   fmtDuration,
+  fractalSpans,
   isEasing,
   lastDataAt,
   layoutAxis,
@@ -61,6 +63,14 @@ const REDUCED_FRAME_MS = 250;
 /** Both lanes' fill. Provenance (exact, estimated, apportioned) is in the tooltip, not the paint. */
 const LANE_ALPHA = 0.85;
 const STYLE_ID = "call-timeline-style";
+/** FORK 2026-10-10 — a light green outline around Fractal calls (the owner, 13:20: "skip the green
+ *  background. Instead, do a light green outline"); its width in CSS px, and its opacity. */
+const FRACTAL_OUTLINE_CSS_PX = 2;
+const FRACTAL_OUTLINE_ALPHA = 0.7;
+/** FORK 2026-10-10 — the Fractal divider is this share of a column's width ("proportional to the
+ *  thickness of the bars"), never thinner than 2 device px nor wider than FRACTAL_RULE_MAX_CSS_PX. */
+const FRACTAL_RULE_SHARE = 0.35;
+const FRACTAL_RULE_MAX_CSS_PX = 12;
 
 type Dash = "solid" | "dashed" | "dotted";
 
@@ -122,6 +132,7 @@ const CSS = `
 .ctl-tip[hidden]{display:none}
 .ctl-legend{margin-top:4px}
 .ctl-dot--compaction{background:color-mix(in srgb,var(--red) 35%,transparent)}
+.ctl-dot--fractal{background:transparent;box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--green) 70%,transparent)}
 .ctl-sr{position:absolute;top:0;left:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 `;
 
@@ -142,6 +153,8 @@ interface Paint {
   muted: string;
   border: string;
   red: string;
+  /** FORK 2026-10-10 — the Fractal band and track (base.css --green). */
+  green: string;
   hatch: CanvasPattern | string;
 }
 
@@ -156,6 +169,7 @@ function readPaint(ctx: CanvasRenderingContext2D | null, dpr: number): Paint {
     muted: tok("--muted", SEGMENT_COLORS.userMessage),
     border: tok("--border", SEGMENT_COLORS.userMessage),
     red: tok("--red", SEGMENT_COLORS.conversation),
+    green: tok("--green", SEGMENT_COLORS.userMessage),
     hatch: text,
   };
   // The unitemised hatch, mirroring .cache-seg--unitemised (135°, 17 % / 9 % of --text).
@@ -343,6 +357,8 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
         return paint.border;
       case "@red":
         return paint.red;
+      case "@green":
+        return paint.green;
       default:
         return SEGMENT_COLORS[style] ?? paint.muted;
     }
@@ -487,7 +503,16 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
     // The legend names what THIS frame painted (2026-10-02), not every key the session ever saw: a
     // bare `send` estimate is briefly one unitemised block, and a session-wide record would list
     // "Unitemised" under a graph that no longer shows any.
-    const legendOf = { keys: new Set<string>(), absent: false, compactions: false };
+    const legendOf = {
+      keys: new Set<string>(),
+      absent: false,
+      compactions: false,
+      fractal: false,
+    };
+    // 0. FORK 2026-10-10 — the stretches of Fractal calls (they can sit between the calls of a newer
+    //    prompt, since the Fractal runs in the background). Outlined after the columns, below.
+    const spans = fractalSpans(calls);
+    legendOf.fractal = spans.length > 0;
     for (let i = 0; i < calls.length; i++) {
       const c = calls[i];
       const { x0, x1 } = slots[i];
@@ -540,6 +565,12 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
 
     // 3. Axis band — one baseline across the width: there is no idle stretch left to mark.
     fillPath("@border", 1).rect(0, Math.floor(axisMid), W, px);
+    // 3b. FORK 2026-10-10 — the Fractal's own track: the axis band under its calls in solid green,
+    //     so its stretch reads even where its columns are short.
+    for (const sp of spans) {
+      const x0 = slots[sp.from].x0;
+      fillPath("@green", 0.9).rect(x0, axisTop + px, slots[sp.to - 1].x1 - x0, axisH - 2 * px);
+    }
 
     // 4. Compactions inside the prompt — a red seam at the column edge where each one began.
     const view = s.promptView();
@@ -552,6 +583,38 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
       const x = j < 0 ? W - 2 * px : slots[j].x0;
       fillPath("@red", 0.85).rect(Math.max(0, x - px), 0, 2 * px, H);
       legendOf.compactions = true;
+    }
+
+    // 4b. FORK 2026-10-08 — the main turn ends here and its Fractal turn begins (the owner: "Afegeix
+    //     una línia vertical quan acaba el torn normal i segueix dibuixant els tokens d'anada i vinguda
+    //     del torn fractal"). One rule across both lanes at the first Fractal column; the columns on
+    //     its right are the reflection's own calls, in and out, drawn like any other.
+    if (view?.fractal) {
+      const j = calls.findIndex((c) => isFractalRunId(c.runId));
+      if (j > 0) {
+        // Black, as wide as a third of a column (the owner, 13:09 and 13:20).
+        const colW = slots[j].x1 - slots[j].x0;
+        const ruleW = Math.max(
+          2 * px,
+          Math.min(
+            Math.round(colW * FRACTAL_RULE_SHARE),
+            Math.round(FRACTAL_RULE_MAX_CSS_PX * dpr),
+          ),
+        );
+        fillPath("@text", 1).rect(Math.max(0, slots[j].x0 - ruleW / 2), 0, ruleW, H);
+      }
+    }
+
+    // 4c. FORK 2026-10-10 — a light green outline around each stretch of Fractal calls, both lanes.
+    const ow = Math.max(1, Math.round(FRACTAL_OUTLINE_CSS_PX * dpr));
+    for (const sp of spans) {
+      const x0 = slots[sp.from].x0;
+      const x1 = slots[sp.to - 1].x1;
+      const o = fillPath("@green", FRACTAL_OUTLINE_ALPHA);
+      o.rect(x0, 0, x1 - x0, ow);
+      o.rect(x0, H - ow, x1 - x0, ow);
+      o.rect(x0, 0, ow, H);
+      o.rect(x1 - ow, 0, ow, H);
     }
 
     // 5. The selected / hovered call, outlined across both lanes.
@@ -582,7 +645,12 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
     span: { t0: number; t1: number } | null,
     inMax = 0,
     outMax = 0,
-    legendOf?: { keys: ReadonlySet<string>; absent: boolean; compactions: boolean },
+    legendOf?: {
+      keys: ReadonlySet<string>;
+      absent: boolean;
+      compactions: boolean;
+      fractal: boolean;
+    },
   ): void {
     const view = s?.promptView() ?? null;
     // What the stage says when there is nothing to draw.
@@ -612,8 +680,15 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
     const waiting = last !== undefined && last.endAt === undefined && promptWindow(last) === null;
     const dur = span && n > 0 ? fmtDuration(span.t1 - span.t0) : "";
     const parts = [view.ordinal > 0 ? `prompt ${view.ordinal}` : "this prompt"];
-    if (n > 0) {
-      parts.push(`${n} call${n === 1 ? "" : "s"}`);
+    // FORK 2026-10-08 — a window that holds a Fractal turn names both sides of the line. Since
+    // 2026-10-10 also a newer prompt's window, where a Fractal still running draws beside it.
+    const fractalN = calls.filter((c) => isFractalRunId(c.runId)).length;
+    const mainN = n - fractalN;
+    if (mainN > 0) {
+      parts.push(`${mainN} call${mainN === 1 ? "" : "s"}`);
+    }
+    if (fractalN > 0) {
+      parts.push(`│ 🌿 Fractal ${fractalN} call${fractalN === 1 ? "" : "s"}`);
     }
     if (dur) {
       parts.push(dur);
@@ -625,7 +700,11 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
     // drawn yet.
     const newer = view.newer;
     if (newer) {
-      const p = newer.ordinal > 0 ? `prompt ${newer.ordinal}` : "next prompt";
+      const p = newer.fractal
+        ? "🌿 Fractal"
+        : newer.ordinal > 0
+          ? `prompt ${newer.ordinal}`
+          : "next prompt";
       parts.push(
         newer.state === "preparing"
           ? `${p} preparing…`
@@ -647,11 +726,12 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
       const order = Object.keys(SEGMENT_COLORS).filter((k) => legendOf.keys.has(k));
       const unitemised = legendOf.keys.has(UNITEMISED_KEY);
       setLegend(
-        `${order.join(",")}|${unitemised}|${legendOf.absent}|${legendOf.compactions}`,
+        `${order.join(",")}|${unitemised}|${legendOf.absent}|${legendOf.compactions}|${legendOf.fractal}`,
         order,
         unitemised,
         legendOf.absent,
         legendOf.compactions,
+        legendOf.fractal,
       );
     } else {
       setLegend("");
@@ -685,6 +765,7 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
     unitemised = false,
     absent = false,
     compactions = false,
+    fractal = false,
   ): void {
     if (key === legendKey) {
       return;
@@ -731,6 +812,14 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
         "compaction",
         undefined,
         "The session's context was being compacted.",
+      );
+    }
+    if (fractal) {
+      item(
+        "ctl-dot--fractal",
+        "🌿 Fractal",
+        undefined,
+        "Calls of the background Fractal reflection: green outline, green track on the axis.",
       );
     }
   }

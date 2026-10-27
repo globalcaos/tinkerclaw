@@ -2,7 +2,7 @@
   "name": "@globalcaos/tinker-thalamus",
   "version": "0.1.0",
   "private": true,
-  "description": "THALAMUS v4 (J19): routes each model call, ranks the assistant's enhancements for each task, and records what it would have done. Ships disabled; mode off by default.",
+  "description": "THALAMUS v4 (J19): routes each model call, ranks the assistant's enhancements for each task, points at the notes and past chats that may hold what it needs, and records what it would have done. Loads in shadow by default; only enforce hands the agent anything.",
   "license": "Apache-2.0",
   "type": "module",
   "peerDependencies": {
