@@ -1,0 +1,151 @@
+/* pdf-review read-aloud: toolbar controls and the highlight on the sentence being read. */
+#readerControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-end: 8px;
+}
+.readerBtn,
+#readerControls select {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--field-border-color, #b5b5b5);
+  border-radius: 4px;
+  background: var(--field-bg-color, #fff);
+  color: var(--field-color, #222);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+#readerControls select {
+  padding: 0 2px;
+}
+.readerBtn:hover {
+  background: var(--button-hover-color, #ddd);
+}
+.readerBtn.on {
+  background: #f2c94c;
+  border-color: #c9a227;
+  color: #222;
+}
+.readerBtn.dim {
+  opacity: 0.55;
+}
+/* While the AI applies comments the button is disabled: dimmed, no hover, no clicks (2026-10-16). */
+.readerBtn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+  pointer-events: none;
+}
+#readerError {
+  color: #b3261e;
+  font-size: 12px;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.readerMark {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.readerMark > div {
+  position: absolute;
+  background: rgba(255, 196, 0, 0.33);
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+
+/* ✏️ Edit text (2026-10-16). Kept here, not inline: the viewer's CSP is style-src 'self'. */
+.paraPick { position: absolute; z-index: 30; cursor: pointer; border-radius: 4px; transition: background .08s; }
+.paraPick:hover { background: rgba(185,112,64,.18); outline: 2px solid rgba(185,112,64,.55); }
+.epWrap { position: fixed; inset: 0; z-index: 100001; background: rgba(40,25,10,.35); display: flex; align-items: center; justify-content: center; }
+.epBox { background: #f6efe2; border: 1px solid #c9b48a; border-radius: 10px; padding: 16px 18px; width: min(760px, 92vw); box-shadow: 0 8px 30px #0005; font: 14px Georgia, serif; color: #3b2a14; }
+.epTitle { font-weight: 700; color: #7A3921; margin-bottom: 8px; }
+.epText { width: 100%; min-height: 60px; max-height: 70vh; overflow-y: auto; resize: none; box-sizing: border-box; font: 14px/1.5 Georgia, serif; padding: 10px; border: 1px solid #c9b48a; border-radius: 6px; background: #fffdf8; color: #3b2a14; }
+.epRow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; align-items: center; }
+.epMsg { margin-right: auto; font-size: 12px; color: #8a7060; }
+.epBtn { padding: 5px 14px; border: 1px solid #c9b48a; border-radius: 5px; background: transparent; color: #7A3921; cursor: pointer; font: 14px Georgia, serif; }
+.epBtn.primary { border-color: #7A3921; background: #7A3921; color: #f6efe2; }
+.rbFreeze { position: fixed; inset: 0; z-index: 100000; background: rgba(246,239,226,.55); cursor: progress; display: flex; align-items: center; justify-content: center; }
+.rbCard { display: flex; gap: 10px; align-items: center; background: #f6efe2; border: 1px solid #c9b48a; border-radius: 8px; padding: 10px 16px; font: 14px Georgia, serif; color: #7A3921; box-shadow: 0 4px 16px #0003; }
+.rbSpin { width: 16px; height: 16px; border: 3px solid #e7cbb0; border-top-color: #7A3921; border-radius: 50%; display: inline-block; animation: rbspin .8s linear infinite; }
+@keyframes rbspin { to { transform: rotate(360deg); } }
+/* Small highlights: an invisible 32x24 px click target so their comment can be reopened (2026-10-16). */
+.highlightEditor.tiny:not(.disabled)::before,
+.annotationLayer .highlightAnnotation.tiny::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 32px);
+  height: max(100%, 24px);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* ▶ Read from here, in the selection toolbar beside Comment and Highlight (2026-10-18). */
+.editToolbar .buttons .basic.readerHere::before {
+  -webkit-mask-image: url(images/reader-play.svg);
+  mask-image: url(images/reader-play.svg);
+}
+/* 🕘 Recent (2026-10-21): the PDFs opened with this viewer, newest first. */
+#recentDialog { width: min(560px, 94vw); max-height: 80vh; padding: 0; border: 1px solid #c9b48a; border-radius: 10px; background: #f6efe2; color: #3b2a14; font: 14px Georgia, serif; box-shadow: 0 8px 30px #0005; }
+#recentDialog::backdrop { background: rgba(40,25,10,.35); }
+.recentHead { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #e2d3b5; color: #7A3921; }
+.recentClose { border: 0; background: transparent; font-size: 18px; color: #7A3921; cursor: pointer; padding: 4px 8px; }
+.recentList { overflow-y: auto; max-height: calc(80vh - 48px); padding: 4px 0; }
+.recentRow { display: block; padding: 10px 14px; text-decoration: none; color: inherit; border-bottom: 1px solid #efe4cf; }
+.recentRow:hover, .recentRow:active { background: #efe2c8; }
+.recentRow.current { background: #ead7b3; }
+.recentRow .recentName { display: block; font-weight: 700; word-break: break-word; color: #3b2a14; }
+.recentMeta { display: block; font-size: 12px; color: #8a7060; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Phone layout (2026-10-21): this viewer's controls in a bottom bar on a narrow screen (phone.js). */
+#phoneBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 6px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow-x: auto; background: var(--toolbar-bg-color, #f9f9fa); border-top: 1px solid var(--toolbar-border-color, #b8b8b8); scrollbar-width: none; }
+#phoneBar[hidden] { display: none; }
+#phoneBar > *, #phoneBar #readerControls { flex: none; }
+#phoneBar #readerControls { margin: 0; gap: 6px; }
+#phoneBar .readerBtn, #phoneBar #readerControls select { height: 36px; font-size: 14px; }
+body.withPhoneBar #viewerContainer { bottom: calc(49px + env(safe-area-inset-bottom)); }
+/* Pinch zooms on a phone, so − / + and the zoom menu go; pages sit 10 px apart, without the
+   desktop's thick transparent border, with a light shadow so their edges still show. */
+body.withPhoneBar #toolbarViewerMiddle { display: none; }
+body.withPhoneBar .pdfViewer { --page-margin: 0 auto 10px; --page-border: none; padding-top: 10px; }
+body.withPhoneBar .pdfViewer .page { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+/* 💬 Comment tap tool (tools.js, 2026-10-23): pressed state, and a text cursor hint while on. */
+#tapComment.on { background: #7A3921; color: #fff; border-color: #7A3921; }
+body.tapComment .textLayer { cursor: text; }
+#toolbarViewerLeft > #tapComment { margin-inline: 4px; }
+/* Phone top row (2026-10-23): it scrolls sideways by itself; the page underneath does not move,
+   and nothing makes the whole document wider than the screen. */
+html, body { overflow-x: hidden; }
+body.withPhoneBar #toolbarViewer { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; touch-action: pan-x; flex-wrap: nowrap; scrollbar-width: none; }
+body.withPhoneBar #toolbarViewer::-webkit-scrollbar { display: none; }
+body.withPhoneBar #toolbarViewerLeft, body.withPhoneBar #toolbarViewerRight { flex: none; }
+body.withPhoneBar #tapComment { height: 32px; font-size: 14px; }
+/* Landscape phone (the architect 2026-10-24): every pixel of height for the page. The pdf.js toolbar becomes
+   a column of icons on the left that scrolls up and down (phone.js sets body.sideRail). Our buttons keep
+   their full labels but show only the leading emoji, so labels that change (▶/⏸, Saving…) still work. */
+body.sideRail { --rail: 46px; }
+body.sideRail #toolbarContainer { position: fixed; top: 0; left: 0; bottom: 0; width: var(--rail); height: auto; padding: 4px 0; z-index: 30; border-bottom: 0; border-right: 1px solid var(--toolbar-border-color, #b8b8b8); }
+body.sideRail #toolbarContainer #toolbarViewer { flex-direction: column; justify-content: flex-start; align-items: center; height: 100%; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; touch-action: pan-y; scrollbar-width: none; gap: 2px; }
+body.sideRail #toolbarViewer::-webkit-scrollbar { display: none; }
+body.sideRail #toolbarViewerLeft, body.sideRail #toolbarViewerRight, body.sideRail #readerControls, body.sideRail #toolbarViewerLeft > *, body.sideRail #toolbarViewerRight > * { flex-direction: column; flex: none; align-items: center; gap: 2px; margin: 0; }
+body.sideRail #toolbarViewerMiddle, body.sideRail .verticalToolbarSeparator, body.sideRail #numPages { display: none; }
+body.sideRail .readerBtn, body.sideRail #toolbarViewer select { width: 38px; min-width: 38px; max-width: 38px; height: 34px; padding: 0 0 0 9px; overflow: hidden; white-space: nowrap; text-overflow: clip; text-align: left; font-size: 16px; }
+body.sideRail #toolbarViewer input#pageNumber { width: 36px; }
+body.sideRail #viewerContainer { inset: 0 0 0 var(--rail); }
+body.sideRail #sidebarContent { inset-block-start: 0; }
+/* Pop-up panels (highlight colours, ink thickness, the ⋯ menu) open beside the column, not inside it. */
+body.sideRail .doorHanger, body.sideRail .doorHangerRight, body.sideRail .editorParamsToolbar { position: fixed; left: calc(var(--rail) + 4px); right: auto; top: 6px; inset-inline-end: auto; }
+body.sideRail .doorHanger::before, body.sideRail .doorHanger::after, body.sideRail .doorHangerRight::before, body.sideRail .doorHangerRight::after { display: none; }
+/* pdf.js sizes its buttons from the toolbar height, which in the column is the screen height (332×332
+   squares, 2026-10-24 render): pin them to 34 px and stack every group. */
+body.sideRail #toolbarViewer :is(.toolbarHorizontalGroup, .toolbarButtonWithContainer) { width: auto; height: auto; flex-direction: column; align-items: center; }
+body.sideRail #toolbarViewer .toolbarButton { width: 34px !important; height: 34px !important; min-width: 34px; flex: none; }
+body.sideRail #toolbarViewer .toolbarButtonSpacer { display: none; }
+/* Icon only: phone.js copies each button's first symbol into data-icon; the words are hidden. */
+body.sideRail .readerBtn[data-icon] { font-size: 0; padding: 0; text-align: center; overflow: hidden; }
+body.sideRail .readerBtn[data-icon]::before { content: attr(data-icon); font-size: 18px; line-height: 34px; }

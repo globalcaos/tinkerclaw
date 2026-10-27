@@ -40,7 +40,10 @@ const opt = (name: string, dflt: string) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 };
 const SINCE = Date.parse(opt("--since", "2026-10-15") + "T00:00:00Z");
-const DIR = opt("--dir", path.join(HOME, ".claude/projects/-home-user--openclaw-jarvis-workspace"));
+const DIR = opt(
+  "--dir",
+  path.join(HOME, ".claude/projects/-home-user--openclaw-jarvis-workspace"),
+);
 const BRIDGE_CWD = opt("--cwd", path.join(HOME, ".openclaw/jarvis-workspace"));
 
 type Call = {

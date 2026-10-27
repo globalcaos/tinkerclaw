@@ -1431,7 +1431,7 @@ function proxyToGateway(req, res, rewritePath) {
 }
 
 // FORK 2026-10-21 (the architect: "when I click on a pdf link from the phone I want the capabilities we have
-// on desktop to work"). The pdf-review viewer (~/src/pdf-review, loopback :18820) under /pdf/, so the
+// on desktop to work"). The pdf-review viewer (apps/pdf-review, loopback :18820) under /pdf/, so the
 // phone reaches it through the phone door like the rest of Tinker: same device token, same origin.
 // The viewer finds its own base from its URL (viewer/web/base.js), so no path inside it is rewritten.
 const PDF_REVIEW_PORT = Number(process.env.PDF_REVIEW_PORT || 18820);
@@ -1500,6 +1500,9 @@ function proxyToZenMail(req, res, url) {
 // only `lj-<id>` dirs whose state.json moved in the last 6 h are opened (a worker writes every few seconds,
 // so a dead one drops off), and only jobs whose `session` is the asking chat's come back. Same-origin only:
 // no CORS header, unlike the per-id route below, which a sandboxed card frame has to reach.
+// FORK 2026-10-27 (the architect: a running job shows as busy on every tab, not only the one on screen): `?all=1`
+// returns every chat's running jobs in one read, each naming its chat in `session`; the page keeps that
+// census and every tab asks it. An older page still sends `?session=`.
 const LONGJOB_ROOT = path.join(HOME, ".openclaw", "canvas", "documents");
 const LONGJOB_LIST_MAX_AGE_MS = 6 * 3600_000;
 
@@ -1515,8 +1518,9 @@ function longjobSessionMatches(jobSession, asked) {
 
 async function handleLongjobList(url, res) {
   const session = url.searchParams.get("session") || "";
-  if (!session) {
-    json(res, 400, { error: "session required" });
+  const all = url.searchParams.get("all") === "1";
+  if (!session && !all) {
+    json(res, 400, { error: "session or all=1 required" });
     return;
   }
   const now = Date.now();
@@ -1540,7 +1544,7 @@ async function handleLongjobList(url, res) {
         continue;
       }
       const job = JSON.parse(await fs.promises.readFile(file, "utf8"));
-      if (job?.status === "running" && longjobSessionMatches(job.session, session)) {
+      if (job?.status === "running" && (all || longjobSessionMatches(job.session, session))) {
         jobs.push(job);
       }
     } catch {

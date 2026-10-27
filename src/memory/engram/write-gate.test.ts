@@ -177,10 +177,7 @@ describe("gateMemoryWrite: one label, one outcome", () => {
     // Agreeing with the rule is not a clash.
     expect(
       decide({
-        after: note(
-          "lang",
-          "Reply to the architect in English even when files are Catalan, always.",
-        ),
+        after: note("lang", "Reply to the architect in English even when files are Catalan, always."),
         rules,
       }).label,
     ).not.toBe("clash");
@@ -458,10 +455,7 @@ describe("runMemoryGate: the door", () => {
       toolName: "Write",
       input: {
         file_path: path.join(w.mem, "lang.md"),
-        content: note(
-          "lang",
-          "Do not reply to the architect in English when the files are Catalan.",
-        ),
+        content: note("lang", "Do not reply to the architect in English when the files are Catalan."),
       },
       config: w.config("enforce"),
       stateDir: w.state,

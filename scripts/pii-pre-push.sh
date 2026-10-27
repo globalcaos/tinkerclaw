@@ -109,9 +109,11 @@ scan_range() {
   if [[ -z "$diff_output" ]]; then
     return 0
   fi
-  # Match only added lines (+) and skip diff hunk headers (+++)
+  # Match only added lines (+) and skip the file headers (+++ b/… or +++ /dev/null).
+  # FORK 2026-10-27: the old shape `^\+[^+].*` spent the line's first character on `[^+]`, so a
+  # token at column 0 of an added line ("+<FirstName> said …") was never matched. Found during a publish.
   local matches
-  matches=$(echo "$diff_output" | grep -P "^\+[^+].*(${PII_RE})" || true)
+  matches=$(echo "$diff_output" | grep -P "^\+(?!\+\+ (?:b/|/dev/null)).*?(${PII_RE})" || true)
   if [[ -n "$matches" ]]; then
     local n
     n=$(echo "$matches" | wc -l)

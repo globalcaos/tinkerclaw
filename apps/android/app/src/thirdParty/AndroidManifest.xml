@@ -16,6 +16,9 @@
          installer of record update itself with no confirmation screen (Android 12+). -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 2026-10-27 (the architect: "the Jarvis app keeps stopping"): Android 15 caps dataSync at 6 h a day and every wake
+         after that crashed the app, so the always-connected Jarvis build runs its node service as specialUse. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- Loopback cleartext only in a JARVIS_DEV build (see build.gradle.kts). -->
     <application
@@ -34,6 +37,14 @@
                     android:scheme="jarvis" />
             </intent-filter>
         </activity>
+        <service
+            android:name="ai.openclaw.app.NodeForegroundService"
+            android:foregroundServiceType="specialUse|microphone"
+            tools:replace="android:foregroundServiceType">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the owner's personal assistant connected to their home server" />
+        </service>
         <receiver
             android:name="ai.openclaw.app.update.AppUpdateReceiver"
             android:exported="false" />

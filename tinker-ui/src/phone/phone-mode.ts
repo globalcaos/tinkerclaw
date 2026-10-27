@@ -30,6 +30,8 @@ export interface PhoneModeDeps {
   getTabs(): readonly PhoneTab[];
   getActiveTabId(): string;
   isRunning(tabId: string): boolean;
+  /** FORK 2026-10-27 — a turn finished in this chat and the owner has not seen it yet. */
+  isUnread?(tabId: string): boolean;
   switchToTab(id: string): void;
   /** The same close path as the desktop tab ✕ (chained pairs close together). */
   closeTab(id: string): void;
@@ -224,7 +226,9 @@ export function initPhoneMode(
     `<button type="button" class="phone-hbtn" id="phone-menu-btn" aria-label="Menu">☰</button>` +
     `<button type="button" class="phone-chat-btn" id="phone-chat-btn" aria-haspopup="listbox" aria-expanded="false">` +
     `<span class="phone-run-dot" aria-hidden="true"></span><span class="phone-chat-title"></span>` +
-    `<span class="phone-caret" aria-hidden="true">▾</span></button>` +
+    `<span class="phone-caret" aria-hidden="true">▾</span>` +
+    // FORK 2026-10-27 — another chat has an unread result: the dropdown is where to find it.
+    `<span class="phone-unread-dot phone-unread-elsewhere" aria-label="unread result in another chat" hidden></span></button>` +
     // FORK 2026-10-19 (the architect: phone app) — the trip corner lives here inside the Jarvis app, so no
     // floating button covers the chat. Hidden in a plain browser (no JarvisNative).
     `<button type="button" class="phone-hbtn" id="phone-trip-btn" aria-label="Trip" hidden>✈</button>` +
@@ -372,6 +376,10 @@ export function initPhoneMode(
       if (c) dot.style.setProperty("--run", c);
       else dot.style.removeProperty("--run");
     }
+    const elsewhere = header.querySelector<HTMLElement>(".phone-unread-elsewhere");
+    if (elsewhere) {
+      elsewhere.hidden = !tabs.some((t) => t.id !== activeId && deps.isUnread?.(t.id));
+    }
     // 2026-10-21 (the architect): the row of buttons goes at the TOP of the list, and gains the PDF reader
     // on the file read last. Before: the list ended in it (2026-10-20). 📄 works in a plain browser
     // too (tinker-prod-ui serves the reader under /pdf/); ✈ ⚙ ⌨ need the Jarvis app.
@@ -394,6 +402,9 @@ export function initPhoneMode(
         `<div class="phone-sheet-row${isActive ? " active" : ""}" role="option" aria-selected="${isActive}" data-phone-tab="${esc(t.id)}">` +
         `<span class="phone-run-dot${running ? " on" : ""}"${c ? ` style="--run:${esc(c)}"` : ""} aria-hidden="true"></span>` +
         `<span class="phone-sheet-title">${deps.isZenTab?.(t.id) ? zenTitleHtml(t.title, esc) : esc(t.title)}</span>` +
+        (deps.isUnread?.(t.id)
+          ? `<span class="phone-unread-dot" aria-label="unread result"></span>`
+          : "") +
         (deps.openTabMenu
           ? `<button type="button" class="phone-sheet-more" data-phone-menu="${esc(t.id)}" aria-label="Chat actions">⋯</button>`
           : "") +

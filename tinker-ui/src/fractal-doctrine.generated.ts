@@ -96,7 +96,7 @@ lacks. Read the log again right before the merge (2026-10-09: two reflections fi
 two minutes apart, \`222fa1a6e83\`).
 
 A background reflection never restarts the gateway or pushes the page while the house is busy: a
-restart's drain freezes every chat for up to 10 minutes (2026-10-09: one lost the owner's alarm-company
+restart's drain freezes every chat for up to 10 minutes (2026-10-09: one lost the owner's Securitas
 request twice). The restart and rebuild scripts refuse you with exit 5 while a Tinker chat moved in
 the last 10 minutes. Then merge only, write "merged into develop; the next rebuild carries it", and
 never work around the refusal.
@@ -371,7 +371,7 @@ gap between what was expected and the reality?" It had not.
       missing login, "renewing is the owner's step") is not closed by naming who owns the block:
       the question was about the data. List every other read path (shared browser tabs, Copilot, a
       local cache, another channel) with the command that lists it, and try them. (2026-10-05, "Any
-      response from the supplier?": the Outlook token had expired and nobody ran \`openclaw browser tabs\`,
+      response from Roger?": the Outlook token had expired and nobody ran \`openclaw browser tabs\`,
       where a shared Copilot tab found the reply in one ask. "You failed to detect that Teams was
       shared, right?")
 - [ ] **Messages for another person.** A message meant to let someone DO something (log in, pay,

@@ -289,7 +289,7 @@ await scenario({
         title: "Which Sam?",
         chips: [],
         options: [
-          { id: "jordi-a", label: "Sam Roe (supplier)", hint: "wrote to you last week" },
+          { id: "jordi-a", label: "Sam Puig (supplier)", hint: "wrote to you last week" },
           { id: "jordi-b", label: "Sam Doe (family)" },
         ],
       }),

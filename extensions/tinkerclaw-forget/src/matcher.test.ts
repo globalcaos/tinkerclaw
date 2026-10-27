@@ -45,8 +45,8 @@ describe("buildMatcher", () => {
   });
 
   it("scans raw bytes: a non-ASCII fact is found in latin1-decoded UTF-8", () => {
-    const m = buildMatcher("Plaça Major 1");
-    const raw = Buffer.from("viu al Plaça Major 1", "utf8").toString("latin1");
+    const m = buildMatcher("Carrer Martí 12");
+    const raw = Buffer.from("viu al Carrer Martí 12", "utf8").toString("latin1");
     expect(hits(m.scan, raw)).toBe(true);
   });
 });

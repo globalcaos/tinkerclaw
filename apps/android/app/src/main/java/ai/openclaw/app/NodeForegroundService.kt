@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -29,7 +30,7 @@ class NodeForegroundService : Service() {
     super.onCreate()
     ensureChannel()
     val initial = buildNotification(title = "OpenClaw Node", text = "Starting…")
-    startForegroundWithTypes(notification = initial)
+    if (!startForegroundWithTypes(notification = initial)) return
 
     val runtime = (application as NodeApp).peekRuntime()
     if (runtime == null) {
@@ -155,6 +156,16 @@ class NodeForegroundService : Service() {
     return START_STICKY
   }
 
+  // 2026-10-27: Android 15 calls this when a time-limited type (dataSync, 6 h a day) runs out; not stopping
+  // within seconds crashes the app.
+  override fun onTimeout(
+    startId: Int,
+    fgsType: Int,
+  ) {
+    Log.w("NodeForegroundService", "foreground time limit reached (type $fgsType); stopping")
+    stopSelf()
+  }
+
   override fun onDestroy() {
     notificationJob?.cancel()
     scope.cancel()
@@ -215,14 +226,21 @@ class NodeForegroundService : Service() {
       .build()
   }
 
-  private fun startForegroundWithTypes(notification: Notification) {
+  // 2026-10-27 (the architect: "the Jarvis app keeps stopping"): 102 crashes in one day were Android refusing the start
+  // ("Time limit already exhausted for foreground service type dataSync"). A refusal now stops the service quietly;
+  // the app process stays up and reconnects on the next wake. Returns false when refused.
+  private fun startForegroundWithTypes(notification: Notification): Boolean {
     val serviceTypes = foregroundServiceTypesForVoiceMode(voiceCaptureMode)
-    if (didStartForeground) {
+    try {
       ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceTypes)
-      return
+    } catch (e: IllegalStateException) {
+      // ForegroundServiceStartNotAllowedException (API 31+) extends IllegalStateException.
+      Log.w("NodeForegroundService", "foreground start refused: ${e.message}")
+      stopSelf()
+      return false
     }
-    ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceTypes)
     didStartForeground = true
+    return true
   }
 
   companion object {
@@ -260,8 +278,14 @@ class NodeForegroundService : Service() {
   }
 }
 
-internal fun foregroundServiceTypesForVoiceMode(mode: VoiceCaptureMode): Int {
-  val base = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+internal fun foregroundServiceTypesForVoiceMode(
+  mode: VoiceCaptureMode,
+  jarvisApp: Boolean = BuildConfig.JARVIS_APP,
+): Int {
+  // 2026-10-27: Android 15 caps dataSync at 6 h per 24 h and the Jarvis build stays connected all day, so it runs as
+  // specialUse (no cap; declared in src/thirdParty/AndroidManifest.xml). The Play build keeps dataSync.
+  val base =
+    if (jarvisApp) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
   return if (mode == VoiceCaptureMode.TalkMode) {
     base or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
   } else {

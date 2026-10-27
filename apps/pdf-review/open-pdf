@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Open local PDFs in the pdf-review viewer. Installed as the desktop's default PDF app.
+
+Each file is linked into papers/open/<hash of its folder>/ so the loopback server can serve it,
+the server is started if it is down, and the viewer opens in a Chrome app window.
+
+  open-pdf FILE...            open each file
+  open-pdf --link FILE...     register each file and print the link for the architect's phone/laptop through the
+                              Pi door (Tinker /pdf/ mount): "/pdf" prefix, file= encoded ONCE (2026-10-22:
+                              a hand-built, doubly-encoded link gave a silent 404, grey page, "of 0")
+  PDF_REVIEW_DRY=<path>       write the URLs to <path> instead of opening a window (tests)
+"""
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+BASE = "http://127.0.0.1:18820"
+# The address other devices use to reach the viewer through Tinker's /pdf/ proxy. Default: this machine's
+# Tinker. Set PDF_REVIEW_DOOR, or put the URL in ~/.config/pdf-review/door, to hand out a LAN/tailnet link.
+_DOOR_FILE = Path.home() / ".config" / "pdf-review" / "door"
+DOOR = (os.environ.get("PDF_REVIEW_DOOR")
+        or (_DOOR_FILE.read_text().strip() if _DOOR_FILE.is_file() else "")
+        or "http://127.0.0.1:18793/pdf")
+CHROME = "/opt/google/chrome/google-chrome"
+
+
+def notify(msg):
+    print(msg, file=sys.stderr)
+    subprocess.run(["notify-send", "PDF Review", msg], check=False)
+
+
+def server_up():
+    try:
+        urllib.request.urlopen(f"{BASE}/api/voices", timeout=1).read()
+        return True
+    except OSError:
+        return False
+
+
+def register_origin(path):
+    """A chat that opens a PDF is its maker: without this the viewer hides ↻ Redo (the architect 2026-10-16)."""
+    session = os.environ.get("TC_SESSION_KEY")
+    if not session:
+        return
+    req = urllib.request.Request(f"{BASE}/api/origin?path=" + urllib.parse.quote(path, safe="/"),
+                                 data=json.dumps({"session": session}).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=2).read()
+    except OSError as e:
+        print(f"origin not recorded: {e}", file=sys.stderr)
+
+
+def viewer_url(pdf):
+    folder = ROOT / "papers" / "open" / hashlib.sha1(str(pdf.parent).encode()).hexdigest()[:10]
+    folder.mkdir(parents=True, exist_ok=True)
+    link = folder / pdf.name
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        raise RuntimeError(f"{link} is a real file, not a link this script made; leaving it alone")
+    link.symlink_to(pdf)
+    path = "/" + link.relative_to(ROOT).as_posix()
+    register_origin(path)
+    # Encoded twice: the viewer decodes `file=` once, and the path must stay a URL path after that
+    # (a "#" or "%" in a file name would otherwise break it).
+    # v= changes whenever the viewer code changes: a new URL, so Chrome cannot reuse a stale cached copy.
+    v = int(max(p.stat().st_mtime for p in (ROOT / "viewer" / "web").glob("*.*")))
+    return (f"{BASE}/viewer/web/viewer.html?v={v}&file="
+            + urllib.parse.quote(urllib.parse.quote(path, safe="/"), safe=""))
+
+
+def door_url(loopback_url):
+    """The same viewer through the door: base.js expects file= to carry the mount prefix, encoded once."""
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(loopback_url).query)
+    path = urllib.parse.unquote(q["file"][0])  # undo the second encoding open-pdf adds for loopback
+    prefix = urllib.parse.urlparse(DOOR).path
+    return f"{DOOR}/viewer/web/viewer.html?file=" + urllib.parse.quote(prefix + path, safe="")
+
+
+def main(files):
+    link_only = bool(files) and files[0] == "--link"
+    files = files[1:] if link_only else files
+    if not server_up():
+        subprocess.run(["systemctl", "--user", "start", "pdf-review.service"], check=False)
+        for _ in range(40):
+            if server_up():
+                break
+            time.sleep(0.25)
+        else:
+            notify("The viewer server did not start: systemctl --user status pdf-review")
+            return 1
+    urls = []
+    for f in files:
+        pdf = Path(urllib.parse.unquote(f[7:]) if f.startswith("file://") else f).expanduser().resolve()
+        if not pdf.is_file():
+            notify(f"Not found: {pdf}")
+            continue
+        urls.append(viewer_url(pdf))
+    if link_only:
+        for url in urls:
+            print(door_url(url))
+        return 0 if urls else 1
+    dry = os.environ.get("PDF_REVIEW_DRY")
+    for url in urls:
+        if dry:
+            with open(dry, "a") as out:
+                out.write(url + "\n")
+        elif Path(CHROME).exists():
+            subprocess.Popen([CHROME, "--profile-directory=Default", f"--app={url}"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        else:
+            subprocess.Popen(["xdg-open", url], start_new_session=True)
+    return 0 if urls else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

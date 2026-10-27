@@ -49,7 +49,7 @@ gap between what was expected and the reality?" It had not.
       missing login, "renewing is the owner's step") is not closed by naming who owns the block:
       the question was about the data. List every other read path (shared browser tabs, Copilot, a
       local cache, another channel) with the command that lists it, and try them. (2026-10-05, "Any
-      response from the supplier?": the Outlook token had expired and nobody ran `openclaw browser tabs`,
+      response from Roger?": the Outlook token had expired and nobody ran `openclaw browser tabs`,
       where a shared Copilot tab found the reply in one ask. "You failed to detect that Teams was
       shared, right?")
 - [ ] **Messages for another person.** A message meant to let someone DO something (log in, pay,

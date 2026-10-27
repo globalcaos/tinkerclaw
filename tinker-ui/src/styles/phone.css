@@ -133,6 +133,21 @@ body.phone .phone-run-dot.on {
   box-shadow: 0 0 8px var(--run, #d97757);
   animation: phone-run-pulse 1.4s ease-in-out infinite;
 }
+/* FORK 2026-10-27 — unread result: the desktop tab's still blue dot (base.css .tab-unread-dot), after
+   the chat's title in the dropdown, and on the header button when it is another chat's. */
+body.phone .phone-unread-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blue, #5b8fc9);
+}
+body.phone .phone-unread-dot[hidden] {
+  display: none;
+}
+body.phone .phone-chat-btn .phone-unread-elsewhere {
+  margin-left: 4px;
+}
 @keyframes phone-run-pulse {
   50% {
     opacity: 0.45;
