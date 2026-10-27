@@ -184,8 +184,9 @@ fun PostOnboardingTabs(
   }
 }
 
+// FORK 2026-10-19 (the architect: phone app) — internal so the Jarvis home can show it too.
 @Composable
-private fun ScreenTabScreen(
+internal fun ScreenTabScreen(
   viewModel: MainViewModel,
   visible: Boolean,
   modifier: Modifier = Modifier,

@@ -1,5 +1,5 @@
 /**
- * FORK 2026-08-18 (the user: "Every cron should publish in its corresponding card
+ * FORK 2026-08-18 (the architect: "Every cron should publish in its corresponding card
  * instead of here, in the main tab... If I don't click on the 'read' checkbox,
  * the cron should understand that I have not read it yet, and its nightly cron
  * should compound on top of what was there before").
@@ -40,7 +40,7 @@ export type BoardItemKind =
 
 /**
  * open      — live, shown on the card.
- * dismissed — the user dismissed it WITH A REASON. Never auto-reopens; recurrence
+ * dismissed — the architect dismissed it WITH A REASON. Never auto-reopens; recurrence
  *             is still counted so "you dismissed this, it came back 3×" stays
  *             tellable. The reason is fed BACK to the cron (see boardDigest).
  * resolved  — stopped being reported for `RESOLVE_AFTER_MISSED_RUNS` runs, so
@@ -67,7 +67,7 @@ export type BoardItem = {
   status: BoardItemStatus;
   /** ISO. Set when status became "dismissed". */
   dismissedAt?: string;
-  /** the user's words. The instruction channel back to the cron — NOT decoration. */
+  /** the architect's words. The instruction channel back to the cron — NOT decoration. */
   dismissReason?: string;
   /** Times the item recurred in a report AFTER being dismissed. */
   recurrencesSinceDismissal?: number;
@@ -173,7 +173,7 @@ export function volatilityStrippedText(text: string): string {
  * KIND IS PART OF IDENTITY. Without it the two tiers contradicted each other -
  * the fuzzy tier refuses to cross kinds, while the exact hash crossed them
  * freely, because the kind prefix is stripped out of `text` before hashing. A
- * FLAG asks the user for something; a CHANGED tells him something. Same sentence,
+ * FLAG asks the architect for something; a CHANGED tells him something. Same sentence,
  * different claims, and letting them share an id also let two items claim one
  * key inside a single board.
  */
@@ -201,7 +201,7 @@ export function stableItemId(
  *
  * So identity is now two-tier: exact hash first (fast, unchanged), then a
  * content-word overlap fallback. Tuned deliberately conservative — a missed
- * merge shows as a duplicate, which the user can see and dismiss; a wrong merge
+ * merge shows as a duplicate, which the architect can see and dismiss; a wrong merge
  * hides a real issue behind another one's text, which he cannot see at all.
  */
 
@@ -356,7 +356,7 @@ export type CronBoardSummary = {
   unread: boolean;
   openCount: number;
   flagCount: number;
-  /** Open items the user has ticked — they leave All and live in Acknowledged. */
+  /** Open items the architect has ticked — they leave All and live in Acknowledged. */
   ackedCount: number;
   /** Oldest firstSeen among open items — how stale the worst item is. */
   oldestOpenDate: string | null;

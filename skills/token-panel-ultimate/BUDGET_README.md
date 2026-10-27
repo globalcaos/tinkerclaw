@@ -42,18 +42,18 @@ uvicorn api:app --port 8765
 
 ## API Endpoints
 
-This API is **not read-only.** It serves reads _and_ writes; the two are separated by
+This API is **not read-only.** It serves reads *and* writes; the two are separated by
 authentication, not by absence. Read the Auth column before you expose the port.
 
-| Endpoint                    | Method | Auth      | Description                               |
-| --------------------------- | ------ | --------- | ----------------------------------------- |
-| `/status`                   | GET    | none      | Overall budget status (for agent)         |
-| `/budgets`                  | GET    | none      | All budget configurations                 |
-| `/summary/monthly`          | GET    | none      | Monthly usage summary                     |
-| `/summary/daily/{provider}` | GET    | none      | Daily breakdown                           |
-| `/budgets`                  | POST   | **token** | Set/update a budget                       |
-| `/usage`                    | POST   | **token** | Record a usage event                      |
-| `/manus/task`               | POST   | **token** | Record a Manus task (id, credits, status) |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/status` | GET | none | Overall budget status (for agent) |
+| `/budgets` | GET | none | All budget configurations |
+| `/summary/monthly` | GET | none | Monthly usage summary |
+| `/summary/daily/{provider}` | GET | none | Daily breakdown |
+| `/budgets` | POST | **token** | Set/update a budget |
+| `/usage` | POST | **token** | Record a usage event |
+| `/manus/task` | POST | **token** | Record a Manus task (id, credits, status) |
 
 **token** = the request must carry `X-Token-Panel-Token` matching the server's
 `TOKEN_PANEL_API_TOKEN`. When that variable is unset, every mutating endpoint returns
@@ -71,7 +71,8 @@ text is discarded, not stored.
 Store provider keys in your OS keychain. Do not export them in a shell:
 
 ```bash
-python3 secretstore.py --login anthropic     # reads the key from stdin
+claude setup-token | python3 secretstore.py --login anthropic   # Claude usage token (claude-usage-fetch.py)
+python3 secretstore.py --login anthropic-admin   # Anthropic Admin API key (collector), from stdin
 python3 secretstore.py --login openai
 python3 secretstore.py --login gemini
 python3 secretstore.py --login manus
@@ -79,6 +80,11 @@ python3 secretstore.py --login manus
 python3 secretstore.py --status              # which providers are configured
 python3 secretstore.py --logout anthropic    # clears every local store
 ```
+
+`anthropic` and `anthropic-admin` are different kinds of credential and are kept in separate
+slots: the usage token is sent only to the OAuth usage endpoint, the Admin key only to the
+Admin usage API. The keychain helper (`secret-tool` / `security`) is run from `/usr/bin` or
+`/bin` by absolute path, never found via `$PATH`.
 
 `--login` reads from stdin, so the secret never lands in your shell history or in any
 process's command line. With no keychain available (`secret-tool` on Linux, the login
@@ -100,10 +106,10 @@ Whichever you use:
 
 **Environment variables** are a fallback for CI and one-shot runs:
 
-| Variable                                                                                                   | Read by default?                                      |
-| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `TOKEN_PANEL_ANTHROPIC_TOKEN`, `TOKEN_PANEL_OPENAI_KEY`, `TOKEN_PANEL_GEMINI_KEY`, `TOKEN_PANEL_MANUS_KEY` | yes — these are ours                                  |
-| `ANTHROPIC_ADMIN_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MANUS_API_KEY`                             | **no** — only with `TOKEN_PANEL_ALLOW_PROVIDER_ENV=1` |
+| Variable | Read by default? |
+|---|---|
+| `TOKEN_PANEL_ANTHROPIC_TOKEN`, `TOKEN_PANEL_ANTHROPIC_ADMIN_KEY`, `TOKEN_PANEL_OPENAI_KEY`, `TOKEN_PANEL_GEMINI_KEY`, `TOKEN_PANEL_MANUS_KEY` | yes — these are ours |
+| `ANTHROPIC_ADMIN_API_KEY` (Admin slot only), `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MANUS_API_KEY` | **no** — only with `TOKEN_PANEL_ALLOW_PROVIDER_ENV=1` |
 
 The second row belongs to other tools. Consuming it silently would mean this dashboard
 spending a credential nobody handed it, so it takes an explicit opt-in.
@@ -131,16 +137,54 @@ openai: $50/month
 
 ## Systemd Service
 
-```bash
-# Install service
-sudo cp budget-collector.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable budget-collector
-sudo systemctl start budget-collector
+Install it as a **user** unit. Do not `sudo cp` it into `/etc/systemd/system`: the unit
+has no `User=` line and uses `%h` for your home directory, so system-wide it would run
+**as root** with `%h` resolving to `/root` — the collector would run privileged and put
+the database somewhere you are not looking. `systemctl --user` supplies the account, which
+is why the file carries no username.
 
-# Check status
-sudo systemctl status budget-collector
+```bash
+# Install as YOUR user — no sudo anywhere
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/budget-collector.service <<'UNIT'
+[Unit]
+Description=Token Panel - AI usage tracking API
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.openclaw/skills/token-panel-ultimate
+ExecStart=%h/.local/bin/uvicorn api:app --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target
+UNIT
+
+# Point it at wherever you installed the skill, and set the API token
+systemctl --user edit budget-collector
+#   [Service]
+#   WorkingDirectory=%h/path/to/token-panel-ultimate
+#   Environment=TOKEN_PANEL_API_TOKEN=<a long random string>
+
+systemctl --user daemon-reload
+systemctl --user enable --now budget-collector
+
+# Check status / logs
+systemctl --user status budget-collector
+journalctl --user -u budget-collector -f
 ```
+
+Mutating endpoints stay closed until `TOKEN_PANEL_API_TOKEN` is set. To keep the collector
+running when you are not logged in: `loginctl enable-linger $USER`.
 
 ## Database Location
 
@@ -181,15 +225,15 @@ token-panel-ultimate/
 │   ├── manus.py        # Manus task tracker
 │   └── transcript.py   # OpenClaw log parser
 ├── secretstore.py      # keychain-backed credential store
+├── scripts/            # per-provider usage fetchers + browser widget
+├── tests/              # file-safety and credential-handling tests
 ├── requirements.txt
-├── budget-collector.service
 └── BUDGET_README.md
 ```
 
 ## Independence from OpenClaw
 
 This service is **completely standalone**:
-
 - Own codebase
 - Own SQLite database (owner-only, `0600` inside a `0700` directory)
 - Own systemd service

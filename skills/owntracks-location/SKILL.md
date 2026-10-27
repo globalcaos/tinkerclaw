@@ -94,8 +94,8 @@ Named locations with haversine distance queries.
 
 ```bash
 # Add a place
-node scripts/places.mjs add "Home" 0.0000 0.0000 home "Home"
-node scripts/places.mjs add "Gym" 0.0000 0.0000 gym "Gym"
+node scripts/places.mjs add "Home" 41.3200 1.8900 home "Townsville"
+node scripts/places.mjs add "Gym" 40.4168 -3.7038 gym "City Gym"
 
 # Where am I? (reads OwnTracks latest + finds nearest named place)
 node scripts/places.mjs where
@@ -127,16 +127,16 @@ When the user says "this is my X" at a location:
 1. Get current coords from `/latest`
 2. Reverse geocode via Nominatim or web search for the business name
 3. `node scripts/places.mjs add "<name>" <lat> <lon> <category>`
-</agent_usage>
+   </agent_usage>
 
 ## Server Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/owntracks` | OwnTracks webhook (expects `_type: "location"`) |
-| GET | `/latest` | Last known location |
-| GET | `/history?limit=50` | Location history |
-| GET | `/health` | Health check |
+| Method | Path                | Description                                     |
+| ------ | ------------------- | ----------------------------------------------- |
+| POST   | `/owntracks`        | OwnTracks webhook (expects `_type: "location"`) |
+| GET    | `/latest`           | Last known location                             |
+| GET    | `/history?limit=50` | Location history                                |
+| GET    | `/health`           | Health check                                    |
 
 ## Dependencies
 

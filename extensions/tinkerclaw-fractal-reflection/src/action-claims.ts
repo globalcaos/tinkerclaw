@@ -1,5 +1,5 @@
 /**
- * FORK 2026-07-27 (the user's session, after a 4-for-4 failure): verify `🌿 FRACTAL ACTION:`
+ * FORK 2026-07-27 (the architect's session, after a 4-for-4 failure): verify `🌿 FRACTAL ACTION:`
  * claims against the filesystem.
  *
  * THE BUG THIS EXISTS FOR. The fractal reflection is composed in the same breath as the

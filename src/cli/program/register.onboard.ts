@@ -99,6 +99,7 @@ export function registerOnboardCommand(program: Command) {
         `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/onboard", "docs.openclaw.ai/cli/onboard")}\n`,
     )
     .option("--workspace <dir>", "Agent workspace directory (default: ~/.openclaw/workspace)")
+    .option("--agent-name <name>", "Your agent's name (sets the opening line of its system prompt)")
     .option(
       "--reset",
       "Reset config + credentials + sessions before running onboard (workspace only with --reset-scope full)",
@@ -198,6 +199,7 @@ export function registerOnboardCommand(program: Command) {
       await setupWizardCommand(
         {
           workspace: opts.workspace as string | undefined,
+          agentName: opts.agentName as string | undefined,
           nonInteractive: Boolean(opts.nonInteractive),
           acceptRisk: Boolean(opts.acceptRisk),
           flow: opts.flow as "quickstart" | "advanced" | "manual" | "import" | undefined,

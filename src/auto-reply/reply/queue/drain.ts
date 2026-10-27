@@ -13,7 +13,7 @@ import {
 } from "../../../utils/queue-helpers.js";
 import { isRoutableChannel } from "../route-reply.js";
 import { FOLLOWUP_QUEUES } from "./state.js";
-import type { FollowupRun } from "./types.js";
+import { resolveFollowupRunPromptKeys, type FollowupRun } from "./types.js";
 
 // Persists the most recent runFollowup callback per queue key so that
 // enqueueFollowupRun can restart a drain that finished and deleted the queue.
@@ -126,6 +126,18 @@ function collectQueuedImages(items: FollowupRun[]): Pick<FollowupRun, "images" |
   };
 }
 
+/**
+ * FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 G3) — every prompt key of the
+ * items one batch run answers, in queue order, each item's own keys included (an item re-enqueued
+ * from a lost steer already holds several). Spread like collectQueuedImages: no key, no field.
+ */
+function collectQueuedPromptKeys(items: FollowupRun[]): Pick<FollowupRun, "promptKeys"> {
+  const promptKeys = resolveFollowupRunPromptKeys({
+    promptKeys: items.flatMap((item) => resolveFollowupRunPromptKeys(item)),
+  });
+  return promptKeys.length > 0 ? { promptKeys } : {};
+}
+
 function resolveCrossChannelKey(item: FollowupRun): { cross?: true; key?: string } {
   const { originatingChannel: channel, originatingTo: to, originatingAccountId: accountId } = item;
   const threadId = item.originatingThreadId;
@@ -172,6 +184,13 @@ export function scheduleFollowupDrain(
             run: effectiveRunFollowup,
           });
           if (collectDrainResult === "empty") {
+            // FORK 2026-09-24 (prompt-queue.md §7 G3): the two summary-only runs of collect mode
+            // (here and `authGroups.length === 0` below) carry NO prompt key. The live queue is
+            // empty on both, and the prompts the summary stands for were dropped at enqueue:
+            // utils/queue-helpers.ts applyQueueDropPolicy keeps each one's summary line, not its
+            // key. Their keys left sessions.list's BEHIND when they were dropped, so the client
+            // already counts them toward LOST (PQ-5). Naming them here needs the drop policy to keep
+            // the keys (queue/enqueue.ts, queue/state.ts, utils/queue-helpers.ts): not done yet.
             const summaryOnlyPrompt = previewQueueSummaryPrompt({ state: queue, noun: "message" });
             const run = queue.lastRun;
             if (summaryOnlyPrompt && run) {
@@ -194,6 +213,7 @@ export function scheduleFollowupDrain(
           const summary = previewQueueSummaryPrompt({ state: queue, noun: "message" });
           const authGroups = splitCollectItemsByAuthorization(items);
           if (authGroups.length === 0) {
+            // Summary-only again: no prompt key (see the `empty` branch above).
             const run = queue.lastRun;
             if (!summary || !run) {
               break;
@@ -227,6 +247,10 @@ export function scheduleFollowupDrain(
               enqueuedAt: Date.now(),
               ...routing,
               ...collectQueuedImages(groupItems),
+              // FORK 2026-09-24 (prompt-queue.md §7 G3): this ONE run answers every item of the
+              // batch, so it names every item's key (the follow-up start event and the reply
+              // operation read them; followup-runner.ts resolveFollowupPromptKeys).
+              ...collectQueuedPromptKeys(groupItems),
             });
             queue.items.splice(0, groupItems.length);
             if (pendingSummary) {
@@ -243,6 +267,13 @@ export function scheduleFollowupDrain(
           if (!run) {
             break;
           }
+          // FORK 2026-09-24 (prompt-queue.md §7 G3): this run consumes `item` (drainNextQueueItem
+          // shifts it once the run returns), but the prompt it sends is the overflow summary alone;
+          // only `item`'s route and images ride along, never `item.prompt`. So it carries NO prompt
+          // key: naming `item`'s key would move a prompt the model never read to PREPARING and then
+          // to answered. Left unlinked, the key leaves BEHIND when this run returns and the client
+          // counts it toward LOST (PQ-5), which is the truth. The dropped prompts' keys are gone for
+          // the reason given in the collect branch above.
           if (
             !(await drainNextQueueItem(queue.items, async (item) => {
               await effectiveRunFollowup({

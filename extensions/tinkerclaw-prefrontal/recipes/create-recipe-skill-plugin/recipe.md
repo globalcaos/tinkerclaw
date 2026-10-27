@@ -215,7 +215,8 @@ Read `{{placement_policy}}` first: it names the agents, what each is for, and th
 7. **Publish by default, after sanitizing.** Keep an enhancement private only when the private subject IS its content (a gateway to one company's file server, one company's wiki, one company's article codes). A private name in a slug becomes a generic name, and the result serves a wider audience.
 8. **Exclusive slots are per agent, not per fleet.** Where a kind allows one active holder (a memory backend, for example), each agent picks its own; the others of that kind load but stay dormant on that agent.
 9. **Inert enhancements** (a required binary is missing) cost clutter, not tokens. Keep the ones that serve a known use and list the install as a setup task; switch off the ones that serve nothing.
-10. **Retire a superseded enhancement everywhere at once:** the repo, every agent, the registry listing (soft-delete, which stays restorable for a while) and the README.
+10. **Opt-in or needs setup? Then the installer dialog changes in the same piece of work.** If a cloner has to choose to turn the enhancement on, or it needs a token, a service or a port, add its question to `scripts/setup.sh` (default **off** unless it is harmless and free), put the actual set-up in a re-runnable script that exits non-zero when the thing is configured but not running, and list it in the installer's "Optional components" line. Test the real lines of the dialog with the three answers: the opt-in, the default, and a setting that must never see the question. Placement is not finished while the installer still does not know the enhancement exists.
+11. **Retire a superseded enhancement everywhere at once:** the repo, every agent, the registry listing (soft-delete, which stays restorable for a while) and the README.
 
 Where a decision makes a live agent restart, stage it for the next start or pick a moment when that agent is idle, and say which.
 
@@ -245,6 +246,7 @@ Where a decision makes a live agent restart, stage it for the next start or pick
 
 ## Failures Overcome
 
+- 2026-10-06: a per-person-token door for the Goku gateway was built, deployed and merged as a private script, and the owner asked: "How are you planning to set it up for our cloners? ... Did you remember to update the installer dialog?" It had no placement decision, no installer question, and private host and colleague names in the tree. Step 9 rule 10 exists because of it; the work was redone as the opt-in `scripts/hive-door/` with a question in `scripts/setup.sh` (company setting only, default no).
 - 2026-09-29: an owner kept two model-vendor plugins on a purchasing agent, reading their names as shopping platforms. Step 9 rule 1 (read the manifest before placing by name) exists because of it.
 
 - `prompts.csv` fails to parse with `field larger than field limit (131072)`: the longest prompt is about 144k characters. Raise `csv.field_size_limit` before reading.

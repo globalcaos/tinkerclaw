@@ -163,6 +163,28 @@ vi.mock("../agents/openclaw-tools.js", () => {
         if (mode === "crash") {
           throw new Error("boom");
         }
+        if (mode === "media-wrapped") {
+          const err = new Error(
+            "LocalMediaAccessError: Host-local media sends only allow buffer-verified images, audio, video, PDF, and Office documents (got text/html).",
+          );
+          err.name = "GatewayClientRequestError";
+          throw err;
+        }
+        if (mode === "browser") {
+          const err = new Error("Error: page.evaluate: TypeError: Failed to fetch");
+          err.name = "BrowserServiceError";
+          throw err;
+        }
+        if (mode === "browser-wrapped") {
+          const err = new Error("BrowserServiceError: action targetId must match request targetId");
+          err.name = "GatewayClientRequestError";
+          throw err;
+        }
+        if (mode === "media") {
+          const err = new Error("Local media path is not under an allowed directory: /etc/x");
+          err.name = "LocalMediaAccessError";
+          throw err;
+        }
         return { ok: true };
       },
     },
@@ -765,6 +787,70 @@ describe("POST /tools/invoke", () => {
     expect(crashBody.ok).toBe(false);
     expect(crashBody.error?.type).toBe("tool_error");
     expect(crashBody.error?.message).toBe("tool execution failed");
+  });
+
+  it("returns a refused media attachment as a 400 with its reason, not an opaque 500", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [{ id: "main", default: true, tools: { allow: ["tools_invoke_test"] } }],
+      },
+    };
+
+    const wrappedRes = await invokeToolAuthed({
+      tool: "tools_invoke_test",
+      args: { mode: "media-wrapped" },
+      sessionKey: "main",
+    });
+    expect(wrappedRes.status).toBe(400);
+    const wrappedBody = await wrappedRes.json();
+    expect(wrappedBody.ok).toBe(false);
+    expect(wrappedBody.error?.message).toContain("(got text/html)");
+
+    const directRes = await invokeToolAuthed({
+      tool: "tools_invoke_test",
+      args: { mode: "media" },
+      sessionKey: "main",
+    });
+    expect(directRes.status).toBe(400);
+    const directBody = await directRes.json();
+    expect(directBody.error?.message).toContain("not under an allowed directory");
+  });
+
+  // FORK 2026-10-08 — the browser tool's own refusals reached the agent as "tool execution failed"
+  // (33 characters) while the gateway log held the reason: "page.evaluate: TypeError: Failed to
+  // fetch" and "action targetId must match request targetId". Two blind retries and a switch to
+  // the CLI followed; the reason would have fixed the call at once.
+  it("returns a browser service error with its reason, not an opaque 500", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [{ id: "main", default: true, tools: { allow: ["tools_invoke_test"] } }],
+      },
+    };
+    for (const [mode, needle] of [
+      ["browser", "Failed to fetch"],
+      ["browser-wrapped", "action targetId must match request targetId"],
+    ] as const) {
+      const res = await invokeToolAuthed({
+        tool: "tools_invoke_test",
+        args: { mode },
+        sessionKey: "main",
+      });
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error?.type).toBe("tool_error");
+      expect(body.error?.message).toContain(needle);
+    }
+    // CONTROL: an ordinary crash stays opaque.
+    const crash = await invokeToolAuthed({
+      tool: "tools_invoke_test",
+      args: { mode: "crash" },
+      sessionKey: "main",
+    });
+    expect(crash.status).toBe(500);
+    expect((await crash.json()).error?.message).toBe("tool execution failed");
   });
 
   it("passes deprecated format alias through invoke payloads even when schema omits it", async () => {

@@ -6,11 +6,15 @@ Nothing here reads another application's credential store.
 
 Storage order, best first:
   1. Linux  — libsecret via `secret-tool` (the value is passed on STDIN, never in argv).
+     The helper is taken from a fixed system directory (/usr/bin, /bin), never looked
+     up on $PATH, so a `secret-tool` planted earlier on PATH cannot receive the secret.
   2. macOS  — the login Keychain through Security.framework (the value is passed as a
      pointer, never in argv). The `security` CLI is NOT used to write: its
      `add-generic-password -w <secret>` form puts the credential in this process's
      command line, where any local process enumerating processes can read it.
   3. Fallback — a 0600 file inside a 0700 directory, WITH A WARNING PRINTED EVERY RUN.
+     Neither the file nor its directory may be a symlink; the file is opened with
+     O_NOFOLLOW and replaced atomically (temp file + rename), never written in place.
 
 Lookup order when a collector asks for a secret:
   1. This store (keychain, or the warned 0600 fallback file).
@@ -24,12 +28,12 @@ server-side revoke URL, because deleting a local copy is not revocation.
 
 CLI:
     python3 secretstore.py --status
-    python3 secretstore.py --login anthropic     # reads the secret from stdin
+    python3 secretstore.py --login anthropic        # Claude usage token, read from stdin
+    python3 secretstore.py --login anthropic-admin  # Anthropic Admin API key (collector)
     python3 secretstore.py --logout anthropic
 """
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -51,11 +55,26 @@ MARKER_FILE = ".token-panel-store"
 # Each provider: the env var we also accept, and the page where the credential is
 # revoked SERVER-SIDE. Deleting the local copy does not revoke anything.
 PROVIDERS = {
+    # Two Anthropic credentials of DIFFERENT kinds, kept in separate slots so neither is
+    # ever sent where the other belongs. Up to 2.6.1 one "anthropic" slot fed both the
+    # claude-usage-fetch OAuth call (as a Bearer token) and the collector's Admin API
+    # call (as x-api-key), and ANTHROPIC_ADMIN_API_KEY could fill it — so an Admin key
+    # could be sent to the OAuth endpoint and a subscription token to the Admin API.
     "anthropic": {
+        # The subscription usage token you mint with `claude setup-token`. There is no
+        # generic environment variable for it: none belongs to this kind of token.
         "env": "TOKEN_PANEL_ANTHROPIC_TOKEN",
+        "also_env": None,
+        "revoke_url": "https://claude.ai/settings",
+        "revoke_note": "sign out the long-lived token there (or run `claude setup-token` again) to invalidate it server-side.",
+    },
+    "anthropic-admin": {
+        # An Anthropic Admin API key (sk-ant-admin...), used only by the collector's
+        # organisation usage report.
+        "env": "TOKEN_PANEL_ANTHROPIC_ADMIN_KEY",
         "also_env": "ANTHROPIC_ADMIN_API_KEY",
-        "revoke_url": "https://console.anthropic.com/settings/keys",
-        "revoke_note": "delete the API key there to revoke it server-side.",
+        "revoke_url": "https://console.anthropic.com/settings/admin-keys",
+        "revoke_note": "delete the Admin key there to revoke it server-side.",
     },
     "openai": {
         "env": "TOKEN_PANEL_OPENAI_KEY",
@@ -87,8 +106,23 @@ FALLBACK_WARNING = (
 )
 
 
+# Keychain helpers are executed from these directories ONLY. $PATH is not consulted:
+# a writable directory early on PATH would otherwise let any binary named `secret-tool`
+# receive the credential on its stdin.
+TRUSTED_BIN_DIRS = ("/usr/bin", "/bin")
+
+
+def _tool(binary: str) -> str | None:
+    """Absolute path of a keychain helper in a trusted system directory, or None."""
+    for d in TRUSTED_BIN_DIRS:
+        candidate = os.path.join(d, binary)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def _have(binary: str) -> bool:
-    return shutil.which(binary) is not None
+    return _tool(binary) is not None
 
 
 def backend() -> str:
@@ -179,18 +213,35 @@ def _macos_keychain_store(account: str, value: str) -> bool:
 # Fallback file (0600 inside a 0700 directory)
 # ---------------------------------------------------------------------------
 
+def _refuse_symlinks() -> None:
+    """The fallback store's directory and file must be real, not links to elsewhere."""
+    for p in (FALLBACK_DIR, FALLBACK_FILE):
+        if p.is_symlink():
+            raise PermissionError(
+                f"refusing to use {p}: it is a symlink, so whoever created the link "
+                f"would choose where your credentials are read from or written to."
+            )
+
+
 def _read_fallback() -> dict:
-    if not FALLBACK_FILE.exists():
+    _refuse_symlinks()
+    try:
+        fd = os.open(str(FALLBACK_FILE), os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
         return {}
-    st = FALLBACK_FILE.stat()
-    if st.st_uid != os.getuid():
-        raise PermissionError(f"{FALLBACK_FILE} is not owned by you — refusing to read it.")
-    if st.st_mode & 0o077:
-        raise PermissionError(
-            f"{FALLBACK_FILE} is group/world accessible. Run: chmod 600 {FALLBACK_FILE}"
-        )
+    with os.fdopen(fd, "r") as f:
+        # Checked on the descriptor we read from, so the file cannot be swapped between
+        # the ownership check and the read.
+        st = os.fstat(f.fileno())
+        if st.st_uid != os.getuid():
+            raise PermissionError(f"{FALLBACK_FILE} is not owned by you — refusing to read it.")
+        if st.st_mode & 0o077:
+            raise PermissionError(
+                f"{FALLBACK_FILE} is group/world accessible. Run: chmod 600 {FALLBACK_FILE}"
+            )
+        text = f.read()
     out = {}
-    for line in FALLBACK_FILE.read_text().splitlines():
+    for line in text.splitlines():
         if "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1)
             out[k.strip()] = v.strip()
@@ -198,20 +249,39 @@ def _read_fallback() -> dict:
 
 
 def _write_fallback(entries: dict) -> None:
-    FALLBACK_DIR.mkdir(parents=True, exist_ok=True)
+    _refuse_symlinks()
+    FALLBACK_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(FALLBACK_DIR, 0o700)
     # Proof that this directory is ours. --logout refuses to unlink anything that is
     # not sitting next to a marker this tool wrote itself.
     marker = FALLBACK_DIR / MARKER_FILE
+    if marker.is_symlink():
+        raise PermissionError(f"refusing to use {marker}: it is a symlink.")
     if not marker.exists():
-        fd = os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(f"{SERVICE} credential store — do not edit by hand.\n")
+    for k, v in entries.items():
+        if "\n" in k or "\n" in v or "\r" in v:
+            raise ValueError(f"refusing to store a credential for {k!r} that contains a newline")
     body = "".join(f"{k}={v}\n" for k, v in sorted(entries.items()))
-    fd = os.open(str(FALLBACK_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(body)
-    os.chmod(FALLBACK_FILE, 0o600)
+    # Write a fresh 0600 temp file beside the store and rename it over the old one: a
+    # crash leaves either the old or the new store, never a truncated one, and the
+    # rename replaces a directory entry rather than writing through whatever it names.
+    tmp = FALLBACK_DIR / f".credentials.{os.getpid()}.tmp"
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, FALLBACK_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _assert_safe_to_delete(path: Path) -> None:
@@ -261,7 +331,7 @@ def set_secret(provider: str, value: str) -> str:
     kind = backend()
     if kind == "libsecret":
         r = subprocess.run(
-            ["secret-tool", "store", f"--label={SERVICE} {provider}",
+            [_tool("secret-tool"), "store", f"--label={SERVICE} {provider}",
              "service", SERVICE, "account", provider],
             input=value, text=True,
         )
@@ -292,20 +362,20 @@ def get_secret(provider: str) -> tuple[str | None, str | None]:
     kind = backend()
     if kind == "libsecret":
         r = subprocess.run(
-            ["secret-tool", "lookup", "service", SERVICE, "account", provider],
+            [_tool("secret-tool"), "lookup", "service", SERVICE, "account", provider],
             capture_output=True, text=True,
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip(), "keychain:libsecret"
     elif kind == "macos":
         r = subprocess.run(
-            ["security", "find-generic-password", "-s", SERVICE, "-a", provider, "-w"],
+            [_tool("security"), "find-generic-password", "-s", SERVICE, "-a", provider, "-w"],
             capture_output=True, text=True,
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip(), "keychain:macos"
 
-    if FALLBACK_FILE.exists():
+    if FALLBACK_FILE.exists() or FALLBACK_FILE.is_symlink():
         value = _read_fallback().get(provider)
         if value:
             _warn_fallback()
@@ -321,7 +391,7 @@ def get_secret(provider: str) -> tuple[str | None, str | None]:
     # Someone else's. OPENAI_API_KEY was exported for whatever tool the user set it up
     # for, not for this dashboard; using it silently would spend a credential nobody
     # pointed at us. Off unless explicitly switched on.
-    if os.environ.get(PROVIDER_ENV_OPT_IN) == "1":
+    if spec["also_env"] and os.environ.get(PROVIDER_ENV_OPT_IN) == "1":
         value = os.environ.get(spec["also_env"])
         if value:
             print(
@@ -346,12 +416,12 @@ def clear_secret(provider: str) -> list[str]:
 
     if _have("secret-tool"):
         found = subprocess.run(
-            ["secret-tool", "lookup", "service", SERVICE, "account", provider],
+            [_tool("secret-tool"), "lookup", "service", SERVICE, "account", provider],
             capture_output=True, text=True,
         )
         if found.returncode == 0 and found.stdout.strip():
             r = subprocess.run(
-                ["secret-tool", "clear", "service", SERVICE, "account", provider],
+                [_tool("secret-tool"), "clear", "service", SERVICE, "account", provider],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             if r.returncode == 0:
@@ -359,7 +429,7 @@ def clear_secret(provider: str) -> list[str]:
 
     if sys.platform == "darwin" and _have("security"):
         r = subprocess.run(
-            ["security", "delete-generic-password", "-s", SERVICE, "-a", provider],
+            [_tool("security"), "delete-generic-password", "-s", SERVICE, "-a", provider],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         if r.returncode == 0:
@@ -378,7 +448,7 @@ def clear_secret(provider: str) -> list[str]:
     spec = PROVIDERS[provider]
     print(f"Local copies removed: {', '.join(cleared) if cleared else 'none were stored'}")
     for env_name in (spec["env"], spec["also_env"]):
-        if os.environ.get(env_name):
+        if env_name and os.environ.get(env_name):
             print(f"NOTE: {env_name} is still set in this environment — unset it too.")
     print(
         f"\nThis only deleted local copies. To REVOKE the credential server-side, open:\n"

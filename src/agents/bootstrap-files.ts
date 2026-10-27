@@ -275,7 +275,7 @@ export async function resolveBootstrapContextForRun(params: {
   contextMode?: BootstrapContextMode;
   runKind?: BootstrapContextRunKind;
   /**
-   * FORK 2026-08-24 (the user: "If a task is in average more than 1 second it should be decomposed
+   * FORK 2026-08-24 (the architect: "If a task is in average more than 1 second it should be decomposed
    * further") — report the two halves of this call separately.
    *
    * `bootstrap-files-read` averaged 5,250ms over 121 turns (gateway journal, 14 days) with a p50

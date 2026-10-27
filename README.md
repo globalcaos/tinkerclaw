@@ -407,8 +407,16 @@ Visit **`http://localhost:18789/tinker/`** for the command center. Click the **T
 - **Context pruning** — cache-ttl prevents unbounded session growth
 - **Budget panel** — token cost tracking so you know what each session costs
 - **Tinker UI** — real-time context treemaps, session management, cost dashboard
-- **106 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
-- **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer, so a fresh clone maintains itself from night one
+- **116 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
+- **Seven structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer, so a fresh clone maintains itself from night one
+
+### Jev, the optional judge
+
+Two plugins that ship with the repo, the amygdala and Thalamus, can ask Jev for a second opinion. Jev is a hosted model that answers short typed questions: is this tool step safe, which skill fits this task, which recipe applies. A fresh clone has no token, so all of that starts off. Nothing is sent to Jev and nothing logs an error. One line at start says what is off and where the token goes. Everything else works as before: routing falls back to local rules and recipe matching stays lexical.
+
+To switch it on, put the token in `~/.openclaw/jev/token`, either as a bare value or as `TYPESAFE_API_KEY=...`. The gateway sees the file within about ten seconds, checks the token once, and turns Jev on. No restart. The environment works too, but then you restart the gateway. Keep the token out of `openclaw.json`, which tends to end up in a git remote.
+
+`openclaw jev status` shows where it stands, and Tinker draws the same thing as a small "Jev: on" or "Jev: off" chip beside the composer. Both plugins start in shadow mode, so they record what they would have done and change nothing. Real conversations never go to Jev unless you set `jev.sendRealSituations: true` yourself. `openclaw onboard` offers a token step you can skip, and a non-interactive install only prints the line about where the token goes.
 
 ### Required Setup (you must do these)
 
@@ -441,10 +449,11 @@ genuinely personal (your morning briefing, your marketplace hunter) _are_ yours 
 **structural** ones — the agent maintaining itself — are not personal at all, and they were the
 reason a fresh clone felt like a different piece of software from the one in the demos.
 
-Six of them now ship in `extensions/tinkerclaw-tinker-bridge/crons/`, each a readable brief:
+Seven of them now ship in `extensions/tinkerclaw-tinker-bridge/crons/`, each a readable brief:
 
 | job                      | what it does                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------- |
+| `wind-down`              | Reflects on your day from your own prompts and leaves a note for the morning    |
 | `memory-consolidation`   | Reads the day's notes and files what is worth keeping into long-term memory     |
 | `self-evolution`         | Scans vendor blogs, model releases and agent techniques                         |
 | `security-updates-check` | Read-only sweep: pending updates, advisories, open ports, plaintext credentials |

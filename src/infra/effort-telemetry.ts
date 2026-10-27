@@ -1,7 +1,7 @@
-// FORK 2026-07-24 (the user): EEG effort telemetry — single owner of the
+// FORK 2026-07-24 (the architect): EEG effort telemetry — single owner of the
 // `stream:"effort"` agent-event contract.
 //
-// LAYERING DOCTRINE (the user 2026-07-24): the EEG must collect its data from the
+// LAYERING DOCTRINE (the architect 2026-07-24): the EEG must collect its data from the
 // DEEPEST practical layer of each serving pipe, decoupled from higher
 // mechanisms, so changes/bugs in upper layers (runner heuristics, session
 // plumbing, UI) cannot silence the instrument. The stack, bottom → top:

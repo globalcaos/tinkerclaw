@@ -1,5 +1,5 @@
-// FORK 2026-07-25 (the user): the ORCA panel's policy view is served from orca-policy.md, and
-// the user's requirement was "the exact one that drives the real policy, so that there is never
+// FORK 2026-07-25 (the architect): the ORCA panel's policy view is served from orca-policy.md, and
+// the architect's requirement was "the exact one that drives the real policy, so that there is never
 // a drift between the two". A doc cannot literally BE the code, so this test is the joint:
 // every load-bearing number in the md's `constants` block is asserted against the real
 // source. Change one side only and this fails.

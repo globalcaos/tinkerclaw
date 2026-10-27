@@ -75,7 +75,7 @@ function parseCard(asin, card, position) {
   );
   const list_price_eur = listText ? parseSpanishNumber(listText) : null;
 
-  // A logged-in tab may serve the /-/en/ locale, where the same field reads
+  // amazon.es sometimes serves the /-/en/ locale, where the same field reads
   // "4.5 out of 5 stars". Spanish-only patterns returned null for every row.
   let ratingText = extractCardField(card, /([0-9],[0-9])\s+de\s+5\s+estrellas/);
   if (!ratingText) ratingText = extractCardField(card, /([0-9][.,][0-9])\s+out of\s+5\s+stars/i);

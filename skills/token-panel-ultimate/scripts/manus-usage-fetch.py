@@ -33,6 +33,8 @@ from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import secretstore
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _secure_write import write_private_json  # owner-only JSON writes
 
 API_BASE = "https://api.manus.ai/v1"
 DEFAULT_OUTPUT = Path.home() / ".openclaw/workspace/memory/manus-usage.json"
@@ -184,11 +186,7 @@ def main():
     elif args.update:
         # Owner-only: this file reports your plan and remaining credits. Do not let it
         # inherit a loose umask from whatever shell or daemon happened to run us.
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(output_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(usage, indent=2) + "\n")
-        os.chmod(output_path, 0o600)
+        write_private_json(output_path, usage)
         print(f"✔ Updated {output_path}")
         # Print summary
         c = usage["credits"]

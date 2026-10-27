@@ -14,6 +14,7 @@ import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import { getActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
 import { mergeActivationSectionsIntoRuntimeConfig } from "./plugin-activation-runtime-config.js";
+import { refreshStalePluginRegistryAtStartup } from "./plugin-registry-startup-refresh.js";
 import { listGatewayMethods } from "./server-methods-list.js";
 import { loadGatewayStartupPlugins } from "./server-plugin-bootstrap.js";
 import { runStartupSessionMigration } from "./server-startup-session-migration.js";
@@ -156,6 +157,11 @@ export async function prepareGatewayPluginBootstrap(params: {
         }).config,
       });
   const pluginsGloballyDisabled = gatewayPluginConfig.plugins?.enabled === false;
+  if (!params.minimalTestGateway && !pluginsGloballyDisabled) {
+    // FORK 2026-10-15 (bug-log `stale-plugin-registry-rebuild-storm`): a stale persisted registry makes every
+    // embedded run rebuild the plugin index on this thread.
+    await refreshStalePluginRegistryAtStartup({ config: params.cfgAtStart, log: params.log });
+  }
   const defaultAgentId = resolveDefaultAgentId(gatewayPluginConfig);
   const defaultWorkspaceDir = resolveAgentWorkspaceDir(gatewayPluginConfig, defaultAgentId);
   const pluginLookUpTable =

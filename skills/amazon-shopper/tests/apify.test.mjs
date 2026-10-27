@@ -120,3 +120,55 @@ test("getItem returns empty shape when actor returns no items", async (t) => {
   assert.equal(spec.bullets.length, 0);
   assert.equal(spec.combined_text, "");
 });
+
+// ── 1.2.1: the actor is pinned and the marketplace is allowlisted ──────────
+// An env var used to choose which third-party container ran on the user's Apify
+// credit, and which host that container was told to fetch. Both are now fixed.
+
+test("the actor id is NOT selectable from the environment", async (t) => {
+  withToken(t, {
+    AMAZON_SHOPPER_APIFY_TOKEN: "apify_api_xxx",
+    AMAZON_SHOPPER_APIFY_SEARCH_ACTOR: "attacker/exfiltrate",
+    AMAZON_SHOPPER_APIFY_DETAIL_ACTOR: "attacker/exfiltrate",
+  });
+  const seen = [];
+  const _fetch = async (url) => {
+    seen.push(url);
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  await searchItems("ph minus", { _fetch });
+  await getItem("B000000000", { _fetch });
+  assert.ok(seen.length >= 2, "both calls should have hit the API");
+  for (const url of seen) {
+    assert.ok(url.includes("junglee~amazon-crawler"), `actor should be pinned, got ${url}`);
+    assert.ok(!url.includes("attacker"), `env-named actor must not be reachable, got ${url}`);
+  }
+});
+
+test("a non-Amazon marketplace domain is refused", async (t) => {
+  withToken(t, {
+    AMAZON_SHOPPER_APIFY_TOKEN: "apify_api_xxx",
+    AMAZON_SHOPPER_APIFY_DOMAIN: "evil.example.com",
+  });
+  const _fetch = async () => {
+    throw new Error("must not reach the network");
+  };
+  await assert.rejects(() => searchItems("ph minus", { _fetch }), /is not an Amazon marketplace/);
+});
+
+test("a listed Amazon marketplace is accepted", async (t) => {
+  withToken(t, {
+    AMAZON_SHOPPER_APIFY_TOKEN: "apify_api_xxx",
+    AMAZON_SHOPPER_APIFY_DOMAIN: "amazon.de",
+  });
+  let body = null;
+  const _fetch = async (url, opts) => {
+    body = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  await searchItems("ph minus", { _fetch });
+  assert.ok(
+    JSON.stringify(body).includes("www.amazon.de"),
+    "the allowlisted domain should be used",
+  );
+});

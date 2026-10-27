@@ -2,6 +2,7 @@
 
 package ai.openclaw.app
 
+import ai.openclaw.app.jarvis.defaultJarvisDoorCandidates
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
@@ -38,6 +39,12 @@ class SecurePrefs(
       "notifications.forwarding.maxEventsPerMinute"
     private const val notificationsForwardingSessionKeyKey = "notifications.forwarding.sessionKey"
     private const val voiceMicEnabledKey = "voice.micEnabled"
+
+    // FORK 2026-10-19 (the architect: phone app) — Jarvis door pairing. The tokens stay in the encrypted
+    // store; the candidate list and the "paired" flag are not secret and live in the plain one.
+    private const val jarvisDoorCandidatesKey = "jarvis.door.candidates"
+    private const val jarvisPairedKey = "jarvis.paired"
+    private const val jarvisDeviceTokenKey = "jarvis.device.token"
   }
 
   private val appContext = context.applicationContext
@@ -70,7 +77,9 @@ class SecurePrefs(
     MutableStateFlow(plainPrefs.getBoolean("location.preciseEnabled", true))
   val locationPreciseEnabled: StateFlow<Boolean> = _locationPreciseEnabled
 
-  private val _preventSleep = MutableStateFlow(plainPrefs.getBoolean("screen.preventSleep", true))
+  // FORK 2026-10-22 (the architect: "let the screen turn off if I'm not using it") — new key so phones that
+  // saved the old default (true) start fresh at off too.
+  private val _preventSleep = MutableStateFlow(plainPrefs.getBoolean("screen.preventSleep.v2", false))
   val preventSleep: StateFlow<Boolean> = _preventSleep
 
   private val _manualEnabled =
@@ -170,6 +179,44 @@ class SecurePrefs(
   private val _speakerEnabled = MutableStateFlow(plainPrefs.getBoolean("voice.speakerEnabled", true))
   val speakerEnabled: StateFlow<Boolean> = _speakerEnabled
 
+  private val _jarvisDoorCandidates = MutableStateFlow(loadJarvisDoorCandidates())
+  val jarvisDoorCandidates: StateFlow<List<String>> = _jarvisDoorCandidates
+
+  private val _jarvisPaired = MutableStateFlow(plainPrefs.getBoolean(jarvisPairedKey, false))
+  val jarvisPaired: StateFlow<Boolean> = _jarvisPaired
+
+  fun setJarvisDoorCandidates(origins: List<String>) {
+    val cleaned = origins.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    val encoded = JsonArray(cleaned.map { JsonPrimitive(it) }).toString()
+    plainPrefs.edit { putString(jarvisDoorCandidatesKey, encoded) }
+    _jarvisDoorCandidates.value = cleaned
+  }
+
+  fun loadJarvisDeviceToken(): String? {
+    if (!_jarvisPaired.value) return null
+    return securePrefs.getString(jarvisDeviceTokenKey, null)?.trim()?.takeIf { it.isNotEmpty() }
+  }
+
+  fun saveJarvisDeviceToken(token: String) {
+    val trimmed = token.trim()
+    securePrefs.edit { putString(jarvisDeviceTokenKey, trimmed) }
+    plainPrefs.edit { putBoolean(jarvisPairedKey, trimmed.isNotEmpty()) }
+    _jarvisPaired.value = trimmed.isNotEmpty()
+  }
+
+  private fun loadJarvisDoorCandidates(): List<String> {
+    val raw = plainPrefs.getString(jarvisDoorCandidatesKey, null)?.trim()
+    if (raw.isNullOrEmpty()) return defaultJarvisDoorCandidates
+    return try {
+      val array = json.parseToJsonElement(raw) as? JsonArray ?: return defaultJarvisDoorCandidates
+      array
+        .mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf { s -> s.isNotEmpty() } }
+        .ifEmpty { defaultJarvisDoorCandidates }
+    } catch (_: Throwable) {
+      defaultJarvisDoorCandidates
+    }
+  }
+
   fun setLastDiscoveredStableId(value: String) {
     val trimmed = value.trim()
     plainPrefs.edit { putString("gateway.lastDiscoveredStableID", trimmed) }
@@ -198,7 +245,7 @@ class SecurePrefs(
   }
 
   fun setPreventSleep(value: Boolean) {
-    plainPrefs.edit { putBoolean("screen.preventSleep", value) }
+    plainPrefs.edit { putBoolean("screen.preventSleep.v2", value) }
     _preventSleep.value = value
   }
 

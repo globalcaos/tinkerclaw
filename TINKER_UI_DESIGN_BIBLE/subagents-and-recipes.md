@@ -2,15 +2,23 @@
 file: subagents-and-recipes.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-06-04
+last_verified: 2026-10-09
 last_verified_commit: 24237e0cd22
 single_owner: yes — subagent + kit orchestration + plan persistence + skill-library behavior + marketplace semantics facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 tinker-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream), memory-layout.md (WHERE recipe-archive / skill-library / failure-state stores live on disk), probes.md (fork.skill.* / fork.prefrontal.* RPC surface), config-shape.md (RECIPE_AUTOAPPLY_ENABLED, dead-code trap registry)
 verify:
   - name: recipe-matcher exists and auto-seeds a plan at turn start (FORK 2026-05-16 — the smart-router matching half)
     cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts")).read(); assert "export async function seedPlanFromPrompt" in m and "NO-MATCH" in m and "recipe-gap" in m, "recipe-matcher.ts missing seedPlanFromPrompt or the no-match recipe-gap WARN — the smart-router matching half regressed"; idx=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts")).read(); assert "seedPlanFromPrompt" in idx and "before_prompt_build" in idx, "index.ts no longer wires seedPlanFromPrompt into a before_prompt_build hook — turn-start auto-seed is dead, restart-continue has nothing to resume for normal turns"'
+  - name: recipe retrieval v2 — interactive-session gate, runtime notices get no list, a plan seeds only from a confident USE, overlay wins, one ranker slot, recipe.extract exists (2026-10-06)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'a=open("extensions/tinkerclaw-prefrontal/recipe-advice.ts").read(); t=open("src/shared/enhancement-task-rank.ts").read(); m=open("extensions/tinkerclaw-prefrontal/recipe-matcher.ts").read(); i=open("extensions/tinkerclaw-prefrontal/index.ts").read(); assert "isInteractiveSession" in a or "isInteractiveSession" in t, "the matcher gate is the main-only test again (bible subagents-and-recipes retrieval v2)"; assert "SEED_CONFIDENCE = 0.6" in t and "allowSeed" in m, "a plan can seed from an INSPIRE or a weak match (bible retrieval v2)"; assert "wins over" in m, "the overlay recipe no longer wins a slug collision (bible retrieval v2)"; assert "openclaw.thalamus.taskRanker" in open("src/infra/thalamus-task-ranking.ts").read(), "the one-ranker slot is gone: Jev is asked twice per turn (bible retrieval v2)"; assert "task-notification" in open("src/shared/enhancement-text.ts").read(), "runtime notices get a list again (bible retrieval v2)"; assert "prefrontal.recipe.extract" in open("extensions/tinkerclaw-prefrontal/recipe-rpcs.ts").read(), "recipe.extract is not registered (bible retrieval v2)"'
+  - name: the Overseer never arms itself; only an explicit fork.overseer.activate call starts it (2026-10-05)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && ! grep -qE 'callGatewayFromCli\([[:space:]]*"fork\.overseer\.activate' extensions/tinkerclaw-prefrontal/index.ts && ! grep -qF 'Overseer engaged (' extensions/tinkerclaw-prefrontal/index.ts && grep -qF '"fork.overseer.activate": async' src/fork/overseer-runtime.ts
+  - name: the gateway publishes the recipe catalog for Claude Code sessions and warms it at start (2026-10-09)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'void publishRecipeIndex(index' extensions/tinkerclaw-prefrontal/recipe-matcher.ts && grep -qF 'void loadRecipeIndex(ownRecipesDir' extensions/tinkerclaw-prefrontal/index.ts && grep -qF 'resolveStateDir' extensions/tinkerclaw-prefrontal/recipe-index-publish.ts && grep -qF 'recipe-index.json' claude-plugins/tinkerclaw-core/scripts/recipe-hint.mjs
   - name: spawn helper script is executable
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
+  - name: a detached fan-out runs on its own unit and --status tells running from dead (2026-10-01)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'buildDetachedLaunch({' scripts/openclaw-orchestrate.mjs && grep -qF 'ws.on("close"' scripts/openclaw-orchestrate.mjs && grep -qF 'export function readFanoutStatus(' scripts/lib/fanout-unit.mjs && node scripts/openclaw-orchestrate.mjs --status no-such-fanout-0 >/dev/null; test $? -eq 2
   - name: recipe-state helper script is executable
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-recipe-state.mjs
   - name: every slug→file resolver goes through recipe-locate.ts, and triggers: are scored (FORK 2026-09-02)
@@ -27,7 +35,7 @@ verify:
     cmd: python3 -c 'import os,re,yaml,sys; r1=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits"); r2=os.path.expanduser("~/.openclaw/workspace/kits"); bad=[]; [bad.append(f+" (parse/field err)") if not all(yaml.safe_load(re.search(r"^---\n(.+?)\n---",open(f).read(),re.DOTALL).group(1)).get(k) for k in ["slug","title","summary"]) else None for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]; sys.exit(1) if bad else print("ok "+str(len([f for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]))+" kits")'
   - name: every parallelism.groups in our kits is a valid step-index covering exit=2
     cmd: |
-      cd ~/src/tinkerclaw && python3 << 'PYEOF'
+      cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 << 'PYEOF'
       import os, glob, sys
       try:
           import yaml
@@ -157,8 +165,8 @@ verify:
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/__tests__/recipe-run-no-stopper.test.ts && grep -Fq 'dryRun' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/__tests__/recipe-run-no-stopper.test.ts
   - name: Overseer DERIVES its loop bound EVERYWHERE (no frozen cap) — the per-turn engine (src/fork/overseer.ts) AND the recipe-runner loop both use deriveOverseerLoopBudget (canonical in src/fork, re-exported to the extension); right-side keep-going bubble via onKeepGoing
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/overseer/recipe.md && grep -Fq 'loop: until OVERSEER_DONE' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/overseer/recipe.md && grep -Fq 'export function deriveOverseerLoopBudget' ~/src/tinkerclaw/src/fork/overseer-budget.ts && grep -Fq 'deriveOverseerLoopBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/overseer-budget.ts && grep -Fq 'deriveOverseerLoopBudget(' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'onKeepGoing' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'deriveOverseerLoopBudget' ~/src/tinkerclaw/src/fork/overseer.ts && grep -Fq 'OVERSEER_LOOP_HARD_CEILING' ~/src/tinkerclaw/src/fork/overseer.ts && ! grep -Fq 'export const MAX_OVERSEER_ITERATIONS' ~/src/tinkerclaw/src/fork/overseer.ts
-  - name: Overseer nudges are FULL-CONTEXT completion DIRECTIVES (not "keep going") + the loop auto-engages on multi-step / won't-finish-in-one-turn tasks (not only explicit keywords)
-    cmd: grep -Fq 'CONCRETE COMPLETION DIRECTIVE' ~/src/tinkerclaw/src/fork/overseer.ts && grep -Fq 'FULL CONVERSATION SO FAR' ~/src/tinkerclaw/src/fork/overseer.ts && grep -Fq 'windowTurns != null ? messages.slice' ~/src/tinkerclaw/src/fork/overseer.ts && grep -Fq 'looksMultiStep' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts && grep -Fq 'multi-step plan' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts
+  - name: Overseer nudges are FULL-CONTEXT completion DIRECTIVES (not "keep going"); the loop runs only when explicitly activated (auto-engage removed 2026-10-05)
+    cmd: grep -Fq 'CONCRETE COMPLETION DIRECTIVE' ~/src/tinkerclaw/src/fork/overseer.ts && grep -Fq 'FULL CONVERSATION SO FAR' ~/src/tinkerclaw/src/fork/overseer.ts && grep -Fq 'windowTurns != null ? messages.slice' ~/src/tinkerclaw/src/fork/overseer.ts
   - name: Prompt caching — the tools array gets a cache_control breakpoint (tools->system->messages), the highest-ROI budget-prompting win
     cmd: grep -Fq 'export function applyAnthropicCacheControlToTools' ~/src/tinkerclaw/src/agents/anthropic-payload-policy.ts && grep -Fq 'applyAnthropicCacheControlToTools(payloadObj.tools' ~/src/tinkerclaw/src/agents/anthropic-payload-policy.ts
   - name: P0 typed recipe parameters — RecipeParamSpec declared (recipe-author) + parsed (recipe-parse) so recipes are fill-in-the-blank functions
@@ -188,7 +196,7 @@ verify:
   # where the invariant HELD — both CLIs mention the literal inside a COMMENT that documents its
   # removal. The script strips comments before matching; see its header.
   - name: announce-misdelivery fix pinned (2026-08-04) — headless sink, no default main-tab parent in CLI code, RPC-boundary substitution wired
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/subagents-announce-sink.mjs
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/subagents-announce-sink.mjs
   - name: ORCA Phase-A injects DOC_REQUIREMENT (bible annotate + update old entries) AND MECHANISM_REQUIREMENT (code vs prompt) — 2026-09-01
     cmd: python3 -c 'import os; w=open(os.path.expanduser("~/src/jarvis-icu/docs/superpowers/parallel-implement.workflow.js")).read(); g=open(os.path.expanduser("~/src/.claude_global/workflows/parallel-implement.js")).read(); assert "const DOC_REQUIREMENT" in w and "const MECHANISM_REQUIREMENT" in w; i=w.index("const draftPrompt"); src=w[i:i+2000]; assert "DOC_REQUIREMENT" in src and "MECHANISM_REQUIREMENT" in src, "a standing ORCA rule is declared but not injected into draftPrompt"; assert "promptly UPDATE" in w and "plasticity" in w.lower() and "prefer code whenever it is possible" in w.lower(); gi=g.index("const draftPrompt"); assert "const DOC_REQUIREMENT" in g and "MECHANISM_REQUIREMENT" in g[gi:gi+2000], "the .claude_global copy drifted — it is a second firing surface, not a backup"'
 ---
@@ -221,6 +229,12 @@ Stdout (with `--json`) returns `{childSessionKey, runId}`.
 `--parent <sessionKey>` names the REQUESTER session — the lane the child's completion announcement is delivered back to (see the requester-session contract below). A caller WITH a UI tab passes its own tab key. Omitted, the requester resolves to the headless sink `agent:<agentId>:orchestrator` (substituted at the RPC boundary) — never `agent:main:main`. Until 2026-08-04 this flag defaulted to the `agent:main:main` literal; that documented default was one half of the announce-misdelivery defect below.
 
 When the active provider is a regular LLM (anthropic, openai, google, ollama), the **native `sessions_spawn` tool** takes over automatically — no orchestration code rewrite required. The helper is the fallback for the claude-cli mode where the native tool isn't exposed.
+
+## A fan-out that outlives its worker — `openclaw-orchestrate --detach` (2026-10-01)
+
+A fan-out held by a worker dies with it: at 14:29 on 2026-10-01 the pool's idle sweep stopped a build worker and the six-agent Workflow it held, and the waiter, which only looked for report files, noticed 43 minutes later (bug-log `[fanout-dies-with-its-worker]`). `openclaw-orchestrate --detach [--id <slug>] [--wake-session <key>]` runs the same plan as systemd user unit `tinkerclaw-fanout-<id>` and returns at once, so the worker can end its turn. The unit keeps `job.json`, `plan.js`, `run.log`, `result.json` and `done.json` under `~/.openclaw/fanout/<id>/` (`scripts/lib/fanout-unit.mjs` owns the layout) and wakes `--wake-session` (default `$TC_SESSION_KEY`) with `chat.send`, retried across a restart. `openclaw-orchestrate --status <id>` answers `running`, `done`, `failed`, `dead` (the unit is gone and no `done.json` was written) or `unknown`, with exit 0 / 0 / 1 / 3 / 2: a waiter asks whether the fan-out lives, not only whether its files exist.
+
+Limits: the plan still runs inside the gateway (`prefrontal.recipe.orchestrate`), so a gateway restart ends it; the runner now sees the closed connection at once and reports the failure instead of waiting out `--timeout`. On this machine the RPC is off (`plugins.entries.tinkerclaw-prefrontal.config.orchestration.allowScripts` unset, seen 2026-10-01), so only the Claude Code `Workflow` tool runs fan-outs here; those live in the worker's CLI, which L2 now keeps busy (`lifecycles.md` §L2) and whose finish now wakes the chat.
 
 ## The requester-session contract — where completion announcements land (FIXED 2026-08-04)
 
@@ -396,6 +410,36 @@ Flow:
 7. No match → a `WARN [recipe-matcher] NO-MATCH … prompt="…" (catalog=N kits)` line. **This is the recipe-gap signal**: if it fires often for a class of prompts, the catalog is too thin, or the work has drifted into new territory, or we need on-the-fly kit authoring. Mining this WARN is how the catalog grows. The implicit 2-step panel (content-rich, see `tinker-ui.md` / `prefrontal-tree.ts` `humanizeRootStatus`) is the acceptable recovery UX for genuinely trivial no-match turns.
 
 Recovery contract: because the matcher seeds a plan for substantially every non-trivial turn, **restart-continue almost always has an `in_progress` plan to resume** — that is the "working recovery system against restart." Trivial no-match turns are short enough that a restart just means the user re-asks; no plan-replay machinery is needed (deliberately not built — minimal blast radius).
+
+## Recipe retrieval v2 — one ranked result per task, USE and INSPIRE, and recipes that split (FORK 2026-10-06)
+
+**WANT (the architect, 2026-10-05):** the agent sometimes fails to retrieve the right recipe; recipes from earlier work that do not match today's job exactly should still offer inspiration; when the agent takes inspiration it should lift the reusable part out of the old recipe into a recipe of its own and link to it; and Jev should give a list, sorted by match, that says which recipes can be used directly and which only as inspiration. **Status:** `IMPLEMENTED` on `feat/broca-retrieval-v2`; live after `tinker-rebuild full`. Plan and review: `~/Documents/AI_reports/Papers/J17_broca/2026-10-05-retrieval-v2-plan.md` (private paper, never in the repo).
+
+**Why it was needed (measured 2026-10-05, 7 days):** the matcher hook skipped every session that did not end in `:main`, so it never ran in a Tinker tab; Thalamus's list held the card the agent used 4 to 9 % of the time; Jev built that list 29 % of the time (800 ms wait); `~/.openclaw/recipes` was not scanned at all (matcher recall of used recipes 28 %, 67 % once scanned).
+
+**RUN.**
+
+- **Gate.** The hook runs for an interactive session (the main chat or a Tinker tab, `isInteractiveSession`); never subagents, cron, heartbeat or channel chats. Effort guidance stays main-only.
+- **No recommendation to a runtime-generated prompt.** A prompt whose run provenance is not `external_user` (`inputProvenanceKind`, now carried on the hook context), or that starts with a marked notice (`[System`, `⟦AGENT`, `<task-notification>`, `System (untrusted):`, an internal-context block, `[Subagent Context]`), gets no match, plan, advice or short list.
+- **One ranked result per task.** Recall (text, session context, history from earlier uses, named-surface map; up to 15) then ONE Jev request: a USE / INSPIRE / NO question per candidate, a part question for candidates with sections, and one comparative question that separates (asked one by one, Jev says USE to anything plausible). The first of the two `before_prompt_build` hooks (matcher priority 20, short-list seam priority 0) that asks starts it; the other gets the same promise (`openclaw.thalamus.taskRanker` slot on `globalThis`). Lists are capped at 3 USE and 3 INSPIRE; each entry carries source (jev | local), mode and, for INSPIRE, the section. A context-free follow-up (under 6 words, no card named) is ranked on the previous user turn. House rules stay mandatory behaviour and are excluded from recall and statistics.
+- **Seeding.** A plan is seeded only from a USE Jev chose with a comparative share of at least 0.6 (`SEED_CONFIDENCE`); with Jev off, only a recipe the lexical matcher scored high. An INSPIRE never seeds and never triggers authoring.
+- **Degraded honestly.** Jev unavailable or late: the local order is used and labelled `local`, never called Jev; the ledger records why (`skip_reason`, `skip_detail`, `jev_ms`). A wholly local ranking is shown only where the old local list would be (89 of 129 held-out requests used no card, so a list on every turn is noise). Budget default 1500 ms (live Jev median 288 ms over 20 requests).
+- **Overlay wins.** A recipe in `~/.openclaw/recipes` wins a slug collision with a shipped one in the matcher, as it already did in the runner; one `[recipe-matcher] slug collision` line.
+- **`prefrontal.recipe.extract {from, section, slug, title}`** lifts one step into a recipe of its own beside the parent (the shipped dir included: generic skeletons in the public fork; private values never leave `recipe-vars.json`) and puts `uses: <slug>` where the step was. It validates every affected recipe first, stages the writes and rolls back all of them on failure, refuses steps tied to the parent (`in:`/`out:`/`when:`/`uses:`/`loop:`, `{{steps…}}`) and never deletes a source. Operator-called; an agent calls it only when it actually reuses a part, and says so in its reply.
+- **Learning.** The nightly card loop gains one step: off-list uses give a card its tasks' key phrases (at most 3 of 48 characters, in at least 2 different tasks, bare names never), kept only if later tasks say so, versioned and reversible (`design-principles.md` #25). On the first held-out run no edit was kept (0 of 4 gained): the safeguard doing its job.
+
+**Rejected:** a second Jev client and store; per-token answers sorted by mode alone (over-assigns USE); seeding from an INSPIRE; a list on every turn; reusing the card `parent` field (it is a version number) for recipe dependency, which stays `uses:` / `composes:`.
+
+**Don't regress:** the privacy gate (`RoutingReader.gate`) applies to every ranking read; the advice is never a `chat.send`; the matcher hook must not run for subagents or cron; a ranking with no Jev entry must never be labelled Jev.
+
+**Files:** `src/shared/enhancement-{text,recall,rank,replay,replay-rank,budget,task-rank}.ts`, `src/infra/thalamus-task-ranking.ts`, `extensions/tinkerclaw-thalamus/src/{task-ranker,store,runtime}.ts`, `extensions/tinkerclaw-prefrontal/{recipe-matcher,recipe-advice,recipe-extract,index}.ts`, `scripts/broca-retrieval-replay.ts`, `scripts/broca-rank-live.ts`.
+
+## The published recipe catalog — Claude Code reads what the gateway publishes (FORK 2026-10-09)
+
+The matcher's catalog lived only inside the gateway, so a plain Claude Code session (a terminal or a background job) could run a recipe it already knew by slug but could not discover one, and the hand-kept `CATALOG.md` was missing 30 of 111 slugs. Same pattern as the moral code: the gateway publishes, Claude Code only reads.
+
+- **Producer.** `recipe-index-publish.ts publishRecipeIndex()` writes `<state dir>/prefrontal/recipe-index.json` = `{version:1, generatedAt, recipes:[{slug, owner, title, summary, tags, category?, subdivision?, path}]}`, sorted by slug, one entry per slug exactly as `loadRecipeIndex` resolved it (the overlay wins). The state dir comes from `resolveStateDir` (`openclaw/plugin-sdk/state-paths`), the resolver the moral code uses, so both files sit under one root. It runs from `loadRecipeIndex`'s rebuild branch (fire-and-forget, never on a cache hit) and once at plugin register, so the file exists right after start. The write is atomic (tmp + rename), skipped when the recipes array is unchanged, and never throws into its caller. `category` and `subdivision` now ride on `RecipeIndexEntry` (not scored) so the catalog keeps each recipe's shelf.
+- **Consumers.** `tinkerclaw-core`'s `recipe-hint.mjs` (UserPromptSubmit, plain Claude Code only; `tool-loop.md`, 2026-10-09) and the Claude Code `jarvis-recipe` skill's locate step. A chat worker keeps the gateway's own per-turn matcher above; it never reads this file.
 
 ## Composition, loops, and on-the-fly authoring (FORK 2026-05-29/30)
 
@@ -636,6 +680,12 @@ From bible / memory:
 
 The infrastructure is COMPLETE (2026-04-01). Plan/kit RPCs added 2026-05-13 (Phases 1–7 of the plan-board implementation).
 
+### The Overseer is manual only (2026-10-05)
+
+The Overseer (`src/fork/overseer.ts`, `src/fork/overseer-runtime.ts`) re-checks a task after each turn with a separate judge and injects a `⟦OVERSEER⟧` prompt when work is left. From 2026-06-07 the prefrontal `before_prompt_build` hook armed it by itself on any prompt that looked multi-step (two list lines, "then", a seeded plan of 2+ steps). the architect switched that off on 2026-10-05: across Aug–Oct it made 250 deliveries and none was a useful directive (123 error envelopes, empty runs, "the task is complete" read as a nudge, its own report re-arming it), while each check cost a full-transcript subagent and a main-chat wake-up. Fractal rule 15 checks expected against delivered inside the same turn.
+
+Still available on purpose: the `fork.overseer.activate` / `deactivate` / `status` RPCs and the `overseer` recipe. Armed sessions live in memory only, so a gateway restart clears them. If it is ever re-armed automatically, fix first: the done marker accepts only a bare word, its report re-arms it, a timed-out spawn still announces, and failed runs inject error envelopes as instructions.
+
 ## Kit parallelism
 
 The `parallelism:` frontmatter block declares which step-groups can fan out:
@@ -744,6 +794,17 @@ files**, instead of editing them serially.
 jarvis-icu/docs/superpowers/parallel-implement.workflow.js`, `args:{repoRoot,
 units:[{id,task,writes:[paths]}], wrapPath?, verifyHint?}`. Spec:
   `docs/superpowers/specs/2026-06-04-parallel-multi-agent-coding-design.md`.
+
+## THALAMUS v4 scheduler and `model: "auto"` in `openclaw-orchestrate` (2026-10-01)
+
+**What this is for.** How a fan-out gets a model per unit, and what is and is not wired. Mechanism and lines not to cross: `auth-routing.md` § THALAMUS v4. **Status:** `IMPLEMENTED` on `feat/thalamus-v4`, inert until the plugin runs in `enforce` with `enforce.orchestrateAuto`.
+
+- **The plan graph** (`src/shared/thalamus-graph.ts`, pure): inputs from declared outputs, same-write edges from declared changes only, cycles and self-waits refused; critical path and slack; the ready set re-checks declared changes at the moment of starting; provider caps; shared-start groups; hedge only on a critical unit, once, for at most a fifth of the units.
+- **The scheduler** (`extensions/tinkerclaw-thalamus/src/scheduler.ts`) prices each unit as a fresh point with `routeCall`, feeds slack back into the price, and runs one state machine under two drivers: `simulate` on a virtual clock (what shadow records and the preview returns) and `execute` on the real clock (enforce only). A provider at its cap is priced again without it.
+- **The consumer.** `model: "auto"` asks a registered resolver; with none it behaves exactly like an omitted model. The billing guard still forces `claude-code/*` on the answer, so "auto" mixes Haiku, Sonnet, Opus and Fable plus effort until `orchestrate.allowedLeafProviders` is widened. Since 2026-10-03 a unit with **no** model asks too (site `orchestrate-default`, under `enforce.ownModelChoices`), unless the caller set its own default leaf; so does a sub-agent spawned with no model (`auth-routing.md`, "Owned model choices").
+- **`thalamus.plan.preview`** returns a plan from outside (input clipped and checked, no task text back) and can record it as a shadow plan (`record: true`). `openclaw-orchestrate --dry-run` does not exist: a script's units are not known before it runs.
+- **Not built:** prefetch, pipeline and outline-then-fill; nothing calls the shadow scheduler live yet, so the UI's Plan group stays empty until something does.
+- **Don't regress:** a shared-start sibling is priced at what the cache makes it cost (the first on a model writes the start, later ones read it); a hedge copy cancels the loser; a failed unit cancels the rest.
 
 ## Don't regress
 

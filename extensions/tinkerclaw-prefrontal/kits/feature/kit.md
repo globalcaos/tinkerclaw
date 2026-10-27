@@ -25,7 +25,7 @@ parallelism:
     1=Design, 2=Write Tests, 3=Implement, 4=Verify.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

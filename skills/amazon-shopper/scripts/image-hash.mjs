@@ -14,18 +14,21 @@
 //   11-20   → similar layout, maybe same product family
 //   20+     → different image
 //
-// Decoding uses the ImageMagick CLI (system dep, like the browser relay uses
-// Chrome). Zero npm dependencies.
+// Decoding uses the ImageMagick CLI (a system dependency). Zero npm dependencies.
 //
 // The binary is NOT configurable. It used to be overridable via
 // AMAZON_SHOPPER_CONVERT_CMD, which meant an environment variable chose which
 // program got spawned with attacker-influenced image bytes on its stdin — a
 // generic process launcher wearing an image-hashing hat. 1.2.0 hard-codes the
-// two acceptable names and resolves them from PATH, and passes ImageMagick its
-// own resource limits so a decompression-bomb packshot cannot take the host
-// down with it.
+// two acceptable names, and passes ImageMagick its own resource limits so a
+// decompression-bomb packshot cannot take the host down with it. Since 1.2.2 the
+// name is resolved in-process by scripts/resolve-bin.mjs (absolute PATH entries
+// only, symlinks followed, every directory on the way to the real file owned by
+// root or you and not writable by others) rather than by spawning `which`, and
+// the resolved absolute path is what runs.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { resolveTrustedBin } from "./resolve-bin.mjs";
 import { fetchImageSafely, MAX_IMAGE_BYTES } from "./url-guard.mjs";
 
 const ALLOWED_CONVERT_BINS = ["magick", "convert"];
@@ -35,11 +38,9 @@ function resolveConvertBin() {
   if (resolvedBin !== undefined) return resolvedBin;
   resolvedBin = null;
   for (const bin of ALLOWED_CONVERT_BINS) {
-    // A bare name only: `which` resolves it from PATH, and a name containing a
-    // path separator is never even considered.
-    const r = spawnSync("which", [bin], { encoding: "utf8" });
-    if (r.status === 0 && r.stdout.trim()) {
-      resolvedBin = { bin, path: r.stdout.trim() };
+    const path = resolveTrustedBin(bin);
+    if (path) {
+      resolvedBin = { bin, path };
       break;
     }
   }

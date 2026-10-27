@@ -315,7 +315,7 @@ describe("splitReasoningFromAnswer", () => {
   // hidden head under 10% narration. These pin the discrimination in both directions.
   it("does NOT fold substantive prose just because a heading appears late", () => {
     const prose =
-      "the user — you're right, and the sharpest evidence is from tonight's own wind-down: I filed B037 " +
+      "the architect — you're right, and the sharpest evidence is from tonight's own wind-down: I filed B037 " +
       "before checking whether the report had already landed, and it had. The same shape shows up in " +
       "the two cron failures earlier this week, which is why the count looks worse than it is. " +
       "None of this is narration; it is the answer to the question you asked.";
@@ -338,5 +338,90 @@ describe("splitReasoningFromAnswer", () => {
     const r = splitReasoningFromAnswer(text);
     expect(typeof r.answer).toBe("string");
     expect(r.answer.length).toBeGreaterThan(0);
+  });
+});
+
+describe("✨ DEEPER — the curiosity sense's bubble (2026-10-01)", () => {
+  const reply =
+    "**Jarvis:** *Done.*\n\nThe build is green.\n\n✨ DEEPER\nOne thing I found: [a paper](https://example.org/p) on fractal attention.\n\nA question: what pulls you to fractals?\n\n🌿 FRACTAL: clean.";
+
+  it("splits answer, deeper and fractal; a reply without 💬 keeps its text as the answer", () => {
+    const s = splitSectionedReply(reply)!;
+    expect(s.other).toContain("The build is green.");
+    expect(s.deeper).toContain("fractal attention");
+    expect(s.deeper).toContain("what pulls you to fractals?");
+    expect(s.deeper).not.toContain("FRACTAL:");
+    expect(s.fractal).toBe("clean.");
+  });
+
+  it("renders the deeper bubble between the answer and the reflection, with its yellow-border class", () => {
+    const md = (t: string) => `<p>${t}</p>`;
+    const esc = (t: string) => t;
+    const html = renderSectionedReply(splitSectionedReply(reply)!, "", md, esc);
+    const ans = html.indexOf("The build is green.");
+    const dee = html.indexOf('class="msg assistant msg-deeper"');
+    const fra = html.indexOf("fractal-details");
+    expect(ans).toBeGreaterThanOrEqual(0);
+    expect(dee).toBeGreaterThan(ans);
+    expect(fra).toBeGreaterThan(dee);
+    expect(html).toContain("✨ Deeper");
+    expect(html).not.toMatch(/✨ DEEPER/);
+  });
+
+  // FORK 2026-10-03 — a SERVED sectioned answer was drawn with no `data-oc-id`, so the snapshot
+  // census and scripts/ui-dup-proof.mjs, which tell a served row from a client-written bubble by that
+  // attribute, counted the history copy of a duplicated answer as client-written.
+  // Only the parts drawn as bubbles on the page carry it. The 🌿 and ▸ Commentary bodies sit inside a
+  // <details> that is usually closed, and Chromium still reports a box for a closed fold's content, so
+  // a stamped fold body could become the "first row on screen" the reload anchor names (review round
+  // 1, 2026-10-03).
+  it("stamps the answer and the deeper bubble with the row's history identity, never a fold body", () => {
+    const md = (t: string) => `<p>${t}</p>`;
+    const idAttrs = (part: string) => ` data-oc-id="ext:abc" data-oc-part="${part}"`;
+    const render = (text: string) =>
+      renderSectionedReply(
+        splitSectionedReply(text)!,
+        "",
+        md,
+        (t) => t,
+        "",
+        () => "",
+        "",
+        idAttrs,
+      );
+    const html = render(reply);
+    expect(html).toMatch(/<div class="msg assistant" data-oc-id="ext:abc" data-oc-part="main">/);
+    expect(html).toContain(
+      'class="msg assistant msg-deeper" data-oc-id="ext:abc" data-oc-part="deeper"',
+    );
+    expect(html).toContain('<div class="msg msg-fractal">');
+    expect(html).not.toContain('data-oc-part="fractal"');
+    const withCommentary = render(
+      "Let me check the build first.\n\n💬 ANSWER\nThe build is green.\n\n🌿 FRACTAL: clean.",
+    );
+    expect(withCommentary).toContain('data-oc-part="main"');
+    expect(withCommentary).not.toContain('data-oc-part="commentary"');
+  });
+
+  it("stamps nothing for a client-written bubble (no identity passed)", () => {
+    const html = renderSectionedReply(
+      splitSectionedReply(reply)!,
+      "",
+      (t) => t,
+      (t) => t,
+    );
+    expect(html).not.toContain("data-oc-id");
+  });
+
+  it("a deeper section with no reflection still renders both bubbles", () => {
+    const md = (t: string) => `<p>${t}</p>`;
+    const html = renderSectionedReply(
+      splitSectionedReply("Answer here.\n\n**✨ DEEPER:** more")!,
+      "",
+      md,
+      (t) => t,
+    );
+    expect(html).toContain("Answer here.");
+    expect(html).toContain("msg-deeper");
   });
 });

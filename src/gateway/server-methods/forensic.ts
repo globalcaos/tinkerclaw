@@ -12,6 +12,7 @@ import {
   getDumpByIndexForSession,
 } from "../../forensic/dump-writer.js";
 import type { ForensicRun } from "../../forensic/dump-writer.js";
+import { withLedgerCompletion } from "../../forensic/llm-ledger.js";
 import { isForensicMode, setForensicMode } from "../../forensic/mode.js";
 import type { GatewayRequestHandlers, RespondFn } from "./types.js";
 
@@ -90,28 +91,38 @@ async function summarizeText(text: string): Promise<string> {
   // Truncate to ~60k chars (Haiku has a large context window)
   const truncated = text.length > 60_000 ? text.slice(0, 60_000) + "\n…[truncated]" : text;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
+  const requestBody = {
+    model: "claude-haiku-4-5",
+    max_tokens: 300,
+    system:
+      "Summarize the following content in 2-3 concise sentences. Focus on what it does and why it matters.",
+    messages: [{ role: "user", content: truncated }],
+  };
+  const data = await withLedgerCompletion(
+    {
+      source: "completion:forensic-summarize",
+      provider: "anthropic",
+      model: requestBody.model,
+      api: "anthropic-messages",
     },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5",
-      max_tokens: 300,
-      system:
-        "Summarize the following content in 2-3 concise sentences. Focus on what it does and why it matters.",
-      messages: [{ role: "user", content: truncated }],
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 200)}`);
-  }
-
-  const data = (await res.json()) as any;
+    requestBody,
+    async () => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 200)}`);
+      }
+      return (await res.json()) as any;
+    },
+  );
   const candidate = data?.content?.find(
     (b: { type?: string; text?: string }) => b?.type === "text",
   )?.text;

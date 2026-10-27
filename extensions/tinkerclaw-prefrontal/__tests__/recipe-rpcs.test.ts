@@ -84,6 +84,10 @@ function baseDeps(over?: Partial<KitRpcsDeps>): KitRpcsDeps {
     apiKey: "test-key",
     recipeInstallSandbox: sandbox,
     ownRecipesDir,
+    // The suites below exercise the enabled behaviour; the default-off gates
+    // have their own suite at the end of this file.
+    allowRecipePublish: true,
+    allowRemoteRecipeInstall: true,
     ...over,
   };
 }
@@ -425,5 +429,93 @@ describe("U12 recipe.get/install — version-constraint resolution", () => {
     const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl, marketplace }));
     await rpcs["prefrontal.recipe.install"]({ kitRef: "globalcaos/debug", ref: "^1.0.0" });
     expect(seen[0]).toBe("1.2.0");
+  });
+});
+
+// ─── Opt-in gates + recipe.read path confinement ─────────────────────────────
+
+describe("opt-in gates are OFF by default", () => {
+  function defaultDeps(over?: Partial<KitRpcsDeps>): KitRpcsDeps {
+    return {
+      store: new RecipeStore({ rootDir: sandbox }),
+      baseUrl: "https://example.invalid",
+      apiKey: "test-key",
+      recipeInstallSandbox: sandbox,
+      ownRecipesDir,
+      ...over,
+    };
+  }
+
+  it("refuses recipe.orchestrate without orchestration.allowScripts", async () => {
+    const rpcs = createRecipeRpcs(defaultDeps());
+    await expect(
+      rpcs["prefrontal.recipe.orchestrate"]({ sessionKey: "agent:main:x", script: "return 1" }),
+    ).rejects.toThrow(/orchestration\.allowScripts/);
+  });
+
+  it("refuses recipe.publish without marketplace.allowPublish and makes no request", async () => {
+    await writeLocalKit("debug", LOCAL_DEBUG_KIT);
+    const fetchJsonImpl = vi.fn(async () => ({ ok: true }));
+    const rpcs = createRecipeRpcs(defaultDeps({ fetchJsonImpl }));
+    await expect(
+      rpcs["prefrontal.recipe.publish"]({ slug: "debug", visibility: "public" }),
+    ).rejects.toThrow(/marketplace\.allowPublish/);
+    expect(fetchJsonImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses a JourneyKits recipe.install without marketplace.allowRemoteInstall", async () => {
+    const fetchJsonImpl = vi.fn(async () => ({ files: [] }));
+    const rpcs = createRecipeRpcs(defaultDeps({ fetchJsonImpl }));
+    await expect(rpcs["prefrontal.recipe.install"]({ kitRef: "globalcaos/top" })).rejects.toThrow(
+      /marketplace\.allowRemoteInstall/,
+    );
+    expect(fetchJsonImpl).not.toHaveBeenCalled();
+  });
+
+  it("still bridges a local SKILL.md with the remote-install gate off", async () => {
+    const rpcs = createRecipeRpcs(defaultDeps());
+    const res: any = await rpcs["prefrontal.recipe.install"]({
+      kitRef: "cc/deploy-check",
+      skillMd: SKILL_MD,
+    });
+    expect(res.bridged).toBe(true);
+  });
+});
+
+describe("recipe.read path confinement", () => {
+  it("reads a .md path inside the own-recipes dir", async () => {
+    await writeLocalKit("debug", LOCAL_DEBUG_KIT);
+    const rpcs = createRecipeRpcs(baseDeps());
+    const res: any = await rpcs["prefrontal.recipe.read"]({
+      path: path.join(ownRecipesDir, "debug", "kit.md"),
+    });
+    expect(res.recipe.slug).toBe("debug");
+  });
+
+  it("refuses a path outside the recipe directories", async () => {
+    const outside = path.join(tmp, "outside.md");
+    await fs.writeFile(outside, LOCAL_DEBUG_KIT, "utf8");
+    const rpcs = createRecipeRpcs(baseDeps());
+    await expect(rpcs["prefrontal.recipe.read"]({ path: outside })).rejects.toThrow(
+      /inside the recipe directories/,
+    );
+  });
+
+  it("refuses a symlink inside a root that points outside it", async () => {
+    const outside = path.join(tmp, "secret.md");
+    await fs.writeFile(outside, LOCAL_DEBUG_KIT, "utf8");
+    const link = path.join(ownRecipesDir, "link.md");
+    await fs.symlink(outside, link);
+    const rpcs = createRecipeRpcs(baseDeps());
+    await expect(rpcs["prefrontal.recipe.read"]({ path: link })).rejects.toThrow(
+      /inside the recipe directories/,
+    );
+  });
+
+  it("refuses a non-markdown path", async () => {
+    const rpcs = createRecipeRpcs(baseDeps());
+    await expect(rpcs["prefrontal.recipe.read"]({ path: "/etc/passwd" })).rejects.toThrow(
+      /inside the recipe directories/,
+    );
   });
 });

@@ -70,8 +70,8 @@ Assessment: Ready to merge / Needs fixes / Needs discussion
 sessions_spawn({
   task: `[paste template above with filled placeholders]`,
   runtime: "subagent",
-  model: "gpt",  // second opinion from different model family
+  model: "gpt", // second opinion from different model family
   mode: "run",
-  cwd: "/path/to/project"
-})
+  cwd: "/path/to/project",
+});
 ```

@@ -95,6 +95,10 @@ export function buildEmbeddedRunBaseParams(params: {
     model: params.model,
     ...params.authProfile,
     thinkLevel: params.run.thinkLevel,
+    // FORK 2026-10-09 (effort slider): who chose the level, and Thalamus's ultracode call, travel
+    // with it toward the attempt's `__openclawThinkSource` / `__openclawUltracode` smuggle keys.
+    thinkSource: params.run.thinkSource,
+    ultracode: params.run.ultracode,
     verboseLevel: params.run.verboseLevel,
     reasoningLevel: params.run.reasoningLevel,
     execOverrides: params.run.execOverrides,

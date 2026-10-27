@@ -65,6 +65,8 @@ export const ConnectParamsSchema = Type.Object(
     ),
     locale: Type.Optional(Type.String()),
     userAgent: Type.Optional(Type.String()),
+    /** Hivemind seat chosen at the door; names the human driving this connection's prompts. */
+    seatId: Type.Optional(NonEmptyString),
   },
   { additionalProperties: false },
 );

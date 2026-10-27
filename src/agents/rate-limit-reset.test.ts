@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { MAX_RETRY_AFTER_SECONDS, resolveRetryAfterSeconds } from "./rate-limit-reset.js";
 
-// FORK 2026-09-07 (the user: "If a model like now Sol is overflowing, the most natural thing is to
+// FORK 2026-09-07 (the architect: "If a model like now Sol is overflowing, the most natural thing is to
 // retry, right?") — the numbers below are verbatim from the 2026-09-07 15:00 incident.
 //
 // The client retry ladder (tinker-ui/src/retry-policy.ts) is 3s/10s/30s/2m/7m/15m and already

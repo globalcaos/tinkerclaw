@@ -129,6 +129,17 @@ vi.mock("./inbound/runtime-api.js", () => {
   };
 });
 
+// The inbound gate asks the WhatsApp history DB whether a chat has moved on
+// past a message. The real accessor opens the live file under ~/.openclaw, so
+// tests get a stand-in: null (no history, the gate lets the message through)
+// unless a test seeds an in-memory database.
+const historyDbState = vi.hoisted(() => ({ db: null as unknown }));
+
+vi.mock("./history/db.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./history/db.js")>()),
+  getDbIfExists: () => historyDbState.db,
+}));
+
 vi.mock("./session.js", async () => {
   return {
     createWaSocket: vi.fn().mockImplementation(async () => {
@@ -142,6 +153,10 @@ vi.mock("./session.js", async () => {
     formatError: (err: unknown) => (err instanceof Error ? err.message : String(err)),
   };
 });
+
+export function setHistoryDbForTest(db: unknown): void {
+  historyDbState.db = db;
+}
 
 export function getSock(): MockSock {
   if (!sessionState.sock) {
@@ -276,6 +291,7 @@ export function installWebMonitorInboxUnitTestHooks(opts?: { authDir?: boolean }
       resetWebInboundDedupe = inboundModule.resetWebInboundDedupe;
     }
     resetWebInboundDedupe();
+    historyDbState.db = null;
     if (createAuthDir) {
       authDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "openclaw-auth-"));
     } else {

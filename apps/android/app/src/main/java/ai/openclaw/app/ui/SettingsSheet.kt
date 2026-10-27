@@ -336,10 +336,17 @@ fun SettingsSheet(viewModel: MainViewModel) {
       assistantRoleHeld = isAssistantRoleHeld(context)
     }
 
+  // Special accesses Jarvis uses (the architect 2026-10-22: all access controls on this page, as switches
+  // that ask Android to confirm and stay on once granted).
+  var allFilesAccess by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
+  var installUpdatesAllowed by remember { mutableStateOf(context.packageManager.canRequestPackageInstalls()) }
+
   DisposableEffect(lifecycleOwner, context) {
     val observer =
       LifecycleEventObserver { _, event ->
         if (event == Lifecycle.Event.ON_RESUME) {
+          allFilesAccess = android.os.Environment.isExternalStorageManager()
+          installUpdatesAllowed = context.packageManager.canRequestPackageInstalls()
           micPermissionGranted =
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -505,22 +512,13 @@ fun SettingsSheet(viewModel: MainViewModel) {
                 )
               },
               trailingContent = {
-                Button(
-                  onClick = {
+                AccessSwitch(granted = assistantRoleHeld, onClick = {
                     assistantRoleLauncher.launch(
                       context
                         .getSystemService(RoleManager::class.java)
                         .createRequestRoleIntent(RoleManager.ROLE_ASSISTANT),
                     )
-                  },
-                  colors = settingsPrimaryButtonColors(),
-                  shape = RoundedCornerShape(14.dp),
-                ) {
-                  Text(
-                    if (assistantRoleHeld) "Manage" else "Enable",
-                    style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                  )
-                }
+                  })
               },
             )
           }
@@ -548,22 +546,13 @@ fun SettingsSheet(viewModel: MainViewModel) {
               )
             },
             trailingContent = {
-              Button(
-                onClick = {
+              AccessSwitch(granted = micPermissionGranted, onClick = {
                   if (micPermissionGranted) {
                     openAppSettings(context)
                   } else {
                     audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                   }
-                },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (micPermissionGranted) "Manage" else "Grant",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
+                })
             },
           )
           HorizontalDivider(color = mobileBorder)
@@ -595,22 +584,13 @@ fun SettingsSheet(viewModel: MainViewModel) {
               Text("Alerts and foreground service.", style = mobileCallout)
             },
             trailingContent = {
-              Button(
-                onClick = {
+              AccessSwitch(granted = notificationsPermissionGranted, onClick = {
                   if (notificationsPermissionGranted || Build.VERSION.SDK_INT < 33) {
                     openAppSettings(context)
                   } else {
                     notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                   }
-                },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (notificationsPermissionGranted) "Manage" else "Grant",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
+                })
             },
           )
           HorizontalDivider(color = mobileBorder)
@@ -625,16 +605,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
               )
             },
             trailingContent = {
-              Button(
-                onClick = { openNotificationListenerSettings(context) },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (notificationListenerEnabled) "Manage" else "Enable",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
+              AccessSwitch(granted = notificationListenerEnabled, onClick = { openNotificationListenerSettings(context) })
             },
           )
           if (smsPermissionAvailable) {
@@ -647,8 +618,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
                 Text("Send and search SMS from this device.", style = mobileCallout)
               },
               trailingContent = {
-                Button(
-                  onClick = {
+                AccessSwitch(granted = smsPermissionGranted, onClick = {
                     if (smsPermissionGranted) {
                       openAppSettings(context)
                     } else {
@@ -656,19 +626,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
                         arrayOf(Manifest.permission.SEND_SMS, Manifest.permission.READ_SMS),
                       )
                     }
-                  },
-                  colors = settingsPrimaryButtonColors(),
-                  shape = RoundedCornerShape(14.dp),
-                ) {
-                  Text(
-                    if (smsPermissionGranted) {
-                      "Manage"
-                    } else {
-                      "Grant"
-                    },
-                    style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                  )
-                }
+                  })
               },
             )
           }
@@ -986,22 +944,13 @@ fun SettingsSheet(viewModel: MainViewModel) {
             headlineContent = { Text("Photos", style = mobileHeadline) },
             supportingContent = { Text("Access recent photos.", style = mobileCallout) },
             trailingContent = {
-              Button(
-                onClick = {
+              AccessSwitch(granted = photosPermissionGranted, onClick = {
                   if (photosPermissionGranted) {
                     openAppSettings(context)
                   } else {
                     photosPermissionLauncher.launch(photosPermission)
                   }
-                },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (photosPermissionGranted) "Manage" else "Grant",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
+                })
             },
           )
           HorizontalDivider(color = mobileBorder)
@@ -1011,8 +960,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
             headlineContent = { Text("Contacts", style = mobileHeadline) },
             supportingContent = { Text("Search and add contacts.", style = mobileCallout) },
             trailingContent = {
-              Button(
-                onClick = {
+              AccessSwitch(granted = contactsPermissionGranted, onClick = {
                   if (contactsPermissionGranted) {
                     openAppSettings(context)
                   } else {
@@ -1020,15 +968,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
                       arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS),
                     )
                   }
-                },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (contactsPermissionGranted) "Manage" else "Grant",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
+                })
             },
           )
           HorizontalDivider(color = mobileBorder)
@@ -1038,8 +978,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
             headlineContent = { Text("Calendar", style = mobileHeadline) },
             supportingContent = { Text("Read and create events.", style = mobileCallout) },
             trailingContent = {
-              Button(
-                onClick = {
+              AccessSwitch(granted = calendarPermissionGranted, onClick = {
                   if (calendarPermissionGranted) {
                     openAppSettings(context)
                   } else {
@@ -1047,15 +986,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
                       arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR),
                     )
                   }
-                },
-                colors = settingsPrimaryButtonColors(),
-                shape = RoundedCornerShape(14.dp),
-              ) {
-                Text(
-                  if (calendarPermissionGranted) "Manage" else "Grant",
-                  style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                )
-              }
+                })
             },
           )
           if (callLogPermissionAvailable) {
@@ -1066,22 +997,13 @@ fun SettingsSheet(viewModel: MainViewModel) {
               headlineContent = { Text("Call Log", style = mobileHeadline) },
               supportingContent = { Text("Search recent call history.", style = mobileCallout) },
               trailingContent = {
-                Button(
-                  onClick = {
+                AccessSwitch(granted = callLogPermissionGranted, onClick = {
                     if (callLogPermissionGranted) {
                       openAppSettings(context)
                     } else {
                       callLogPermissionLauncher.launch(Manifest.permission.READ_CALL_LOG)
                     }
-                  },
-                  colors = settingsPrimaryButtonColors(),
-                  shape = RoundedCornerShape(14.dp),
-                ) {
-                  Text(
-                    if (callLogPermissionGranted) "Manage" else "Grant",
-                    style = mobileCallout.copy(fontWeight = FontWeight.Bold),
-                  )
-                }
+                  })
               },
             )
           }
@@ -1093,13 +1015,8 @@ fun SettingsSheet(viewModel: MainViewModel) {
               headlineContent = { Text("Motion", style = mobileHeadline) },
               supportingContent = { Text("Track steps and activity.", style = mobileCallout) },
               trailingContent = {
-                val motionButtonLabel =
-                  when {
-                    !motionPermissionRequired -> "Manage"
-                    motionPermissionGranted -> "Manage"
-                    else -> "Grant"
-                  }
-                Button(
+                AccessSwitch(
+                  granted = !motionPermissionRequired || motionPermissionGranted,
                   onClick = {
                     if (!motionPermissionRequired || motionPermissionGranted) {
                       openAppSettings(context)
@@ -1107,14 +1024,47 @@ fun SettingsSheet(viewModel: MainViewModel) {
                       motionPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
                     }
                   },
-                  colors = settingsPrimaryButtonColors(),
-                  shape = RoundedCornerShape(14.dp),
-                ) {
-                  Text(motionButtonLabel, style = mobileCallout.copy(fontWeight = FontWeight.Bold))
-                }
+                )
               },
             )
           }
+        }
+      }
+
+      // ── Jarvis access ──
+      item {
+        Column(modifier = Modifier.settingsRowModifier()) {
+          ListItem(
+            modifier = Modifier.fillMaxWidth(),
+            colors = listItemColors,
+            headlineContent = { Text("All Files Access", style = mobileHeadline) },
+            supportingContent = { Text(if (allFilesAccess) "Jarvis can fetch files from Downloads." else "Lets Jarvis fetch files you download.", style = mobileCallout) },
+            trailingContent = {
+              AccessSwitch(granted = allFilesAccess, onClick = {
+                runCatching {
+                  context.startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
+                  )
+                }.onFailure { openAppSettings(context) }
+              })
+            },
+          )
+          HorizontalDivider(color = mobileBorder)
+          ListItem(
+            modifier = Modifier.fillMaxWidth(),
+            colors = listItemColors,
+            headlineContent = { Text("Install Updates", style = mobileHeadline) },
+            supportingContent = { Text(if (installUpdatesAllowed) "Jarvis updates itself." else "Lets Jarvis install its own updates.", style = mobileCallout) },
+            trailingContent = {
+              AccessSwitch(granted = installUpdatesAllowed, onClick = {
+                runCatching {
+                  context.startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
+                  )
+                }.onFailure { openAppSettings(context) }
+              })
+            },
+          )
         }
       }
 
@@ -1353,3 +1303,11 @@ private fun hasMotionCapabilities(context: Context): Boolean {
 private fun isAssistantRoleAvailable(context: Context): Boolean = context.getSystemService(RoleManager::class.java).isRoleAvailable(RoleManager.ROLE_ASSISTANT)
 
 private fun isAssistantRoleHeld(context: Context): Boolean = context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT)
+
+// A permission switch: it shows the real state. Turning it on asks Android (its own confirmation
+// dialog or settings page); turning it off opens the app's settings, the only place Android lets
+// a permission be revoked. The screen re-checks every state on resume, so a granted access stays on.
+@Composable
+private fun AccessSwitch(granted: Boolean, onClick: () -> Unit) {
+  Switch(checked = granted, onCheckedChange = { onClick() })
+}

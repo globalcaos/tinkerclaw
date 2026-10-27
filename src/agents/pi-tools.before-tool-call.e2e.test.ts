@@ -9,6 +9,7 @@ import {
 import { resetDiagnosticSessionStateForTest } from "../logging/diagnostic-session-state.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import {
+  __testing,
   runBeforeToolCallHook,
   wrapToolWithBeforeToolCallHook,
 } from "./pi-tools.before-tool-call.js";
@@ -687,6 +688,32 @@ describe("before_tool_call requireApproval handling", () => {
       "reason",
       "Tool call blocked because before_tool_call hook failed",
     );
+  });
+
+  it("blocks a hook that timed out and keeps the plugin's name for the log (2026-10-22)", async () => {
+    // The shape the hook runner throws for a fail-closed hook: the plugin in the message, the
+    // original error as the cause. The log used to print only the cause.
+    const timedOut = new Error(
+      "[hooks] before_tool_call handler from slow-gate failed: timed out after 600000ms",
+      { cause: new Error("timed out after 600000ms") },
+    );
+    hookRunner.runBeforeToolCall.mockRejectedValueOnce(timedOut);
+
+    const result = await runBeforeToolCallHook({
+      toolName: "exec",
+      params: { command: "jarvis hello" },
+      ctx: { agentId: "main", sessionKey: "main" },
+    });
+
+    expect(result.blocked).toBe(true);
+    expect(result).toHaveProperty(
+      "reason",
+      "Tool call blocked because before_tool_call hook failed",
+    );
+    expect(__testing.describeHookFailure(timedOut)).toBe(
+      "[hooks] before_tool_call handler from slow-gate failed: timed out after 600000ms",
+    );
+    expect(__testing.describeHookFailure(new Error("hook crashed"))).toBe("Error: hook crashed");
   });
 
   it("passes diagnostic trace context to before_tool_call hooks", async () => {

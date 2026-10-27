@@ -697,6 +697,39 @@ describe("Phase 1D: Recall Tool", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("an oversized top hit does not hide smaller hits", async () => {
+    const store = createEventStore({ baseDir: tmpDir, sessionKey: "recall-oversized" });
+    const oversized = store.append({
+      turnId: 0,
+      sessionKey: "recall-oversized",
+      kind: "tool_result",
+      content: "deploy ".repeat(2000),
+      tokens: 5000,
+      metadata: {},
+    });
+    const small = [1, 2, 3].map((i) =>
+      store.append({
+        turnId: i,
+        sessionKey: "recall-oversized",
+        kind: "user_message",
+        content: `Note ${i}: we deploy the staging build after review`,
+        tokens: 50,
+        metadata: {},
+      }),
+    );
+
+    // Precondition: the oversized event really is the TOP hit, so this exercises the bug
+    // (packing used to stop at it and return nothing) instead of passing on ranking luck.
+    expect(ftsSearch(store, "deploy")[0].event.id).toBe(oversized.id);
+
+    const result = await recall({ query: "deploy", maxTokens: 1000 }, store);
+    const packedIds = new Set(result.events.map((e) => e.event.id));
+    expect(packedIds).toEqual(new Set(small.map((e) => e.id)));
+    expect(result.events).toHaveLength(3);
+    expect(result.totalTokens).toBeLessThanOrEqual(1000);
+    expect(result.truncated).toBe(true);
+  });
+
   it("recall batch queries return union", async () => {
     const store = createEventStore({ baseDir: tmpDir, sessionKey: "recall-batch" });
     store.append({

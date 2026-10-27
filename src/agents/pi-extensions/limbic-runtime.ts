@@ -25,6 +25,7 @@ import {
   sensitivityGate,
   type SensitivityResult,
 } from "../../../extensions/tinkerclaw-computational-humor/src/sensitivity-gate.js";
+import { emitJLimbicAttempt } from "../../infra/events/j-rows.js";
 import type { EmbeddingProvider } from "../../memory/embeddings.js";
 import type { EventStore } from "../../memory/engram/event-store.js";
 import type { CortexRuntime } from "./cortex-runtime.js";
@@ -275,7 +276,19 @@ export function createLimbicRuntime(
     checkSensitivity(topic: string, context?: string): SensitivityResult {
       const calibration = getCalibration();
       // sensitivityGate needs conceptA/conceptB/bridge breakdown; map topic to those roles.
-      return sensitivityGate(topic, context ?? "", "", calibration);
+      const result = sensitivityGate(topic, context ?? "", "", calibration);
+      // logging.md §4.12 (J7): the SUPPRESSED half of `j.limbic.attempt`. n1 is null on this path
+      // on purpose — the gate runs BEFORE h_v2 is computed, so there is no humor potential to
+      // report and a zero would be a measurement that never happened (L7). The topic, the context
+      // and the gate's reason string are all free text and never travel (L4).
+      if (!result.allowed) {
+        emitJLimbicAttempt({
+          outcome: "suppressed",
+          humorPotential: null,
+          sessionKey: eventStore.sessionKey,
+        });
+      }
+      return result;
     },
 
     logAttempt(id: string, params: HumorAttemptParams, turnId: number): void {
@@ -306,6 +319,15 @@ export function createLimbicRuntime(
           tags: ["limbic", "humor_attempt"],
           importance: 5,
         },
+      });
+
+      // logging.md §4.12 (J7): the EMITTED half — one row per attempt that reached the audience,
+      // carrying the computed potential that the J7 claim is about. The concepts, the bridge and
+      // the audience stay in the event store; none of them belongs in a row (L4).
+      emitJLimbicAttempt({
+        outcome: "emitted",
+        humorPotential: params.score,
+        sessionKey: eventStore.sessionKey,
       });
     },
 

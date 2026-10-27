@@ -119,7 +119,7 @@ describe("pendingPillLabel", () => {
   });
 });
 
-// FORK 2026-08-15 (the user: "itemized as much as possible") — the trail is what answers
+// FORK 2026-08-15 (the architect: "itemized as much as possible") — the trail is what answers
 // "where did the 30 seconds go", so its ordering, collapsing and duration arithmetic are
 // the parts worth pinning. Durations come from real arrival times only.
 const P = (phase: string, at: number, sessionKey = "agent:main:tinker:A"): TurnPhase => ({
@@ -230,7 +230,7 @@ describe("turnPhaseSteps", () => {
     ]);
   });
 
-  // FORK 2026-08-16 (the user: "All the phase elapsed times should always show even though the time
+  // FORK 2026-08-16 (the architect: "All the phase elapsed times should always show even though the time
   // is small or zero"). `seconds` rounds a sub-second stage to 0, and the chip used to print
   // "0s" — which reads as "did not happen" for exactly the stages a warm cache makes fast. The
   // unrounded `ms` is what the renderer formats from, so it must survive here.

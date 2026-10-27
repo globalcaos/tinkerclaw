@@ -1,7 +1,9 @@
-import { analyzeBootstrapBudget } from "../../agents/bootstrap-budget.js";
+import { analyzeBootstrapBudget, analyzeMemoryIndexBudget } from "../../agents/bootstrap-budget.js";
 import {
   resolveBootstrapMaxChars,
   resolveBootstrapTotalMaxChars,
+  resolveMemoryIndexMaxChars,
+  resolveMemoryIndexWarningMode,
 } from "../../agents/embedded-agent-helpers/bootstrap.js";
 import { buildSystemPromptReport } from "../../agents/system-prompt-report.js";
 import {
@@ -194,6 +196,18 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
           "Tip: increase `agents.defaults.bootstrapMaxChars` and/or `agents.defaults.bootstrapTotalMaxChars` if this truncation is not intentional.",
         ]
       : [];
+  const memoryIndexBudget =
+    resolveMemoryIndexWarningMode(params.cfg) === "off"
+      ? undefined
+      : analyzeMemoryIndexBudget({
+          files: report.injectedWorkspaceFiles,
+          maxChars: resolveMemoryIndexMaxChars(params.cfg),
+        });
+  if (memoryIndexBudget) {
+    bootstrapWarningLines.push(
+      `⚠ ${memoryIndexBudget.name} is ${formatInt(memoryIndexBudget.rawChars)} chars, over its ${formatInt(memoryIndexBudget.maxChars)}-char index budget (\`agents.defaults.memoryIndexMaxChars\`). Keep it one line per topic and move detail into topic files (memory/<topic>.md).`,
+    );
+  }
 
   const contextWindowLabel = session.contextTokens != null ? formatInt(session.contextTokens) : "?";
   const totalsLine =

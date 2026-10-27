@@ -213,6 +213,9 @@ private val onboardingCaption2Style: TextStyle
 fun OnboardingFlow(
   viewModel: MainViewModel,
   modifier: Modifier = Modifier,
+  // FORK 2026-10-19 (the architect: phone app) — a Jarvis app paired through a door link already has its
+  // gateway: skip the Gateway step and connect through the door, keep the permission steps.
+  jarvisPaired: Boolean = false,
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val statusText by viewModel.statusText.collectAsState()
@@ -223,7 +226,7 @@ fun OnboardingFlow(
   val persistedGatewayToken by viewModel.gatewayToken.collectAsState()
   val pendingTrust by viewModel.pendingGatewayTrust.collectAsState()
 
-  var step by rememberSaveable { mutableStateOf(OnboardingStep.Welcome) }
+  var step by rememberSaveable { mutableStateOf(if (jarvisPaired) OnboardingStep.Permissions else OnboardingStep.Welcome) }
   var setupCode by rememberSaveable { mutableStateOf("") }
   var gatewayUrl by rememberSaveable { mutableStateOf("") }
   var gatewayPassword by rememberSaveable { mutableStateOf("") }
@@ -233,7 +236,7 @@ fun OnboardingFlow(
   var manualPort by rememberSaveable { mutableStateOf("18789") }
   var manualTls by rememberSaveable { mutableStateOf(false) }
   var gatewayError by rememberSaveable { mutableStateOf<String?>(null) }
-  var attemptedConnect by rememberSaveable { mutableStateOf(false) }
+  var attemptedConnect by rememberSaveable { mutableStateOf(jarvisPaired) }
   val canFinishOnboarding = canFinishOnboarding(isConnected = isConnected, isNodeConnected = isNodeConnected)
 
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -752,14 +755,19 @@ fun OnboardingFlow(
           OnboardingStep.FinalCheck ->
             FinalStep(
               viewModel = viewModel,
-              parsedGateway = parseGatewayEndpoint(gatewayUrl),
+              parsedGateway = if (jarvisPaired) jarvisDoorGatewayConfig(viewModel) else parseGatewayEndpoint(gatewayUrl),
               statusText = statusText,
               isConnected = canFinishOnboarding,
               serverName = serverName,
               remoteAddress = remoteAddress,
               attemptedConnect = attemptedConnect,
               enabledPermissions = enabledPermissionSummary,
-              methodLabel = if (gatewayInputMode == GatewayInputMode.SetupCode) "QR / Setup Code" else "Manual",
+              methodLabel =
+                when {
+                  jarvisPaired -> "Jarvis pairing link"
+                  gatewayInputMode == GatewayInputMode.SetupCode -> "QR / Setup Code"
+                  else -> "Manual"
+                },
             )
         }
       }
@@ -784,7 +792,7 @@ fun OnboardingFlow(
                 when (step) {
                   OnboardingStep.Welcome -> OnboardingStep.Welcome
                   OnboardingStep.Gateway -> OnboardingStep.Welcome
-                  OnboardingStep.Permissions -> OnboardingStep.Gateway
+                  OnboardingStep.Permissions -> if (jarvisPaired) OnboardingStep.Welcome else OnboardingStep.Gateway
                   OnboardingStep.FinalCheck -> OnboardingStep.Permissions
                 }
             },
@@ -801,7 +809,7 @@ fun OnboardingFlow(
         when (step) {
           OnboardingStep.Welcome -> {
             Button(
-              onClick = { step = OnboardingStep.Gateway },
+              onClick = { step = if (jarvisPaired) OnboardingStep.Permissions else OnboardingStep.Gateway },
               modifier = Modifier.weight(1f).height(52.dp),
               shape = RoundedCornerShape(14.dp),
               colors = onboardingPrimaryButtonColors(),
@@ -891,6 +899,11 @@ fun OnboardingFlow(
             } else {
               Button(
                 onClick = {
+                  if (jarvisPaired) {
+                    attemptedConnect = true
+                    viewModel.connectJarvisDoor()
+                    return@Button
+                  }
                   val parsed = parseGatewayEndpointResult(gatewayUrl)
                   if (parsed.config == null) {
                     step = OnboardingStep.Gateway
@@ -939,12 +952,32 @@ fun OnboardingFlow(
               ) {
                 Text("Connect", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
               }
+              // FORK 2026-10-19 (the architect: phone app) — the Tinker page only needs the door, not the
+              // node: a gateway that holds the new device for approval, or a stale gw token, must
+              // not lock a paired app out of Jarvis. The node keeps retrying in the background.
+              if (jarvisPaired) {
+                TextButton(
+                  onClick = { viewModel.setOnboardingCompleted(true) },
+                  modifier = Modifier.height(52.dp),
+                ) {
+                  Text("Open Jarvis", style = onboardingHeadlineStyle.copy(fontWeight = FontWeight.Bold))
+                }
+              }
             }
           }
         }
       }
     }
   }
+}
+
+// FORK 2026-10-19 (the architect: phone app) — what the Review step shows as the gateway of a paired app.
+@Composable
+private fun jarvisDoorGatewayConfig(viewModel: MainViewModel): GatewayEndpointConfig? {
+  val host by viewModel.manualHost.collectAsState()
+  val port by viewModel.manualPort.collectAsState()
+  if (host.isBlank()) return null
+  return GatewayEndpointConfig(host = host, port = port, tls = false, displayUrl = "http://$host:$port (Jarvis door)")
 }
 
 internal fun canFinishOnboarding(

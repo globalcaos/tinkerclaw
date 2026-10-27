@@ -47,11 +47,11 @@ const ADMIN_SCOPES = ["operator.admin"];
  * bill metered). Default = sonnet: a sensible, cheaper middle. Dynamic workflows are
  * a STANDING capability (not a max-effort tier), so the default should not be the
  * priciest model — a script picks `claude-code/claude-haiku-4-5` per-unit for cheap
- * parallel scanning (separate budget) and `claude-code/claude-fable-5` (the flagship)
+ * parallel scanning (separate budget) and `claude-code/claude-fable-5-1` (the flagship)
  * for hard reasoning or to break out of a going-in-circles fix loop, via agent({model})
  * (coerced to claude-code/* — see coerceClaudeCodeModel).
  */
-const DEFAULT_LEAF_MODEL = "claude-code/claude-sonnet-4-6";
+const DEFAULT_LEAF_MODEL = "claude-code/claude-sonnet-5-5";
 
 /**
  * BILLING GUARD: force a `claude-code/*` leaf model. A claude-code/* request is
@@ -66,9 +66,63 @@ function coerceClaudeCodeModel(requested: string | undefined): string {
     : DEFAULT_LEAF_MODEL;
 }
 
+/** Must equal `LEAF_RESOLVER_SLOT` in `src/infra/thalamus-call-router.ts`; a core test compares them. */
+export const THALAMUS_LEAF_RESOLVER_SLOT = "openclaw.thalamus.leafModelResolver";
+
+/**
+ * The registered resolver's pick for one `model: "auto"` unit, or undefined. Read by `Symbol.for` key with no import,
+ * so nothing here depends on the Thalamus plugin existing. A throw or a malformed answer counts as no answer.
+ */
+function resolveAutoLeaf(
+  prompt: string,
+  opts: AgentOpts | undefined,
+  site: "orchestrate-auto" | "orchestrate-default",
+): { model: string; thinking?: string } | undefined {
+  const slot = (globalThis as Record<symbol, unknown>)[Symbol.for(THALAMUS_LEAF_RESOLVER_SLOT)];
+  const resolve = (slot as { resolve?: (r: unknown) => unknown } | undefined)?.resolve;
+  if (typeof resolve !== "function") return undefined;
+  try {
+    const out = resolve.call(slot, {
+      prompt,
+      label: opts?.label,
+      reads: opts?.reads,
+      writes: opts?.writes,
+      thinking: opts?.thinking,
+      site,
+    }) as { model?: unknown; thinking?: unknown } | undefined;
+    if (!out || typeof out.model !== "string" || out.model.trim() === "") return undefined;
+    return {
+      model: out.model,
+      ...(typeof out.thinking === "string" && out.thinking ? { thinking: out.thinking } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 interface HistoryMessage {
   role?: string;
   content?: unknown;
+  model?: string;
+  stopReason?: string;
+  errorMessage?: string;
+}
+
+/**
+ * The error text when the child's last assistant message is a provider error rather than an
+ * answer (stopReason "error", or the "<synthetic>" model the runtime uses for error stand-ins,
+ * e.g. "You've hit your weekly limit"); "" otherwise. agent.wait reports such a run as ok.
+ * (2026-10-09: 11 fan-out units died this way and were read as finished.)
+ */
+export function lastAssistantError(messages: unknown): string {
+  const arr = Array.isArray(messages) ? (messages as HistoryMessage[]) : [];
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (m?.role !== "assistant") continue;
+    if (m.stopReason !== "error" && m.model !== "<synthetic>") return "";
+    return (m.errorMessage || extractLastAssistantText([m]) || "provider error").trim();
+  }
+  return "";
 }
 
 /**
@@ -109,6 +163,13 @@ export interface ProductionRuntimeOpts {
   /** Phase sink (wire to fork.prefrontal.setRecipe at the call site for the panel). */
   onPhase?: (title: string) => void;
   /**
+   * Most units in flight at once: min(subagents.maxConcurrent, maxChildrenPerAgent) from the gateway
+   * config. Without it the runtime caps at min(16, cores-2), which can exceed both. (2026-10-09)
+   */
+  maxInFlight?: number;
+  /** Pause before re-trying a spawn refused for max active children. Default 15 s; tests pass 1. */
+  spawnRetryDelayMs?: number;
+  /**
    * Default leaf model for spawned units. COERCED to claude-code/* (see
    * coerceClaudeCodeModel) so billing safety holds regardless of value. Default
    * DEFAULT_LEAF_MODEL. Per-unit override via agent({model}).
@@ -137,29 +198,44 @@ export async function spawnTextVia(
   runTimeoutSeconds: number,
   model?: string,
   thinking?: string,
+  spawnRetryDelayMs = 15_000,
 ): Promise<string> {
   // Pin a claude-code/* model on EVERY spawn here (the billing guard is centralized
   // so no caller can bypass it). Omitted/non-claude-code → DEFAULT_LEAF_MODEL.
   const leafModel = coerceClaudeCodeModel(model);
-  const spawn = await callGateway<{
-    ok?: boolean;
-    childSessionKey?: string;
-    runId?: string;
-    note?: string;
-  }>({
-    method: "fork.subagents.spawn",
-    params: {
-      task,
-      label,
-      model: leafModel,
-      thinking,
-      parentSessionKey,
-      runTimeoutSeconds,
-      expectsCompletionMessage: false,
-    },
-    timeoutMs: (runTimeoutSeconds + 10) * 1000,
-    scopes: ADMIN_SCOPES, // fork.subagents.spawn is admin-only; the loopback must request it
-  });
+  // A requester with agents.defaults.subagents.maxChildrenPerAgent active children gets its next spawn
+  // REFUSED, not queued (src/agents/subagent-spawn.ts). A sibling unit or another fan-out on the same
+  // parent frees a slot within minutes, so wait for one inside the unit's own budget instead of failing
+  // the unit. Any other spawn error still throws at once. (2026-10-09)
+  type SpawnAck = { ok?: boolean; childSessionKey?: string; runId?: string; note?: string };
+  const spawnDeadline = Date.now() + runTimeoutSeconds * 1000;
+  let spawned: SpawnAck | undefined;
+  for (;;) {
+    try {
+      spawned = await callGateway<SpawnAck>({
+        method: "fork.subagents.spawn",
+        params: {
+          task,
+          label,
+          model: leafModel,
+          thinking,
+          parentSessionKey,
+          runTimeoutSeconds,
+          expectsCompletionMessage: false,
+        },
+        timeoutMs: (runTimeoutSeconds + 10) * 1000,
+        scopes: ADMIN_SCOPES, // fork.subagents.spawn is admin-only; the loopback must request it
+      });
+      break;
+    } catch (err) {
+      const message = String((err as Error)?.message ?? err);
+      if (!/max active children/i.test(message) || Date.now() >= spawnDeadline) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, spawnRetryDelayMs));
+    }
+  }
+  const spawn = spawned;
   if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
     throw new Error(`orchestration spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
   }
@@ -196,6 +272,12 @@ export async function spawnTextVia(
     timeoutMs: 10_000,
     scopes: ADMIN_SCOPES,
   });
+  const providerError = lastAssistantError(hist?.messages);
+  if (providerError) {
+    throw new Error(
+      `orchestration run ended in a provider error, not an answer: ${providerError.slice(0, 200)}`,
+    );
+  }
   return extractLastAssistantText(hist?.messages);
 }
 
@@ -217,8 +299,26 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
     const label = agentOpts?.label ?? "orchestration-agent";
     // Per-unit model override (agent({model})) is coerced; otherwise the (already
     // coerced) default leaf model. Either way the spawn is claude-code/* = tinker-sp-*.
-    const model = agentOpts?.model ? coerceClaudeCodeModel(agentOpts.model) : defaultLeafModel;
-    const thinking = agentOpts?.thinking; // per-unit effort override, or undefined to inherit
+    // FORK 2026-09-30 (THALAMUS v4 E3): `model: "auto"` asks the registered resolver for this unit's model. With none
+    // registered, or one that offers nothing usable, "auto" is exactly an omitted model: the default leaf model. The
+    // billing guard still has the last word on whatever comes back.
+    // FORK 2026-10-03: a unit with no model is Thalamus's too when it owns the `orchestrate-default` site (the architect: "Make
+    // sure Thalamus is owner of all those model choices when it is working"), unless the caller configured its own
+    // default leaf model. The resolver decides by site whether to act; an empty answer keeps the default leaf model.
+    const auto = agentOpts?.model === "auto";
+    const omitted = !agentOpts?.model && !opts.leafModel;
+    const choice = auto
+      ? resolveAutoLeaf(prompt, agentOpts, "orchestrate-auto")
+      : omitted
+        ? resolveAutoLeaf(prompt, agentOpts, "orchestrate-default")
+        : undefined;
+    const model = choice
+      ? coerceClaudeCodeModel(choice.model)
+      : agentOpts?.model && !auto
+        ? coerceClaudeCodeModel(agentOpts.model)
+        : defaultLeafModel;
+    // Per-unit effort override, or the resolver's when the script gave none, or undefined to inherit.
+    const thinking = agentOpts?.thinking ?? choice?.thinking;
     const finalText = await spawnTextVia(
       opts.callGateway,
       prompt,
@@ -227,8 +327,13 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
       runTimeoutSeconds,
       model,
       thinking,
+      opts.spawnRetryDelayMs,
     );
     return { finalText };
   };
-  return createOrchestrationRuntime({ spawn, onPhase: opts.onPhase });
+  return createOrchestrationRuntime({
+    spawn,
+    onPhase: opts.onPhase,
+    maxInFlight: opts.maxInFlight,
+  });
 }

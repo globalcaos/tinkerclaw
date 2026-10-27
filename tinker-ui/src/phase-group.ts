@@ -1,4 +1,4 @@
-// FORK 2026-08-24 (the user) — ONE LIVE BLOCK PER TURN, not one chat row per finished stage.
+// FORK 2026-08-24 (the architect) — ONE LIVE BLOCK PER TURN, not one chat row per finished stage.
 //
 // What was wrong with the row-per-stage shape it replaces:
 //
@@ -20,7 +20,7 @@
 // entry with no unit-test harness, so a rule left inlined there is a rule with no test.
 
 /**
- * FORK 2026-08-24 (the user) — the breakdown is a TREE, not a flat list.
+ * FORK 2026-08-24 (the architect) — the breakdown is a TREE, not a flat list.
  *
  * "Total Recall" is a member of the `before_prompt_build` chain AND measures its own internals, so
  * it is a child that is also a parent. A flat `Array<{id,ms}>` could express only one of those, and
@@ -101,6 +101,12 @@ export type PhaseEntry = {
    * derived duration silently folds in event-loop and network latency.
    */
   inferred?: boolean;
+  /**
+   * FORK 2026-09-21 — how an inferred close came about ("final" / "error" / "aborted" /
+   * "cleared" / "new" / "stale-restore") when the closer was a terminal signal rather than the
+   * next stage starting. Diagnostic only; the renderer keys off `done`/`inferred`.
+   */
+  closedBy?: string;
 };
 
 /**
@@ -171,6 +177,49 @@ export function phaseGroupIsLive(entries: readonly PhaseEntry[]): boolean {
 }
 
 /**
+ * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — cap on a derived close.
+ * A phantom block restored from localStorage days after its turn died would otherwise close its
+ * open entry with days of "runtime"; no single stage legitimately holds an hour.
+ */
+export const PHASE_CLOSE_MAX_MS = 60 * 60 * 1000;
+
+/**
+ * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — close every entry a
+ * terminal signal leaves open.
+ *
+ * A timing block is PERSISTED (client-rows.ts) and re-injected on every reload, and one entry
+ * with `done:false` is what makes the whole block render as running (`phaseGroupIsLive`).
+ * Nothing closed open entries on chat final/error/aborted, on Stop, on /clear or /new — so an
+ * aborted turn's block pulsed forever, surviving hard reloads (observed 2026-09-21: gateway
+ * activeRunIds=[], sessions row run.live=false, yet a ticking "Turn timing" block).
+ *
+ * Same convention as the superseded-entry close in `upsertPhaseEntry`: done + `inferred`,
+ * duration derived from `startedAt`, the entry NEVER dropped — a stage that ran is a real stage.
+ * Pure: returns a new array plus whether anything was open; the caller persists.
+ */
+export function closeOpenPhaseEntries(
+  entries: readonly PhaseEntry[],
+  nowMs: number,
+  closedBy: string,
+): { entries: PhaseEntry[]; changed: boolean } {
+  let changed = false;
+  const out = entries.map((e) => {
+    if (e.done) {
+      return e;
+    }
+    changed = true;
+    return {
+      ...e,
+      done: true,
+      inferred: true,
+      closedBy,
+      ms: Math.min(Math.max(0, nowMs - (e.startedAt ?? nowMs)), PHASE_CLOSE_MAX_MS),
+    };
+  });
+  return { entries: changed ? out : entries.slice(), changed };
+}
+
+/**
  * Total of the block, with running entries counted against the clock.
  *
  * A SUM OF STAGES IS NOT THE WALL TIME OF THE TURN, and this function does not pretend otherwise —
@@ -207,7 +256,7 @@ export function phaseGroupSpanMs(entries: readonly PhaseEntry[], nowMs: number):
 }
 
 /**
- * FORK 2026-08-24 (the user: "The elements need to be rendered expanded initially, but when the task
+ * FORK 2026-08-24 (the architect: "The elements need to be rendered expanded initially, but when the task
  * is completed it needs to collapse into the task level") — AUTOMATIC DISCLOSURE.
  *
  * The rows exist to be watched while you wait, and to be out of the way afterwards. Collapsed-by-

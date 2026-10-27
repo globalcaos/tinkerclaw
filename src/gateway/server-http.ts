@@ -211,7 +211,7 @@ function isOpenResponsesPath(pathname: string): boolean {
 }
 
 function isToolsInvokePath(pathname: string): boolean {
-  return pathname === "/tools/invoke";
+  return pathname === "/tools/invoke" || pathname === "/tools/list";
 }
 
 function isSessionKillPath(pathname: string): boolean {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AA_EFFORT_INDEX, aaFamilyOf, aaNamedEfforts, aaScoreAt } from "./aa-effort-index.js";
 
-// FORK 2026-09-02 (the user: "there are still models that look like a horizontal line").
+// FORK 2026-09-02 (the architect: "there are still models that look like a horizontal line").
 // A flat constellation means the model has a vendor effort ladder but ≤1 AA-measured
 // rung. The audit that turn found most of those are genuinely unmeasured — AA runs a
 // full effort ladder only for selected flagship models — but TWO were flat because our
@@ -109,12 +109,28 @@ describe("aa-effort-index — family joins that were silently missing", () => {
     expect(aaScoreAt("openai/gpt-4o", "medium")).toBeUndefined();
   });
 
-  // Sonnet 5's low/medium/high/xhigh rows exist on AA but are `intelligenceIndex: null`,
-  // and its `-non-reasoning` sibling IS scored at high. Folding that in would file a
-  // different MODE as an effort stop and put a bogus high rung below its own max.
+  // Sonnet 5's `-non-reasoning` sibling IS scored at high (28.94). Folding that in
+  // would file a different MODE as an effort stop and put a bogus high rung below
+  // its own max. AA scores the real adaptive high too (31.6623 as of 2026-09-20)
+  // and the adaptive xhigh; those are the ones we keep. The non-reasoning 28.94
+  // must stay out. Do not pin the adaptive high to a literal — it moves daily.
   it("never absorbs a non-reasoning row as an effort stop", () => {
-    expect(aaNamedEfforts("claude-code/claude-sonnet-5")).toEqual(["max"]);
-    expect(aaScoreAt("claude-code/claude-sonnet-5", "high")).toBeUndefined();
+    expect(aaNamedEfforts("claude-code/claude-sonnet-5")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    // ordered by ladder, not pinned to a literal that expires on AA's next pass
+    expect(aaScoreAt("claude-code/claude-sonnet-5", "xhigh")!).toBeGreaterThan(
+      aaScoreAt("claude-code/claude-sonnet-5", "high")!,
+    );
+    expect(aaScoreAt("claude-code/claude-sonnet-5", "xhigh")!).toBeLessThan(
+      aaScoreAt("claude-code/claude-sonnet-5", "max")!,
+    );
+    // the non-reasoning sibling's 28.94 must not have overwritten the adaptive high
+    expect(aaScoreAt("claude-code/claude-sonnet-5", "high")!).toBeGreaterThan(30);
   });
 
   it("every shipped score is a finite number — no nulls, no placeholders", () => {

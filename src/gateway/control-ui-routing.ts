@@ -1,3 +1,4 @@
+import { CONTROL_UI_BOOTSTRAP_CONFIG_PATH } from "./control-ui-contract.js";
 import { isReadHttpMethod } from "./control-ui-http-utils.js";
 
 export type ControlUiRequestClassification =
@@ -7,6 +8,12 @@ export type ControlUiRequestClassification =
   | { kind: "serve" };
 
 const ROOT_MOUNTED_GATEWAY_PROBE_PATHS = new Set(["/health", "/healthz", "/ready", "/readyz"]);
+
+function bootstrapPath(basePath: string): string {
+  return basePath
+    ? `${basePath}${CONTROL_UI_BOOTSTRAP_CONFIG_PATH}`
+    : CONTROL_UI_BOOTSTRAP_CONFIG_PATH;
+}
 
 export function classifyControlUiRequest(params: {
   basePath: string;
@@ -19,13 +26,9 @@ export function classifyControlUiRequest(params: {
     if (pathname === "/ui" || pathname.startsWith("/ui/")) {
       return { kind: "not-found" };
     }
-    // Keep core probe routes outside the root-mounted SPA catch-all so the
-    // gateway probe handler can answer them even when the Control UI owns `/`.
     if (ROOT_MOUNTED_GATEWAY_PROBE_PATHS.has(pathname)) {
       return { kind: "not-control-ui" };
     }
-    // Keep plugin-owned HTTP routes outside the root-mounted Control UI SPA
-    // fallback so untrusted plugins cannot claim arbitrary UI paths.
     if (pathname === "/plugins" || pathname.startsWith("/plugins/")) {
       return { kind: "not-control-ui" };
     }
@@ -35,7 +38,12 @@ export function classifyControlUiRequest(params: {
     if (!isReadHttpMethod(method)) {
       return { kind: "not-control-ui" };
     }
-    return { kind: "serve" };
+    // FORK 2026-09-10: stock dashboard SPA is gone. Keep the bootstrap JSON
+    // that media/avatar helpers still read; everything else 404s.
+    if (pathname === bootstrapPath("")) {
+      return { kind: "serve" };
+    }
+    return { kind: "not-found" };
   }
 
   if (!pathname.startsWith(`${basePath}/`) && pathname !== basePath) {
@@ -44,8 +52,9 @@ export function classifyControlUiRequest(params: {
   if (!isReadHttpMethod(method)) {
     return { kind: "not-control-ui" };
   }
-  if (pathname === basePath) {
-    return { kind: "redirect", location: `${basePath}/${search}` };
+  if (pathname === bootstrapPath(basePath)) {
+    return { kind: "serve" };
   }
-  return { kind: "serve" };
+  void search;
+  return { kind: "not-found" };
 }

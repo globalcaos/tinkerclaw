@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
 import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
+import { emitJSkillOutcome } from "../infra/events/j-rows.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveSkillEmbedFn } from "../memory/engram/skill-embed.js";
 import { recordSkillOutcome } from "../memory/engram/skill-invocation.js";
@@ -199,6 +200,13 @@ export const forkSkillHandlers: GatewayRequestHandlers = {
       // poking the library directly, so the fitness-update path is single-owner.
       recordSkillOutcome(lib, skillId, success);
       const updated = lib.read(skillId);
+      // logging.md §4.12 (J5): one row per recorded use of a consolidated skill. The version
+      // travels as an id ("v3") so success can be read per version as nights accumulate; the
+      // skill id, name and body never do (L4).
+      emitJSkillOutcome({
+        outcome: success ? "success" : "failure",
+        skillVersion: updated ? `v${updated.version}` : null,
+      });
       log.info(
         `fork.skill.recordOutcome skillId=${skillId} success=${success} invocations=${updated?.successMetrics.invocations ?? "?"}`,
       );

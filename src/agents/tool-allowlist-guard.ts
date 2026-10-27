@@ -10,6 +10,11 @@ export function collectExplicitToolAllowlistSources(
 ): ExplicitToolAllowlistSource[] {
   return sources.flatMap((source) => {
     const entries = (source.allow ?? []).map((entry) => entry.trim()).filter(Boolean);
+    // FORK 2026-10-09: a list holding "*" allows every tool, so it cannot be why none remain.
+    // `tools.alsoAllow` alone resolves to ["*", ...alsoAllow]; counting it failed every tool-less run.
+    if (entries.includes("*")) {
+      return [];
+    }
     return entries.length ? [{ label: source.label, entries }] : [];
   });
 }

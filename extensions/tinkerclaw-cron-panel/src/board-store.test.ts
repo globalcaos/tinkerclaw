@@ -193,7 +193,7 @@ describe("reworded recurrence (measured 2026-08-18: exact hashing merged 5 of 13
     ingestBoard(cfg, JOB);
     // Byte-identical text, different tag. `kind` is part of stableItemId, so the
     // EXACT tier splits them too — the two tiers must not disagree, and a FLAG
-    // asking the user for something is not the same claim as a CHANGED telling him.
+    // asking the architect for something is not the same claim as a CHANGED telling him.
     writeReport(cfg, day(1), [
       "CHANGED: the gateway restarted with no deploy and the cause is not established",
     ]);
@@ -347,6 +347,25 @@ describe("auto-resolve by absence", () => {
     const board = ingestBoard(cfg, JOB);
     expect(board.items.find((i) => i.text === "pin me")?.status).toBe("open");
     expect(board.items.find((i) => i.text === "dismiss me")?.status).toBe("dismissed");
+  });
+
+  it("keeps an unread FOUND open until it is ticked, then lets it leave the card", () => {
+    const cfg = makeCfg();
+    writeReport(cfg, day(0), ["FOUND: an upgrade worth picking", "NOTE: heartbeat"]);
+    ingestBoard(cfg, JOB);
+
+    for (let k = 1; k <= RESOLVE_AFTER_MISSED_RUNS; k++)
+      writeReport(cfg, day(k), ["NOTE: heartbeat"]);
+    const board = ingestBoard(cfg, JOB);
+    const pick = board.items.find((i) => i.text === "an upgrade worth picking");
+    expect(pick?.status).toBe("open");
+
+    acknowledgeItem(cfg, JOB, pick!.id, true);
+    writeReport(cfg, day(RESOLVE_AFTER_MISSED_RUNS + 1), ["NOTE: heartbeat"]);
+    const after = ingestBoard(cfg, JOB);
+    // Ticked and long absent: it leaves the card (resolved), like any read item.
+    expect(after.items.find((i) => i.id === pick!.id)?.status).toBe("resolved");
+    expect(summarizeBoard(after).openCount).toBe(1);
   });
 });
 

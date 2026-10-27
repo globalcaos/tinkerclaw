@@ -9,6 +9,16 @@ const _makeFile = (overrides: Partial<WorkspaceBootstrapFile>): WorkspaceBootstr
   missing: false,
   ...overrides,
 });
+describe("classifyFailoverReason — 426 Upgrade Required", () => {
+  // 2026-10-02: xAI answers every call with 426 because our Grok client reports an old version. It classified as
+  // null, so no failover happened and the Auto turn died; Thalamus kept choosing Grok because nothing cooled it.
+  const xai426 =
+    '426 "Your Grok CLI version (0.2.91) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation."';
+  it("is a provider-wide rejection of this client, classified as auth so the chain moves on", () => {
+    expect(classifyFailoverReason(xai426, { provider: "xai" })).toBe("auth");
+    expect(classifyFailoverReason("426 Upgrade Required")).toBe("auth");
+  });
+});
 describe("classifyFailoverReason", () => {
   it("returns a stable reason", () => {
     expect(classifyFailoverReason("invalid api key")).toBe("auth");
@@ -20,7 +30,7 @@ describe("classifyFailoverReason", () => {
       classifyFailoverReason(
         '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
       ),
-    ).toBe("rate_limit");
+    ).toBe("overloaded");
     expect(classifyFailoverReason("invalid request format")).toBe("format");
     expect(classifyFailoverReason("credit balance too low")).toBe("billing");
     expect(classifyFailoverReason("deadline exceeded")).toBe("timeout");

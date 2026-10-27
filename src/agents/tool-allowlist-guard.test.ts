@@ -72,4 +72,26 @@ describe("tool allowlist guard", () => {
       { label: "runtime toolsAllow", entries: ["query_db"] },
     ]);
   });
+
+  // FORK 2026-10-09: `tools.alsoAllow` without `tools.allow` resolves to `["*", ...alsoAllow]`. That
+  // list allows every tool, so it can never be why none remain; counting it failed every tool-less
+  // run (the amygdala's explanation runs, 3,901 times on 2026-10-09).
+  it("does not count an allow-all list as an explicit allowlist", () => {
+    const sources = collectExplicitToolAllowlistSources([
+      { label: "tools.allow", allow: ["*", "budget_check"] },
+      { label: "runtime toolsAllow", allow: ["query_db"] },
+    ]);
+
+    expect(sources).toEqual([{ label: "runtime toolsAllow", entries: ["query_db"] }]);
+    expect(
+      buildEmptyExplicitToolAllowlistError({
+        sources: collectExplicitToolAllowlistSources([
+          { label: "tools.allow", allow: ["*", "budget_check"] },
+        ]),
+        callableToolNames: [],
+        toolsEnabled: true,
+        disableTools: true,
+      }),
+    ).toBeNull();
+  });
 });

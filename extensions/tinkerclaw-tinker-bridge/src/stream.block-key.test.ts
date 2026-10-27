@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBlockKeyTracker } from "./stream.js";
 
-// FORK 2026-08-25 (the user: "the original chat of this cloned tab just swallowed
+// FORK 2026-08-25 (the architect: "the original chat of this cloned tab just swallowed
 // intermediate thinking text").
 //
 // A content-block `index` is unique only within ONE assistant message, but the

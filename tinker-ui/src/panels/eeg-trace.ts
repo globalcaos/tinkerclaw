@@ -14,17 +14,18 @@
 // style), never right-angle jumps. Color = provider brand, width = ESTIMATED
 // relative cost of (model × effort). The line sits at the effort the model
 // ACTUALLY ran at (the executed level) — no "requested vs actual" halo overlay
-// and no "forced" dashing: the EEG shows what happened (the user 2026-06-18).
+// and no "forced" dashing: the EEG shows what happened (the architect 2026-06-18).
 
 import { EFFORT_COST_MULT } from "../../../src/shared/effort-cost-mult.js";
-import { buildEegSpendClock } from "./eeg-spend-clock.js";
+import { DEFAULT_REL_COST, REL_COST_TABLE } from "../../../src/shared/rel-cost-table.js";
+import { buildEegSpendClock, EEG_LIVE_GRACE_MS } from "./eeg-spend-clock.js";
 import { vendorOfModel } from "./vendor-marks.js";
 
 // ─── Stops (MUST mirror app.ts THINK_STOPS order exactly) ───
 // `short` = the compact tick label printed under the slider AND above the
 // seismograph column (full labels collide at 8 stops in a ~280px panel).
 export const EEG_STOPS: { lvl: string; label: string; short: string }[] = [
-  // lvl "" = the uncapped/"Auto" column. Auto is NOT an effort (the user 2026-06-25)
+  // lvl "" = the uncapped/"Auto" column. Auto is NOT an effort (the architect 2026-06-25)
   // — so its tick text is blank. The COLUMN stays: it reserves the left-hand space
   // that overflow `minimal` strands fan into (min→auto) when many run concurrently.
   { lvl: "", label: "Auto", short: "" },
@@ -42,11 +43,11 @@ export interface EegSample {
   provider: string;
   chosenLevel: string; // one of EEG_STOPS lvl values ("" = Auto/uncapped)
   subagent: boolean;
-  // FORK 2026-06-25 (the user scope C): a TOOL CALL (not an LLM run) — drawn as a
+  // FORK 2026-06-25 (the architect scope C): a TOOL CALL (not an LLM run) — drawn as a
   // branch off the trunk like a subagent, but colored/weighted by the PROVIDER it
   // drives (eegToolIdentity). nano-banana → gemini rainbow; grep/read → thin gray.
   // The point is to SEE a turn branch into providers + thicknesses, not to meter
-  // cost precisely (the user: €/token is already orientative). Excluded from `mains`
+  // cost precisely (the architect: €/token is already orientative). Excluded from `mains`
   // (never a trunk segment) and from the subagent ×N gauge (tools aren't fan-out).
   tool?: boolean;
   parentRunId?: string;
@@ -58,13 +59,6 @@ export interface EegSample {
   outputTokens?: number; // generated tokens (run total)
   startedAt: number; // epoch ms
   endedAt?: number; // epoch ms (absent = still running)
-  // FORK 2026-06-19 (bible §5.8h): true for a trace belonging to ANOTHER session
-  // overlaid in the EEG "all" scope — drawn semi-transparent so the viewed
-  // session's own (solid) trace stays distinguishable.
-  dim?: boolean;
-  // FORK 2026-06-19: which session this sample belongs to, so a merged "all"-scope
-  // render draws ONE continuous main line per session (absent = the viewed store).
-  sessionKey?: string;
 }
 
 export interface EegTurnEnd {
@@ -78,17 +72,17 @@ export interface EegTurnEnd {
   promptText?: string; // trimmed prompt text for the marker tooltip
 }
 
-// ─── Provider brand palette (bible §5.8h, the user's q6 full-palette pick) ───
+// ─── Provider brand palette (bible §5.8h, the architect's q6 full-palette pick) ───
 // google is NOT here — it is special-cased as the rainbow gradient below.
 export const EEG_PROVIDER_COLORS: Record<string, string> = {
   anthropic: "#E8702A",
   openai: "#10A37F",
-  // FORK 2026-08-04 (the user): Copilot EEG = pink. Exact value from the OKLab
+  // FORK 2026-08-04 (the architect): Copilot EEG = pink. Exact value from the OKLab
   // farthest-point sampler (scripts/pick-trace-colors.mjs) — h=337, separation
   // 0.255 from every other point on the paper including the #2a2318 background.
   "github-copilot": "#BF09A3",
   deepseek: "#4D6BFE",
-  // FORK 2026-08-04 (the user): the OpenRouter vendors. Values are NOT the brand
+  // FORK 2026-08-04 (the architect): the OpenRouter vendors. Values are NOT the brand
   // colours — Kimi #1783FF, GLM #3859FF, Qwen #6336E7 and DeepSeek #4D6BFE are
   // four blue-indigo brands that would paint four indistinguishable traces. See
   // ./vendor-marks.ts and scripts/pick-trace-colors.mjs.
@@ -97,7 +91,7 @@ export const EEG_PROVIDER_COLORS: Record<string, string> = {
   glm: "#80EE24",
   mistral: "#FA520F",
   meta: "#0668E1",
-  xai: "#B7BBC2", // FORK 2026-07-21 (the user): Grok = light gray (black brand is invisible on the #2a2318 paper; gray keeps the trace legible + distinct from the neutral `unknown` gray).
+  xai: "#B7BBC2", // FORK 2026-07-21 (the architect): Grok = light gray (black brand is invisible on the #2a2318 paper; gray keeps the trace legible + distinct from the neutral `unknown` gray).
   unknown: "#8A8F98", // local / anything unrecognized = neutral gray
 };
 
@@ -105,8 +99,8 @@ export const EEG_PROVIDER_COLORS: Record<string, string> = {
 // MODEL name — the live trace gets the cc-bridge model id ("claude-fable-5", no
 // "claude-code/" prefix), so providerOf() returns the bare name and a plain
 // provider-key lookup missed → gray. Matching model-name patterns keeps the trace
-// branded (the user 2026-06-13: "why am I still seeing gray instead of orange").
-// FORK 2026-08-04 #2 (the user: "The chinese models still have no visible color yet").
+// branded (the architect 2026-06-13: "why am I still seeing gray instead of orange").
+// FORK 2026-08-04 #2 (the architect: "The chinese models still have no visible color yet").
 // The vendor branch added earlier this day could NEVER fire: every caller passes
 // the PROVIDER string, and for these models that string is the literal
 // "openrouter" — which carries no vendor token at all. Adding the optional
@@ -123,7 +117,7 @@ export function eegProviderPaint(
   if (p === "google" || p.startsWith("google") || /gemini|gemma|bison/.test(p)) {
     return { stroke: "url(#eeg-google)", isRainbow: true };
   }
-  // FORK 2026-07-30 (the user): GitHub Copilot BEFORE the claude/gpt regexes — otherwise
+  // FORK 2026-07-30 (the architect): GitHub Copilot BEFORE the claude/gpt regexes — otherwise
   // a full "github-copilot/claude-…" id would paint Anthropic orange, and gpt twins
   // would paint OpenAI green. Copilot is its own Windows-blue lane.
   if (
@@ -134,7 +128,7 @@ export function eegProviderPaint(
   ) {
     return { stroke: EEG_PROVIDER_COLORS["github-copilot"], isRainbow: false };
   }
-  // FORK 2026-08-04 (the user): the OpenRouter vendors resolve by MODEL id, not by
+  // FORK 2026-08-04 (the architect): the OpenRouter vendors resolve by MODEL id, not by
   // provider — every one of them reports provider "openrouter", so a provider-key
   // lookup painted them all the neutral gray. Must sit ABOVE the generic branches:
   // 'glm' would otherwise never be reached, and a bare 'qwen3.8-max' has no other
@@ -145,7 +139,7 @@ export function eegProviderPaint(
       return { stroke: EEG_PROVIDER_COLORS[vendor], isRainbow: false };
     }
   }
-  // FORK 2026-09-02 (the user: "the color of the trace of fable 5.1 should be the one
+  // FORK 2026-09-02 (the architect: "the color of the trace of fable 5.1 should be the one
   // assigned to claude, the orange one"). These branches tested `p` — the PROVIDER
   // string — while the vendor branch above tests provider AND model. For a model we
   // reach THROUGH a router the brand lives in the model id's middle segment, so
@@ -173,7 +167,7 @@ export function eegProviderPaint(
   return { stroke: EEG_PROVIDER_COLORS[p] ?? EEG_PROVIDER_COLORS.unknown, isRainbow: false };
 }
 
-// FORK 2026-06-25 (the user scope C): a tool call branches off the trunk colored +
+// FORK 2026-06-25 (the architect scope C): a tool call branches off the trunk colored +
 // weighted by the PROVIDER it drives. Most skills shell out to a CLI/script, so we
 // infer the provider from the tool name + (for Bash) the command string. A call that
 // drives an EXTERNAL model (nano-banana → Gemini image, codex → OpenAI) gets that
@@ -204,14 +198,14 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
   return { provider: "tool", model: "tool:local" };
 }
 
-// ─── Cost model: thickness = the user's REAL per-use cost (€/Mtok output) ───
-// relCost values ARE effective €/Mtok-output under the user's actual billing,
+// ─── Cost model: thickness = the architect's REAL per-use cost (€/Mtok output) ───
+// relCost values ARE effective €/Mtok-output under the architect's actual billing,
 // NOT API sticker.
 //
-// FORK 2026-07-22 15:48 (the user, REAL INVOICES — supersedes the same-day 50%
+// FORK 2026-07-22 15:48 (the architect, REAL INVOICES — supersedes the same-day 50%
 // blanket model): effective €/Mtok per model from the four actual bills:
-//   · Anthropic: Max 20x €217.80/mo + €46.28 metered OVERAGE (the user pays) = €264.08.
-//     FORK 2026-08-11 (the user, after a $146 OpenRouter bill that this table argued
+//   · Anthropic: Max 20x €217.80/mo + €46.28 metered OVERAGE (the architect pays) = €264.08.
+//     FORK 2026-08-11 (the architect, after a $146 OpenRouter bill that this table argued
 //     FOR): the denominator was the ASSUMED ~124 Mtok-sonnet-eq × 1.21 ≈ 150, giving
 //     €1.76 per sonnet-eq Mtok. That constant only ages one way — a flat fee's
 //     per-token cost DIVIDES by usage — and burn has grown ~20× since it was written
@@ -235,13 +229,13 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 //     to the denominator problem documented at the gpt-5.6 rows below. Our
 //     path burns one seat. No token data → uniform 9.3× price→API-value quota
 //     at 50% use = API output price ÷ 4.65 (Sol $30 / Terra $15 / Luna $6).
-//   · Google: the user ATTRIBUTES his €21.99/mo Google One AI to Gemini (his call
+//   · Google: the architect ATTRIBUTES his €21.99/mo Google One AI to Gemini (his call
 //     2026-07-22 16:17, though the CLI tokens come from the free Code Assist
 //     tier) → same uniform amortization: API output ÷ 4.65 (3.1-pro $12 →
 //     2.58; flash $9 → 1.94).
 //   · xAI: SuperGrok (company seat, $9.90 promo → $30 steady-state; widths use $30):
 //     grok-4.5 $6 ÷ 4.65.
-//   · GitHub Copilot Pro+ (the user 2026-07-30): $39/mo → 7,000 AI credits
+//   · GitHub Copilot Pro+ (the architect 2026-07-30): $39/mo → 7,000 AI credits
 //     (1 credit = $0.01 ⇒ $70 included). Token burn is metered at GitHub's
 //     sticker rates (docs.github.com/copilot models-and-pricing). Amortize
 //     like other subscriptions: API output $/Mtok ÷ 4.65. Copilot-path models
@@ -250,7 +244,7 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 // ESTIMATES except the Anthropic spend (real invoice); measured halo corrects
 // later. Never present as measured (bible §5.8h invariant 3).
 //
-// FORK 2026-08-12 (the user: "draw it from public websites and then refute it with our
+// FORK 2026-08-12 (the architect: "draw it from public websites and then refute it with our
 // data"). Copilot is NO LONGER a ÷4.65 subscription row. Since 2026-06-01 Copilot
 // bills tokens at vendor sticker and publishes the rates itself
 // (docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing, read
@@ -258,404 +252,18 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 // GPT-5.4 $2.50/$15 · GPT-5.5 $5/$30 · Gemini 3.5 Flash $1.50/$9. Dividing those by
 // 4.65 understated every Copilot row 4.65×, so they now carry the RAW output price
 // like the OpenRouter block — a Copilot token is cash, not prepaid quota.
-export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
-  // ── GitHub Copilot Pro+ — PREPAID at a PUBLISHED allowance ──
-  // FORK 2026-08-15 (the user: "revise the models that have an EEG trace thicker than
-  // fable"). On 2026-08-12 these rows were moved to RAW vendor sticker because Copilot
-  // switched to token billing on 2026-06-01. That was half right: Copilot bills tokens,
-  // but Pro+ is still a **subscription with an included allowance** — $39/mo carrying
-  // **$70 of AI credits** (7,000 credits at $0.01; docs.github.com plans + billing).
-  // Treating it as pure cash put the whole block at the 40px cap, implying Copilot was
-  // the dearest thing we can run. It is not: inside the allowance you pay $39 for $70
-  // of sticker value, an officially-stated conversion of **39/70 = 0.5571×**.
-  // So: relCost = published sticker × 0.5571. No measurement, no invention — both
-  // numbers come off GitHub's own pages. (Past the allowance you pay list; our Copilot
-  // burn is ~3 turns in 30 days, i.e. deep inside it, so 0.5571 is the live factor.)
-  //
-  // ⚠ PROSPECTIVE ROWS — the user 2026-08-15: **we do not hold a Copilot Pro+
-  // subscription.** These models are on the panel to show management what buying one
-  // would get us and whether it is worth it. So the number to draw is what a token
-  // WOULD cost if we bought the plan (sticker × 0.5571), which is what these are — but
-  // nothing here is live spend, and the EEG will never paint one of these traces
-  // because the models are not routable today.
-  //
-  // AND THE THING MANAGEMENT WILL ASK: GitHub applies **NO MARKUP**. Its per-token
-  // prices are IDENTICAL to each model's own vendor — verified 13 of 14 price triples
-  // (input / cache-read / output) against Anthropic, OpenAI, Google and xAI on
-  // 2026-08-15; the sole exception is Grok-4.5's cache-read, $0.50 on Copilot against
-  // xAI's $0.30. Copilot rows draw thick NOT because GitHub overcharges but because our
-  // baseline is a far deeper discount: Pro+ returns ~1.79x its fee in list value,
-  // Anthropic Max 20x returns ~30x — an **18x gap in value-per-euro**. Same tokens,
-  // same list price, very different plan.
-  { modelMatch: /github-copilot\/.*fable/i, relCost: 27.86 }, // $50
-  { modelMatch: /github-copilot\/.*opus/i, relCost: 13.93 }, // $25
-  { modelMatch: /github-copilot\/.*5\.6-sol/i, relCost: 5.57 }, // $10 promo through 2026-09-03 (GitHub docs 2026-08-28; was $30 / 16.71)
-  { modelMatch: /github-copilot\/.*gpt-5\.5/i, relCost: 16.71 }, // $30
-  { modelMatch: /github-copilot\/.*5\.6-terra/i, relCost: 6.69 }, // $12
-  { modelMatch: /github-copilot\/.*gpt-5\.4(?!-mini|-nano)/i, relCost: 8.36 }, // $15
-  { modelMatch: /github-copilot\/.*sonnet-5(?!\.)/i, relCost: 5.57 }, // $10
-  { modelMatch: /github-copilot\/.*sonnet/i, relCost: 8.36 }, // $15
-  { modelMatch: /github-copilot\/.*5\.6-luna/i, relCost: 0.67 }, // $1.20
-  { modelMatch: /github-copilot\/.*gemini.*pro/i, relCost: 6.69 }, // $12
-  // GitHub docs 2026-08-28: 3.6/3.7 Flash promo $0.75/$3.75 through 2026-12-31.
-  // The $7.50 / $9 rows were last year's stickers. 3.75 × 0.5571 = 2.09.
-  { modelMatch: /github-copilot\/.*gemini-3\.[678].*flash/i, relCost: 2.09 }, // $3.75 promo (3.6/3.7/3.8 through 2026-12-31)
-  { modelMatch: /github-copilot\/.*gemini.*flash/i, relCost: 5.01 }, // 3.5 Flash $9
-  { modelMatch: /github-copilot\/.*haiku/i, relCost: 2.79 }, // $5
-  { modelMatch: /github-copilot\/.*gpt-5\.4-mini/i, relCost: 2.51 }, // $4.50
-  { modelMatch: /github-copilot\/.*gpt-5-mini/i, relCost: 1.11 }, // $2
-  { modelMatch: /github-copilot\/.*gpt-5\.3-codex/i, relCost: 7.8 }, // $14
-  { modelMatch: /github-copilot\/.*gpt-5\.2/i, relCost: 7.8 }, // $14
-  { modelMatch: /github-copilot\/.*gpt-5\.1/i, relCost: 5.57 }, // $10
-  { modelMatch: /github-copilot\/.*gpt-5(?!\.)/i, relCost: 5.57 }, // $10
-  { modelMatch: /github-copilot\/.*gpt-4\.1/i, relCost: 4.46 }, // $8
-  { modelMatch: /github-copilot\/.*gpt-4o/i, relCost: 5.57 }, // $10
-  { modelMatch: /github-copilot\/.*grok/i, relCost: 3.34 }, // $6
-  { modelMatch: /github-copilot\//i, relCost: 6.69 }, // unknown copilot model ($12-class)
-
-  // ── OpenRouter, METERED (the user 2026-08-04) ──
-  // These are the only models on the panel billed in REAL CASH per token — there
-  // is no subscription to amortize, so relCost is the sticker output $/Mtok
-  // verified against the live /v1/models endpoint on 2026-08-04, with NO ÷4.65.
-  // That is why Kimi K3 draws THICKER than Opus: an Opus token is prepaid inside
-  // the Max 20x plan, a Kimi token is money leaving the account. The widths are
-  // telling the truth about spend, which is the whole point of the column.
-  // Must precede the bare-family rules below so nothing generic claims them.
-  // Prices re-read from the vendors' own pages 2026-08-12 (NOT from our telemetry).
-  // FORK 2026-08-13 — RE-VERIFIED against the OpenRouter **API** (`/api/v1/models`),
-  // not its web pages or a search summary. Three of five were wrong, including one I
-  // introduced the day before by pricing a brokered model from the LAB's page:
-  //   kimi-k3   14   → 15     (OR charges $3/$15, identical to Moonshot first-party;
-  //                            the "$2.80/$14" read off the model page was not the
-  //                            price actually billed)
-  //   glm-5.2   4.4  → 1.98   (4.4 was Z.ai's OWN $1.40/$4.40 — we route through
-  //                            OpenRouter, which charges $0.63/$1.98. 2.22× overstated)
-  //   deepseek  0.144→ 0.18   (OR charges $0.08/$0.18, not the $0.072/$0.144 listed)
-  // qwen3.8 and qwen3.7 verified EXACT. Re-verify with:
-  //   curl -s https://openrouter.ai/api/v1/models | jq '.data[]|select(.id=="z-ai/glm-5.2").pricing'
-  // RE-CHECKED 2026-08-15 against the same API. **Two of five moved in 48 hours** —
-  // these are live marketplace prices, not stable literals:
-  //   glm-5.2      1.98 → 1.452  (-27%)
-  //   deepseek     0.18 → 0.28   (+56% — the rise DeepSeek's own docs warned about;
-  //                               it now matches their first-party $0.14/$0.28)
-  // qwen3.8, qwen3.7 and kimi unchanged. Anything frozen here is wrong within days;
-  // re-run the curl above before trusting these.
-  // RE-CHECKED 2026-08-17 → glm-5.2 1.452 → 2.42, deepseek-v4-pro 0.87 → 3.96.
-  // RE-CHECKED 2026-08-18 → glm-5.2 2.42 → 3.15 (+30% out, while INPUT fell 0.76 →
-  //   0.50). Three moves in four days on one model, in both directions: GLM's routed
-  //   price is the most volatile figure on this panel. Everything else held exactly.
-  // RE-CHECKED 2026-08-19 → glm-5.2 3.15 → 3.036 (−3.6% out; input 0.50 → 0.966).
-  // ── OpenRouter catalog rows (FORK 2026-08-15, the user: "add all of them ... which
-  //    will tell us how good we are doing"). Metered $/Mtok-OUTPUT, every figure
-  //    read off the live /api/v1/models endpoint, never off a price page.
-  //    SPECIFIC ROWS MUST STAY ABOVE the generic /kimi/, /glm/, /deepseek.*flash/
-  //    rows below — regex order decides, and the generic rows misprice these by up
-  //    to 6× (a K2.6 dot priced as a K3 dot is a lie the chart cannot walk back).
-  { modelMatch: /qwen3\.8-2\.4t/i, relCost: 6.0 }, // $2.000/$6.000
-  // FORK 2026-08-18: added with the model itself. No generic /qwen/ row exists, so
-  // without this the 27B would have fallen through to EEG_DEFAULT_REL_COST (2.58)
-  // and drawn 19% thin — the "dot with no cost row" failure the block above warns of.
-  { modelMatch: /qwen3\.8-27b/i, relCost: 3.0 }, // $0.420/$3.000 OR list — re-checked 2026-09-04 live catalog (+17.6% out; cheapest Parasail $2.20 still endpoint-only, not baked)
-  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 2.6 }, // $1.300/$2.600 — re-checked 2026-08-31 live endpoints (+31%; DeepInfra cheapest, DeepSeek direct came off a 50% dip $0.660/$1.980 -> $1.320/$3.960)
-  { modelMatch: /deepseek.*v4-pro/i, relCost: 1.74 }, // $0.870/$1.740 — re-checked 2026-09-01 live endpoints (undated slug; DigitalOcean cheapest; was 1.3993, +24%)
-  { modelMatch: /minimax/i, relCost: 0.96 }, // $0.230/$0.960 — re-checked 2026-08-31 live endpoints (-20%; CoreWeave cheapest)
-  { modelMatch: /muse-spark/i, relCost: 4.25 }, // $1.250/$4.250
-  // PROVIDER-SCOPED ON PURPOSE. The native `google/*` rows further down sit on an
-  // AMORTIZED scale (3.5 Flash = 0.0804 for a $9 sticker, i.e. ÷112), left over from
-  // when Gemini was reachable on a free CLI tier. An unscoped /gemini-3.7.*flash/ here
-  // would win by regex order and price a NATIVE google dot at raw metered rate — two
-  // scales in one column, which is exactly the 43× lie of [eeg-cost-table-amortized].
-  // Only the metered OpenRouter route gets the raw number.
-  { modelMatch: /openrouter\/.*gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.750/$3.750 OR — same promo as Google list, unlike 3.7's cheaper OR seat
-  { modelMatch: /openrouter\/.*gemini-3\.7.*flash/i, relCost: 1.875 }, // $0.375/$1.875 OR
-  { modelMatch: /mimo/i, relCost: 0.609 }, // $0.3045/$0.609 — re-checked 2026-08-31 live endpoints (-30%; GMICloud cheapest)
-  { modelMatch: /inkling-small/i, relCost: 1.2 }, // $0.450/$1.200
-  { modelMatch: /inkling/i, relCost: 4.05 }, // $0.950/$4.050
-  { modelMatch: /tencent|hy3/i, relCost: 0.522 }, // $0.126/$0.522 — re-checked 2026-08-31 live endpoints (-1.1%; GMICloud cheapest)
-  // FORK 2026-08-15 (regex-leak audit): `/nex-n2/i` also claimed `nex-n2-mini`
-  // ($0.100), drawing it 10× too thick. Specific row first.
-  { modelMatch: /nex-n2-mini/i, relCost: 0.1 }, // $0.025/$0.100
-  { modelMatch: /nex-n2/i, relCost: 1.0 }, // nex-n2-pro $0.250/$1.000
-  { modelMatch: /solar-pro/i, relCost: 0.12 }, // $0.030/$0.120
-  { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // $0.075/$0.250 — re-checked 2026-09-02 live endpoints (Z.AI took cheapest from Relace; +5%)
-  { modelMatch: /glm-5\.3/i, relCost: 3.432 }, // $1.144/$3.432 — re-checked 2026-09-03 live endpoints (−13.3%; Decart took cheapest from DeepInfra $4.00)
-  { modelMatch: /glm-5\.1/i, relCost: 2.86 }, // $0.910/$2.860 — re-checked 2026-08-31 live endpoints (+0.2%; GMICloud cheapest, was Baidu)
-  { modelMatch: /glm-5\.2/i, relCost: 1.56 }, // $0.4875/$1.560 — re-checked 2026-08-31 live endpoints (+52%; DeepInfra cheapest, StreamLake gone)
-  // FORK 2026-08-15: `/glm-5(?![.\d])/i` blocks a following digit or dot, but NOT a
-  // letter or hyphen — so it also claimed `glm-5-turbo` and `glm-5v-turbo`, both
-  // $4.000, and drew them at 1.92 (2.1× too thin). Both turbos get their own row.
-  { modelMatch: /glm-5v?-turbo/i, relCost: 4.0 }, // $1.200/$4.000
-  { modelMatch: /glm-5(?![.\d])/i, relCost: 1.92 }, // $0.600/$1.920
-  { modelMatch: /kimi-k2\.6/i, relCost: 2.2618 }, // $0.5372/$2.2618 — re-checked 2026-08-31 live endpoints (+1.5%; Decart cheapest, was Baidu)
-  { modelMatch: /kimi-k2\.7/i, relCost: 3.4 }, // $0.670/$3.400 — re-checked 2026-08-22 (was 3.5)
-  { modelMatch: /qwen3\.6-max-preview/i, relCost: 6.162 }, // $1.027/$6.162 — added 2026-08-22
-  { modelMatch: /qwen3\.6-plus/i, relCost: 1.95 }, // $0.325/$1.950
-  // DEEPSEEK PRICES OSCILLATE — do not read a single day as a trend. This row has
-  // measured $1.32 (08-27), $0.66 (08-29/08-30) and $1.32 again (08-31), each time
-  // from the live /api/v1/models/deepseek/deepseek-v4-flash-vision-exp/endpoints call.
-  // Neither reading was a mistake: DeepSeek discounts its OWN endpoint by ~50%
-  // intermittently, and the 08-29 note calling $1.32 "wrong" was itself reading one
-  // sample as a correction. The same 2x flip hit deepseek-v4-pro-0813 on 08-30/08-31.
-  // Treat any single DeepSeek snapshot as +/-2x, and re-check before citing it.
-  { modelMatch: /deepseek-v4-flash-vision/i, relCost: 0.66 }, // $0.220/$0.660 — re-checked 2026-09-02 live endpoints (−50%; Fireworks took cheapest from DeepSeek — see oscillation note above)
-  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.16 }, // $0.030/$0.160 — re-checked 2026-08-31 live endpoints (+78%; OpenInference cheapest, Baidu gone)
-  { modelMatch: /deepseek-v4-flash(?!-)/i, relCost: 0.168 }, // $0.0679/$0.168 — re-checked 2026-08-29 live (undated slug, DigitalOcean cheapest; was 0.159)
-  // FORK 2026-09-02 (the architect banned OpenRouter routes for vendors we hold a
-  // direct subscription with): the openrouter/openai/gpt-5.3-codex row that sat here
-  // since 2026-08-23 is gone with its catalog id. It existed to keep that metered
-  // $1.75/$14.00 route off the generic /gpt-5/i catch-all (0.0893, a 157× underprice);
-  // with the id deleted it matched nothing. The github-copilot/gpt-5.3-codex row above
-  // is a different route on the Copilot-adjusted scale and is unaffected.
-  { modelMatch: /kimi/i, relCost: 15 }, // $3/$15, cache read $0.30
-  { modelMatch: /qwen3\.8-max/i, relCost: 6.0 }, // $2/$6, cache read $0.25
-  { modelMatch: /qwen3\.7-max/i, relCost: 4.425 }, // $1.475/$4.425, cache read $0.295
-  { modelMatch: /glm/i, relCost: 3.036 }, // GLM generic fallback (glm-5.1/5.2/5.3 have specific rows above)
-  { modelMatch: /deepseek.*flash/i, relCost: 0.168 }, // $0.0679/$0.168 — generic fallback (re-checked 2026-08-29; was 0.159)
-
-  // ── FORK 2026-08-30 (the user: "update it with the newest models in the market") ──
-  // Every figure below read off the LIVE OpenRouter catalog this pass (http=200,
-  // 396 models, 655,423 bytes) — id, price AND context window from /api/v1/models,
-  // never a price page. That is the rule the Kimi K3 miss bought ($2.90/$14 on
-  // every price page, $3.00/$15 actually billed).
-  //
-  // FORK 2026-09-02 (the architect banned OpenRouter routes for vendors we hold a
-  // direct subscription with): claude-opus-5-fast is gone from the catalog, so its
-  // row here is removed. It was pinned ABOVE the native `/opus/i` row because the
-  // metered $10/$50 fast mode would otherwise have been drawn at the Max 20x
-  // amortized €0.2232 and understated 224x — the regex-order trap still applies to
-  // the openrouter fable row below, which keeps that pinning.
-  //
-  // MUST STAY ABOVE the native `/fable/i` row: this is the METERED OpenRouter route
-  // at $10/$50, and if `/fable/i` won here a CASH route would draw at the Max 20x
-  // amortized €0.4464 and understate it by 112× — same regex-order class as the
-  // glm-5-turbo and nex-n2-mini leaks above.
-  //
-  // FORK 2026-09-02 (the user: "the cost of Fable 5.1 is not correct... claude models
-  // cost us about 112 times less"). This row read `/fable-5\.1/i` and was introduced
-  // on the premise that Claude Code did not serve the model. TWO THINGS WERE WRONG.
-  //  (a) The id was probed as `claude-fable-5.1` — AA's DOTTED display name. Every
-  //      claude-code id is HYPHENATED (`claude-opus-4-8`, `claude-sonnet-4-6`), so
-  //      the real id is `claude-fable-5-1` and the probe asked for a model that never
-  //      existed under any version. Claude Code 2.1.258 serves it (verified against
-  //      two bogus-id controls, which fail loudly). It is a subscription model.
-  //  (b) Keying on the DOT is what made (a) invisible: `/fable-5\.1/i` happens not to
-  //      match the hyphenated subscription id, so the two routes were told apart by a
-  //      punctuation accident rather than by what actually differs — the BILLING
-  //      ROUTE. A future `claude-fable-5.2` id would have re-broken it silently.
-  // Keyed on the provider prefix now, the same convention the Copilot block above
-  // uses. The native subscription route falls through to `/fable/i` = €0.4464.
-  { modelMatch: /openrouter\/.*fable/i, relCost: 50.0 }, // $10.000/$50.000 OR, ctx 1M
-  { modelMatch: /nemotron-3\.5-lightning/i, relCost: 0.2 }, // $0.080/$0.200 OR, ctx 262k
-  { modelMatch: /ling-3\.0-flash/i, relCost: 0.063 }, // $0.021/$0.063 OR, ctx 262k
-  { modelMatch: /longcat-2\.0/i, relCost: 1.2 }, // $0.300/$1.200 OR, ctx 1.05M
-
-  // ── Native / non-Copilot paths — SUBSCRIPTION, so relCost is amortized ──
-  // Anthropic: Max 20x ÷ MEASURED trailing-30d burn, weighted with the renderer's own
-  // blend (output + 0.2·input), then split by the PUBLIC sticker ratios (Haiku $5 /
-  // Sonnet 5 $10 / Opus 5 $25 / Fable $50 → 0.5 / 1 / 2.5 / 5) — NOT the .3/1/5/10
-  // frozen at the Opus-4.1 era ($75 out).
-  //   measured 2026-08-12, trailing 30d: 6,291 Mtok in + 34.2 Mtok out over 23,354
-  //   turns → 1,292 Mtok weighted → 3,323 Mtok-sonnet-eq.
-  // FORK 2026-08-13 (the user: "consider an average of 75% usage"). The denominator is
-  // no longer raw measured burn but the QUOTA CEILING × his stated utilisation, which
-  // is the number he actually reasons with. Derived end to end from live data:
-  //   · live `budget.usage` 2026-08-12 16:36 UTC: seven_day = **70%**, window opened
-  //     2026-08-06 15:59 UTC.
-  //   · our burn inside exactly that window, in the RENDERER's own blend
-  //     (output + 0.2·input), split by public sticker ratios (.5/1/2.5/5):
-  //     opus 204.6 + sonnet 11.2 = **522.7 Mtok-sonnet-eq** — which IS that 70%.
-  //   · ceiling = 522.7 / 0.70 = 746.7 eq-Mtok/week; at 75% usage = 560.0 consumed.
-  //   · €50/week (€200/mo ÷ ~4 weeks) / 560.0 = **€0.0893 per sonnet-eq Mtok**.
-  // Every Anthropic row moves ×1.48 against the 2026-08-12 values, and sonnet comes
-  // back OFF the floor (0.35 → 0.52px). Opus 1.30px against qwen3.8's 34.88px: 27×
-  // the width for 27× the cash, which is the linear axis doing its job.
-  //
-  // READ THIS BEFORE TRUSTING THE NUMBER: it is an AVERAGE, not a MARGINAL price.
-  // At 75% usage there is headroom, so the true cost of the next Anthropic token is
-  // €0 until the cap. Dividing a flat fee by usage measures how well a seat is used,
-  // not what a model costs — see the OpenAI rows below, where the same arithmetic
-  // makes Sol look 48× Opus purely because that seat sits idle.
-  // ── RE-DERIVED 2026-09-02 (the user: "do not just divide the $50 sticker by 112,
-  //    find the proper model cost"). He was right, and for two separate reasons.
-  //
-  // (1) THE BLEND WAS COUNTING CACHE READS AT 10x THEIR PRICE. The old figure used
-  //     `output + 0.2·input` with `input` = cache_read + cache_creation. But 0.2 is
-  //     the FRESH-input ratio, and a cache read is not fresh input: read off the live
-  //     catalog for all four models, Anthropic prices cache read at 10% of input and
-  //     cache write at 1.25x input, uniformly (Fable 5.1: in $10 / out $50 /
-  //     cacheRead $0.25 / cacheWrite $12.50). In OUTPUT-equivalent units that is
-  //     out 1.0 · in 0.20 · cacheRead 0.02 · cacheWrite 0.25 — NOT 0.2 for all input.
-  //     Our traffic is ~99% cache read (2,137 Mtok read vs 12 Mtok written out in the
-  //     current window), so the wrong weight did not shade the answer, it DOMINATED
-  //     it: measured burn came out 5.3x too high.
-  //
-  // (2) THE PLAN'S CEILING MOVED. Same measurement on the window the 2026-08-13 note
-  //     used gives 166.8 eq-Mtok against Anthropic's reported 70% utilisation; the
-  //     current window gives 158.8 eq against a reported **7%**. Nearly identical real
-  //     burn, a tenth of the quota — Anthropic raised the Max 20x weekly allowance
-  //     ~10x between 08-13 and now. The old constant could only ever age one way and
-  //     it did.
-  //
-  // DERIVATION, end to end, every input live or published — no sticker was divided:
-  //   · `budget.usage` 2026-09-02 10:17 UTC: seven_day utilisation = **7%**, window
-  //     opened 2026-08-27 16:00 UTC.
-  //   · our burn inside exactly that window, from anatomy_events, weighted with the
-  //     PUBLISHED price ratios above and split by the public sticker ladder
-  //     (haiku $5 / sonnet-5 $10 / opus-5 $25 / fable $50 -> 0.5 / 1 / 2.5 / 5):
-  //     **158.77 sonnet-eq Mtok**. Cross-check, previous COMPLETE week: 163.56 eq,
-  //     also ~7% — two independent windows agree, so this is not one noisy sample.
-  //   · ceiling = 158.77 / 0.07 = **2,268 eq-Mtok/week**.
-  //   · at the user's stated 75% average utilisation = 1,701 eq-Mtok consumed/week.
-  //   · unit = EUR 50/week (EUR 200/mo over ~4 weeks) / 1,701 = **EUR 0.0294 per
-  //     sonnet-eq Mtok**. Every row below is that unit times the model's sticker ratio.
-  //
-  // PRECISION: the 7% is Anthropic's own integer percent, so +/-0.5pp puts the unit in
-  // EUR 0.0273-0.0315 and Fable in EUR 0.136-0.157 — about +/-7%. Quote it as ~EUR 0.15,
-  // not as four significant figures.
-  //
-  // Fable 5.1 carries the SAME $10/$50 sticker as Fable 5 (live OpenRouter catalog,
-  // 2026-09-02, http=200/421 models), so it shares the ratio-5 row rather than getting
-  // an assumed one. The implied plan-vs-sticker factor is now **340x**, not the 112x
-  // this block used to imply — that number was an OUTPUT of the old arithmetic, never
-  // an input, and it must never be used as a shortcut to price a new model.
-  //
-  // RE-DERIVE when the fee changes, when `budget.usage` utilisation moves materially,
-  // or when the sticker ladder changes. Do not hand-edit a single row: the four move
-  // together or the chart starts claiming Fable is cheaper than Opus.
-  { modelMatch: /fable/i, relCost: 0.147 },
-  { modelMatch: /opus/i, relCost: 0.0735 },
-  { modelMatch: /sonnet/i, relCost: 0.0294 },
-  { modelMatch: /haiku/i, relCost: 0.0147 },
-  // OpenAI gpt-5.6 trio (ChatGPT Business seat, codex provider) — sticker out ÷ 4.65.
-  // FORK 2026-08-12: Terra is $12 out (not $15) and Luna is $1.20 (not $6) per
-  // developers.openai.com/api/docs/pricing. Luna being 5× wrong mattered most —
-  // it was the pixel anchor for the whole scale.
-  //
-  // WHY THESE STAY ON THE ÷4.65 BLANKET WHILE ANTHROPIC IS MEASURED — the architect
-  // asked why Sol draws so much dearer than Opus when the two feel comparable in use.
-  // He is right about the models: at PUBLIC sticker Sol is $30 out against Opus 5's
-  // $25 — **1.2×**. The panel says 43×, and measuring the OpenAI seat the same way we
-  // measure Anthropic says **48×**, so the blanket is not the culprit. The culprit is
-  // UTILISATION: over the same 30 days the Anthropic seat did 3,323 sonnet-eq Mtok
-  // and the OpenAI seat did **3.6** sol-eq Mtok — 924× less work for a comparable
-  // fee. Amortising a flat fee over a nearly idle seat is also numerically unstable:
-  // one more Sol session moves that rate ~12%. So the measured value (€7.23) is NOT
-  // adopted here — it would be a more precise answer to the wrong question. This
-  // column is meant to say "how much cash does this token cost", and for any seat
-  // with headroom the answer is ~zero regardless of provider.
-  // OPEN, for the architect: either (a) leave the blanket and accept that the
-  // subscription block encodes assumed-utilisation, (b) measure every seat and accept
-  // that idle seats draw thick, or (c) split the channel so width = metered cash only
-  // and prepaid models share one thin band ordered by sticker. Costed in bug-log
-  // 2026-08-12 [panels]. Do NOT half-migrate this — mixing a measured Anthropic rate
-  // with a blanket OpenAI one is exactly what produced the 43× the architect caught.
-  //
-  // AND THE FACT THAT UNDERMINES ANY per-token AMORTISATION HERE: **neither plan
-  // meters tokens at all.** `memory/chatgpt-usage.json` (fetched 2026-08-12 10:01)
-  // reports `limit_requests: 100` weekly with `limit_tokens: null` — a REQUEST quota,
-  // and `utilization_pct: 2` with 98/100 remaining, i.e. the seat is close to idle.
-  // `memory/claude-usage.json` reports five_hour / seven_day / seven_day_opus
-  // UTILISATION WINDOWS, again no token quota (that file is stale — fetchedAt
-  // 2026-04-03 — so it cannot confirm a current figure either). So "N% of my token
-  // quota" is not a quantity either vendor defines; every per-token subscription rate
-  // in this table divides by a denominator we invented. Treat these four values as an
-  // ACCOUNTING CONVENTION, never as a price, and never compare them to a metered row
-  // without saying which is which.
-  // ══ FORK 2026-08-13 — THE ÷4.65 BLANKET IS GONE. The user: "How can Sol cost so much
-  // more than Fable? There must be a mistake here somewhere." There was, and it was
-  // an INVERSION, not a magnitude error. Claude Fable 5 is the dearest model we can
-  // reach ($50/Mtok out) and drew at 2.60px; gpt-5.6-sol ($30) drew at 37.50px —
-  // Sol **14.4× thicker than a model 1.67× its price**, an end-to-end error of 24×.
-  //
-  // Neither number was wrong on its own terms. Fable sat on the MEASURED Anthropic
-  // basis; Sol sat on the INVENTED `÷ 4.65` blanket ("9.3× price→API-value quota at
-  // 50% use" — a July guess with no source). Two units in one column, which is the
-  // same defect that made this panel recommend the model behind a $146 bill.
-  //
-  // THE FIX: one basis for EVERY prepaid seat. relCost = MEASURED_UNIT × (public
-  // sticker output ÷ Sonnet 5's $10), where MEASURED_UNIT = **€0.0893 per sonnet-eq
-  // Mtok** — the same figure the Anthropic rows use, derived from the live 70%
-  // `seven_day` reading, our burn inside that exact window, and 75% average usage.
-  // Every prepaid model is now ranked by its OFFICIAL price, on a unit measured from
-  // the one seat we can actually meter. Fable 2.60px > Sol 1.56px, ratio 1.67× —
-  // exactly the sticker ratio. The last invented number in this table is gone.
-  //
-  // WHAT THIS DELIBERATELY DOES NOT ENCODE: that the OpenAI seat is barely used
-  // (2% utilisation, 2026-08-12). That is a real fact and a real waste, but it answers
-  // "is this subscription worth it?", not "what does this model cost" — and mixing the
-  // two is what produced the inversion above. Seat efficiency belongs in its own view.
-  // FORK 2026-08-30 — BASIS CORRECTION, not a price move. OpenAI publishes TWO
-  // rates per gpt-5.6 model (developers.openai.com/api/docs/pricing, read today):
-  // short-context and long-context. Sol carried the LONG rate ($30) while Terra
-  // ($12) and Luna ($1.20) carried the SHORT one — three rows of ONE family on two
-  // different bases, the same defect that made this table recommend the model
-  // behind a $146 bill. All three now on the SHORT/standard rate:
-  // Sol $4/$20 · Terra $2/$12 · Luna $0.20/$1.20. Long context doubles
-  // ($30/$18/$1.80); relCost is a scalar and cannot say so — same caveat as grok.
-  // LIVE PROMO, deliberately NOT baked here: OpenRouter bills Sol at $2/$10 today
-  // and GitHub quotes $10 through 2026-09-03, while OpenAI's page says the promo
-  // runs "at least through 2026-11-21". This row tracks the STANDARD list because
-  // that is what the column claims to rank by; the promo is reported, not encoded.
-  { modelMatch: /5\.6-sol/i, relCost: 0.1786 }, // $20 out short-ctx = 0.0893 x (20/10)
-  { modelMatch: /5\.6-terra/i, relCost: 0.1072 }, // $12 out
-  { modelMatch: /5\.6-luna/i, relCost: 0.0107 }, // $1.20 out
-  // Google (€21.99 Google One attributed, the user 2026-07-22).
-  // gemini rows BEFORE \bmini\b so "…e-mini…" never steals a gemini id.
-  // 3.6-flash ($7.50 out) is cheaper than 3.5-flash ($9), so it needs its own row.
-  // FORK 2026-08-15 — RE-BASED FROM AMORTIZED TO METERED, and this is a correction,
-  // not a tuning. These three rows carried the ÷112 subscription divisor every other
-  // native row uses (3.5 Flash read 0.0804 against a $9 sticker), because Gemini was
-  // reachable on the free Gemini-CLI tier and a free seat genuinely amortizes to ~0.
-  // That tier is GONE: `gemini -p` now returns IneligibleTierError ("no longer
-  // supported for Gemini Code Assist for individuals"), and Google is reached with a
-  // metered API key as of tonight. A metered model priced on a subscription divisor
-  // understates its cost by two orders of magnitude — the same defect recorded in
-  // [eeg-cost-table-amortized], pointing the other way.
-  // Prices from ai.google.dev/gemini-api/docs/pricing, output $/Mtok. The 3.8/3.7/3.6
-  // rate is promotional through 2026-12-31; re-check it in January.
-  // 3.8 BEFORE 3.7 BEFORE 3.6 BEFORE the generic flash row — regex order decides.
-  { modelMatch: /gemini.*pro/i, relCost: 12.0 }, // 3.1 Pro $12 out ≤200k (doubles above)
-  { modelMatch: /gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
-  { modelMatch: /gemini-3\.7.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
-  { modelMatch: /gemini-3\.6.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
-  { modelMatch: /gemini.*flash/i, relCost: 9.0 }, // 3.5 Flash $1.50/$9.00
-  // Catch-all for an unrecognised "*-mini": assume the dearer current-generation
-  // member (gpt-5.4-mini $4.50, not gpt-5-mini $2) so it is never under-drawn.
-  { modelMatch: /\bmini\b/i, relCost: 0.0402 },
-  // GPT-6 Astra — CASH, not a seat. Added to rel-cost-table.ts the same day and MISSED
-  // here, which is the split this file's own header warns about: the chart reads THIS
-  // table, so Astra fell through to EEG_DEFAULT_REL_COST (2.58) and drew at ~€1.3/Mtok
-  // — a 19x understatement that put OpenAI's dearest model in the cheap half of the
-  // plot. Metered convention, same as the DeepSeek/Gemini rows above: relCost is the
-  // RAW published output sticker, because for a route we hold no plan on, list price
-  // IS what the token costs us. ($10 in / $50 out, developers.openai.com.)
-  { modelMatch: /gpt-6-astra/i, relCost: 50.0 }, // $50 out — no plan, no triangle
-  { modelMatch: /gpt-5\.5/i, relCost: 0.2679 }, // $30 out
-  { modelMatch: /gpt-5\.4(?!-mini|-nano)/i, relCost: 0.134 }, // $15 out
-  { modelMatch: /gpt-5/i, relCost: 0.0893 }, // $10 out
-  // xAI grok-4.5 (SuperGrok) — $6 out BELOW 200k context. Above 200k xAI doubles
-  // every rate ($4/$12); relCost is a scalar and cannot say that, so this row
-  // UNDERSTATES any run with a long context. See bug-log 2026-08-12 [panels].
-  { modelMatch: /grok|xai/i, relCost: 0.0536 }, // $6 out
-  // FORK 2026-06-25 (the user scope C): local housekeeping tool calls (grep/read/edit/
-  // plain bash) — effectively free, drawn as the thinnest possible gray hairline.
-  // FORK 2026-08-04 (the user, found while rescaling to Luna=1.5px): the anchor was
-  // `^tool:local$`, but eegCostKey PREFIXES the provider — eegToolIdentity returns
-  // {provider:"tool", model:"tool:local"}, so the key is "tool/tool:local" and the
-  // anchored rule NEVER matched. Every grep/read/edit therefore fell through to
-  // EEG_DEFAULT_REL_COST and drew as thick as a mid-tier model — the exact
-  // "housekeeping out-shouts a provider call" failure the hairline exists to
-  // prevent. Its test had been red since the rule was written. Allow the prefix.
-  // FORK 2026-08-12: was 0.3, chosen to sit under everything on a LINEAR scale. Once
-  // the Anthropic rows became honest (haiku 0.0401) that put local grep ABOVE opus,
-  // and on the log axis it would have drawn thicker still. Local compute costs
-  // nothing, so the value is now nominal-zero and it floors by arithmetic, not luck.
-  { modelMatch: /(?:^|\/)tool:local$/i, relCost: 0.001 },
-];
-// Unknown model → assume it is METERED and mid-frontier (between glm-5.2's 1.98 and
-// qwen3.7's 4.425). Since 2026-08-13 every PREPAID row sits below 0.45, so this value
-// also guarantees an unrecognised model never masquerades as subscription-cheap.
-const EEG_DEFAULT_REL_COST = 2.58;
+// ══ 2026-09-23 — THE DUPLICATE IS GONE. This file kept its own copy of the cost table
+// after src/shared/rel-cost-table.ts became "the SINGLE source", and the two drifted:
+// on the day of the collapse 24 rows disagreed — the Anthropic block sat on a 0.0294
+// unit here against 0.0893 there, and `openai-codex/gpt-6-sol` / `gpt-6-luna` had NO
+// row here at all, so the MODELS panel and the smartness×cost chart (which read THIS
+// table) drew both at the 2.58 unknown-metered default, far right of where the seat
+// puts them. the architect caught it as "the cost of the tokens of the different openai models
+// are not calculated properly". Every surface now reads the shared table; the prose
+// basis block above is HISTORY — the live derivation (measured seats, one method) is
+// the SUBSCRIPTION SEATS block at the top of src/shared/rel-cost-table.ts.
+export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = REL_COST_TABLE;
+const EEG_DEFAULT_REL_COST = DEFAULT_REL_COST;
 
 // Effort multiplier per stop. Auto ("") = UNCAPPED — the model picks its own
 // budget, so it costs more than medium on average (§5.8g: Auto is never tier 0).
@@ -663,7 +271,7 @@ const EEG_DEFAULT_REL_COST = 2.58;
 // rungs from the same table). Re-exported under the panel's historical name.
 export const EEG_EFFORT_MULT: Record<string, number> = EFFORT_COST_MULT;
 
-// FORK 2026-06-20 (the user): the model's effective €/Mtok-output (EEG_COST_TABLE
+// FORK 2026-06-20 (the architect): the model's effective €/Mtok-output (EEG_COST_TABLE
 // value, or the default for an unrecognized model). Shared by BOTH the stroke
 // WIDTH (cost-per-token identity) and the segment LENGTH (euro cost = the §1 grid).
 // Pass FULL model refs when available ("github-copilot/gpt-5.5") so Pro+ pricing
@@ -685,7 +293,7 @@ export function eegRelCost(model: string, provider?: string): number {
   return EEG_DEFAULT_REL_COST;
 }
 
-// Pixel + comparison unit are BOTH Luna (the user 2026-07-30 20:56:
+// Pixel + comparison unit are BOTH Luna (the architect 2026-07-30 20:56:
 // "using Luna as reference, with one pixel wide"). Sol=5px, Terra=2.5px, Luna=1px.
 //
 // SINGLE SOURCE for all three surfaces (FORK 2026-08-28: two SCALES, still one file
@@ -706,7 +314,7 @@ export function eegRelCost(model: string, provider?: string): number {
 // against the same reference the numbers are derived from, instead of against a model
 // whose own basis just changed underneath it.
 export const EEG_COST_PX_PER_REL = 5.814; // px per 1.0 of relCost (€/Mtok-output)
-// FORK 2026-08-30 (the user: "since grok is cheaper than sonnet, let's make the whole
+// FORK 2026-08-30 (the architect: "since grok is cheaper than sonnet, let's make the whole
 // models panel onhover references change now to grok"). SUPERSEDES the 2026-08-13
 // switch to Sonnet 5 described immediately above.
 //
@@ -753,11 +361,11 @@ export const EEG_COST_COMPARE_REF = "xai/grok-4.6";
 export const EEG_COST_COMPARE_REL = eegRelCost(EEG_COST_COMPARE_REF, "xai");
 export const EEG_COST_COMPARE_LABEL = "Grok";
 
-// FORK 2026-08-04 (the user: "Let's set up Luna at 1.5 pixels and resize the rest of
+// FORK 2026-08-04 (the architect: "Let's set up Luna at 1.5 pixels and resize the rest of
 // the stroke widths accordingly"). Luna stays the unit; only its pixel value moves,
 // so every other width rescales linearly and no relative relationship changes.
 //
-// FORK 2026-08-12 (the user: "I would like to keep the linear axis") — a log axis was
+// FORK 2026-08-12 (the architect: "I would like to keep the linear axis") — a log axis was
 // shipped earlier the same day and is REVERTED here. Linear is the architect's call
 // and it buys a real property that log destroys: the drawn ratio IS the cost ratio.
 // qwen3.8 renders 29.9× thicker than opus for 29.9× the cash. Under log the same
@@ -767,7 +375,7 @@ export const EEG_COST_COMPARE_LABEL = "Grok";
 // The price of that property, stated so nobody re-discovers it as a bug: with every
 // prepaid seat on one measured basis the honest spread is ~4700:1 (luna 0.0107 →
 // copilot-fable 50). FORK 2026-08-15: that spread is now drawn IN FULL — the top is
-// uncapped, so kimi-k3 renders at 87px and a hypothetical copilot-fable at 162px.
+// uncapped, so kimi-k3 renders at ~53px (Sail Research $9.043, 2026-09-26) and a hypothetical copilot-fable at 162px.
 // Only the bottom clips, at the 0.35px FLOOR (luna, mini, grok, haiku, tool:local),
 // and that clamp only ever makes a stroke MORE visible. `EEG_COST_PX_PER_REL` is the
 // single density knob if the widest strokes ever need to fit a narrower rail.
@@ -783,37 +391,39 @@ export const EEG_COST_COMPARE_LABEL = "Grok";
  * When a price legitimately changes, update the number here — that is the whole ritual.
  */
 export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
-  ["claude-haiku-4-5", 0.35], // floor (raw 0.26)
-  ["claude-sonnet-5", 0.35],
-  ["codex/gpt-5.6-luna", 0.35], // floor (raw 0.06)
-  ["xai/grok-4.5", 0.35], // floor (raw 0.31)
-  ["claude-opus-4-8", 0.43],
-  ["codex/gpt-5.6-terra", 0.62],
-  ["claude-fable-5", 0.85],
-  ["deepseek/deepseek-v4-flash-0731", 0.93], // 0.16 — re-checked 2026-08-31 live (+78%; OpenInference cheapest, Baidu gone)
-  ["z-ai/glm-5.3-flash", 1.45], // 0.25 — re-checked 2026-09-02 live (Z.AI took cheapest from Relace)
-  ["openai-codex/gpt-5.5", 1.56],
-  ["tencent/hy3", 3.03], // 0.522 — re-checked 2026-08-31 live (-1.1%; GMICloud cheapest)
-  ["deepseek/deepseek-v4-flash-vision-exp", 3.84], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32)
-  ["minimax/minimax-m3", 5.58], // 0.96 — re-checked 2026-08-31 live (-20%; CoreWeave cheapest)
-  ["z-ai/glm-5.2", 9.07], // 1.56 — re-checked 2026-08-31 live (+52%; DeepInfra cheapest, StreamLake gone)
-  ["moonshotai/kimi-k2.6", 13.15], // 2.2618 — re-checked 2026-08-31 live (+1.5%; Decart cheapest, was Baidu)
-  ["deepseek/deepseek-v4-pro-0813", 15.12], // 2.6 — re-checked 2026-08-31 live (+31%; DeepInfra cheapest)
-  ["qwen/qwen3.8-27b", 17.44], // 3.0 × 5.814 — re-checked 2026-09-04 OR catalog (was 2.55 / 14.83; +17.6%)
-  ["z-ai/glm-5.3", 19.95], // 3.432 × 5.814 — re-checked 2026-09-03 live (−13%; Decart cheapest)
+  ["z-ai/glm-5.3-flash", 0.41], // re-priced 2026-10-27 live endpoints (was 0.44px). re-priced 2026-10-26 live endpoints (was 0.41px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 0.5px)
+  ["codex/gpt-5.6-luna", 0.48], // off the floor since the 2026-09-23 measured-seat re-base
+  ["claude-haiku-4-5", 0.57], // 2026-10-10 seat re-measurement (was 0.66); off the floor since the 2026-09-23 measured-seat re-base
+  ["xai/grok-4.5", 0.68], // 2026-10-10 seat re-measurement (was 0.79); off the floor since the 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4-flash-0731", 0.87], // re-priced 2026-10-26 live endpoints (was 0.78px). 0.1333 (Baidu fp8, -11%; was Sail Research $0.15) — re-checked 2026-10-24 live endpoints (was 0.87px)
+  ["deepseek/deepseek-v4.1-flash", 1.05], // 0.18 (Decart, +20%; was Sail Research $0.15) — re-checked 2026-10-23 live endpoints
+  ["claude-sonnet-5", 1.14], // 2026-10-10 seat re-measurement (was 1.32); 2026-09-23 measured-seat re-base
+  ["claude-opus-4-8", 2.84], // 2026-10-10 seat re-measurement (was 3.31); 2026-09-23 measured-seat re-base
+  ["tencent/hy3", 3.07], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
+  ["deepseek/deepseek-v4-flash-vision-exp", 3.76], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
+  ["xiaomi/mimo-v2.6-pro", 4.55], // 0.783 (DeepInfra via OR, −10%; was $0.87) — re-checked 2026-10-20 live endpoints
+  ["deepseek/deepseek-v4-pro-0813", 4.65], // re-priced 2026-10-26 live endpoints (was 2.3px). 0.396 (Baidu fp8, -50%; Baidu promo back, may revert; was $0.80) — re-checked 2026-10-24 live endpoints (was 4.65px)
+  ["codex/gpt-5.6-terra", 4.77], // 2026-09-23 measured-seat re-base
+  ["minimax/minimax-m3", 5.12], // re-priced 2026-10-27 live endpoints (was 5.58px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
+  ["claude-fable-5", 5.68], // 2026-10-10 seat re-measurement (was 6.62); 2026-09-23 measured-seat re-base
+  ["qwen/qwen3.8-27b", 7.27], // re-priced 2026-10-26 live endpoints (was 2.91px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
+  ["z-ai/glm-5.3", 8.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
+  ["z-ai/glm-5.2", 8.37], // re-priced 2026-10-26 live endpoints (was 3.45px). 0.594 (Baidu fp8, -59%; was DeepInfra, our route, $1.44) — re-checked 2026-10-24 live endpoints (was 8.37px)
+  ["moonshotai/kimi-k2.6", 10.47], // re-priced 2026-10-27 live endpoints (was 11.34px). re-priced 2026-10-26 live endpoints (was 11.0px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 11.34px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
+  ["openai-codex/gpt-5.5", 11.93], // 2026-09-23 measured-seat re-base
   ["google/gemini-3.8-flash", 21.8], // $3.75 promo, same as 3.7
   ["google/gemini-3.7-flash", 21.8],
   ["qwen/qwen3.7-max", 25.73],
   ["qwen/qwen3.8-max", 34.88],
+  ["moonshotai/kimi-k3", 47.97], // re-priced 2026-10-27 live endpoints (was 31.98px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["github-copilot/gpt-5.4", 48.61],
   ["google/gemini-3.5-flash", 52.33],
   ["github-copilot/claude-opus-4.7", 80.99],
-  ["moonshotai/kimi-k3", 87.21],
   ["github-copilot/gpt-5.5", 97.15],
 ] as const;
 
 export const EEG_COST_PX_FLOOR = 0.35; // tool:local hairline
-// FORK 2026-08-15 (the user: "Do not cap pixel width of EEG traces, the thickness
+// FORK 2026-08-15 (the architect: "Do not cap pixel width of EEG traces, the thickness
 // comparison is the main objective of all of it in the first place"). EEG_COST_PX_CAP
 // = 40 is DELETED, not merely raised. It was introduced as "a runaway backstop, not a
 // design value" and had quietly become a design value: six rows sat on it, so kimi-k3
@@ -827,7 +437,7 @@ export const EEG_COST_PX_FLOOR = 0.35; // tool:local hairline
 export function eegCostWidthPx(model: string, level: string, provider?: string): number {
   const rel = eegRelCost(model, provider);
   void level; // effort no longer scales thickness — it is the X column (below)
-  // LINEAR width (the user 2026-08-04, reaffirmed 2026-08-12): rel / luna(0.258) × 1.5.
+  // LINEAR width (the architect 2026-08-04, reaffirmed 2026-08-12): rel / luna(0.258) × 1.5.
   // The drawn ratio IS the cost ratio — that is the whole reason to stay linear.
   // The ladder USED to be pasted here as a comment. It rotted three times — the
   // 2026-08-13 copy still claimed luna 1.50 / terra 15.00 / sol 37.50 / grok-4.5 7.50 /
@@ -854,7 +464,7 @@ export function eegCostWidthPx(model: string, level: string, provider?: string):
 }
 
 // ─── LOG scale — the BOUNDED surfaces (model selector · EEG paper) ───
-// FORK 2026-08-28 (the user: "inside the models panel, when expanded, it shows a trace
+// FORK 2026-08-28 (the architect: "inside the models panel, when expanded, it shows a trace
 // thickness linearly proportional to the model's cost. However, in the model selector,
 // the big spenders are capped and the cheap ones are very thin. Turn those last ones
 // only into log-scale thickness, which will be also used in turn by the EEG.").
@@ -895,7 +505,7 @@ export function eegCostWidthPx(model: string, level: string, provider?: string):
 // which is synthetic local housekeeping and would spend a whole decade of the ramp on
 // something that is not a model at all. tool:local lands below the reference and
 // therefore on the log FLOOR, staying the thinnest thing on the paper by construction.
-// FORK 2026-08-29 (the user: "luna 1 px and let's set the maximum at 25 px"). Both ends
+// FORK 2026-08-29 (the architect: "luna 1 px and let's set the maximum at 25 px"). Both ends
 // are the architect's pixels; the decade slope is DERIVED, not chosen. MAXREL = 15.0
 // (openrouter kimi-k3, the largest relCost among models either surface can actually
 // draw — Copilot rows go higher, but app.ts filters Copilot ids off the chip and the
@@ -906,7 +516,10 @@ export function eegCostWidthPx(model: string, level: string, provider?: string):
 // moves with the base: 0.75/2.0 was 37.5% of the reference stroke, and 0.375/1.0
 // preserves that ratio, so tool:local still reads as a hairline instead of 75% of a
 // real model.
-export const EEG_COST_LOG_REF_REL = 0.0107; // gpt-5.6-luna, the cheapest routable model
+// 2026-09-23: 0.0107 WAS gpt-5.6-luna's relCost; the measured-seat re-base moved Luna
+// to 0.082. The constant is KEPT as a fixed px anchor on purpose — re-normalising it
+// to the new Luna would scale the correction away; the prepaid strokes thicken instead.
+export const EEG_COST_LOG_REF_REL = 0.0107; // fixed 1px anchor (was gpt-5.6-luna)
 export const EEG_COST_LOG_BASE_PX = 1.0; // px drawn AT the reference
 export const EEG_COST_LOG_PX_PER_DECADE = 7.627; // px added per 10× of €/Mtok (derived above)
 export const EEG_COST_LOG_PX_FLOOR = 0.375; // tool:local + anything under the reference
@@ -924,35 +537,37 @@ export const EEG_COST_LOG_PX_FLOOR = 0.375; // tool:local + anything under the r
  */
 export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["tool:local", 0.38],
-  ["codex/gpt-5.6-luna", 1.0],
-  ["claude-haiku-4-5", 2.05],
-  ["claude-sonnet-5", 4.35],
-  ["xai/grok-4.5", 6.34],
-  ["claude-opus-4-8", 7.38],
-  ["codex/gpt-5.6-terra", 8.63],
-  ["claude-fable-5", 9.68],
-  ["deepseek/deepseek-v4-flash-0731", 9.96], // 0.16 — re-checked 2026-08-31 live (+78%; OpenInference cheapest, Baidu gone)
-  ["z-ai/glm-5.3-flash", 11.44], // 0.25 — re-checked 2026-09-02 live (Z.AI took cheapest from Relace)
-  ["openai-codex/gpt-5.5", 11.67],
-  ["tencent/hy3", 13.88], // 0.522 — re-checked 2026-08-31 live (-1.1%; GMICloud cheapest)
-  ["deepseek/deepseek-v4-flash-vision-exp", 14.65], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest)
-  ["minimax/minimax-m3", 15.89], // 0.96 — re-checked 2026-08-31 live (-20%; CoreWeave cheapest)
-  ["z-ai/glm-5.2", 17.5], // 1.56 — re-checked 2026-08-31 live (+52%; DeepInfra cheapest, StreamLake gone)
-  ["deepseek/deepseek-v4-pro", 17.86], // 1.74 — re-checked 2026-09-01 live endpoints (undated slug; DigitalOcean cheapest; was 1.3993)
-  ["moonshotai/kimi-k2.6", 18.73], // 2.2618 — re-checked 2026-08-31 live (+1.5%; Decart cheapest, was Baidu)
-  ["deepseek/deepseek-v4-pro-0813", 19.19], // 2.6 — re-checked 2026-08-31 live (+31%; DeepInfra cheapest)
-  ["z-ai/glm-5.1", 19.51], // 2.86 — re-checked 2026-08-31 live (+0.2%; GMICloud cheapest, was Baidu)
-  ["qwen/qwen3.8-27b", 19.67], // 3.0 — re-checked 2026-09-04 OR catalog (was 2.55 / 19.13; +17.6%)
-  ["moonshotai/kimi-k2.7-code", 20.08],
-  ["z-ai/glm-5.3", 20.11], // 3.432 — re-checked 2026-09-03 live (−13%; Decart cheapest)
+  ["z-ai/glm-5.3-flash", 7.23], // re-priced 2026-10-27 live endpoints (was 7.49px). re-priced 2026-10-26 live endpoints (was 7.21px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 7.87px). Earlier: 0.16 (OpenInference, −20%; was $0.20) — re-checked 2026-10-24 live endpoints
+  ["codex/gpt-5.6-luna", 7.75], // 2026-09-23 measured-seat re-base
+  ["claude-haiku-4-5", 8.33], // 2026-10-10 seat re-measurement (was 8.83); 2026-09-23 measured-seat re-base
+  ["xai/grok-4.5", 8.93], // 2026-10-10 seat re-measurement (was 9.44); 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4-flash-0731", 9.75], // re-priced 2026-10-26 live endpoints (was 9.35px). 0.15 (Sail Research fp4, -17%; was DeepInfra, our route, $0.18) — re-checked 2026-10-24 live endpoints
+  ["deepseek/deepseek-v4.1-flash", 10.35], // 0.18 (Decart, +20%; was Sail Research $0.15) — re-checked 2026-10-23 live endpoints
+  ["claude-sonnet-5", 10.62], // 2026-10-10 seat re-measurement (was 11.13); 2026-09-23 measured-seat re-base
+  ["claude-opus-4-8", 13.66], // 2026-10-10 seat re-measurement (was 14.16); 2026-09-23 measured-seat re-base
+  ["tencent/hy3", 13.91], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
+  ["deepseek/deepseek-v4-flash-vision-exp", 14.59], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
+  ["xiaomi/mimo-v2.6-pro", 15.22], // 0.783 (DeepInfra via OR, −10%; was $0.87) — re-checked 2026-10-20 live endpoints
+  ["deepseek/deepseek-v4-pro-0813", 15.29], // re-priced 2026-10-26 live endpoints (was 12.96px). 0.80 (Sail Research fp4, +37%; was $0.582) — re-checked 2026-10-24 live endpoints
+  ["codex/gpt-5.6-terra", 15.38], // 2026-09-23 measured-seat re-base
+  ["minimax/minimax-m3", 15.61], // re-priced 2026-10-27 live endpoints (was 15.89px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
+  ["claude-fable-5", 15.95], // 2026-10-10 seat re-measurement (was 16.46); 2026-09-23 measured-seat re-base
+  ["qwen/qwen3.8-27b", 16.77], // re-priced 2026-10-26 live endpoints (was 13.73px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
+  ["z-ai/glm-5.3", 17.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
+  ["z-ai/glm-5.2", 17.24], // re-priced 2026-10-26 live endpoints (was 14.3px). 1.44 (DeepInfra, our route, -20%; was $1.80) — re-checked 2026-10-24 live endpoints
+  ["deepseek/deepseek-v4-pro", 17.37], // re-priced 2026-10-26 live endpoints (was 13.12px). 0.4157 (Baidu, -78%; was StreamLake $1.8966) — re-checked 2026-10-25 live endpoints (was 18.15px). Earlier: 1.8966 (StreamLake still cheapest, +126% vs $0.8376; GMICloud $1.914 next) — re-checked 2026-10-10 live endpoints
+  ["moonshotai/kimi-k2.6", 17.98], // re-priced 2026-10-27 live endpoints (was 18.24px). re-priced 2026-10-26 live endpoints (was 18.14px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 18.24px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
+  ["openai-codex/gpt-5.5", 18.41], // 2026-09-23 measured-seat re-base
+  ["z-ai/glm-5.1", 19.56], // re-priced 2026-10-27 live endpoints (was 19.71px). 3.036 — re-checked 2026-09-10 live (StreamLake still cheapest)
+  ["moonshotai/kimi-k2.7-code", 19.67], // 3.0 (StreamLake, was the $3.50 list) — re-checked 2026-10-01 live endpoints
   ["google/gemini-3.8-flash", 20.41], // $3.75 promo, same as 3.7
   ["google/gemini-3.7-flash", 20.41],
   ["meta/muse-spark-1.2", 20.82],
   ["qwen/qwen3.7-max", 20.96],
   ["qwen/qwen3.8-2.4t-a95b", 21.96],
   ["qwen/qwen3.8-max", 21.96],
+  ["moonshotai/kimi-k3", 23.02], // re-priced 2026-10-27 live endpoints (was 21.68px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["google/gemini-3.5-flash", 23.31],
-  ["moonshotai/kimi-k3", 25.0],
 ] as const;
 
 /**
@@ -975,8 +590,8 @@ export function eegCostLunaMult(model: string, provider?: string): number {
   return eegRelCost(model, provider) / EEG_COST_COMPARE_REL;
 }
 
-// ─── THE central paint resolution (the user 2026-08-06) ───
-// FORK 2026-08-06 (the user: "There should be a central point where the color and
+// ─── THE central paint resolution (the architect 2026-08-06) ───
+// FORK 2026-08-06 (the architect: "There should be a central point where the color and
 // thickness of the EEG lines are defined, and the rest of the pieces of code
 // that need them should go there to look. Also, the information about which
 // model at which effort is running should be a json object passed around.").
@@ -1025,7 +640,7 @@ export function resolveEegPaint(run: EegRun): EegPaint {
   return { stroke: paint.stroke, isRainbow: paint.isRainbow, width, logWidth };
 }
 
-// FORK 2026-08-06 #2 (the user: "We have multiple places where it shows thinking
+// FORK 2026-08-06 #2 (the architect: "We have multiple places where it shows thinking
 // progress, chat, tab title, model panel, recipes panel... The color of the
 // glows should be representative of the model running. Use the same strategy
 // you have used with the EEG trace color and unify all these thinking
@@ -1048,7 +663,7 @@ export function resolveEegGlowColor(run: EegRun): string {
 // badge. Replaces the old wide lateral fan. `step` is small so the band reads as a
 // stack, not separate lanes.
 export const EEG_STRAND_DEPTH_STEP = 1.4;
-// FORK 2026-06-25 (the user): lateral gap between distinct (model,effort) LANES that
+// FORK 2026-06-25 (the architect): lateral gap between distinct (model,effort) LANES that
 // share one effort column. Different models at the same effort stand side by side,
 // each keeping its own brand color; whitening only stacks WITHIN one model's lane.
 export const EEG_LANE_GAP = 6;
@@ -1068,7 +683,7 @@ function eegLightenHex(hex: string, t: number): string {
 // idx 0 = bottom/back of the pile (WHITEST), idx n-1 = top/front (full brand
 // color). When runs overlap they pile up; the buried tracks whiten toward
 // white so each track's edge stays identifiable under the stack, while the
-// front (latest, drawn on top) keeps the pure provider color (the user
+// front (latest, drawn on top) keeps the pure provider color (the architect
 // 2026-07-20, bible §5.8h — INVERTED from the original front-lightest ramp).
 // The rainbow gradient can't be tinted, so it fades by opacity instead
 // (bottom faintest).
@@ -1108,13 +723,13 @@ export function eegStopX(lvl: string, width: number): number {
   return EEG_PAD_LEFT + (idx * inner) / (EEG_STOPS.length - 1);
 }
 
-// FORK 2026-06-26 (the user): thinkingChars→effort-bucket was REMOVED. The EEG column
+// FORK 2026-06-26 (the architect): thinkingChars→effort-bucket was REMOVED. The EEG column
 // is now the allocator's REQUESTED level (eegEffectiveLevel below), never a bucket
 // derived from observed reasoning length — char-bucketing produced the bogus weave.
 // thinkingChars stays on EegSample (for future tooltip/measured-reality use) but no
 // longer drives any column position.
 
-// FORK 2026-06-26 (the user): the EEG is the oscilloscope for AUEFALAL (the automatic
+// FORK 2026-06-26 (the architect): the EEG is the oscilloscope for AUEFALAL (the automatic
 // effort allocator) — so the effort COLUMN is the level the allocator REQUESTED for
 // this call (s.chosenLevel), graphed DIRECTLY. It is NEVER re-derived from
 // thinkingChars: that char-bucketing was the bogus minimal↔medium "weave" (it
@@ -1133,12 +748,12 @@ function eegEffectiveLevel(s: EegSample): string {
 }
 
 // ─── Render constants ───
-// PERMANENT retention (the user 2026-06-13): keep the WHOLE session so all activity
+// PERMANENT retention (the architect 2026-06-13): keep the WHOLE session so all activity
 // is visible by scrolling — no drop-oldest. The high guard only backstops a
 // pathological runaway; a normal session never reaches it.
 const EEG_MAX_SAMPLES = 100000;
 const ROW_H = 24; // px per EMPTY-paper placeholder row (real rows are token-sized)
-// FORK 2026-06-22 (the user): the per-prompt boundary rule color. YELLOW (was blue #4DA3FF,
+// FORK 2026-06-22 (the architect): the per-prompt boundary rule color. YELLOW (was blue #4DA3FF,
 // originally faint gray #C9CDD4) — single source so the populated AND empty-paper render
 // paths can never disagree.
 export const EEG_TURN_COLOR = "#FFD23F";
@@ -1146,62 +761,137 @@ const TOP_PAD = 26; // room for the stop labels above the paper
 const BOTTOM_PAD = 14;
 const ARC_HALF = 7; // bezier vertical half-span → ~14px of curve per column hop
 // FORK 2026-06-19: half-gap each side of a prompt rule so the trunk visibly FINISHES
-// then RESTARTS across the boundary, the two ends nearly touching (the user).
+// then RESTARTS across the boundary, the two ends nearly touching (the architect).
 const EEG_TURN_GAP = 5;
 // FORK 2026-06-20: half-gap each side of EVERY LLM call so consecutive calls read as
-// DISTINCT segments, never one continuous spline (the user: "I don't see a clear
+// DISTINCT segments, never one continuous spline (the architect: "I don't see a clear
 // separation between calls"). Smaller than EEG_TURN_GAP so the per-prompt break stays
 // the stronger, dominant separation (call = small gap, prompt = big gap).
 const EEG_CALL_GAP = 2;
-const STRAND_CAP = 10; // bible §5.8h invariant 4: cap rendered strands per group; the dynamic ×N carries the true count (the user 2026-06-19: 10, was 5)
+const STRAND_CAP = 10; // bible §5.8h invariant 4: cap rendered strands per group; the dynamic ×N carries the true count (the architect 2026-06-19: 10, was 5)
 
 // ─── Segment LENGTH model: LENGTH = EURO COST → each €1 = one grid line ───
-// FORK 2026-06-20 (the user): "make the horizontal lines mean one euro — the thinking
+// FORK 2026-06-20 (the architect): "make the horizontal lines mean one euro — the thinking
 // should scale to the grid so we understand how much we spend on every prompt."
 // LENGTH now directly encodes the segment's EURO cost: a prompt's trace HEIGHT,
 // measured against the §1 horizontal grid (EEG_PX_PER_EURO px = €1, drawn in
 // renderSvg), reads as how many euros that prompt cost. width still = the model's
 // cost-PER-token identity (thick = an expensive model), so a thin-but-tall line =
-// a cheap model that ran a LOT and still cost real money — exactly the signal the user
+// a cheap model that ran a LOT and still cost real money — exactly the signal the architect
 // wants. euros = relCost(€/Mtok-output) × weightedMtok, where the weighted token
 // blend counts output ~5× input (the typical price ratio): weighted = output + 0.2·input.
 // MIN floor keeps tiny (sub-€0.2) turns clickable + fits the column-hop bezier
 // (≥ 2·ARC_HALF) — so the floor slightly over-draws the cheapest turns; the grid
 // reading is exact for anything above it. MAX backstops a pathological single turn.
 // The whole axis (and the grid pitch) rescales together with the wheel zoom.
-export const EEG_PX_PER_EURO = 90; // vertical px per €1 of spend (the §1 grid pitch)
+export const EEG_PX_PER_EURO = 90; // FALLBACK pitch only — see eegPxPerEuro (adaptive, 2026-10-01)
 const EEG_INPUT_COST_RATIO = 0.2; // input price ÷ output price (typical 5:1)
 const EEG_MIN_LEN = 16; // ≥ 2·ARC_HALF so the column-hop bezier always fits
-const EEG_MAX_LEN = 600;
 
+// FORK 2026-10-01 (finding 12) — THE INPUT TERM IS CURRENTLY ALWAYS ZERO, by omission upstream.
+// `inputTokens` has no producer: it was summed from the per-round lifecycle pair, which never
+// fired, and the 2026-09-24 telemetry swap deleted that consumer rather than re-feeding it. So
+// every euro figure on this paper is output-only and therefore an UNDER-estimate.
+//
+// The data does exist elsewhere in this UI: panels/call-timeline.ts carries a per-call `input`,
+// `cacheRead` and `cacheWrite` (its CallFrame, "billed prompt of THIS call"). That is the future
+// source, and wiring it is a PRICING DECISION, not a plumbing one — a call's prompt is mostly
+// cache reads, which this blend would charge at the full input rate. Deliberately left alone:
+// inventing a number here would be the same class of error as the floor that was just removed.
 function eegWeightedTokens(s: EegSample): number {
   return (s.outputTokens ?? 0) + EEG_INPUT_COST_RATIO * (s.inputTokens ?? 0);
 }
-// FORK 2026-06-20 (the user): estimated euro cost of one sample. relCost is €/Mtok-output
+// FORK 2026-06-20 (the architect): estimated euro cost of one sample. relCost is €/Mtok-output
 // (subscription-amortized for Anthropic, metered for API providers — see EEG_COST_TABLE).
 export function eegSampleEuros(s: EegSample): number {
   return (eegRelCost(s.model, s.provider) * eegWeightedTokens(s)) / 1_000_000;
 }
+// ─── THE SCALE ADAPTS TO THE TAB (FORK 2026-10-01, the architect) ───
+//
+// `eegClampEuros` lived here and was fed to the SPEND CLOCK, flooring every sample at
+// EEG_MIN_LEN / EEG_PX_PER_EURO = €0.1778 before the ledger summed it. The review measured the
+// consequence at 1874x: 200 tool calls (cost €0) plus 40 sonnet turns drew 43 "€N" gridlines over
+// 2.3 cents of real spend, because the axis was a sample count wearing a euro label. That is
+// exactly the architect's report — "parts of the graph that are empty, and yet the grid shows it has cost".
+//
+// So the floor is gone from the ledger and survives only as a DRAWN-LENGTH minimum at the render
+// site. The reason the floor existed at all was that 90px/€ was calibrated when the cost constants
+// were ~43x high: at honest subscription-amortised rates one turn is worth ~€0.005 and the whole
+// paper collapsed to a flat mat, which is what made a floor feel necessary. Fix the pitch instead.
+//
+// THE PITCH IS DERIVED FROM THE TAB'S OWN SPEND: a typical (median) turn draws about
+// EEG_TARGET_TURN_PX. A tab of cheap prepaid turns and a tab of expensive metered ones are both
+// legible, each on its own scale, which is the whole point of a PER-TAB instrument. The cost is
+// that heights are no longer comparable ACROSS papers — but they never meaningfully were, and
+// "length = euro cost" was always a within-one-paper property.
+//
+// The median, not the mean: one pathological turn must not flatten the other ninety-nine.
+export const EEG_TARGET_TURN_PX = 60;
+// A backstop, not a design target. Without it a tab holding one near-free sample and one real one
+// would set the pitch from a near-zero median and ask the browser for an SVG billions of px tall.
+// It is set well above any honest paper so it only ever bites on a spend spread over several orders
+// of magnitude — and when it does bite, the expensive turn rightly keeps most of the paper.
+export const EEG_MAX_PAPER_PX = 200_000;
+// Gridlines aim for this spacing before snapping to the 1-2-5 series; see eegGridStepEuros.
+export const EEG_GRID_TARGET_PX = 65;
+
+/** Unzoomed px per €1 for this paper, derived from the tab's own sample costs. */
+export function eegPxPerEuro(sampleEuros: number[]): number {
+  const positive = sampleEuros.filter((e) => Number.isFinite(e) && e > 0).sort((a, b) => a - b);
+  if (positive.length === 0) return EEG_PX_PER_EURO;
+  const median = positive[(positive.length - 1) >> 1];
+  if (!(median > 0)) return EEG_PX_PER_EURO;
+  const total = positive.reduce((a, b) => a + b, 0);
+  let px = EEG_TARGET_TURN_PX / median;
+  if (total > 0) px = Math.min(px, EEG_MAX_PAPER_PX / total);
+  return Number.isFinite(px) && px > 0 ? px : EEG_PX_PER_EURO;
+}
+
 /**
- * FORK 2026-08-08: legibility clamp for a strand's drawn length, in UNZOOMED px.
- *
- * The SPEND CLOCK (eeg-spend-clock.ts) decides the true euro extent of every strand; this only
- * keeps sub-€0.2 turns clickable and tall enough for the column-hop bezier, and backstops a
- * pathological single turn. Kept as one named derivation so the render path never re-invents the
- * floor — and kept OUT of the clock, which must stay exact arithmetic so the conservation test
- * (Σ advance ≡ Σ euros) can be exact.
- *
- * Was `eegSampleLength(sample)`, which computed position and floor together; position now comes
- * from the clock, so only the floor remains.
+ * The euro step between gridlines: a 1-2-5-per-decade value whose pixel spacing lands nearest
+ * EEG_GRID_TARGET_PX. Snapping to the NEAREST rather than rounding up keeps spacing inside roughly
+ * 40-100px (the worst ratio between neighbouring 1-2-5 steps is 2.5, so the error is at most its
+ * square root either way), and it is what keeps every label a round euro amount a human reads at a
+ * glance instead of an arbitrary fraction of the paper.
  */
-export function eegClampEuros(euros: number): number {
-  const min = EEG_MIN_LEN / EEG_PX_PER_EURO;
-  const max = EEG_MAX_LEN / EEG_PX_PER_EURO;
-  return Math.min(max, Math.max(min, Number.isFinite(euros) && euros > 0 ? euros : 0));
+export function eegGridStepEuros(pxPerEuro: number, total = Infinity): number {
+  if (!Number.isFinite(pxPerEuro) || pxPerEuro <= 0) return 1;
+  const target = EEG_GRID_TARGET_PX / pxPerEuro;
+  if (!Number.isFinite(target) || target <= 0) return 1;
+  const decade = Math.pow(10, Math.floor(Math.log10(target)));
+  let best = decade;
+  let bestErr = Infinity;
+  for (const m of [1, 2, 5, 10]) {
+    const step = m * decade;
+    const err = Math.abs(Math.log(step) - Math.log(target));
+    if (err < bestErr) {
+      bestErr = err;
+      best = step;
+    }
+  }
+  // A paper holding one or two calls would otherwise get a step larger than the whole ledger and
+  // so no rule at all — the spend is real and deserves at least one reference line. Walk DOWN the
+  // same 1-2-5 ladder until the step fits, which keeps the labels round even when the spacing is
+  // tighter than the target.
+  if (Number.isFinite(total) && total > 0) {
+    while (best > total) {
+      const d = Math.pow(10, Math.floor(Math.log10(best) + 1e-9));
+      const m = best / d;
+      best = m > 5.5 ? 5 * d : m > 2.5 ? 2 * d : m > 1.5 ? 1 * d : 5 * (d / 10);
+      if (!Number.isFinite(best) || best <= 0) return 1;
+    }
+  }
+  return best;
+}
+
+/** A gridline's label: a REAL euro amount of this tab, at the precision its step deserves. */
+export function eegEuroLabel(value: number, step: number): string {
+  const decimals = step >= 1 ? 0 : Math.min(6, Math.max(0, Math.ceil(-Math.log10(step))));
+  return `€${value.toFixed(decimals)}`;
 }
 
 // ─── LANES: lateral offset must encode REAL simultaneity ───
-// FORK 2026-07-28 (the user "lines dancing laterally within Min"): the original lane
+// FORK 2026-07-28 (the architect "lines dancing laterally within Min"): the original lane
 // allocator handed every distinct (T/S,model,effort) group its OWN permanent lane,
 // numbered per RAW `chosenLevel`. Two defects, exactly inverted from the intent:
 //   1. SEQUENTIAL groups still got different lanes → strands that never once ran at
@@ -1277,6 +967,57 @@ export function eegAssignLanes(
   return out;
 }
 
+/** Group key for strand bucketing: a tool strand never merges with a same-model subagent. */
+function eegStrandGroupKey(s: EegSample): string {
+  return `${s.tool ? "T" : "S"}|${s.model}|${s.chosenLevel}`;
+}
+
+/**
+ * Which strands STRAND_CAP drops — FINDING 2 (review 2026-10-01).
+ *
+ * The cap exists "so a big fan-out doesn't overwhelm the paper" (the architect 2026-06-19), and a fan-out
+ * is a CONCURRENT burst. It was being applied to a lifetime-wide bucket instead — every sample ever
+ * recorded for one (tool/sub, model, effort) — sorted oldest-first and truncated at index 10. Two
+ * defects followed. Forty strictly sequential tool calls, with a true concurrency of one, lost
+ * thirty of themselves. And because the paper puts the newest at the TOP, the ten survivors were
+ * the OLDEST: the region the architect looks at for what just happened was the emptiest part of the paper.
+ *
+ * So the rule is per-peer, not per-index: a strand is dropped only when STRAND_CAP or more of its
+ * genuinely OVERLAPPING peers started after it. Sequential work is never touched, and what survives
+ * a real burst is its newest end. The caller must also keep the dropped strands out of the spend
+ * clock — undrawn work that still buys axis advance is exactly the empty-paper-with-cost symptom.
+ */
+export function eegCappedOut(subs: EegSample[], cap: number = STRAND_CAP): Set<string> {
+  const out = new Set<string>();
+  const byKey = new Map<string, EegSample[]>();
+  for (const s of subs) {
+    const k = eegStrandGroupKey(s);
+    const arr = byKey.get(k);
+    if (arr) arr.push(s);
+    else byKey.set(k, [s]);
+  }
+  const endOf = (x: EegSample): number => (typeof x.endedAt === "number" ? x.endedAt : Infinity);
+  for (const group of byKey.values()) {
+    if (group.length <= cap) continue; // cannot have `cap` concurrent peers
+    const items = [...group].sort((a, b) => a.startedAt - b.startedAt);
+    for (let i = 0; i < items.length; i++) {
+      const s = items[i];
+      const sEnd = endOf(s);
+      let newer = 0;
+      for (let j = 0; j < items.length; j++) {
+        if (j === i) continue;
+        const o = items[j];
+        if (!(o.startedAt < sEnd && s.startedAt < endOf(o))) continue; // no real overlap
+        // the mirror of the renderer's depthIdx tie-break, so the two agree exactly
+        if (o.startedAt > s.startedAt || (o.startedAt === s.startedAt && j > i)) newer++;
+        if (newer >= cap) break;
+      }
+      if (newer >= cap) out.add(s.runId);
+    }
+  }
+  return out;
+}
+
 function esc(s: string): string {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -1286,12 +1027,6 @@ function esc(s: string): string {
 }
 
 const fx = (v: number): string => (Math.round(v * 100) / 100).toString();
-
-interface SubCluster {
-  items: EegSample[];
-  start: number;
-  end: number; // Infinity while any member is still running
-}
 
 export class EegTraceStore {
   // insertion order keyed by runId — record() upserts because effort events
@@ -1340,15 +1075,20 @@ export class EegTraceStore {
     }
   }
 
-  // FORK 2026-06-19: close any still-running SUBAGENT branch whose run is no longer
-  // live (gone from activeRuns, or silent past the caller's bound) — clears the
-  // "thinking forever" ghosts (dead 30× fan-outs that never got an end event).
-  // Returns the closed runIds so the caller can also drop their activeRuns entry.
-  // Main-session samples are NEVER swept (a main turn may legitimately think long).
+  // FORK 2026-06-19: close any still-running BRANCH whose run is no longer live (gone from
+  // activeRuns, or silent past the caller's bound) — clears the "thinking forever" ghosts (dead
+  // 30× fan-outs that never got an end event). Returns the closed runIds so the caller can also
+  // drop their activeRuns entry. Main-session samples are NEVER swept (a main turn may
+  // legitimately think long).
+  //
+  // FORK 2026-10-01 (finding 8): TOOL strands are swept too, not just subagents. A tool's end
+  // stamp is written only while its own tab is being viewed, so switching tabs between a tool's
+  // start and its result leaves it open forever; `s.subagent` is false for a tool, so this sweep
+  // skipped exactly the one class that could not stamp itself.
   closeStaleRunning(isLive: (runId: string) => boolean, now: number): string[] {
     const closed: string[] = [];
     for (const [runId, s] of this.samples) {
-      if (s.subagent && s.endedAt === undefined && !isLive(runId)) {
+      if ((s.subagent || s.tool) && s.endedAt === undefined && !isLive(runId)) {
         this.samples.set(runId, { ...s, endedAt: now });
         closed.push(runId);
       }
@@ -1378,25 +1118,25 @@ export class EegTraceStore {
     return { samples: [...this.samples.values()], ends: [...this.turnEnds] };
   }
 
-  // FORK 2026-06-19: this store's samples tagged for a merged "all"-scope overlay
-  // (renderSvg `overlay`) — a session id (for per-session main-line grouping) + dim.
-  taggedSamples(tag: { sessionKey: string; dim: boolean }): EegSample[] {
-    return [...this.samples.values()].map((s) => ({
-      ...s,
-      sessionKey: tag.sessionKey,
-      dim: tag.dim,
-    }));
-  }
-
-  renderSvg(opts: { width: number; zoom?: number; overlay?: EegSample[] }): string {
+  // ONE TAB, ONE PAPER (the architect 2026-10-01: "the toggle switch needs to go, and the EEG has to stay
+  // specific for each tab"). There is no `overlay` option and no `dim` sample any more: the paper
+  // draws THIS store — the viewed session plus its own subagents and its own tool calls — and
+  // nothing else. The all-scope overlay made the same euro glyphs mean one tab's spend or the union
+  // across tabs depending on a switch, and moved every strand when flipped; the axis could not be
+  // read without knowing the toggle's history.
+  renderSvg(opts: { width: number; zoom?: number }): string {
     // chronological, oldest first — row 0 of the chrono index sits at the BOTTOM.
-    // `overlay` = OTHER sessions' samples (all-scope), drawn faint on the SAME axis.
-    const all = [...this.samples.values(), ...(opts.overlay ?? [])].sort(
-      (a, b) => a.startedAt - b.startedAt,
-    );
+    const everySample = [...this.samples.values()].sort((a, b) => a.startedAt - b.startedAt);
+    // FINDING 2: decide the strand cap BEFORE the clock, so a capped strand buys no axis advance.
+    // `allSubs` keeps the full population for the ×N gauge and the "N× parallel here" tip, which
+    // must report the TRUE fan-out — reporting the true count while drawing a bounded stack is the
+    // whole point of the cap.
+    const allSubs = everySample.filter((s) => s.subagent || s.tool);
+    const cappedOut = eegCappedOut(allSubs);
+    const all = cappedOut.size ? everySample.filter((s) => !cappedOut.has(s.runId)) : everySample;
 
     const width = Math.max(120, opts.width || 320);
-    // vertical SCALE (the user 2026-06-13): the secondary-button wheel zooms the
+    // vertical SCALE (the architect 2026-06-13): the secondary-button wheel zooms the
     // whole length axis. Re-floor each row at 2·ARC_HALF so the column-hop bezier
     // still fits even when zoomed all the way out.
     const zoom = Math.min(20, Math.max(0.03, opts.zoom ?? 1));
@@ -1427,24 +1167,26 @@ export class EegTraceStore {
     // money was being spent alongside. Idle advances nothing, so the paper still stops and resumes.
     // With one session and no concurrency this is arithmetically identical to the old stacking —
     // pinned by eeg-spend-clock.test.ts "reproduces plain cumulative stacking".
-    // THE FLOOR IS APPLIED TO THE CLOCK'S INPUT, NOT TO ITS OUTPUT. Clamping lengths afterwards
-    // desynchronises them from their positions: two sub-€0.2 calls sit ~1px apart on the exact
-    // ledger but each draw 16px tall, so they OVERLAP instead of showing the call gap. Feeding
-    // clamped euros in keeps one coherent layout — and reproduces the pre-existing, documented
-    // deviation exactly (the floor slightly over-draws the cheapest turns; the grid reading is
-    // exact for anything above it). The clock module itself stays exact arithmetic, which is why
-    // its conservation test can be exact.
+    // THE LEDGER IS EXACT (FORK 2026-10-01, the architect). The clock is fed eegSampleEuros, never a floor:
+    // the grid therefore reads real euros of this tab. The legibility floor survives below, on the
+    // DRAWN length only. That does desynchronise length from position for a sub-floor strand — two
+    // near-free calls sit ~1px apart on the exact ledger yet each draw 16px, so they overlap — and
+    // that is the trade taken deliberately: an overlapping hairline is a cosmetic cost, a 1874x
+    // wrong money axis is not. The adaptive pitch below makes it rare, because a typical turn is
+    // now ~60px rather than under the floor.
     const nowMs = Date.now();
+    const sampleEuros = all.map((s) => eegSampleEuros(s));
     const clock = buildEegSpendClock(
-      all.map((s) => ({
+      all.map((s, i) => ({
         key: s.runId,
         startedAt: s.startedAt,
         endedAt: s.endedAt,
-        euros: eegClampEuros(eegSampleEuros(s)),
+        euros: sampleEuros[i],
       })),
       nowMs,
     );
-    const pxPerEuro = EEG_PX_PER_EURO * zoom;
+    // Per-tab pitch (eegPxPerEuro), times the wheel zoom exactly as before.
+    const pxPerEuro = eegPxPerEuro(sampleEuros) * zoom;
     // Newest at TOP: the clock grows with time, so screen y counts DOWN from the total.
     const rowTopArr: number[] = new Array(n);
     const lengths: number[] = new Array(n);
@@ -1453,9 +1195,11 @@ export class EegTraceStore {
       const yStart = span?.yStart ?? 0;
       const yEnd = span?.yEnd ?? yStart;
       rowTopArr[c] = TOP_PAD + (clock.total - yEnd) * pxPerEuro;
-      // Euros were already clamped on the way IN, so length and position agree by construction.
-      // The only floor left is the zoom-scaled bezier minimum, exactly as before.
-      lengths[c] = Math.max(2 * arc, (yEnd - yStart) * pxPerEuro);
+      // The legibility floor lives HERE and only here: keep a near-free call clickable and tall
+      // enough for the column-hop bezier, without it ever reaching the ledger. There is no maximum:
+      // capping a strand below its own span would leave euros of axis advance with no ink on them,
+      // which is the emptiness the architect reported.
+      lengths[c] = Math.max(2 * arc, EEG_MIN_LEN * Math.min(1, zoom), (yEnd - yStart) * pxPerEuro);
     }
     // The paper is as tall as the ledger, but never shorter than a floored strand sticking out.
     let contentLen = clock.total * pxPerEuro;
@@ -1480,16 +1224,14 @@ export class EegTraceStore {
     // FORK 2026-06-25 (scope C): tool samples are NEVER trunk segments — they branch
     // off it (added to `subs` below), so the trunk stays the LLM-call spine.
     const mains = all.filter((s) => !s.subagent && !s.tool);
-    // the VIEWED session's main line = the trunk branches anchor to + the ×N counts
-    const viewedMains = mains.filter((s) => !s.dim);
-    // parent main-line column at instant t (for branch split/join anchors) — viewed trunk
+    // parent main-line column at instant t (for branch split/join anchors)
     const mainColAt = (t: number): number => {
       let best: EegSample | undefined;
-      for (const m of viewedMains) {
+      for (const m of mains) {
         if (m.startedAt <= t) best = m;
         else break;
       }
-      if (!best && viewedMains.length > 0) best = viewedMains[0];
+      if (!best && mains.length > 0) best = mains[0];
       return best ? colX(eegEffectiveLevel(best)) : colX("");
     };
 
@@ -1514,24 +1256,30 @@ export class EegTraceStore {
         ` font-size="8" fill="#8A8F98">${esc(stop.short)}</text>`;
     }
 
-    // ── horizontal €-grid: one rule per €1 of trace length (the user 2026-06-20). Each
-    // cell = EEG_PX_PER_EURO·zoom px = €1 of spend, anchored at the bottom (oldest =
-    // session start) and counting UP, so a prompt's trace HEIGHT reads as its euro cost
-    // and the gutter labels read as cumulative session spend. Drawn IN the svg (not the
-    // old fixed-pitch CSS background) so it scales with zoom and aligns to the trace.
-    const euroPitch = EEG_PX_PER_EURO * Math.min(20, Math.max(0.03, opts.zoom ?? 1));
+    // ── horizontal €-grid: one rule per grid STEP of spend (the architect 2026-06-20, rescaled 2026-10-01).
+    // Anchored at the bottom (oldest = session start) and counting UP, so a prompt's trace HEIGHT
+    // reads as its euro cost and the gutter labels read as cumulative spend FOR THIS TAB. The step
+    // is no longer hardcoded at €1: it comes from the tab's own pitch via the 1-2-5 series, so the
+    // lines stay ~40-100px apart whether the tab spent cents or tens of euros, and every label is a
+    // real euro amount this tab actually reached. A tab that spent nothing measurable gets no line
+    // at all, which is the honest reading — the old fixed grid printed €1, €2, €3 over it.
+    const euroStep = eegGridStepEuros(pxPerEuro, clock.total);
+    const euroPitch = euroStep * pxPerEuro;
     const gridBottom = height - BOTTOM_PAD;
     let euroGrid = "";
-    if (euroPitch >= 4) {
-      // skip an unreadable hairline mat when zoomed all the way out
+    if (euroPitch >= 4 && clock.total > 0) {
       let e = 1;
-      for (let gy = gridBottom - euroPitch; gy >= TOP_PAD; gy -= euroPitch, e++) {
+      for (
+        let gy = gridBottom - euroPitch;
+        gy >= TOP_PAD && e * euroStep <= clock.total;
+        gy -= euroPitch, e++
+      ) {
         euroGrid +=
           `<line class="eeg-eurogrid" x1="0" y1="${fx(gy)}" x2="${width}" y2="${fx(gy)}"` +
           ` stroke="#8A8F98" stroke-opacity="0.16" stroke-width="1"/>`;
         euroGrid +=
           `<text class="eeg-eurolabel" x="${fx(width - 3)}" y="${fx(gy - 2)}" text-anchor="end"` +
-          ` font-size="8" fill="#8A8F98">€${e}</text>`;
+          ` font-size="8" fill="#8A8F98">${eegEuroLabel(e * euroStep, euroStep)}</text>`;
       }
     }
 
@@ -1541,7 +1289,7 @@ export class EegTraceStore {
         `<text class="eeg-empty-hint" x="${fx(width / 2)}"` +
         ` y="${fx(TOP_PAD + (EMPTY_ROWS * ROW_H) / 2)}" text-anchor="middle"` +
         ` font-size="9" fill="#8A8F98">waiting for model activity…</text>`;
-      // FORK 2026-06-22 (the user): even with NO samples yet, draw the prompt-boundary
+      // FORK 2026-06-22 (the architect): even with NO samples yet, draw the prompt-boundary
       // rule(s) so a turn sent into a fresh session is delimited the instant it is sent
       // (was the no-line bug: the old early-return skipped ALL markers when n===0).
       // timeToY is NaN-unsafe here (empty arrays), so stack them at fixed y instead.
@@ -1571,17 +1319,11 @@ export class EegTraceStore {
     // Each sample's <path> = the incoming connector from the previous (older,
     // lower) main sample + its own vertical run; column hops are cubic beziers
     // spanning ~14px (ARC_HALF each side of the row boundary).
-    // Group main samples by SESSION so a merged "all"-scope render draws ONE
-    // continuous line per session (viewed session solid; others `dim` = faint).
-    const mainsBySession = new Map<string, EegSample[]>();
-    for (const s of mains) {
-      const g = s.sessionKey ?? "__self";
-      const arr = mainsBySession.get(g);
-      if (arr) arr.push(s);
-      else mainsBySession.set(g, [s]);
-    }
+    // One session, so one continuous line: the per-session grouping the all-scope overlay needed
+    // went with it (the architect 2026-10-01).
     let trace = "";
-    for (const group of mainsBySession.values()) {
+    {
+      const group = mains;
       for (let m = 0; m < group.length; m++) {
         const s = group[m];
         const c = rowOf.get(s.runId)!;
@@ -1598,33 +1340,29 @@ export class EegTraceStore {
         // lanes and strand stacks, so the linear spread clipped at the top and floored
         // at the bottom. The MODELS panel keeps the linear scale.
         const w = paint.logWidth;
-        const op = s.dim ? 0.32 : 1; // other sessions (all-scope) draw semi-transparent
         let d: string;
         const prev = m > 0 ? group[m - 1] : undefined;
         const next = m + 1 < group.length ? group[m + 1] : undefined;
         // FORK 2026-06-19: BREAK the trunk at each prompt boundary so the line
         // visibly FINISHES at a turn end and RESTARTS in the next turn, the two ends
-        // nearly touching across the prompt rule (the user). startsTurn = a boundary
+        // nearly touching across the prompt rule (the architect). startsTurn = a boundary
         // sits just before this sample (begins a new turn) → start EEG_TURN_GAP above
         // its bottom; endsTurn = one sits just after (this sample ends a turn) → stop
         // EEG_TURN_GAP below the marker instead of leaving a connector arc. Only the
         // VIEWED trunk breaks (this.turnEnds is the viewed session's).
         // FORK 2026-06-20: EVERY CALL is its own segment — no connector spline between
-        // calls (the user: "the line is a continuous spline, I don't see a clear separation
+        // calls (the architect: "the line is a continuous spline, I don't see a clear separation
         // between calls"). Each main sample draws a fresh VERTICAL run at its effort
         // column, inset by a small CALL gap at each end so consecutive calls visibly
         // finish + restart. A PROMPT boundary (turn change) uses the bigger TURN gap so
         // the per-prompt break stays the dominant separation (hierarchy: call < prompt).
         // This also means breaks no longer depend on turnEnds being recorded: even with
         // no turn boundaries the calls still separate, killing the continuous-spline look.
-        const canBreak = !s.dim;
         const startsTurn =
-          canBreak &&
           !!prev &&
           (turnOf(prev.startedAt) !== turnOf(s.startedAt) ||
             this.turnEnds.some((t) => t.endedAt > prev.startedAt && t.endedAt <= s.startedAt));
         const endsTurn =
-          canBreak &&
           !!next &&
           (turnOf(s.startedAt) !== turnOf(next.startedAt) ||
             this.turnEnds.some((t) => t.endedAt > s.startedAt && t.endedAt <= next.startedAt));
@@ -1634,14 +1372,14 @@ export class EegTraceStore {
         const gapAbove = !next ? 0 : endsTurn ? turnGap : callGap;
         d = `M ${fx(x)} ${fx(yB - gapBelow)} L ${fx(x)} ${fx(yT + gapAbove)}`;
         // tag each trunk segment with the PROMPT (turn) it belongs to, so hovering the
-        // line highlights the whole prompt + clicking it scrolls the chat (the user 2026-06-19).
-        const mainTurn = s.dim ? -1 : this.turnEnds.filter((t) => t.endedAt <= s.startedAt).length;
-        const mainTE = mainTurn >= 0 ? this.turnEnds[mainTurn] : undefined;
+        // line highlights the whole prompt + clicking it scrolls the chat (the architect 2026-06-19).
+        const mainTurn = this.turnEnds.filter((t) => t.endedAt <= s.startedAt).length;
+        const mainTE = this.turnEnds[mainTurn];
         const mainIdxAttr =
           mainTE && typeof mainTE.promptIndex === "number"
             ? ` data-eeg-prompt-index="${mainTE.promptIndex}"`
             : "";
-        // FORK 2026-06-26 (the user): every LLM-call trace must read its model/effort on
+        // FORK 2026-06-26 (the architect): every LLM-call trace must read its model/effort on
         // hover. The branches already carried a <title>; the main trunk did not — so a
         // mouse-over of a trunk call said nothing. Same tip shape as the branch path:
         // model · effort · tokens (effort falls back to "auto" when unpinned).
@@ -1656,12 +1394,12 @@ export class EegTraceStore {
             .join(" · "),
         );
         trace +=
-          // FORK 2026-07-22 (the user): FLAT start/finish, not round — a thick trace
+          // FORK 2026-07-22 (the architect): FLAT start/finish, not round — a thick trace
           // (e.g. fable 33px) with a round cap bulges into a half-circle at each
           // end. `butt` squares the ends; `round` linejoin keeps the mid-path
           // effort bends smooth (joins are unaffected by the cap).
           `<path class="eeg-main" d="${d}" fill="none" stroke="${paint.stroke}"` +
-          ` stroke-opacity="${fx(op)}" stroke-width="${fx(w)}" stroke-linecap="butt"` +
+          ` stroke-opacity="1" stroke-width="${fx(w)}" stroke-linecap="butt"` +
           ` stroke-linejoin="round" data-eeg-run="${esc(s.runId)}"${mainIdxAttr}><title>${mainTip}</title></path>`;
       }
     }
@@ -1674,25 +1412,25 @@ export class EegTraceStore {
     // depth-shade so they read as a stack. (bible §5.8h invariant 4, updated
     // 2026-06-19: show ALL branches as a real staggered tree + a DYNAMIC ×N that
     // re-labels at each concurrency change — replaces the cap-5 monolith + one
-    // static badge.) `dim` strands (other sessions in "all" scope) draw faint.
+    // static badge.)
     // FORK 2026-06-25 (scope C): tool calls render through the SAME branch path as
     // subagents — split off the trunk, run up a strand column, join back — but keyed
     // separately ("T" vs "S") so a tool strand never merges with a same-model subagent.
     const subs = all.filter((s) => s.subagent || s.tool);
     const byKey = new Map<string, EegSample[]>();
     for (const s of subs) {
-      const k = `${s.tool ? "T" : "S"}|${s.model}|${s.chosenLevel}`;
+      const k = eegStrandGroupKey(s);
       const arr = byKey.get(k);
       if (arr) arr.push(s);
       else byKey.set(k, [s]);
     }
     // run interval of a strand; a still-running (un-ended) strand stays open.
     const endOf = (x: EegSample): number => (typeof x.endedAt === "number" ? x.endedAt : Infinity);
-    // FORK 2026-06-25 (the user): LANES. Distinct (T/S,model,effort) groups that land
+    // FORK 2026-06-25 (the architect): LANES. Distinct (T/S,model,effort) groups that land
     // on the SAME effort column must stand SIDE BY SIDE, not pile onto each other —
     // opus-low and sonnet-low at the same instant are two lanes, each its own brand
     // color; whitening (depth-shade) only ever stacks WITHIN one group.
-    // FORK 2026-07-28 (the user): …and groups that are merely SEQUENTIAL must SHARE lane 0
+    // FORK 2026-07-28 (the architect): …and groups that are merely SEQUENTIAL must SHARE lane 0
     // — a lane index is now earned by real temporal overlap, keyed on the EFFECTIVE
     // column the strand is actually drawn in. See eegAssignLanes for the two defects
     // this replaced ("lines dancing laterally within Min").
@@ -1707,11 +1445,13 @@ export class EegTraceStore {
     for (const [groupKey, items] of byKey) {
       items.sort((a, b) => a.startedAt - b.startedAt);
       const lane = laneOf.get(groupKey) ?? 0;
-      // cap rendered strands per group so a big fan-out doesn't overwhelm the
-      // paper — the dynamic ×N below still reports the true total (the user 2026-06-19).
-      for (let i = 0; i < items.length && i < STRAND_CAP; i++) {
+      // No index bound here any more (FINDING 2): STRAND_CAP was already applied, per concurrency
+      // burst, by eegCappedOut above — and applied to the clock's input at the same time, so what
+      // is not drawn is not billed. `items` therefore holds at most STRAND_CAP genuinely concurrent
+      // peers, which is what makes the depth/shade arithmetic below bounded without clamping.
+      for (let i = 0; i < items.length; i++) {
         const s = items[i];
-        // TRUE temporal overlap within THIS (model,effort) group (the user 2026-06-25:
+        // TRUE temporal overlap within THIS (model,effort) group (the architect 2026-06-25:
         // "whiten only when threads ACTUALLY overlap"). depthIdx = overlapping peers
         // that started before s (its rank in the live stack); groupConcurrent =
         // overlapping peers + self. The OLD code counted `endedAt ?? Infinity`, so a
@@ -1741,7 +1481,7 @@ export class EegTraceStore {
         const shade = eegStrandShade(paint, depthIdx, groupConcurrent);
         // FORK 2026-06-19/25: fan LEFT into the unused Auto columns — first by LANE
         // (model separation, side by side), then by depthIdx (the within-model
-        // overlap stack). Clamp so strands never cross the left gutter (the user).
+        // overlap stack). Clamp so strands never cross the left gutter (the architect).
         const col = Math.max(
           EEG_PAD_LEFT,
           colX(eegEffectiveLevel(s)) - lane * EEG_LANE_GAP - depthIdx * EEG_STRAND_DEPTH_STEP,
@@ -1757,31 +1497,37 @@ export class EegTraceStore {
         const ended = typeof s.endedAt === "number";
         // FORK 2026-06-20: floor the arch HEIGHT for an ended branch. A fast helper
         // whose start+end snap to the same row would otherwise split AND join at the
-        // same trunk point → a CLOSED 1px teardrop (the user's "weird max↔low loop").
+        // same trunk point → a CLOSED 1px teardrop (the architect's "weird max↔low loop").
         // Newest-at-top: the join (newer endedAt) sits ABOVE the split; force it at
         // least arc*3 above so the branch reads as a small out-and-back arch — but
         // never above the paper's top pad (a branch that is the very newest event has
         // no room and stays flat until the next sample lands).
+        // FORK 2026-10-01 (finding 8): an UN-ENDED branch is clamped to the live grace window, not
+        // to TOP_PAD. "No end stamp" used to mean "still running", so a strand orphaned six hours
+        // ago drew one hairline from its split straight to the top — 91% of the paper, restored on
+        // every reload. The spend clock already declines to believe such a sample (EEG_LIVE_GRACE_MS)
+        // and collapses its euros to a step at its start, but that bounds the euro ACCRUAL and the
+        // geometry here ignored it. Inside the grace window timeToY(now) is still the top, so a
+        // genuinely live strand is unchanged; past it the branch shrinks to a stub at its own y.
+        const liveEdge = Math.min(nowMs, s.startedAt + EEG_LIVE_GRACE_MS);
         const joinY = ended
           ? Math.max(TOP_PAD, Math.min(timeToY(s.endedAt as number), splitY - arc * 3))
-          : TOP_PAD;
+          : Math.max(TOP_PAD, timeToY(liveEdge));
         // FORK 2026-06-19: if the subagent crossed a prompt boundary, merge back into ITS
         // OWN turn's trunk column (the first turnEnd after it started), NOT the later turn's
         // — so a helper from the previous prompt never draws a high→max line across the
-        // prompt rule into the new turn's column (the user's "previous call's high into max").
+        // prompt rule into the new turn's column (the architect's "previous call's high into max").
         let joinClampT = s.endedAt as number;
         if (ended && turnOf(joinClampT) !== turnOf(s.startedAt)) {
           joinClampT = this.turnEnds.find((t) => t.endedAt > s.startedAt)?.endedAt ?? joinClampT;
         }
         const joinX = ended ? mainColAt(joinClampT) : col;
-        const dimOp = s.dim ? 0.32 : 1;
         // FORK 2026-06-19: how many strands run in parallel at this spawn — shown on
-        // hover so mousing over the bunch reads the multiplicity at that moment (the user).
-        const concurrentAtSpawn = subs.filter(
-          (x) =>
-            !!x.dim === !!s.dim &&
-            x.startedAt <= s.startedAt &&
-            (x.endedAt ?? Infinity) > s.startedAt,
+        // hover so mousing over the bunch reads the multiplicity at that moment (the architect).
+        // the TRUE multiplicity at this instant, counted over every strand including the ones the
+        // cap declined to draw — the tip is the affordance that reports what the paper cannot show.
+        const concurrentAtSpawn = allSubs.filter(
+          (x) => x.startedAt <= s.startedAt && (x.endedAt ?? Infinity) > s.startedAt,
         ).length;
         // FORK 2026-06-25 (scope C): for a tool branch hide the synthetic `tool:local`
         // model + the meaningless "auto" effort — the label (tool name) carries it.
@@ -1797,7 +1543,7 @@ export class EegTraceStore {
             .filter(Boolean)
             .join(" · "),
         );
-        // FORK 2026-06-23 (the user "weird max↔high loop stepping on the labels"): the
+        // FORK 2026-06-23 (the architect "weird max↔high loop stepping on the labels"): the
         // out-arc top (yOut) and its control point were UNCLAMPED, so a branch whose split
         // sits near the paper TOP punched above TOP_PAD into the column-label row — and,
         // splitting from the parent column (max) to the strand column (high) and back, drew
@@ -1814,7 +1560,7 @@ export class EegTraceStore {
         // FORK 2026-06-20: never let a SHORT branch (a fast helper that finishes
         // before the next trunk call, so splitY≈joinY) pinch into a CLOSED teardrop —
         // force a small straight run at the strand column so it reads as a real
-        // out-and-back arch, not a meaningless 1px loop (the user: "weird max↔low loop").
+        // out-and-back arch, not a meaningless 1px loop (the architect: "weird max↔low loop").
         // Geometry stays honest: same split→strand-col→join columns/color/width.
         const yJoinInRaw = ended ? joinY + arc * 2 : joinY;
         const yJoinIn = ended ? Math.max(TOP_PAD, Math.min(yJoinInRaw, yOut - arc)) : yJoinInRaw;
@@ -1825,8 +1571,8 @@ export class EegTraceStore {
         const toolAttr = s.tool ? ` data-eeg-tool="1"` : "";
         branches +=
           `<path class="eeg-branch" d="${d}" fill="none" stroke="${shade.stroke}"` +
-          ` stroke-opacity="${fx(shade.opacity * dimOp)}" stroke-width="${fx(w)}"` +
-          // FORK 2026-08-05 (the user: "the style of EEG trace should ALWAYS be a line
+          ` stroke-opacity="${fx(shade.opacity)}" stroke-width="${fx(w)}"` +
+          // FORK 2026-08-05 (the architect: "the style of EEG trace should ALWAYS be a line
           // that starts and ends abruptly, without the rounding effect embelishment
           // at the ends"). Round caps also LIE about duration: a cap adds half the
           // stroke width past each endpoint, so a 20px-thick Fable branch drew ~20px
@@ -1841,8 +1587,7 @@ export class EegTraceStore {
     // single static cluster badge).
     {
       const evs: { t: number; d: number }[] = [];
-      for (const s of subs) {
-        if (s.dim) continue; // the ×N gauge counts the VIEWED session's fan-out only
+      for (const s of allSubs) {
         if (s.tool) continue; // tools branch but are NOT fan-out — never inflate ×N (scope C)
         evs.push({ t: s.startedAt, d: 1 });
         if (typeof s.endedAt === "number") evs.push({ t: s.endedAt as number, d: -1 });
@@ -1861,7 +1606,7 @@ export class EegTraceStore {
           lastShown = count;
         }
       }
-      // FORK 2026-08-17 (the user: "should show a few EEG traces side by side"): the gauge
+      // FORK 2026-08-17 (the architect: "should show a few EEG traces side by side"): the gauge
       // coalesced only events at the SAME INSTANT, not at the same PIXEL. A real fan-out
       // ramps ×2→×10 within a couple of minutes, which on a multi-day paper is ~3px, so ten
       // 9px labels landed on top of each other and the one affordance that reports "ten ran
@@ -1887,14 +1632,14 @@ export class EegTraceStore {
 
     // ── PROMPT separators: a CLEAR solid rule per turn = one prompt (clickable →
     // app.ts scrolls the chat to that prompt + highlights it). The "t N" label is
-    // dropped (the user 2026-06-19: meaningless); the full-width transparent rect is the
+    // dropped (the architect 2026-06-19: meaningless); the full-width transparent rect is the
     // generous hit target. Internal LLM-call boundaries get only a SUBTLE tick (below).
     let markers = "";
     for (const t of this.turnEnds) {
       const y = timeToY(t.endedAt);
       const idxAttr =
         typeof t.promptIndex === "number" ? ` data-eeg-prompt-index="${t.promptIndex}"` : "";
-      // FORK 2026-06-22 (the user): carry the prompt text as a data-attr so app.ts can
+      // FORK 2026-06-22 (the architect): carry the prompt text as a data-attr so app.ts can
       // render its OWN styled hover overlay (the native <title> is slow + unstyleable);
       // the <title> stays as a no-JS fallback.
       const txtAttr = t.promptText ? ` data-eeg-prompt-text="${esc(t.promptText)}"` : "";
@@ -1902,12 +1647,12 @@ export class EegTraceStore {
         `class="eeg-marker" data-eeg-turn="${esc(String(t.turn))}" data-eeg-run="${esc(t.runId)}"${idxAttr}${txtAttr}` +
         ` style="cursor:pointer"`;
       const pTip = t.promptText ? `<title>${esc(t.promptText)}</title>` : "";
-      // FORK 2026-06-22 (the user): the prompt boundary is a clear YELLOW rule. CSS
+      // FORK 2026-06-22 (the architect): the prompt boundary is a clear YELLOW rule. CSS
       // .eeg-marker brightens it further on hover.
       markers +=
         `<line ${attrs} x1="0" y1="${fx(y)}" x2="${width}" y2="${fx(y)}"` +
         ` stroke="${EEG_TURN_COLOR}" stroke-opacity="0.9" stroke-width="2"/>`;
-      // FORK 2026-09-06 (the user: "the area of effect on the yellow line on-hover is too big …
+      // FORK 2026-09-06 (the architect: "the area of effect on the yellow line on-hover is too big …
       // it should just be on top of the actual line, and maybe a hair or two out from there").
       // Was a 12px band (y-6, h=12) around a 2px rule — six times the line's own width, which
       // swallowed hovers meant for the traces underneath. Now ±3px. The rule is full-width, so
@@ -1917,9 +1662,9 @@ export class EegTraceStore {
 
     // ── SUBTLE internal LLM-call separators: a faint short tick at each viewed
     // main-sample (LLM-call) boundary — the within-a-prompt rhythm, distinct from the
-    // bold prompt rules above (the user 2026-06-19).
+    // bold prompt rules above (the architect 2026-06-19).
     let callTicks = "";
-    for (const s of viewedMains) {
+    for (const s of mains) {
       const c = rowOf.get(s.runId);
       if (c === undefined || c === 0) continue;
       const y = rowTop(c);
@@ -1947,7 +1692,7 @@ export class EegTraceStore {
         ` x="0" y="${fx(topY)}" width="${width}" height="${fx(botY - topY)}" fill="transparent">${zTip}</rect>`;
     }
 
-    // FORK 2026-09-06 (the user) — HIT PRECEDENCE REVERSED. The prompt hit-band used to paint
+    // FORK 2026-09-06 (the architect) — HIT PRECEDENCE REVERSED. The prompt hit-band used to paint
     // LAST, so a full-width rect spanning the whole turn's time-slice sat on top of every trace
     // and stole its hover: "when I mouseover an LLM thread, sometimes it does not show me info
     // about the model used". SVG hit-testing is paint order, so the fix is the order itself.

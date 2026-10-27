@@ -62,7 +62,6 @@ import argparse
 import json
 import os
 import sys
-import pickle
 import subprocess
 import shutil
 from pathlib import Path
@@ -113,7 +112,7 @@ def get_token_file(account=None):
 
 
 def get_legacy_token_file(account=None):
-    """Pre-4.3.0 pickle token path. Migrated to JSON on first use."""
+    """Pre-4.3.0 pickle token path. Never loaded - only reported and deleted."""
     acc = account or _current_account
     if acc == DEFAULT_ACCOUNT:
         return CONFIG_DIR / 'token.pickle'
@@ -136,18 +135,18 @@ def _save_credentials(creds, token_file):
 
 
 def _load_credentials(token_file, legacy_file):
-    """Load stored credentials, migrating a legacy pickle token if present."""
+    """Load stored JSON credentials. A legacy pickle token is never opened.
+
+    Versions <=4.2.3 stored the token as a pickle. Unpickling executes code, so
+    this version does not read that file at all: it reports it and falls through
+    to the normal consented sign-in. `logout` deletes it without reading it.
+    """
     if token_file.exists():
         return Credentials.from_authorized_user_file(str(token_file), SCOPES)
     if legacy_file.exists():
-        # Only ever written by this skill; migrated away so no pickle remains.
-        with open(legacy_file, 'rb') as fh:
-            creds = pickle.load(fh)
-        _save_credentials(creds, token_file)
-        legacy_file.unlink()
-        print(f"Migrated {legacy_file.name} -> {token_file.name} (mode 0600).",
-              file=sys.stderr)
-        return creds
+        print(f"Ignoring legacy token {legacy_file} (written by <=4.2.3). It is not\n"
+              "read, because pickle files execute code on load. Sign in again below;\n"
+              "remove the old file with:  youtube.py logout", file=sys.stderr)
     return None
 
 
@@ -251,7 +250,10 @@ def cmd_accounts(args):
     found = False
     for f in sorted(list(CONFIG_DIR.glob('token*.json')) + list(CONFIG_DIR.glob('token*.pickle'))):
         name = f.stem.replace('token.', '').replace('token', 'default')
-        print(f"  ✓ {name}  ({f})")
+        if f.suffix == '.pickle':
+            print(f"  - {name}  ({f})  legacy pickle, ignored - delete with logout")
+        else:
+            print(f"  ✓ {name}  ({f})")
         found = True
     if not found:
         print("  (none)")

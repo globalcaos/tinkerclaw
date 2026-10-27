@@ -129,6 +129,42 @@ describe("querySessionTree — subagent family expansion", () => {
     expect((row as { durationMs?: number }).durationMs).toBeUndefined();
   });
 
+  // FORK 2026-10-05 (the architect: "it cannot be missing from the chat or from the EEG") — every tab shares
+  // the root, so one LIMIT over "the session OR any subagent" let other tabs' fan-outs push a tab's
+  // own turns out (Main: 34 of 1,391 rows came back) and gave a tab with no row of its own 500
+  // foreign strands.
+  test("a busy subagent family never pushes the session's own rows out", () => {
+    const tab = "agent:main:tinker:own1";
+    insert(tab);
+    insert(tab);
+    for (let i = 0; i < 30; i++) {
+      insert(`agent:main:subagent:busy${i}`);
+    }
+    insert(tab);
+    const tree = querySessionTree(tab, 10);
+    expect(tree.filter((e) => e.sessionKey === tab).length).toBe(3);
+    expect(tree.filter((e) => e.sessionKey?.includes(":subagent:")).length).toBe(10);
+    const ts = tree.map((e) => e.timestampMs);
+    expect(ts).toEqual([...ts].toSorted((a, b) => a - b));
+  });
+
+  test("a session with no row of its own gets no subagent rows", () => {
+    insert("agent:main:subagent:foreign1");
+    insert("agent:main:subagent:foreign2");
+    expect(querySessionTree("agent:main:tinker:fresh", 500)).toEqual([]);
+  });
+
+  test("subagent rows outside the session's own span are not its own", () => {
+    const tab = "agent:main:tinker:span1";
+    insert("agent:main:subagent:before");
+    insert(tab);
+    insert("agent:main:subagent:inside");
+    clock += 2 * 60 * 60 * 1000; // two hours past the last own row: past the slack
+    insert("agent:main:subagent:after");
+    const keys = querySessionTree(tab, 500).map((e) => e.sessionKey);
+    expect(keys).toEqual([tab, "agent:main:subagent:inside"]);
+  });
+
   test("a subagent key itself does not expand (no self-family)", () => {
     const sub = "agent:main:subagent:gggg";
     insert(sub);

@@ -11,6 +11,7 @@ export { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
 export { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 export { resolveOutboundTarget } from "../infra/outbound/targets.js";
 export { registerApnsRegistration } from "../infra/push-apns.js";
+export { registerFcmRegistration } from "../infra/push-fcm.js";
 export { enqueueSystemEvent } from "../infra/system-events.js";
 export { deleteMediaBuffer } from "../media/store.js";
 export { normalizeMainKey, scopedHeartbeatWakeOptions } from "../routing/session-key.js";

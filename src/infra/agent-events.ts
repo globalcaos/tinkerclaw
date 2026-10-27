@@ -114,7 +114,10 @@ export type AgentRunContext = {
   isControlUiVisible?: boolean;
   /** Timestamp when this context was first registered (for TTL-based cleanup). */
   registeredAt?: number;
-  /** Timestamp of last activity (updated on every emitAgentEvent). */
+  /**
+   * Timestamp of last activity: updated on every emitAgentEvent, and on every phase change of the
+   * reply operation that owns this run (touchAgentRunContextsForSession).
+   */
   lastActiveAt?: number;
 };
 
@@ -186,7 +189,9 @@ export function getAgentRunContext(runId: string) {
  *     at event ingest — upstream of every gateway path that can miss a terminal write to the
  *     session store (those corrupt the ARCHIVE; they cannot corrupt this map);
  *   - `lastActiveAt` is refreshed on every emitAgentEvent, so silence is measurable;
- *   - sweepStaleRunContexts (called from server-maintenance.ts) bounds a run that never closed;
+ *   - sweepStaleRunContextsDetailed (called from server-maintenance.ts) bounds a run that never
+ *     closed. It keeps a context while a holder still owns the run, and returns what it drops so
+ *     the caller announces it (prompt-queue.md §6.2 "Sweep (C9)");
  *   - it is in memory, so a gateway restart erases it — "running at boot" is unrepresentable
  *     rather than something a recovery path must remember to clear;
  *   - it is a resolveGlobalSingleton, so bundle splits share one map.
@@ -242,25 +247,135 @@ export function clearAgentRunContext(runId: string) {
 }
 
 /**
- * Sweep stale run contexts that exceeded the given TTL.
- * Guards against orphaned entries when lifecycle "end"/"error" events are missed.
+ * Close every run of ONE session in the run set at once: `sessions.delete` / `sessions.reset`
+ * (FORK 2026-09-24, TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.2 step 5, PQ-10). Without it a turn
+ * still before the model kept `sessions.list` reporting `run.live` until the silent 30-minute
+ * sweep below.
+ *
+ * A derivation over `runContextById`, exactly like getSessionRunLiveness — not a second index.
+ * It matches `sessionKey` EXACTLY, as getSessionRunLiveness does, so a caller holding several key
+ * forms of one session passes each. Heartbeat runs are included: a deleted or reset session has no
+ * turn of any kind left. `registeredAtOrBefore` keeps any run registered after that instant (a
+ * turn another tab started on the same key while the caller was waiting). Each run closes through
+ * clearAgentRunContext, the one per-run close path. Returns the runIds it closed.
  */
-export function sweepStaleRunContexts(maxAgeMs = 30 * 60 * 1000): number {
-  const state = getAgentEventState();
-  const now = Date.now();
-  let swept = 0;
-  for (const [runId, ctx] of state.runContextById.entries()) {
-    // Use lastActiveAt (refreshed on every event) to avoid sweeping active runs.
-    // Fall back to registeredAt, then treat missing timestamps as infinitely old.
-    const lastSeen = ctx.lastActiveAt ?? ctx.registeredAt;
-    const age = lastSeen ? now - lastSeen : Infinity;
-    if (age > maxAgeMs) {
-      state.runContextById.delete(runId);
-      state.seqByRun.delete(runId);
-      swept++;
+export function clearAgentRunContextsForSession(
+  sessionKey: string,
+  opts?: { registeredAtOrBefore?: number },
+): string[] {
+  if (!sessionKey) {
+    return [];
+  }
+  const cutoff = opts?.registeredAtOrBefore;
+  const runIds: string[] = [];
+  for (const [runId, ctx] of getAgentEventState().runContextById) {
+    if (ctx.sessionKey !== sessionKey) {
+      continue;
+    }
+    if (cutoff !== undefined && (ctx.registeredAt ?? 0) > cutoff) {
+      continue;
+    }
+    runIds.push(runId);
+  }
+  for (const runId of runIds) {
+    clearAgentRunContext(runId);
+  }
+  return runIds;
+}
+
+/**
+ * Refresh `lastActiveAt` on the run contexts one reply operation owns. Returns the count.
+ *
+ * FORK 2026-09-24 (prompt-queue.md §6.2 "Sweep (C9)", step G4). Called by the reply operation on
+ * every phase change (src/auto-reply/reply/reply-run-registry.ts `setPhase`): a turn that is
+ * compacting, flushing memory or starting its run is working, even though it emits no agent event.
+ * Only contexts of `sessionKey` registered at or after `registeredSince` (the operation's start)
+ * are touched. An older context on the same session is an earlier turn's orphan, and refreshing it
+ * would let every later turn keep it alive, which is why the run set is keyed per RUN (see
+ * getSessionRunLiveness). Like that function, a derivation over `runContextById`, not an index.
+ */
+export function touchAgentRunContextsForSession(
+  sessionKey: string,
+  registeredSince: number,
+  now = Date.now(),
+): number {
+  if (!sessionKey) {
+    return 0;
+  }
+  let touched = 0;
+  for (const ctx of getAgentEventState().runContextById.values()) {
+    if (ctx.sessionKey === sessionKey && (ctx.registeredAt ?? 0) >= registeredSince) {
+      ctx.lastActiveAt = now;
+      touched++;
     }
   }
+  return touched;
+}
+
+/** One run context a sweep removed: what its caller needs to announce the removal. */
+export type SweptRunContext = {
+  runId: string;
+  sessionKey?: string;
+  isHeartbeat?: boolean;
+  isControlUiVisible?: boolean;
+  /** The silence the sweep measured; Infinity when the context carried no timestamp. */
+  silentMs: number;
+};
+
+/**
+ * Sweep stale run contexts that exceeded the given TTL, and RETURN what was removed.
+ * Guards against orphaned entries when lifecycle "end"/"error" events are missed.
+ *
+ * FORK 2026-09-24 (prompt-queue.md §6.2 "Sweep (C9)", step G4). This sweep used to drop a context
+ * after 30 min of silence and tell nobody, while turns were measured waiting 21–49 min before the
+ * model (bug-log.md 2026-09-23), so a slow prompt could turn into one that looks idle. Both fixes
+ * live in the signature, so a caller cannot skip them:
+ *   - `keepAlive` is REQUIRED. The caller names what still owns the run (server-maintenance.ts
+ *     passes the reply-operation registry and the chat abort controllers). This module cannot
+ *     import those holders itself: reply-run-registry imports THIS module for the phase hook
+ *     above, and the reverse import would close a cycle (scripts/check-import-cycles.ts).
+ *   - the removed contexts are RETURNED, so the caller can emit the terminal and
+ *     `sessions.changed`. A count cannot be announced.
+ */
+export function sweepStaleRunContextsDetailed({
+  keepAlive,
+  maxAgeMs = 30 * 60 * 1000,
+  now = Date.now(),
+}: {
+  keepAlive: (runId: string, ctx: Readonly<AgentRunContext>, silentMs: number) => boolean;
+  maxAgeMs?: number;
+  now?: number;
+}): SweptRunContext[] {
+  const state = getAgentEventState();
+  const swept: SweptRunContext[] = [];
+  for (const [runId, ctx] of state.runContextById.entries()) {
+    // Use lastActiveAt (refreshed on every event and reply-op phase change) to avoid sweeping
+    // active runs. Fall back to registeredAt, then treat missing timestamps as infinitely old.
+    const lastSeen = ctx.lastActiveAt ?? ctx.registeredAt;
+    const silentMs = lastSeen ? now - lastSeen : Infinity;
+    if (silentMs <= maxAgeMs || keepAlive(runId, ctx, silentMs)) {
+      continue;
+    }
+    state.runContextById.delete(runId);
+    state.seqByRun.delete(runId);
+    swept.push({
+      runId,
+      sessionKey: ctx.sessionKey,
+      isHeartbeat: ctx.isHeartbeat,
+      isControlUiVisible: ctx.isControlUiVisible,
+      silentMs,
+    });
+  }
   return swept;
+}
+
+/**
+ * The count-only form, with NO holder consulted: a context whose session still has an active
+ * reply operation IS dropped here, and nothing is announced. The gateway's maintenance timer
+ * calls sweepStaleRunContextsDetailed instead; this form remains for callers that own no holder.
+ */
+export function sweepStaleRunContexts(maxAgeMs = 30 * 60 * 1000): number {
+  return sweepStaleRunContextsDetailed({ maxAgeMs, keepAlive: () => false }).length;
 }
 
 export function resetAgentRunContextForTest() {

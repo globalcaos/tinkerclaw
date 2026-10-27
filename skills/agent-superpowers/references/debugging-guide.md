@@ -92,16 +92,16 @@ Before attempting fix #4:
 
 ## Rationalization Prevention
 
-| Excuse | Reality |
-|--------|---------|
-| "I know what's wrong" | Did you reproduce it? |
-| "Quick fix, obvious problem" | Follow Phase 1 anyway. 2 minutes. |
-| "Just one more try" (after 2 fails) | That's the three-strike trigger |
-| "This is different from the pattern" | It's probably the same pattern |
+| Excuse                                       | Reality                                           |
+| -------------------------------------------- | ------------------------------------------------- |
+| "I know what's wrong"                        | Did you reproduce it?                             |
+| "Quick fix, obvious problem"                 | Follow Phase 1 anyway. 2 minutes.                 |
+| "Just one more try" (after 2 fails)          | That's the three-strike trigger                   |
+| "This is different from the pattern"         | It's probably the same pattern                    |
 | "Let me try a completely different approach" | Did you understand WHY the first approach failed? |
-| "The error message is misleading" | Read it again. Literally. |
-| "It works on my machine" | Check environment, config, versions |
-| "Must be a race condition" | Add logging. Prove it. Don't guess. |
+| "The error message is misleading"            | Read it again. Literally.                         |
+| "It works on my machine"                     | Check environment, config, versions               |
+| "Must be a race condition"                   | Add logging. Prove it. Don't guess.               |
 
 ## Multi-Component Debugging
 

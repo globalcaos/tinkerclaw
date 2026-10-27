@@ -3,7 +3,7 @@
  *
  * `cron-data.ts` reads the immutable truth: `reports/<YYYY-MM-DD>/<job>.md`, one
  * file per run, never written to. That is a LOG, and a log cannot answer the two
- * questions the user actually asks a card — "have I read this yet?" and "I already
+ * questions the architect actually asks a card — "have I read this yet?" and "I already
  * told you why I don't care about that one". This file adds the missing mutable
  * projection over the log: `~/.openclaw/cron/board/<jobId>.json`.
  *
@@ -14,14 +14,14 @@
  *    (board-types.ts), which hashes the text with volatile counters stripped.
  *    Break this and the board becomes the wall of noise it exists to replace.
  *
- * 2. A DISMISSAL IS NEVER SILENTLY OVERRIDDEN. Once the user dismisses an item with
+ * 2. A DISMISSAL IS NEVER SILENTLY OVERRIDDEN. Once the architect dismisses an item with
  *    a reason, a recurrence does NOT reopen it: it bumps
  *    `recurrencesSinceDismissal`, and the reason is fed BACK to the cron agent
  *    through `boardDigest` so the cron stops re-raising a settled matter. The
  *    reason is an instruction channel, not decoration.
  *
  * 3. UNREAD COMPOUNDS, PER ITEM. An item with `acknowledged !== true` stays on
- *    the card across nights whether or not it recurred. Only an item the user has
+ *    the card across nights whether or not it recurred. Only an item the architect has
  *    ticked as read is retired (moved to `archived`, never deleted) when it
  *    stops recurring. A ticked item that DOES recur comes back un-acked,
  *    because it is still true. `readAt` is a derived convenience
@@ -368,12 +368,20 @@ export function mergeReportIntoBoard(
     byId.set(id, item);
   }
 
-  // Auto-resolve by absence. Dismissed items are the user's call, pinned items are
+  // Auto-resolve by absence. Dismissed items are the architect's call, pinned items are
   // his too — neither is ever retired behind his back.
+  //
+  // An UNREAD FOUND is exempt too (2026-09-19). Absence means "the condition is
+  // gone" only for conditions (BROKE, WATCH, FLAG…). A discovery does not stop
+  // being true because tonight's run did not repeat it, and the architect asked for the
+  // Scavenger shortlist to stay "until I read them". Measured on the
+  // self-evolution card that day: 70 FOUND items auto-resolved, 0 ever ticked.
+  // Once ticked, a FOUND that stops recurring is archived by ingestBoard as usual.
   const universe = ingestedDateUniverse(board, date, ingestedDates);
   const resolvedAt = nowIso();
   for (const item of next.items) {
     if (item.status !== "open" || item.pinned) continue;
+    if (item.kind === "found" && item.acknowledged !== true) continue;
     const missed = universe.filter((d) => d > item.lastSeen).length;
     if (missed >= RESOLVE_AFTER_MISSED_RUNS) {
       item.status = "resolved";
@@ -594,7 +602,7 @@ export function summarizeBoard(board: CronBoard): CronBoardSummary {
 
 /**
  * The channel BACK to the cron agent: a plain-text block it reads at the top of
- * its run so it stops re-raising matters the user has already settled.
+ * its run so it stops re-raising matters the architect has already settled.
  *
  * READ-ONLY on purpose. It does NOT ingest: generating a digest must never
  * consume the unread page as a side effect. Call `ingestBoard` first.
@@ -609,7 +617,7 @@ export function boardDigest(cfg: CronPanelResolvedConfig, jobId: string): string
 
   const header =
     `CRON BOARD — ${jobId} (carried over; last ingest: ${board.lastIngestedDate ?? "never"})\n` +
-    "These items are ALREADY on the user's card. Re-report a bullet only if it is still true,\n" +
+    "These items are ALREADY on the architect's card. Re-report a bullet only if it is still true,\n" +
     "and never re-explain an item that is merely still open.";
 
   const dismissedLines: string[] = [];

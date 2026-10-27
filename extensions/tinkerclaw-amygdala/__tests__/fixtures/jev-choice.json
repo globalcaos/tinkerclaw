@@ -1,0 +1,12 @@
+{
+  "model": "jev-latest",
+  "answers": {
+    "q-choice": {
+      "type": "choice",
+      "choice": "beta",
+      "confidence": 0.8,
+      "probabilities": { "alpha": 0.1, "beta": 0.7, "gamma": 0.2 }
+    }
+  },
+  "usage": { "input_tokens": 1000, "output_tokens": 10 }
+}

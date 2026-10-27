@@ -181,6 +181,12 @@ const DEFAULT_VOID_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, numbe
 };
 const DEFAULT_MODIFYING_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, number>> = {
   before_prompt_build: 15_000,
+  // FORK 2026-10-22 (JarvisPi): a before_tool_call handler never settled, and its chat held the
+  // tool call for three hours until the run timeout ended it. The global runner runs this hook
+  // fail-closed, so a handler past the bound blocks that one call and the turn goes on. Ten
+  // minutes is twice the longest wait a handler does on purpose: amygdala's hold, which waits
+  // HOLD_WAIT_MS (5 min) for the owner's answer.
+  before_tool_call: 600_000,
 };
 
 type ModifyingHookPolicy<K extends PluginHookName, TResult> = {
@@ -542,7 +548,7 @@ export function createHookRunner(
           // burns its whole 15s budget and then fails is exactly the one worth seeing.
           // A `break` above runs this too.
           const handlerMs = Date.now() - handlerStartedAt;
-          logHookHandlerSpan(hookName, hook.pluginId, handlerMs);
+          logHookHandlerSpan(hookName, hook.pluginId, handlerMs, ctx);
           phaseSpan?.recordHandler(hook.pluginId, handlerMs);
         }
       }

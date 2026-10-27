@@ -238,7 +238,7 @@ export async function runPreparedCliAgent(
     const lastStepPromptTokens = lastStep
       ? (lastStep.input ?? 0) + (lastStep.cacheRead ?? 0) + (lastStep.cacheWrite ?? 0)
       : 0;
-    // FORK 2026-07-25 (the user, Context Cache panel): the CLI pipe's `stream:"cache"`
+    // FORK 2026-07-25 (the architect, Context Cache panel): the CLI pipe's `stream:"cache"`
     // producer, i.e. the `claude-cli` cliBackend ONLY.
     //
     // CORRECTION 2026-07-28: this comment used to claim "claude-code/* is the MAIN pipe, so

@@ -30,15 +30,15 @@ Most YouTube tools use the official YouTube Data API for transcripts, which cost
 
 **Two halves, two very different permission profiles.** Read this before `auth`.
 
-| | Transcripts + downloads | Search, details, comments, your account data |
-| --- | --- | --- |
-| Google account | **not needed** | **required** |
-| API quota | **zero** | 100 per search, 1–3 per lookup |
-| Stored credentials | **none** | one OAuth token on disk |
+|                    | Transcripts + downloads | Search, details, comments, your account data |
+| ------------------ | ----------------------- | -------------------------------------------- |
+| Google account     | **not needed**          | **required**                                 |
+| API quota          | **zero**                | 100 per search, 1–3 per lookup               |
+| Stored credentials | **none**                | one OAuth token on disk                      |
 
 **What the authenticated half can reach.** Your channel, your subscriptions, your playlists and
 your liked videos — that is personal account data, and the commands that read it are listed
-under *Channel & User Data* below. Nothing fetches them unless you run those commands.
+under _Channel & User Data_ below. Nothing fetches them unless you run those commands.
 
 **Scope: `youtube.readonly`, and nothing else.** Since 4.3.0 this skill requests a single
 read-only scope. It cannot post a comment, rate a video, subscribe, or touch a playlist even if
@@ -47,7 +47,7 @@ authenticated back then, run `logout` and `auth` again to downgrade the grant.)
 
 **Where the token lives.** `~/.config/youtube-skill/token.json`, written mode `0600` inside a
 `0700` directory, as JSON — not pickle, which executes code on load. An existing pre-4.3.0
-`token.pickle` is migrated to JSON and deleted on first run.
+`token.pickle` is never read: you sign in again, and `logout` deletes the old file.
 
 **It asks before it stores anything.** The first command that needs your account prints the
 exact path and scope and waits for `y/N`. No browser opens and no file is written until you
@@ -182,11 +182,11 @@ uv run youtube.py comments VIDEO_ID --replies
 
 ### Authentication (optional)
 
-| Command          | Description                                        |
-| ---------------- | -------------------------------------------------- |
-| `auth`           | Sign in — asks for consent, then stores one token   |
-| `accounts`       | List locally stored tokens and their paths          |
-| `logout`         | Delete the stored token (`--all` for every account) |
+| Command    | Description                                         |
+| ---------- | --------------------------------------------------- |
+| `auth`     | Sign in — asks for consent, then stores one token   |
+| `accounts` | List locally stored tokens and their paths          |
+| `logout`   | Delete the stored token (`--all` for every account) |
 
 ### Downloads (requires yt-dlp)
 
@@ -239,7 +239,7 @@ work with nothing configured — skip to using them if that is all you want.
 4. Create OAuth 2.0 Client ID (Desktop app)
 5. Download JSON → save as `~/.config/youtube-skill/credentials.json`
 
-**Treat both files as secrets.** `credentials.json` is your OAuth *client*; `token.json` is a
+**Treat both files as secrets.** `credentials.json` is your OAuth _client_; `token.json` is a
 live grant on your account. Lock them down and keep them out of version control:
 
 ```bash

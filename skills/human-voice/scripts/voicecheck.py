@@ -53,7 +53,8 @@ def load_profile(spec):
 
 def detect_lang(text):
     """Words each language owns alone, plus letters only one of es/ca uses."""
-    toks = re.findall(r"[a-zà-ÿ·'’]+", text.lower())
+    # English "I" is always a capital; Catalan "i" (and) almost never is (2026-10-02 false HIGH)
+    toks = re.findall(r"[a-zà-ÿ·'’]+", re.sub(r"\bI\b(?!['’])", " ", text).lower())
     score = {lang: sum(1 for t in toks if t in set(ws)) for lang, ws in LEX["lang_markers"].items()}
     t = text.lower()
     score["ca"] += 3 * len(re.findall(r"l·l|\b[ld]['’][a-zàèéíòóú]|ç|à|è|ò|\bquè\b|\bperquè\b", t))

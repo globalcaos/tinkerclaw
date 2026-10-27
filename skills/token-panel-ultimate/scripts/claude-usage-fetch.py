@@ -25,6 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import secretstore
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _secure_write import write_private_json  # owner-only JSON writes
 
 USAGE_JSON_PATH = Path.home() / '.openclaw/workspace/memory/claude-usage.json'
 API_URL = 'https://api.anthropic.com/api/oauth/usage'
@@ -61,7 +63,9 @@ def fetch_usage(token):
         headers={
             'Accept': 'application/json',
             'Content-Type': 'application/json',
-            'User-Agent': 'claude-code/2.0.32',
+            # Identifies this tool honestly. Earlier versions sent a Claude Code
+            # User-Agent, presenting the request as coming from another application.
+            'User-Agent': 'token-panel-ultimate/2.6.2',
             'Authorization': f'Bearer {token}',
             'anthropic-beta': 'oauth-2025-04-20'
         }
@@ -121,11 +125,7 @@ def update_usage_json(usage_data, oauth_info):
     
     # Owner-only: this file reports your plan, quota and reset times. Do not let it
     # inherit a loose umask from whatever shell or daemon happened to run us.
-    USAGE_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(USAGE_JSON_PATH), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        json.dump(output, f, indent=2)
-    os.chmod(USAGE_JSON_PATH, 0o600)
+    write_private_json(USAGE_JSON_PATH, output)
 
     return output
 

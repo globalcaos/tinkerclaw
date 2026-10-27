@@ -16,6 +16,20 @@ import type { EmbeddedRunLivenessState } from "../types.js";
 import type { RunEmbeddedPiAgentParams } from "./params.js";
 import type { PreemptiveCompactionRoute } from "./preemptive-compaction.types.js";
 
+/**
+ * FORK 2026-10-09 (effort slider) — WHO chose a turn's thinking level. Decided once, in reply
+ * resolution (auto-reply/reply/get-reply-directives.ts), and carried beside the level to the
+ * attempt's `__openclawThinkSource` smuggle key, so the tinker-bridge can apply a human's pin as a
+ * pin and an Auto decision as Auto:
+ * - "pin": a human chose it: a `/think` typed this turn, a level the client pinned for this turn
+ *   (chat.send `thinking`), or a level stored on the session.
+ * - "thalamus": the router's rung named the effort (ThalamusAutoRoute.effort).
+ * - "allocator": chooseAutoEffort picked it because neither of the above decided.
+ * - "default": the model's default thinking level or `thinkingDefault`.
+ * Absent anywhere along the way reads as "default", never as a pin.
+ */
+export type ThinkSource = "pin" | "thalamus" | "allocator" | "default";
+
 type EmbeddedRunAttemptBase = Omit<
   RunEmbeddedPiAgentParams,
   "provider" | "model" | "authProfileIdSource" | "thinkLevel" | "lane" | "enqueue"
@@ -43,6 +57,14 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
   thinkLevel: ThinkLevel;
+  /**
+   * FORK 2026-10-09 (effort slider): who chose `thinkLevel`; absent reads as "default". When the
+   * run lowers the level for provider support (run.ts thinking fallback) the value changes and
+   * the source does not.
+   */
+  thinkSource?: ThinkSource;
+  /** FORK 2026-10-09: Thalamus called ultracode for this turn (only with thinkSource "thalamus"). */
+  ultracode?: boolean;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
   /** Optional tool allow-list; when set, only these tools are sent to the model. */
   toolsAllow?: string[];

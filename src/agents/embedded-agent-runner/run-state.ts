@@ -6,7 +6,8 @@ import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 
 export type EmbeddedPiQueueHandle = {
   kind?: "embedded";
-  queueMessage: (text: string) => Promise<void>;
+  queueMessage: (text: string, opts?: { promptKeys?: readonly string[] }) => Promise<void>;
+  persistsSteeredPrompt?: boolean;
   isStreaming: () => boolean;
   isCompacting: () => boolean;
   cancel?: (reason?: "user_abort" | "restart" | "superseded") => void;

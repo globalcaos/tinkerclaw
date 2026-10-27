@@ -13,6 +13,8 @@ import ai.openclaw.app.gateway.GatewaySession
 import ai.openclaw.app.gateway.GatewayTlsProbeFailure
 import ai.openclaw.app.gateway.GatewayTlsProbeResult
 import ai.openclaw.app.gateway.probeGatewayTlsFingerprint
+import ai.openclaw.app.jarvis.JARVIS_DEVICE_HEADER
+import ai.openclaw.app.jarvis.jarvisDoorHostPort
 import ai.openclaw.app.node.A2UIHandler
 import ai.openclaw.app.node.CalendarHandler
 import ai.openclaw.app.node.CallLogHandler
@@ -54,6 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +71,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+
+/** Off screen and idle this long, the app drops its node link (battery #3, see scheduleIdleDrop). */
+private const val IDLE_DROP_MS = 3 * 60 * 1000L
 
 class NodeRuntime(
   context: Context,
@@ -329,6 +335,7 @@ class NodeRuntime(
       onEvent = { event, payloadJson ->
         handleGatewayEvent(event, payloadJson)
       },
+      requestHeaders = ::jarvisDoorHeaders,
     )
 
   private val nodeSession =
@@ -346,6 +353,9 @@ class NodeRuntime(
         updateStatus()
         showLocalCanvasOnConnect()
         publishNodePresenceAliveBeacon(NodePresenceAliveBeacon.Trigger.Connect)
+        // FORK 2026-10-22: tell the gateway how to wake this app (FCM token, JarvisPush.kt).
+        registerPushToken()
+        if (!_isForeground.value) scheduleIdleDrop()
         val endpoint = connectedEndpoint
         val auth = activeGatewayAuth
         if (endpoint != null && auth != null) {
@@ -364,12 +374,25 @@ class NodeRuntime(
       },
       onEvent = { _, _ -> },
       onInvoke = { req ->
+        noteNodeActivity()
         invokeDispatcher.handleInvoke(req.command, req.paramsJson)
       },
       onTlsFingerprint = { stableId, fingerprint ->
         prefs.saveGatewayTlsFingerprint(stableId, fingerprint)
       },
+      requestHeaders = ::jarvisDoorHeaders,
     )
+
+  // FORK 2026-10-19 (the architect: phone app) — once paired with a phone door, both gateway sockets go
+  // through it and must carry the device token, but only to a door in this phone's list: a gateway
+  // set up by hand on the Connect screen never sees it. No-op when not paired.
+  private fun jarvisDoorHeaders(endpoint: GatewayEndpoint): Map<String, String> {
+    val token = prefs.loadJarvisDeviceToken() ?: return emptyMap()
+    val host = endpoint.host.trim(' ', '[', ']').lowercase()
+    val target = host to endpoint.port
+    val isDoor = prefs.jarvisDoorCandidates.value.any { candidate -> jarvisDoorHostPort(candidate) == target }
+    return if (isDoor) mapOf(JARVIS_DEVICE_HEADER to token) else emptyMap()
+  }
 
   init {
     DeviceNotificationListenerService.setNodeEventSink { event, payloadJson ->
@@ -678,6 +701,11 @@ class NodeRuntime(
       }
     }
 
+    // Battery: no Wi-Fi multicast scan while a fixed gateway address is set (the Jarvis door).
+    scope.launch(Dispatchers.Default) {
+      manualEnabled.collect { manual -> discovery.setLocalScanEnabled(!manual) }
+    }
+
     scope.launch {
       combine(
         canvasDebugStatusEnabled,
@@ -700,8 +728,12 @@ class NodeRuntime(
   fun setForeground(value: Boolean) {
     _isForeground.value = value
     if (value) {
+      idleDropJob?.cancel()
+      // After an idle drop the service is gone; on screen Android lets us start it again.
+      runCatching { NodeForegroundService.start(appContext) }
       reconnectPreferredGatewayOnForeground()
     } else {
+      noteNodeActivity()
       stopManualVoiceSession()
       publishNodePresenceAliveBeacon(NodePresenceAliveBeacon.Trigger.Background, throttleRecentSuccess = true)
     }
@@ -966,6 +998,53 @@ class NodeRuntime(
     talkMode.stopTts()
     if (voiceReplySpeakerLazy.isInitialized()) {
       voiceReplySpeaker.stopTts()
+    }
+  }
+
+  private fun registerPushToken() {
+    ai.openclaw.app.jarvis.JarvisPush.withToken(appContext) { token ->
+      scope.launch {
+        if (nodeSession.sendNodeEvent("push.fcm.register", """{"token":"$token"}""")) pushTokenSent = true
+      }
+    }
+  }
+
+  // FORK 2026-10-22 (battery #3, the architect: "finish #3") — once the gateway holds our FCM token it can
+  // wake us, so off screen the app drops its socket and foreground service IDLE_DROP_MS after the
+  // last command instead of pinging every 30 s all day. A photo backup in progress keeps it up.
+  // Without a registered token nothing changes.
+  @Volatile private var pushTokenSent = false
+  @Volatile private var lastNodeActivityMs = 0L
+  private var idleDropJob: Job? = null
+
+  private fun noteNodeActivity() {
+    lastNodeActivityMs = System.currentTimeMillis()
+    if (!_isForeground.value) scheduleIdleDrop()
+  }
+
+  private fun scheduleIdleDrop() {
+    idleDropJob?.cancel()
+    idleDropJob =
+      scope.launch {
+        while (true) {
+          delay(IDLE_DROP_MS)
+          if (_isForeground.value || !pushTokenSent) return@launch
+          if (ai.openclaw.app.jarvis.PhotoBackup.isRunning()) continue
+          if (System.currentTimeMillis() - lastNodeActivityMs < IDLE_DROP_MS) continue
+          Log.i("JarvisPush", "idle off screen: dropping the node link until the next wake")
+          disconnect()
+          runCatching { NodeForegroundService.stop(appContext) }
+          return@launch
+        }
+      }
+  }
+
+  /** FORK 2026-10-22: a push wake. The old socket may look alive and be dead, so always reconnect. */
+  fun wakeFromPush() {
+    if (connectedEndpoint != null) {
+      refreshGatewayConnection()
+    } else {
+      resolvePreferredGatewayEndpoint()?.let(::connect)
     }
   }
 

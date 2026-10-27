@@ -1,11 +1,11 @@
 ---
 schema: recipe/1.0
 id: revise-paper
-title: Revise Paper
+title: Solo Paper Revision (batch unit, no-slave fallback)
 category: writing
-summary: Structured improvement pass on an existing paper — audit structure, strengthen claims, tighten prose, verify accuracy
+summary: Solo single-model pass on an existing paper — the unit step of revise-publish-batch and the no-slave fallback; NOT the single-paper default (that is adversarial-review-loop)
 triggers:
-  [revise, improve, polish, "round of improvements", "bounce to", review paper, paper review]
+  ["solo revision", "revise without astra", "single-model revision", "no slave", "batch unit"]
 effort: deep
 tools: [read, grep, glob, exec, edit, write]
 children: []
@@ -17,10 +17,12 @@ Take an existing paper and produce a measurably better version — clearer struc
 
 ## When to Use
 
-- Paper exists but needs improvement
-- Bouncing a draft to a different model for fresh perspective
-- Post-sprint polish before publication
-- Incorporating reviewer feedback
+**Not the default.** To improve ONE paper, run `adversarial-review-loop` (Paper Improvement Loop:
+Claude edits, GPT-6 Astra reviews the PDF). That is the paper-improvement procedure since 2026-09-28.
+This recipe is for:
+
+- the per-paper unit step inside `revise-publish-batch` (Steps 1–6, no reviewer);
+- a solo pass when the principal declines to chain an Astra tab.
 
 ## Steps
 
@@ -29,7 +31,7 @@ Take an existing paper and produce a measurably better version — clearer struc
 **Tools:** read, glob
 **Done when:** Paper classified `actionable` / `seed-only` / `cleared`; non-actionable papers exit here
 
-Before reading the whole paper, decide whether it even needs revising. Locate the improvement notes (`improvement_notes.md` in the folder, an `J-0XX-improvement-notes.md` sibling, or the `J-series-status` table's "Improvements Pending?" column). Classify:
+Before reading the whole paper, decide whether it even needs revising. Locate the improvement notes (`improvement_notes.md` in the folder, an `J-0XX-improvement-notes.md` sibling, or the `J-series-status` table's "Improvements Pending?" column). the architect's own marks on the PDF count as notes: if he saved an annotated copy, `~/src/pdf-review/pdf-comments.py <that PDF>` lists them (page, quoted text, note), and any line there makes the paper `actionable`. Classify:
 
 - **actionable** — concrete pending items NOT yet reflected in the latest version → proceed to Step 1.
 - **seed-only** — placeholder text, e.g. "none logged from a formal review pass yet" → STOP, report `skipped: no actionable notes`.
@@ -66,7 +68,8 @@ First pick the **genuinely latest** version to revise: it is NOT always the high
 Evaluate the architecture:
 
 - Does the abstract accurately reflect the content?
-- Does the abstract work as a one-page doorway rather than a miniature paper? Target 300–450 words in 3–5 visibly separated paragraphs: the problem, what the paper does, how it was tested or reasoned about, and the outcome. Use plain vocabulary a non-specialist can follow; explain necessary technical terms in the sentence where they appear. Remove section-number tours, revision history, and long keyword inventories. Date claims that can go stale ("using information available in July 2026"). If PDF is the deliverable, render and inspect the abstract page—successful compilation does not prove readable fit.
+- Does the paper read as a story (vision, claim, explanation, proof where possible) and does the abstract open on the vision? Canonical definition: `adversarial-review-loop` § What a paper is.
+- Does the abstract work as a one-page doorway rather than a miniature paper? No word or paragraph quota: as long as the story needs and short enough to sit under the title on page 1 (`adversarial-review-loop` § The abstract). A number only when it is the story; caveats live in the body. Too much rigor is rigor mortis (principal, 2026-09-29). Use plain vocabulary a non-specialist can follow; explain necessary technical terms in the sentence where they appear. Remove section-number tours, revision history, and long keyword inventories. Date claims that can go stale ("using information available in July 2026"). If PDF is the deliverable, render and inspect the abstract page—successful compilation does not prove readable fit.
 - Is the introduction hook strong enough?
 - Do sections follow a logical progression?
 - Are there sections that should be merged, split, or reordered?

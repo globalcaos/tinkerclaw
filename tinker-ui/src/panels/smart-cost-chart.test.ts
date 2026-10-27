@@ -23,6 +23,7 @@ import {
   scCostX,
   scLinearTicks,
   scTokenRatio,
+  scTaskCostFactor,
   scAssignTwins,
   scSyncTwinContext,
   scModelKey,
@@ -36,6 +37,9 @@ import {
   SC_PLAN_UTIL,
   SC_COPILOT_PINK,
   type ScModel,
+  scWaypointsFor,
+  scWaypointHud,
+  scWaypointTag,
 } from "./smart-cost-chart";
 
 // ─── 2026-09-05: AA REBASED THE INTELLIGENCE INDEX, AND THIS FILE HELD THE OLD SCALE ───
@@ -109,7 +113,7 @@ describe("smart-cost chart — scales", () => {
 });
 
 describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", () => {
-  // the user 2026-08-27: find how many thinking efforts each model has, find a
+  // the architect 2026-08-27: find how many thinking efforts each model has, find a
   // public source for how smart each effort is, then attribute. Do not invent.
 
   it("plots Opus 5 at AA's five named efforts, not a flattened headline", () => {
@@ -130,26 +134,37 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
 
   // REVISED 2026-08-30, then again 2026-09-02. A rung AA had not scored was first
   // DROPPED, then drawn on the dashed cost rail at the headline index. Since 2026-09-02
-  // (the user: "find other benchmarks … approximate") such a rung carries an ESTIMATE from
+  // (the architect: "find other benchmarks … approximate") such a rung carries an ESTIMATE from
   // other public per-effort benchmark runs fitted to AA's scale, flagged as such. The
   // guard that matters is unchanged: `measured` is true ONLY for AA's own number, the
   // measured rung's value never moves, and an estimate is never a measurement.
-  it("plots Sonnet 5's whole ladder, with only max carrying an AA score", () => {
+  it("plots Sonnet 5's whole ladder, every rung AA's own measurement", () => {
     const ID = "claude-sonnet-5";
-    // AA's one published rung for this model, read from the table: 55.2612 before the
-    // 2026-09-05 rescale, 45.1096 after it. The CLAIM — the measured rung is AA's own
-    // number, and every estimate sits UNDER it — is what has to survive, not the digits.
-    const MAX = aaScoreAt(ID, "max")!;
+    // AA filled Sonnet 5's last gap (xhigh) on 2026-09-12, so it no longer carries an
+    // estimated rung; the estimate half of this contract lives on Opus 4.8 below.
     const pts = scPointsFor(model({ id: ID, relCost: 1, index: 55.26 }));
     expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
-    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    expect(pts.map((p) => p.smart)).toEqual(AA_LADDER_5.map((l) => aaScoreAt(ID, l)));
+  });
+
+  it("plots Opus 4.8's whole ladder, with AA's own rungs measured and the rest estimated", () => {
+    const ID = "claude-opus-4-8";
+    // The CLAIM — every measured rung is AA's own number, and every estimate is flagged
+    // and sits at or under max — is what has to survive, not which rungs AA happened to
+    // run yesterday. AA runs only max for Opus 4.8 as of 2026-09-12.
+    const MAX = aaScoreAt(ID, "max")!;
+    const pts = scPointsFor(model({ id: ID, relCost: 1, index: 41.99 }));
+    expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(
+      AA_LADDER_5.filter((l) => aaScoreAt(ID, l) !== undefined),
+    );
+    expect(pts.some((p) => !p.measured)).toBe(true);
     expect(pts.find((p) => p.lvl === "max")!.smart).toBe(MAX);
     for (const p of pts.filter((x) => !x.measured)) {
       expect(p.estimate, p.lvl).toBeDefined(); // flagged, with a σ and a basis
       expect(p.estimate!.sd).toBeGreaterThan(0);
-      // RED as of 2026-09-05, and correctly so — see the cross-table gate below. The old
-      // literal compared old-scale estimates to the OLD max: green and meaningless.
-      expect(p.smart, p.lvl).toBeLessThan(MAX); // clamped below the measured max
+      expect(p.smart, p.lvl).toBeLessThanOrEqual(MAX); // clamped at the measured max
     }
   });
 
@@ -166,13 +181,15 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
     expect(pts.map((p) => p.smart)).toEqual(LVLS.map((l) => aaScoreAt("grok-4.6", l)));
   });
 
-  it("scores GLM-5.3 only at max — low and high ride the rail", () => {
+  it("scores GLM-5.3 at low and max — high rides the rail", () => {
     const pts = scPointsFor(model({ id: "glm-5.3", provider: "zai", relCost: 4.4, index: 59.51 }));
     expect(pts.map((p) => p.lvl)).toEqual(["low", "high", "max"]);
-    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
+    // 2026-09-25: AA scored glm-5-3 low=34.299. High is still an estimate / rail.
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["low", "max"]);
     // Asking the TABLE for the score also proves the join the literal never tested: the
     // dotted id has to resolve to AA's hyphenated family key (glm-5.3 → glm-5-3).
     expect(pts.find((p) => p.lvl === "max")!.smart).toBe(aaScoreAt("glm-5.3", "max"));
+    expect(pts.find((p) => p.lvl === "low")!.smart).toBe(aaScoreAt("glm-5.3", "low"));
   });
 
   it("scores Kimi K3 at low and max, and rails the unscored high", () => {
@@ -264,14 +281,15 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
     // scIdxTag(): that is the chart's own formatter, and asserting against it would
     // compare the chart to itself. Renders `idx 52.0 at High (AA)` today, `idx 61.5`
     // before the 2026-09-05 rescale; the one-decimal rounding is part of the shape.
-    expect(svg).toContain(`idx ${aaScoreAt("claude-opus-5", "high")!.toFixed(1)} at High (AA)`);
+    expect(svg).toContain(`High effort — `);
+    expect(svg).toContain(`· idx ${aaScoreAt("claude-opus-5", "high")!.toFixed(1)}`);
     expect(svg).not.toContain("measured once, not per effort");
     expect(svg).toContain("/task");
     expect(svg).toContain("1M ctx");
   });
 });
 
-describe("smart-cost chart — tokens per task (the user 2026-08-06 #2)", () => {
+describe("smart-cost chart — tokens per task (the architect 2026-08-06 #2)", () => {
   it("opus-5 base is the OckBench anchor: high=6,745 tokens", () => {
     expect(scTokensPerTask("claude-code/claude-opus-5", "high")).toBeCloseTo(6745, -1);
   });
@@ -290,10 +308,25 @@ describe("smart-cost chart — tokens per task (the user 2026-08-06 #2)", () => 
     }
   });
 
-  it("the REFERENCE (Opus 5 @ high — its top REAL effort) has ZERO shift", () => {
-    // Was "max" until 2026-08-25; Anthropic's ladder for this class stops at
-    // high, so max was a setting the reference model cannot be run at.
-    expect(scTaskShiftDecades("claude-code/claude-opus-5", "high")).toBeCloseTo(0, 10);
+  it("effort is counted ONCE: every graded effort of a model shifts by the same amount", () => {
+    // FIX 2026-09-30 (J19 r2 review): the €/Mtok view already carries the effort
+    // multiplier and tokens-per-task carries it too, so the old shift counted it twice
+    // (max drew 4x dearer than high). The shift is now the model's appetite net of effort.
+    const hi = scTaskShiftDecades("claude-code/claude-opus-5", "high");
+    for (const lvl of ["low", "medium", "xhigh", "max"]) {
+      expect(scTaskShiftDecades("claude-code/claude-opus-5", lvl)).toBeCloseTo(hi, 10);
+    }
+  });
+
+  it("per task, max costs what the token ladder says over high (2x), not its square (4x)", () => {
+    const perTask = (lvl: string) =>
+      EEG_EFFORT_MULT[lvl] * scTaskCostFactor("claude-code/claude-opus-5", lvl);
+    expect(perTask("max") / perTask("high")).toBeCloseTo(
+      scTokensPerTask("claude-code/claude-opus-5", "max") /
+        scTokensPerTask("claude-code/claude-opus-5", "high"),
+      10,
+    );
+    expect(perTask("max") / perTask("high")).toBeCloseTo(2, 10);
   });
 
   it("a more token-hungry model shifts RIGHT (positive decades)", () => {
@@ -302,7 +335,7 @@ describe("smart-cost chart — tokens per task (the user 2026-08-06 #2)", () => 
   });
 
   it("a leaner model/effort shifts LEFT (negative decades)", () => {
-    // Opus 5 at medium burns fewer tokens than the max reference
+    // Opus 5 burns fewer tokens per task than the reference normalisation (Opus 5 @ high)
     expect(scTaskShiftDecades("claude-code/claude-opus-5", "medium")).toBeLessThan(0);
   });
 
@@ -331,7 +364,7 @@ describe("smart-cost chart — honesty + edges", () => {
   });
 });
 
-describe("smart-cost chart — full-catalog labels (the user 2026-08-06 #3)", () => {
+describe("smart-cost chart — full-catalog labels (the architect 2026-08-06 #3)", () => {
   it("labelled models get a text label; unlabelled live only in their tooltip", () => {
     const svg = renderSmartCostChart([
       model({ id: "p/a", name: "Alpha", labeled: true }),
@@ -364,7 +397,7 @@ describe("smart-cost chart — full-catalog labels (the user 2026-08-06 #3)", ()
   });
 });
 
-describe("prepaid utilisation slider (the user 2026-08-28)", () => {
+describe("prepaid utilisation slider (the architect 2026-08-28)", () => {
   it("home cost is the 75% quota convention; 100% is cheaper, list is dearer", () => {
     expect(SC_PLAN_UTIL).toBe(0.75);
     expect(scCostAtUtil(0.2232, 0.75)).toBeCloseTo(0.2232, 6);
@@ -416,7 +449,7 @@ describe("prepaid utilisation slider (the user 2026-08-28)", () => {
   });
 });
 
-describe("smart-cost chart — linear ↔ log axis (the user 2026-08-06 #4)", () => {
+describe("smart-cost chart — linear ↔ log axis (the architect 2026-08-06 #4)", () => {
   it("linear ticks start at 0, use nice 1/2/5 steps, cover the domain", () => {
     const ticks = scLinearTicks(48);
     expect(ticks[0]).toBe(0);
@@ -467,7 +500,7 @@ describe("smart-cost chart — linear ↔ log axis (the user 2026-08-06 #4)", ()
   });
 });
 
-describe("smart-cost chart — full-catalog bounds (the user 2026-08-06 #5)", () => {
+describe("smart-cost chart — full-catalog bounds (the architect 2026-08-06 #5)", () => {
   // The real reachable catalog: ~40 families across the whole index range.
   // However many models are plotted, every dot and every task-mode landing
   // must stay inside the plot — that is what lets the card fit the window.
@@ -629,7 +662,7 @@ describe("the chart markup can never break its own <svg>", () => {
   });
 });
 
-// FORK 2026-08-06 #8: the zoom-out floor the user asked for — "don't let the graph
+// FORK 2026-08-06 #8: the zoom-out floor the architect asked for — "don't let the graph
 // zoom out more when all the models are already visible" — plus the pan pin that
 // keeps the constellations reachable.
 describe("pan/zoom view clamp", () => {
@@ -661,7 +694,7 @@ describe("pan/zoom view clamp", () => {
   });
 });
 
-// FORK 2026-08-24 (the user): REVERSES the 2026-08-06 #10 fold. Copilot charges its
+// FORK 2026-08-24 (the architect): REVERSES the 2026-08-06 #10 fold. Copilot charges its
 // own published rate, so folding its dot into the vendor's showed the cheaper of
 // two routes and answered "what does this cost?" with a price you cannot pay on
 // the route you are looking at. Every route now keeps its own dot; a dashed
@@ -797,7 +830,7 @@ describe("one brain, several vendors: every route keeps its own dot", () => {
   });
 });
 
-describe("chart dots hold still (the user: 'why is gemini flash pulsating?')", () => {
+describe("chart dots hold still (the architect: 'why is gemini flash pulsating?')", () => {
   it("inlines the colourful Google G with no SMIL animation", () => {
     const svg = renderSmartCostChart([
       model({ id: "google/gemini-3.6-flash", provider: "google", name: "Gemini Flash", index: 50 }),
@@ -811,7 +844,7 @@ describe("chart dots hold still (the user: 'why is gemini flash pulsating?')", (
   });
 });
 
-describe("labels ride the zoom (the user: 'should approach the circle as I zoom in')", () => {
+describe("labels ride the zoom (the architect: 'should approach the circle as I zoom in')", () => {
   const svg = () =>
     renderSmartCostChart([
       model({ id: "a/one", name: "One", index: 50, relCost: 2 }),
@@ -835,7 +868,7 @@ describe("labels ride the zoom (the user: 'should approach the circle as I zoom 
     expect(out).not.toMatch(/--sc-dy/);
   });
 
-  // the user 2026-08-06 #11: "the model names need to be exactly at the same height
+  // the architect 2026-08-06 #11: "the model names need to be exactly at the same height
   // than its highest effort bubble" — a name a few px off its dot points at the
   // wrong model. The anchor y MUST equal the max-effort point's y, and the text
   // must be centred on it rather than sitting on a nudged baseline.
@@ -871,7 +904,7 @@ describe("labels ride the zoom (the user: 'should approach the circle as I zoom 
   });
 });
 
-// ─── API-price triangles (the user 2026-08-27) ───
+// ─── API-price triangles (the architect 2026-08-27) ───
 // The overlay exists because the x axis mixes two BASES: an amortized subscription
 // price for the models we hold a plan for, and a metered list price for everything
 // else. These tests pin the three things that make the overlay honest rather than
@@ -1045,7 +1078,7 @@ describe("smart-cost chart — 2026-08-30 arrivals", () => {
   });
 });
 
-// ─── logo identity (the user 2026-08-30: "openrouter bubbles have the wrong icon") ───
+// ─── logo identity (the architect 2026-08-30: "openrouter bubbles have the wrong icon") ───
 // The old fallback returned Anthropic's registered mark for ANY unknown provider, so
 // 15 of 99 plotted models — NVIDIA, Meta, Tencent, MiniMax, Xiaomi, Meituan … —
 // rendered as Claude. These tests exist because the defect was invisible in every
@@ -1106,7 +1139,7 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
   });
 });
 
-// ─── cost rail (the user 2026-08-30: "Fable appears only as one bubble, break it
+// ─── cost rail (the architect 2026-08-30: "Fable appears only as one bubble, break it
 //     down into different thinking efforts") ───
 // AA scores Fable 5 at exactly ONE effort (max) against Anthropic's five-rung
 // ladder — verified live 2026-08-30 15:09 UTC. So the rungs are real, the SCORES
@@ -1251,7 +1284,7 @@ describe("smart-cost chart — vendor rungs AA never scored", () => {
     expect(minimal.smart).toBe(54.96);
     const svg = renderSmartCostChart([m]);
     expect(svg).toContain("sc-rail-cost");
-    expect(svg).toContain("headline — AA published no per-effort split");
+    expect(svg).toContain("Estimated Intelligence Index — AA's single headline score");
   });
 
   it("leaves a FULLY scored model untouched — no rail, solid curve, real spread", () => {
@@ -1264,9 +1297,9 @@ describe("smart-cost chart — vendor rungs AA never scored", () => {
 
   it("keeps the tooltip honest about which rungs are measured", () => {
     const svg = renderSmartCostChart([fable()]);
-    expect(svg).toContain("at Max (AA)");
-    expect(svg).toContain("ESTIMATE");
-    expect(svg).toContain("not an AA measurement");
+    // 2026-10-10: a public AA number prints bare; a guessed one says "(Estimated Intelligence Index".
+    expect(svg).toContain("Max effort — ");
+    expect(svg).toContain("(Estimated Intelligence Index — ");
   });
 });
 
@@ -1312,12 +1345,25 @@ describe("smart-cost chart — OpenRouter vendors get their own logo", () => {
     for (const id of [
       "openrouter/thinkingmachines/inkling",
       "openrouter/thinkingmachines/inkling-small",
-      "openrouter/inclusionai/ling-3.0-flash",
       "openrouter/nex-agi/nex-n2-pro",
     ]) {
       const out = dot(id);
       expect(out).toContain(NEUTRAL);
       expect(out).not.toContain(ANTHROPIC_MARK);
+    }
+  });
+
+  // 2026-10-02: four labs from the CN price matrix gained their official lobehub marks.
+  it("draws the official marks for inclusionAI, StepFun, ByteDance Seed and Baidu", () => {
+    for (const [id, colour] of [
+      ["openrouter/inclusionai/ling-3.0-flash", "#1677FF"], // Ant Group, inclusionAI's parent
+      ["openrouter/stepfun/step-3.7-flash", "#01A9FF"],
+      ["openrouter/bytedance-seed/seed-2-1-turbo", "#00C8D2"],
+      ["openrouter/baidu/ernie-5.0", "#23A4FB"], // Wenxin, ERNIE's own mark
+    ] as const) {
+      const out = dot(id);
+      expect(out).toContain(colour);
+      expect(out).not.toContain(NEUTRAL);
     }
   });
 
@@ -1380,7 +1426,7 @@ describe("smart-cost chart — Claude Fable 5.1", () => {
   });
 
   // The OpenRouter route was REMOVED from the panel and the chart catalog on
-  // 2026-09-02 (the user: "remove the erroneous openrouter Fable 5.1 model") — we hold
+  // 2026-09-02 (the architect: "remove the erroneous openrouter Fable 5.1 model") — we hold
   // the model on the subscription. The PRICING RULE it exercised is still live and
   // still worth guarding, because it is what stops a metered route drawing a fake
   // discount: when a model's plotted cost already IS its list price, there is no
@@ -1399,7 +1445,7 @@ describe("smart-cost chart — Claude Fable 5.1", () => {
   });
 });
 
-// FORK 2026-09-02 (the user: "the triangles need to go at its official price and the
+// FORK 2026-09-02 (the architect: "the triangles need to go at its official price and the
 // circles at the 20x price. The model points for different thinking efforts need
 // different intelligence index and different cost, without hallucinating any value").
 // Fable 5.1 shipped as an OpenRouter-only dot because the id was probed with AA's
@@ -1428,7 +1474,8 @@ describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", ()
     const costs = pts.map((p) => Number(p.cost.toFixed(4)));
     expect(costs).toEqual([0.75, 1, 1.5, 2, 3].map((k) => Number((PLAN * k).toFixed(4))));
     expect(new Set(costs).size).toBe(5);
-    expect(PLAN).toBeLessThan(1); // the plan price, not the $50 sticker
+    // the plan price, not the $50 sticker (1.14 since the 2026-09-23 measured re-base)
+    expect(PLAN).toBeLessThan(50 / 10);
   });
 
   it("plots the triangles at the OFFICIAL API price, same effort ladder", () => {
@@ -1461,10 +1508,191 @@ describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", ()
 
   it("the circle↔triangle gap IS the subscription discount", () => {
     expect(scApiMultiple(sub())).toBeCloseTo(50 / PLAN, 6);
-    expect(scApiMultiple(sub())!).toBeGreaterThan(100); // two orders of magnitude
+    // ~44× since the 2026-09-23 measured re-base (was "two orders of magnitude" on the
+    // blend that priced cache reads ~10× over list)
+    expect(scApiMultiple(sub())!).toBeGreaterThan(30);
   });
 
   it("keeps its real 1M window under the hyphenated id too", () => {
     expect(scDefaultCtx(ID)).toBe(1_000_000);
+  });
+});
+
+// the architect 2026-09-23: "visualize, both for claude and openai models, a few landmarks of how
+// much their tokens cost with what kind of subscription … assume 100% consumption of
+// tokens every week". The waypoints are the SAME token on another plan of the SAME
+// vendor; every figure comes from the measured seats in src/shared/rel-cost-table.ts.
+describe("smart-cost chart — plan-tier waypoints", () => {
+  const opus = () =>
+    model({
+      id: "claude-code/claude-opus-5",
+      relCost: eegRelCost("claude-code/claude-opus-5"),
+      index: 61,
+    });
+  const sol = () =>
+    model({
+      id: "openai-codex/gpt-5.6-sol",
+      provider: "openai-codex",
+      relCost: eegRelCost("openai-codex/gpt-5.6-sol"),
+      index: 58,
+      color: "#10A37F",
+    });
+  const anchorCost = (m: ScModel) => {
+    const p = scPointsFor(m);
+    return (p.find((x) => x.anchor) ?? p[0]).cost;
+  };
+
+  it("gives Claude three marks: Max 20× (ours), Pro = Max 5×, Team", () => {
+    const w = scWaypointsFor(opus());
+    expect(w.map((x) => x.tags)).toEqual([
+      ["Max 20× €200"],
+      ["Pro €20", "Max 5× €100"],
+      ["Team €125"],
+    ]);
+    expect(w.map((x) => x.ours)).toEqual([true, false, false]);
+    for (let i = 1; i < w.length; i++) expect(w[i].cost).toBeGreaterThan(w[i - 1].cost);
+  });
+
+  // 2026-09-30 (DevDay 09-29): Pro 200 fell to 10× and Pro 500 arrived at 25×, so every
+  // personal tier buys exactly Plus's allowance per € and they share ONE mark.
+  it("gives OpenAI two marks: Plus (ours) = Pro 5× = Pro 10× = Pro 25×, then Business", () => {
+    const w = scWaypointsFor(sol());
+    expect(w.map((x) => x.tags)).toEqual([
+      ["Plus €20", "Pro 5× €100", "Pro 10× €200", "Pro 25× €500"],
+      ["Business €25"],
+    ]);
+    expect(w.map((x) => x.ours)).toEqual([true, false]);
+    expect(scWaypointHud(w[0])).toBe(
+      "Plus €20/mo = Pro 5× €100/mo = Pro 10× €200/mo = Pro 25× €500/mo",
+    );
+    // the chart tag prints one plan once; the drag readout above keeps every multiple
+    expect(scWaypointTag(w[0])).toBe("Plus €20 · Pro €100/200/500");
+    expect(scWaypointTag(w[1])).toBe("Business €25");
+  });
+
+  it("gives the GPT-6 family a triangle and the same ladder as the 5.6 models", () => {
+    for (const id of [
+      "openai-codex/gpt-6.1-sol",
+      "openai-codex/gpt-6-sol",
+      "openai-codex/gpt-6-luna",
+    ]) {
+      const m = model({ id, provider: "openai-codex", relCost: eegRelCost(id) });
+      expect(scApiPointsFor(m).length).toBeGreaterThan(0);
+      expect(scWaypointsFor(m).map((x) => x.tags.length)).toEqual([4, 1]);
+    }
+  });
+
+  it("puts OUR seat's 100% mark at exactly 75% of the circle, every other mark under the triangle", () => {
+    for (const m of [opus(), sol()]) {
+      const w = scWaypointsFor(m);
+      const ours = w.find((x) => x.ours)!;
+      expect(ours.cost).toBeCloseTo(anchorCost(m) * SC_PLAN_UTIL, 9);
+      const tri = scApiPointsFor(m).find((p) => p.anchor)!;
+      for (const x of w) expect(x.cost).toBeLessThan(tri.cost);
+    }
+  });
+
+  it("draws no ladder for an unmeasured seat, a Copilot re-sell or a metered model", () => {
+    expect(scWaypointsFor(model({ id: "xai/grok-4.6", provider: "xai" }))).toEqual([]);
+    expect(
+      scWaypointsFor(model({ id: "github-copilot/claude-opus-4.7", provider: "github-copilot" })),
+    ).toEqual([]);
+    expect(scWaypointsFor(model({ id: "google/gemini-3.8-flash", provider: "google" }))).toEqual(
+      [],
+    );
+  });
+
+  it("renders a triangle per mark and shows the tags on ONE model per vendor", () => {
+    const opus55 = model({
+      id: "claude-code/claude-opus-5-5",
+      relCost: eegRelCost("claude-code/claude-opus-5-5"),
+      index: 64,
+    });
+    const svg = renderSmartCostChart([opus(), opus55, sol()]);
+    // One ANCHOR row per model: 3 Claude marks × 2 models + 2 OpenAI marks (2026-09-30).
+    expect(svg.match(/class="sc-apipos sc-wppos[^"]*sc-wp-anchor"/g)?.length).toBe(8);
+    // the architect 2026-09-23 #3 — "make all the triangles the same size, same behavior": a plan
+    // triangle is drawn with the list triangle's OWN classes and EXACT points, so every
+    // API rule (size, shade, dim, hover light, glide) applies to both by construction.
+    const listPts =
+      /<g class="sc-apipos"[^>]*data-model="claude-code\/claude-opus-5"[^>]*>[\s\S]*?<polygon class="sc-tri" points="([^"]+)"/.exec(
+        svg,
+      )![1];
+    const planPts =
+      /<g class="sc-apipos sc-wppos[^"]*"[^>]*data-model="claude-code\/claude-opus-5"[^>]*>[\s\S]*?<polygon class="sc-tri sc-wp[^"]*" points="([^"]+)"/.exec(
+        svg,
+      )![1];
+    expect(planPts).toBe(listPts);
+    expect(svg).not.toMatch(/<path class="sc-wp/);
+    // the smartest Claude (Opus 5.5) and the only OpenAI model carry the always-on tags
+    const shown = (id: string) =>
+      svg.match(
+        new RegExp(
+          `class="sc-apipos sc-wppos sc-wp-show sc-wp-anchor"[^>]*data-model="${id.replace(/[./]/g, "\\$&")}"`,
+          "g",
+        ),
+      )?.length;
+    expect(shown("claude-code/claude-opus-5-5")).toBe(3);
+    expect(shown("openai-codex/gpt-5.6-sol")).toBe(2);
+    expect(shown("claude-code/claude-opus-5")).toBeUndefined();
+    expect(svg).toContain(">Pro €20 · Max 5× €100<");
+    expect(svg).toContain(">Plus €20 · Pro €100/200/500<");
+  });
+
+  // 2026-09-30: the metered openai/gpt-6-astra tied the seat Astra, came first, won the
+  // showcase and drew nothing (no API triangle → no bridge → no marks), so the OpenAI
+  // tags never appeared on the live chart. The showcase must be a model whose marks draw.
+  it("never gives the showcase to a metered twin that draws no marks", () => {
+    const twin = model({ id: "openai/gpt-5.6-sol", provider: "openai", relCost: 20, index: 58 });
+    expect(scApiPointsFor(twin)).toEqual([]);
+    const svg = renderSmartCostChart([twin, sol()]);
+    expect(svg).toMatch(
+      /class="sc-apipos sc-wppos sc-wp-show[^"]*"[^>]*data-model="openai-codex\/gpt-5\.6-sol"/,
+    );
+    expect(svg).toContain(">Plus €20 · Pro €100/200/500<");
+  });
+
+  // The drag (app.ts wireUtilDrag) snaps onto what is DRAWN: every rung owns a row, and
+  // every mark carries its own x and readout, addressed by (model, effort).
+  it("gives every draggable rung its own row, stamped for the drag to snap onto", () => {
+    const m = opus();
+    const svg = renderSmartCostChart([m]);
+    const rungs = scApiPointsFor(m).map((p) => p.lvl);
+    expect(rungs.length).toBeGreaterThan(1);
+    for (const lvl of rungs) {
+      const row =
+        svg.match(
+          new RegExp(`<g class="sc-apipos sc-wppos[^"]*"[^>]*data-effort="${lvl}"[^>]*>`, "g"),
+        ) ?? [];
+      expect(row.length).toBe(3);
+      for (const g of row) {
+        expect(g).toMatch(/data-wp-x="-?[\d.]+"/);
+        expect(g).toMatch(/data-wp-hud="[^"]+\/mo/);
+      }
+      // the list triangle AND the dashed bridge of the same rung are addressable too, so
+      // the drag can light the whole row, not only its plan marks
+      expect(svg).toMatch(new RegExp(`class="sc-apipos"[^>]*data-effort="${lvl}"`));
+      expect(svg).toMatch(new RegExp(`<line class="sc-bridge-cost"[^>]*data-effort="${lvl}"`));
+    }
+    const anchorLvl = scApiPointsFor(m).find((p) => p.anchor)!.lvl;
+    const rest =
+      svg.match(/<g class="sc-apipos sc-wppos[^"]*sc-wp-anchor"[^>]*data-effort="([^"]+)"/g) ?? [];
+    expect(rest.every((g) => g.includes(`data-effort="${anchorLvl}"`))).toBe(true);
+  });
+
+  it("reads out plan and monthly commitment when the circle lands on a mark", () => {
+    const [max20, proMax5, team] = scWaypointsFor(opus());
+    expect(scWaypointHud(max20)).toBe("Max 20× €200/mo");
+    expect(scWaypointHud(proMax5)).toBe("Pro €20/mo = Max 5× €100/mo");
+    expect(scWaypointHud(team)).toBe("Team €125/mo");
+    // a non-anchor rung is the same ladder slid by its effort multiplier
+    const low = scWaypointsFor(opus(), "low");
+    const anchor = scWaypointsFor(opus());
+    expect(low.map(scWaypointHud)).toEqual(anchor.map(scWaypointHud));
+    expect(low[0].lvl).toBe("low");
+    expect(low[0].cost / anchor[0].cost).toBeCloseTo(
+      EEG_EFFORT_MULT.low / EEG_EFFORT_MULT[anchor[0].lvl],
+      9,
+    );
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendBootstrapPromptWarning,
   analyzeBootstrapBudget,
+  analyzeMemoryIndexBudget,
   buildBootstrapInjectionStats,
   buildBootstrapPromptWarning,
   buildBootstrapTruncationReportMeta,
@@ -9,6 +10,7 @@ import {
   formatBootstrapTruncationWarningLines,
   resolveBootstrapWarningSignaturesSeen,
 } from "./bootstrap-budget.js";
+import type { BootstrapInjectionStat } from "./bootstrap-budget.js";
 import { buildAgentSystemPrompt } from "./system-prompt.js";
 import type { WorkspaceBootstrapFile } from "./workspace.js";
 
@@ -456,5 +458,150 @@ describe("bootstrap prompt warnings", () => {
     expect(cacheHitRate(legacyTurns)).toBe(0);
     expect(cacheHitRate(optimizedTurns)).toBe(1);
     expect(optimizedTurns[0]).not.toContain("⚠ Bootstrap truncation warning:");
+  });
+});
+
+describe("memory index budget", () => {
+  const memoryIndex = (rawChars: number, overrides: Partial<BootstrapInjectionStat> = {}) => ({
+    name: "MEMORY.md",
+    path: "/tmp/workspace/MEMORY.md",
+    missing: false,
+    rawChars,
+    injectedChars: rawChars,
+    truncated: false,
+    ...overrides,
+  });
+  const noTruncation = analyzeBootstrapBudget({
+    files: [],
+    bootstrapMaxChars: 12_000,
+    bootstrapTotalMaxChars: 60_000,
+  });
+
+  it("flags MEMORY.md only once it is over the soft budget", () => {
+    expect(analyzeMemoryIndexBudget({ files: [memoryIndex(8_000)], maxChars: 8_000 })).toBe(
+      undefined,
+    );
+    expect(
+      analyzeMemoryIndexBudget({ files: [memoryIndex(9_000, { missing: true })], maxChars: 8_000 }),
+    ).toBe(undefined);
+    expect(
+      analyzeMemoryIndexBudget({
+        files: [{ ...memoryIndex(20_000), name: "AGENTS.md" }],
+        maxChars: 8_000,
+      }),
+    ).toBe(undefined);
+    expect(analyzeMemoryIndexBudget({ files: [memoryIndex(9_000)], maxChars: 8_000 })).toEqual({
+      name: "MEMORY.md",
+      path: "/tmp/workspace/MEMORY.md",
+      rawChars: 9_000,
+      maxChars: 8_000,
+      truncated: false,
+    });
+  });
+
+  it("watch mode logs once per size step and adds no prompt text", () => {
+    const budget = analyzeMemoryIndexBudget({ files: [memoryIndex(9_000)], maxChars: 8_000 });
+    const first = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      memoryIndex: { budget, mode: "watch" },
+    });
+    expect(first.memoryIndexLogLine).toContain("/tmp/workspace/MEMORY.md is 9000 chars");
+    expect(first.memoryIndexLines).toBeUndefined();
+    expect(first.warningShown).toBe(false);
+    expect(first.warningSignaturesSeen).toHaveLength(1);
+
+    const sameStep = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      seenSignatures: first.warningSignaturesSeen,
+      memoryIndex: {
+        budget: analyzeMemoryIndexBudget({ files: [memoryIndex(9_400)], maxChars: 8_000 }),
+        mode: "watch",
+      },
+    });
+    expect(sameStep.memoryIndexLogLine).toBeUndefined();
+
+    const nextStep = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      seenSignatures: first.warningSignaturesSeen,
+      memoryIndex: {
+        budget: analyzeMemoryIndexBudget({ files: [memoryIndex(10_500)], maxChars: 8_000 }),
+        mode: "watch",
+      },
+    });
+    expect(nextStep.memoryIndexLogLine).toContain("10500 chars");
+  });
+
+  it("once mode tells the agent once, always mode on every run, off never", () => {
+    const budget = analyzeMemoryIndexBudget({ files: [memoryIndex(9_000)], maxChars: 8_000 });
+    const once = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      memoryIndex: { budget, mode: "once" },
+    });
+    expect(once.memoryIndexLines?.join("\n")).toContain("over its 8000-char index budget");
+    expect(once.memoryIndexLines?.join("\n")).toContain("memory/<topic>.md");
+    const onceAgain = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      seenSignatures: once.warningSignaturesSeen,
+      memoryIndex: { budget, mode: "once" },
+    });
+    expect(onceAgain.memoryIndexLines).toBeUndefined();
+
+    const always = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      seenSignatures: once.warningSignaturesSeen,
+      memoryIndex: { budget, mode: "always" },
+    });
+    expect(always.memoryIndexLines).toHaveLength(2);
+
+    const off = buildBootstrapPromptWarning({
+      analysis: noTruncation,
+      mode: "once",
+      memoryIndex: { budget, mode: "off" },
+    });
+    expect(off.memoryIndexLines).toBeUndefined();
+    expect(off.memoryIndexLogLine).toBeUndefined();
+    expect(off.warningSignaturesSeen).toEqual([]);
+  });
+
+  it("renders the index notice as its own block after the truncation block", () => {
+    const onlyIndex = appendBootstrapPromptWarning("Please continue.", [], {
+      memoryIndexLines: ["MEMORY.md is 9000 chars"],
+    });
+    expect(onlyIndex).toBe(
+      "Please continue.\n\n[Memory index over budget]\n- MEMORY.md is 9000 chars",
+    );
+    expect(onlyIndex).not.toContain("[Bootstrap truncation warning]");
+
+    const both = appendBootstrapPromptWarning("Go.", ["AGENTS.md: 200 raw -> 0 injected"], {
+      memoryIndexLines: ["MEMORY.md is 9000 chars"],
+    });
+    expect(both.indexOf("[Bootstrap truncation warning]")).toBeLessThan(
+      both.indexOf("[Memory index over budget]"),
+    );
+
+    const heartbeat = "Read HEARTBEAT.md. Reply HEARTBEAT_OK.";
+    expect(
+      appendBootstrapPromptWarning(heartbeat, [], {
+        preserveExactPrompt: heartbeat,
+        memoryIndexLines: ["MEMORY.md is 9000 chars"],
+      }),
+    ).toBe(heartbeat);
+  });
+
+  it("a truncated MEMORY.md gets palace advice instead of only 'raise the limit'", () => {
+    const analysis = analyzeBootstrapBudget({
+      files: [memoryIndex(20_000, { injectedChars: 12_000, truncated: true })],
+      bootstrapMaxChars: 12_000,
+      bootstrapTotalMaxChars: 15_000,
+    });
+    const lines = formatBootstrapTruncationWarningLines({ analysis });
+    expect(lines.join("\n")).toContain("MEMORY.md is the memory index");
+    expect(lines.at(-1)).toContain("raise agents.defaults.bootstrapMaxChars");
   });
 });

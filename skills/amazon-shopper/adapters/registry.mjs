@@ -1,32 +1,23 @@
 // registry.mjs — map a store name → adapter instance.
 //
-// The orchestrator resolves `--store <name>` through here. Default store is
-// "amazon".
+// The orchestrator resolves `--store <name>` through here. There is exactly one
+// store: amazon.
 //
-// SCOPE GATE: this skill presents itself as an amazon.es shopping tool, and the
-// non-Amazon adapters scrape sites the description never names. Shipping them
-// enabled means the skill quietly does more than it says, so since 1.2.0 they are
-// refused unless AMAZON_SHOPPER_ENABLE_OTHER_STORES=1 is set. The Amazon adapter
-// is unaffected.
+// SCOPE, ENFORCED BY ABSENCE: this skill presents itself as an amazon.es shopping
+// tool. Earlier versions also shipped classifieds adapters (Milanuncios, Wallapop)
+// behind an AMAZON_SHOPPER_ENABLE_OTHER_STORES=1 gate, which meant the published
+// package still carried scrapers for sites its own description never named — an
+// env var away from running. Since 1.2.1 that code is not in the package at all,
+// so there is no flag, no env var and no argument that reaches another site.
+// Removed capability beats disabled capability.
 
 import { AmazonAdapter } from "./AmazonAdapter.mjs";
-import { MilanunciosAdapter } from "./MilanunciosAdapter.mjs";
-import { WallapopAdapter } from "./WallapopAdapter.mjs";
 
 export const DEFAULT_STORE = "amazon";
-
-// Stores outside the skill's declared amazon.es scope.
-const OPT_IN_STORES = new Set(["milanuncios", "wallapop"]);
-
-export function otherStoresEnabled() {
-  return process.env.AMAZON_SHOPPER_ENABLE_OTHER_STORES === "1";
-}
 
 // name → factory (lazy instance, one per resolve call).
 const FACTORIES = Object.freeze({
   amazon: () => new AmazonAdapter(),
-  milanuncios: () => new MilanunciosAdapter(),
-  wallapop: () => new WallapopAdapter(),
 });
 
 export function knownStores() {
@@ -43,13 +34,8 @@ export function resolveAdapter(name = DEFAULT_STORE) {
   const key = String(name || DEFAULT_STORE).toLowerCase();
   const factory = FACTORIES[key];
   if (!factory) {
-    throw new Error(`unknown store "${name}" (known: ${knownStores().join(", ")})`);
-  }
-  if (OPT_IN_STORES.has(key) && !otherStoresEnabled()) {
     throw new Error(
-      `store "${key}" is outside this skill's declared amazon.es scope and is disabled by default. ` +
-        "It scrapes a classifieds site and returns listings with different availability and seller " +
-        "semantics. Set AMAZON_SHOPPER_ENABLE_OTHER_STORES=1 to enable it.",
+      `unknown store "${name}" (this skill searches amazon.es only; known: ${knownStores().join(", ")})`,
     );
   }
   return factory();

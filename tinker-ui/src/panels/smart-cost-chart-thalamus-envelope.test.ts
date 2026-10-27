@@ -8,7 +8,7 @@
 // A test that spelled the expected rungs out would pass forever while the router
 // moved underneath it, which is the exact failure the envelope was built to reveal.
 //
-// REDRAWN 2026-09-02/03 (the user: "picked as up-left as possible, basically defining
+// REDRAWN 2026-09-02/03 (the architect: "picked as up-left as possible, basically defining
 // the top-left outline … use the graph in €/task"). The ring now marks a FRONTIER
 // RUNG, not a considered model; the path is the frontier in task-cost order.
 //
@@ -67,7 +67,7 @@ import {
   scPointsFor,
   scRungTag,
   scThalamusRelCost,
-  scTokenRatio,
+  scTaskCostFactor,
   scWrapFooter,
   SC_THALAMUS,
   type ScModel,
@@ -116,10 +116,14 @@ const COPILOT_OPUS: Fixture = {
   ctx: 200_000,
   color: "#BF09A3",
 };
-/** 4.0 — also over the ceiling, from a different vendor. */
-const GLM53: Fixture = {
-  id: "openrouter/z-ai/glm-5.3",
-  name: "GLM 5.3",
+/** 4.0 — also over the ceiling, from a different vendor. GLM 5 Turbo, not a model on
+ *  the picker: its table row is a frozen legacy price. This fixture named glm-5.3 until
+ *  2026-10-01, when the nightly re-price (live endpoints, Baidu $0.4884) took glm-5.3
+ *  under the ceiling and two tests went red on correct data — a fixture for "dear" must
+ *  not borrow the id of a model whose price the cron moves. */
+const GLM_DEAR: Fixture = {
+  id: "openrouter/z-ai/glm-5-turbo",
+  name: "GLM 5 Turbo",
   provider: "openrouter",
   index: 50,
   relCost: 4,
@@ -170,7 +174,7 @@ const SOLE_A: Fixture = {
 };
 const SOLE_B: Fixture = { ...SOLE_A, id: "acme/beta", name: "Beta", index: 60, relCost: 0.2 };
 
-const CATALOG: Fixture[] = [OPUS5, SONNET5, HAIKU45, COPILOT_OPUS, GLM53];
+const CATALOG: Fixture[] = [OPUS5, SONNET5, HAIKU45, COPILOT_OPUS, GLM_DEAR];
 
 /** THE REFERENCE ANSWER for REACH — the function itself, called with exactly the
  *  arguments the renderer builds. Never a literal. */
@@ -288,7 +292,7 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
 
   test("the frontier's rungs are the chart's own points: same €/task, same index", () => {
     // frontierRungsFor(id, index, relCost) must price a rung exactly as the dots
-    // loop does (`p.cost * scTokenRatio(id, lvl)`), or a ring lands beside its dot.
+    // loop does (`p.cost * scTaskCostFactor(id, lvl)`), or a ring lands beside its dot.
     const byId = new Map(CATALOG.map((m) => [m.id, m]));
     for (const c of reference(CATALOG).considered) {
       const m = byId.get(c.key)!;
@@ -298,7 +302,7 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
       for (const p of pts) {
         const r = rungs.find((x) => x.effort === p.lvl);
         expect(r, `${m.id}@${p.lvl}`).toBeDefined();
-        expect(r!.cost).toBeCloseTo(p.cost * scTokenRatio(m.id, p.lvl), 9);
+        expect(r!.cost).toBeCloseTo(p.cost * scTaskCostFactor(m.id, p.lvl), 9);
         expect(r!.smart).toBe(p.smart);
       }
     }
@@ -315,7 +319,7 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
     // took the nightly refresh gate with it. Price must be the ONLY thing under test
     // here, so the companion is pinned strictly below `cheap`'s weakest rung, wherever
     // the vendor moves that rung next.
-    const cheap = { ...GLM53, id: "claude-code/claude-sonnet-4-6", relCost: 0.0893 };
+    const cheap = { ...GLM_DEAR, id: "claude-code/claude-sonnet-4-6", relCost: 0.0893 };
     const cheapFloor = Math.min(
       ...frontierRungsFor(cheap.id, cheap.index, cheap.relCost).map((r) => r.smart),
     );
@@ -324,14 +328,14 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
     expect(reference(withCheap).considered.map((c) => c.key)).toContain(cheap.id);
     expect(frontierOf(withCheap).some((r) => r.key === cheap.id)).toBe(true);
     expect(envelopedIds(renderSmartCostChart(withCheap))).toContain(cheap.id);
-    // …and swapping in the id the table prices at 4.0 removes it from both.
-    const withDear = [OPUS5, GLM53];
-    expect(reference(withDear).considered.map((c) => c.key)).not.toContain(GLM53.id);
-    expect(envelopedIds(renderSmartCostChart(withDear))).not.toContain(GLM53.id);
+    // …and swapping in the id the table prices at 4.0 (glm-5-turbo) removes it from both.
+    const withDear = [OPUS5, GLM_DEAR];
+    expect(reference(withDear).considered.map((c) => c.key)).not.toContain(GLM_DEAR.id);
+    expect(envelopedIds(renderSmartCostChart(withDear))).not.toContain(GLM_DEAR.id);
   });
 
   test("a BRAND-NEW frontier model appears in the envelope with no code change", () => {
-    // The whole point of the feature: the user must be able to see whether thalamus
+    // The whole point of the feature: the architect must be able to see whether thalamus
     // reaches a model that did not exist when this file was written. No literal
     // list could ever contain this id.
     const brandNew: Fixture = {
@@ -704,7 +708,7 @@ describe("thalamus envelope — the footer reports the payload, never a literal"
     expect(line).toContain(env.costVerified ? "cost verified" : "cost UNVERIFIED");
     expect(line).toContain(`${env.excluded.length} cost-veto`);
     // CONTROL: the numbers move with the data rather than being printed constants.
-    const smaller = footer(renderSmartCostChart([OPUS5, GLM53]));
+    const smaller = footer(renderSmartCostChart([OPUS5, GLM_DEAR]));
     expect(smaller).toContain("across 1/2 models");
     expect(smaller).not.toContain(`across ${env.considered.length}/${env.catalogSize} models`);
   });

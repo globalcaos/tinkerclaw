@@ -14,8 +14,9 @@ me** (size). Eight columns, each answering one of those four questions.
 
 Dropped from that table, on purpose:
 
-- **language tags** — the reader speaks seven languages, so they never move his
-  ranking. Parsed and available; simply not shown.
+- **language tags** — for this particular reader, language never changed which
+  release he picked. Parsed and available; simply not shown. A reader for whom
+  language matters gets it as a column.
 - **publish date** — age is not quality, and a recent upload of a bad encode
   reads as "new" to the eye.
 - **the numeric score** — the row order already expresses it. Printing it invites
@@ -23,14 +24,12 @@ Dropped from that table, on purpose:
 
 ## Encodings, and when each earns its place
 
-| encoding                            | use for                                       | why                                                                                  |
-| ----------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **coloured chip**                   | the one attribute that most determines rank   | the eye finds colour before it finds text; more than one per row destroys the anchor |
-| **bar**                             | any magnitude the reader compares across rows | length is pre-attentive; a number is not                                             |
-| **tabular numerals, right-aligned** | sizes, prices, counts                         | digits that do not line up cannot be compared at a glance                            |
-| **dimmed italic**                   | missing data                                  | distinguishes "we do not know" from "it has none"                                    |
-| **left edge colour**                | row status — recommended, suspect             | marks a row without adding a column                                                  |
-| **plain text**                      | everything else                               | most fields are confirmation, not comparison                                         |
+- **Coloured chip** — for the one attribute that most determines rank. The eye finds colour before it finds text; more than one per row destroys the anchor.
+- **Bar** — for any magnitude the reader compares across rows. Length is pre-attentive; a number is not.
+- **Tabular numerals, right-aligned** — for sizes, prices, counts. Digits that do not line up cannot be compared at a glance.
+- **Dimmed italic** — for missing data. Distinguishes "we do not know" from "it has none".
+- **Left edge colour** — for row status (recommended, suspect). Marks a row without adding a column.
+- **Plain text** — everything else. Most fields are confirmation, not comparison.
 
 ## Collapse false choices
 

@@ -1,10 +1,10 @@
-// FORK 2026-07-25 (the user): the ORCA panel links to orca-policy.md as "the exact one that
+// FORK 2026-07-25 (the architect): the ORCA panel links to orca-policy.md as "the exact one that
 // drives the real policy, so that there is never a drift between the two."
 //
 // A prose file cannot literally BE the code, so this test is the enforcement: every constant
 // the policy quotes is asserted against the value the running code actually uses. Change
 // URGENCY_EXP in the allocator, or the fan-out cap in the orchestration runtime, without
-// updating the md (or the reverse) and this fails. The panel can then never send the user to a
+// updating the md (or the reverse) and this fails. The panel can then never send the architect to a
 // page describing a policy we are not running.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";

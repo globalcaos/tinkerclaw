@@ -144,6 +144,61 @@ async function withTempSessionStore<T>(
 }
 
 describe("updateSessionStoreAfterAgentRun", () => {
+  // FORK 2026-09-30 (lifecycles.md L4b): the restart live test's stuck "running" chat.
+  it("never writes the run-start snapshot's lifecycle fields over what the lifecycle wrote", async () => {
+    await withTempSessionStore(async ({ storePath }) => {
+      const cfg = {} as OpenClawConfig;
+      const sessionKey = "agent:main:tinker:resumed";
+      const sessionId = "resumed-session";
+      // the snapshot the command took at run start: the chat was still marked cut by the restart
+      const sessionStore: Record<string, SessionEntry> = {
+        [sessionKey]: {
+          sessionId,
+          updatedAt: 1,
+          status: "running",
+          startedAt: 10,
+          lastResumeAt: 5,
+        },
+      };
+      // meanwhile the run's lifecycle end and recovery's bookkeeping wrote the truth
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [sessionKey]: {
+            sessionId,
+            updatedAt: 3,
+            status: "done",
+            startedAt: 20,
+            endedAt: 30,
+            runtimeMs: 10,
+            lastResumeAt: 15,
+          },
+        }),
+      );
+
+      await updateSessionStoreAfterAgentRun({
+        cfg,
+        sessionId,
+        sessionKey,
+        storePath,
+        sessionStore,
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.4",
+        result: {
+          meta: { durationMs: 1, agentMeta: { sessionId, provider: "openai", model: "gpt-5.4" } },
+        },
+      });
+
+      expect(loadSessionStore(storePath)[sessionKey]).toMatchObject({
+        status: "done",
+        startedAt: 20,
+        endedAt: 30,
+        runtimeMs: 10,
+        lastResumeAt: 15,
+      });
+    });
+  });
+
   it("persists the selected embedded harness id on the session", async () => {
     await withTempSessionStore(async ({ storePath }) => {
       const cfg = {} as OpenClawConfig;

@@ -3622,6 +3622,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               systemPromptOverride: {
                 type: "string",
               },
+              identityLine: {
+                type: "string",
+              },
               promptOverlays: {
                 type: "object",
                 properties: {
@@ -3730,6 +3733,37 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 title: "Bootstrap Prompt Truncation Warning",
                 description:
                   'Inject agent-visible warning text when bootstrap files are truncated: "off", "once" (default), or "always".',
+              },
+              memoryIndexMaxChars: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+                title: "Memory Index Max Chars",
+                description:
+                  "Soft budget for the root MEMORY.md, the memory index loaded on every main-session turn (default: 8000). Over it, the runtime asks for detail to move into topic files under memory/; the index is never truncated by this setting.",
+              },
+              memoryIndexWarning: {
+                anyOf: [
+                  {
+                    type: "string",
+                    const: "off",
+                  },
+                  {
+                    type: "string",
+                    const: "watch",
+                  },
+                  {
+                    type: "string",
+                    const: "once",
+                  },
+                  {
+                    type: "string",
+                    const: "always",
+                  },
+                ],
+                title: "Memory Index Warning",
+                description:
+                  'What happens when MEMORY.md is over memoryIndexMaxChars: "off", "watch" (default; a gateway log line once per size step, no prompt text), "once" (also tell the agent once per size step), or "always" (tell the agent on every run while over budget).',
               },
               userTimezone: {
                 type: "string",
@@ -6161,6 +6195,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   type: "string",
                 },
                 systemPromptOverride: {
+                  type: "string",
+                },
+                identityLine: {
                   type: "string",
                 },
                 agentRuntime: {
@@ -26024,6 +26061,16 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "agents.defaults.bootstrapPromptTruncationWarning": {
       label: "Bootstrap Prompt Truncation Warning",
       help: 'Inject agent-visible warning text when bootstrap files are truncated: "off", "once" (default), or "always".',
+      tags: ["advanced"],
+    },
+    "agents.defaults.memoryIndexMaxChars": {
+      label: "Memory Index Max Chars",
+      help: "Soft budget for the root MEMORY.md, the memory index loaded on every main-session turn (default: 8000). Over it, the runtime asks for detail to move into topic files under memory/; the index is never truncated by this setting.",
+      tags: ["performance"],
+    },
+    "agents.defaults.memoryIndexWarning": {
+      label: "Memory Index Warning",
+      help: 'What happens when MEMORY.md is over memoryIndexMaxChars: "off", "watch" (default; a gateway log line once per size step, no prompt text), "once" (also tell the agent once per size step), or "always" (tell the agent on every run while over budget).',
       tags: ["advanced"],
     },
     "agents.defaults.startupContext": {

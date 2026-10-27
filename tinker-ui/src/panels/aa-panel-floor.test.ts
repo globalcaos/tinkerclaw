@@ -5,7 +5,7 @@
 //
 // Bought on 2026-09-05: Artificial Analysis rebased its Intelligence Index overnight and
 // every scored model fell ~15-25% in one scrape. The gate was the literal number 53, so
-// SMART MODELS went from 23 entries to 2 and the model selector went with it. The user
+// SMART MODELS went from 23 entries to 2 and the model selector went with it. the architect
 // found it as "in the model picker panel I only have 2 models available now".
 //
 // Each assertion carries its CONTROL: a fixture where the OLD absolute rule really gives

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // demo.mjs — a complete, runnable table. Deliberately a NON-media domain, to
 // show the vocabulary is about comparison, not about any one subject.
-import { renderTable, chip, bar, num, absent, THEME } from "../lib/tables.mjs";
+// Every value here is plain data; the builders produce all markup.
+import { renderTable, chip, bar, num, text, block, group } from "../lib/tables.mjs";
 
 const HOSTS = [
   { name: "api-eu-1", tier: "best", region: "Frankfurt", p95: 42, rps: 1840, err: 0.01, cpu: 38 },
@@ -12,6 +13,7 @@ const HOSTS = [
 ];
 const maxRps = Math.max(...HOSTS.map((h) => h.rps));
 const maxP95 = Math.max(...HOSTS.map((h) => h.p95));
+const alarm = (v) => text(v, { color: "bad", weight: 600 });
 
 console.log("```html-render");
 console.log(
@@ -21,8 +23,14 @@ console.log(
     meta: "5 hosts · 3 regions",
     callout: {
       label: "HEALTHIEST",
-      body: `<div style="font-size:13.5px;color:#f3e8d2">api-eu-1 · Frankfurt</div>
-           <div style="color:${THEME.dim};font-size:11.5px;margin-top:4px">42 ms p95 · 1,840 rps · 0.01% errors · 38% CPU</div>`,
+      body: [
+        block("api-eu-1 · Frankfurt", { size: 13.5, color: "#f3e8d2" }),
+        block("42 ms p95 · 1,840 rps · 0.01% errors · 38% CPU", {
+          color: "dim",
+          size: 11.5,
+          marginTop: 4,
+        }),
+      ],
     },
     columns: [
       { label: "#", align: "right" },
@@ -34,24 +42,25 @@ console.log(
       { label: "CPU", align: "right" },
     ],
     rows: HOSTS.map((h, i) => [
-      `<span style="color:${THEME.faint}">${i + 1}</span>`,
+      text(i + 1, { color: "faint" }),
       chip(h.name, h.tier),
-      `<span style="color:${THEME.dim};font-size:12px">${h.region}</span>`,
-      `${bar(maxP95 - h.p95 + 20, maxP95, h.tier)} ${num(h.p95, "ms")}`,
-      `${bar(h.rps, maxRps, h.tier)} ${num(h.rps.toLocaleString(), "rps")}`,
-      h.err > 1 ? `<span style="color:#e39a9a;font-weight:600">${h.err}%</span>` : num(`${h.err}%`),
-      h.cpu > 90
-        ? `<span style="color:#e39a9a;font-weight:600">${h.cpu}%</span>`
-        : num(`${h.cpu}%`),
+      text(h.region, { color: "dim", size: 12 }),
+      group(bar(maxP95 - h.p95 + 20, maxP95, h.tier), " ", num(h.p95, "ms")),
+      group(bar(h.rps, maxRps, h.tier), " ", num(h.rps.toLocaleString(), "rps")),
+      h.err > 1 ? alarm(`${h.err}%`) : num(`${h.err}%`),
+      h.cpu > 90 ? alarm(`${h.cpu}%`) : num(`${h.cpu}%`),
     ]),
     marks: HOSTS.map((h) => (h.tier === "best" ? "best" : h.tier === "bad" ? "bad" : null)),
     legend: [
-      `<span>${chip("healthy", "best")}</span>`,
-      `<span>${chip("degraded", "ok")}</span>`,
-      `<span>${chip("failing", "bad")}</span>`,
-      "<span>bar length = relative to the best host here</span>",
+      chip("healthy", "best"),
+      chip("degraded", "ok"),
+      chip("failing", "bad"),
+      "bar length = relative to the best host here",
     ],
-    footnote: `<b style="color:#c98a5a">2 hosts excluded</b> — draining (api-eu-3) and not yet in rotation (api-us-2). Excluded rows are never shown as rows; a silent filter looks like a broken query.`,
+    footnote: [
+      text("2 hosts excluded", { color: "#c98a5a", weight: 700 }),
+      " — draining (api-eu-3) and not yet in rotation (api-us-2). Excluded rows are never shown as rows; a silent filter looks like a broken query.",
+    ],
   }),
 );
 console.log("```");

@@ -190,6 +190,8 @@ function text(res: Duplex, status: number, bodyText: string) {
 }
 
 function rejectUpgrade(socket: Duplex, status: number, bodyText: string) {
+  // FORK 2026-10-14: every refused upgrade is logged, so a relay that "keeps disconnecting" leaves a trace.
+  log.warn(`[relay-conn] upgrade rejected status=${status} reason="${bodyText}"`);
   text(socket, status, bodyText);
   try {
     socket.destroy();
@@ -299,6 +301,8 @@ export async function ensureChromeExtensionRelayServer(opts: {
       >;
       nextId: number;
       pingTimer: ReturnType<typeof setInterval>;
+      connectedAt: number;
+      lastPongAt: number;
     };
 
     const extensionConnections = new Map<string, ExtensionConnection>();
@@ -349,6 +353,9 @@ export async function ensureChromeExtensionRelayServer(opts: {
     };
 
     const closeCdpClientsAfterExtensionDisconnect = () => {
+      log.warn(
+        `[relay-conn] no extension reconnected within ${extensionReconnectGraceMs}ms: closing ${cdpClients.size} CDP client(s), dropping ${connectedTargets.size} shared target(s)`,
+      );
       connectedTargets.clear();
       for (const client of cdpClients) {
         try {
@@ -903,7 +910,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
       rejectUpgrade(socket, 404, "Not Found");
     });
 
-    wssExtension.on("connection", (ws) => {
+    wssExtension.on("connection", (ws, req?: IncomingMessage) => {
       // FORK: Multi-extension — each connection gets its own state.
       const connId = `ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const conn: ExtensionConnection = {
@@ -918,8 +925,18 @@ export async function ensureChromeExtensionRelayServer(opts: {
           }
           ws.send(JSON.stringify({ method: "ping" } satisfies ExtensionPingMessage));
         }, 5000),
+        connectedAt: Date.now(),
+        lastPongAt: Date.now(),
       };
       extensionConnections.set(connId, conn);
+      log.info(
+        `[relay-conn] extension connected id=${connId} origin=${headerValue(req?.headers.origin) ?? "none"} ua="${(headerValue(req?.headers["user-agent"]) ?? "").slice(0, 80)}" extensions=${extensionConnections.size} sharedTargets=${connectedTargets.size}`,
+      );
+      ws.on("error", (err) => {
+        log.warn(
+          `[relay-conn] extension socket error id=${connId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       clearExtensionDisconnectCleanupTimer();
       flushExtensionReconnectWaiters(true);
 
@@ -956,6 +973,23 @@ export async function ensureChromeExtensionRelayServer(opts: {
 
         if (parsed && typeof parsed === "object" && "method" in parsed) {
           if ((parsed as ExtensionPongMessage).method === "pong") {
+            conn.lastPongAt = Date.now();
+            return;
+          }
+          // FORK 2026-10-21: the extension's own console lines (buffered across outages) land in the
+          // gateway journal next to the [relay-conn] lines, so a stall or failed re-attach is readable.
+          if ((parsed as { method?: unknown }).method === "extLog") {
+            const lines = (parsed as { params?: { lines?: unknown } }).params?.lines;
+            for (const l of Array.isArray(lines) ? lines.slice(-300) : []) {
+              const e = l as { ts?: unknown; level?: unknown; msg?: unknown };
+              const at = typeof e.ts === "number" ? new Date(e.ts).toISOString() : "?";
+              const line = `[relay-ext] id=${connId} at=${at} ${String(e.msg ?? "").slice(0, 500)}`;
+              if (e.level === "warn" || e.level === "error") {
+                log.warn(line);
+              } else {
+                log.info(line);
+              }
+            }
             return;
           }
           if ((parsed as ExtensionForwardEventMessage).method !== "forwardCDPEvent") {
@@ -1072,9 +1106,13 @@ export async function ensureChromeExtensionRelayServer(opts: {
         }
       });
 
-      ws.on("close", () => {
+      ws.on("close", (code: number, reason: Buffer) => {
         clearInterval(conn.pingTimer);
         extensionConnections.delete(connId);
+        const now = Date.now();
+        log.warn(
+          `[relay-conn] extension disconnected id=${connId} code=${code} reason="${reason?.toString() || "none"}" lived=${Math.round((now - conn.connectedAt) / 1000)}s lastPong=${Math.round((now - conn.lastPongAt) / 1000)}s ago ownedTabs=${conn.ownedSessions.size} extensionsLeft=${extensionConnections.size}`,
+        );
 
         // Reject only this extension's pending requests.
         for (const [, pending] of conn.pending) {

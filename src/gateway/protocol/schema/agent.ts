@@ -156,6 +156,10 @@ export const AgentParamsSchema = Type.Object(
     // agent requests; the gateway accepts but intentionally ignores it.
     cleanupBundleMcpOnRunEnd: Type.Optional(Type.Boolean()),
     modelRun: Type.Optional(Type.Boolean()),
+    // FORK 2026-09-29 (lifecycles.md L4b): resume the interrupted turn from the transcript with
+    // pi-agent-core `Agent.continue()`. `message` is ignored (it is required by this schema) and
+    // nothing is added to the transcript as a prompt.
+    continueFromTranscript: Type.Optional(Type.Boolean()),
     promptMode: Type.Optional(
       Type.Union([Type.Literal("full"), Type.Literal("minimal"), Type.Literal("none")]),
     ),

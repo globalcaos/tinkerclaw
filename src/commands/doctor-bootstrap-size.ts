@@ -9,7 +9,9 @@ import {
   resolveBootstrapTotalMaxChars,
 } from "../agents/embedded-agent-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { CANONICAL_ROOT_MEMORY_FILENAME } from "../memory/root-memory-files.js";
 import { note } from "../terminal/note.js";
+import { noteMemoryIndexShape } from "./doctor-memory-index.js";
 
 function formatInt(value: number): string {
   return new Intl.NumberFormat("en-US").format(Math.max(0, Math.floor(value)));
@@ -47,6 +49,7 @@ export async function noteBootstrapFileSize(cfg: OpenClawConfig) {
     bootstrapMaxChars,
     bootstrapTotalMaxChars,
   });
+  noteMemoryIndexShape({ cfg, bootstrapFiles });
   if (!analysis.hasTruncation && analysis.nearLimitFiles.length === 0 && !analysis.totalNearLimit) {
     return analysis;
   }
@@ -88,6 +91,11 @@ export async function noteBootstrapFileSize(cfg: OpenClawConfig) {
     analysis.totalNearLimit;
   if (needsPerFileTip || needsTotalTip) {
     lines.push("");
+  }
+  if (analysis.truncatedFiles.some((file) => file.name === CANONICAL_ROOT_MEMORY_FILENAME)) {
+    lines.push(
+      `- Tip: ${CANONICAL_ROOT_MEMORY_FILENAME} is the memory index; move its detail into topic files (memory/<topic>.md) instead of raising the limits.`,
+    );
   }
   if (needsPerFileTip) {
     lines.push("- Tip: tune `agents.defaults.bootstrapMaxChars` for per-file limits.");

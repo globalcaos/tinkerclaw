@@ -74,15 +74,19 @@
 //   3. THE MIRROR IS DEBOUNCED AND COALESCING. Every setter tails into
 //      `scheduleUiStateMirror`, and a burst of setter calls collapses into ONE POST of
 //      the FINAL snapshot, read at FLUSH time rather than at schedule time.
-//      `keepalive: true` so a mirror still in flight survives the tab being closed —
-//      which is precisely the moment this data is about to be wiped locally. Every error
-//      is swallowed: a failed mirror costs durability, never the session.
+//      Routine mirrors are ORDINARY requests whose response body is always read; only the
+//      `pagehide` flush uses `keepalive` (2026-09-24: every mirror used to, nothing read the
+//      responses, Chrome never released its 64 KB keepalive budget, and the 10th mirror of
+//      every page — and all after it — failed inside the browser). A failed mirror never
+//      throws into the session, but it is NOT silent: it warns and retries on a backoff.
 //   4. LAST WRITER WINS ACROSS TABS. The POST carries the WHOLE snapshot, so two tabs
 //      changing different controls clobber each other down to the most recent write.
 //      Accepted deliberately: a per-key merge cannot express the delete-on-agreement
 //      half of the invariant above — an absent key is indistinguishable from a key the
 //      other tab just reset to its default, so a merge would resurrect stale entries
 //      forever. A wrong panel fold is cheap; an un-resettable control is not.
+//      EXCEPTION (2026-09-21): closed-tab tombstones (`closedTabs`) are UNIONED at every
+//      layer, the server included, so no stale writer can resurrect a closed tab.
 //   5. NO DOM, STILL. `fetch` and `AbortController` are feature-detected, never assumed:
 //      without them hydrate resolves `false` and the mirror is a silent no-op, so the
 //      module stays unit-testable in a bare Node/vitest process, which is an existing
@@ -228,19 +232,86 @@ export function loadTabList(store: Storage = globalThis.localStorage): TabRecord
     if (!raw) {
       return [];
     }
-    return coerceTabs(JSON.parse(raw) as unknown);
+    return withoutClosedTabs(coerceTabs(JSON.parse(raw) as unknown), loadClosedTabs(store));
   } catch {
     return [];
   }
 }
 
-/** Overwrite the stored tab list. Same silent-failure contract as `writeMap`. */
+/**
+ * Overwrite the stored tab list. Same silent-failure contract as `writeMap`. Tombstoned
+ * ids are dropped on the way in, so no writer — a stale second window, a hydrate from an
+ * old file — can put a closed tab back into the cache.
+ */
 export function writeTabList(tabs: TabRecord[], store: Storage = globalThis.localStorage): void {
   try {
-    store.setItem(TABS_KEY, JSON.stringify(tabs));
+    store.setItem(TABS_KEY, JSON.stringify(withoutClosedTabs(tabs, loadClosedTabs(store))));
   } catch {
     /* quota or disabled storage — ignore */
   }
+}
+
+// --- closed-tab tombstones --------------------------------------------------
+// FORK 2026-09-21 (the architect: "When I do ctrl+shift+R the tinker ui shows tabs I had deleted …
+// whatever is closed or deleted stays that way"). Closing a tab used to be recorded ONLY as
+// its absence from a list, and absence meant "no information" to every other layer: the boot
+// hydrate let the file's list overwrite the cache, the re-hydrate merge re-added "file-only"
+// tabs on purpose, the server kept whichever list was POSTed last, and a mirror still in its
+// 250ms debounce died with the page. Any of those resurrected a closed tab. Measured that
+// day: the durable file held 4 tabs whose sessions were already soft-deleted, one since
+// 2026-09-17. A close is now a POSITIVE fact — tab id → closedAt — that is only ever UNIONED
+// (cache ∪ file ∪ every POST, also on the server), and every tab list is filtered through it.
+// Tab ids are minted fresh per tab (generateTabId), so a tombstone can never block a reopen.
+
+/** localStorage key of the tombstone map (tab id → epoch ms it was closed). */
+export const CLOSED_TABS_KEY = "tinker.closedTabs";
+/** Newest tombstones kept. Ids are never reused, so an evicted one costs nothing but a
+ *  resurrection risk from a writer older than the last 500 closes. */
+export const MAX_CLOSED_TABS = 500;
+
+export type ClosedTabs = Record<string, number>;
+
+function isEpoch(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Union of tombstone maps: latest close time wins, newest MAX_CLOSED_TABS kept. */
+export function unionClosedTabs(...maps: Array<ClosedTabs | undefined>): ClosedTabs {
+  const all: ClosedTabs = {};
+  for (const map of maps) {
+    for (const [id, at] of Object.entries(coerceMap(map, isEpoch))) {
+      all[id] = Math.max(all[id] ?? 0, at);
+    }
+  }
+  const newest = Object.entries(all)
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, MAX_CLOSED_TABS);
+  return Object.fromEntries(newest);
+}
+
+export function loadClosedTabs(store: Storage = globalThis.localStorage): ClosedTabs {
+  return readMap(CLOSED_TABS_KEY, isEpoch, store);
+}
+
+/** A tab list minus every tombstoned id. `tab-main` cannot be closed, so it is never dropped. */
+export function withoutClosedTabs(tabs: TabRecord[], closed: ClosedTabs): TabRecord[] {
+  return tabs.filter(
+    (t) => typeof t.id !== "string" || t.id === "tab-main" || typeof closed[t.id] !== "number",
+  );
+}
+
+/** Tombstone one tab. Written to the cache synchronously, mirrored to the file like any setter. */
+export function recordClosedTab(
+  tabId: string,
+  store: Storage = globalThis.localStorage,
+  now: number = Date.now(),
+): void {
+  if (!tabId || tabId === "tab-main") {
+    return;
+  }
+  writeMap(CLOSED_TABS_KEY, unionClosedTabs(loadClosedTabs(store), { [tabId]: now }), store);
+  console.info(`[tabs] closed ${tabId} — tombstoned (build ${uiBuild()})`);
+  scheduleUiStateMirror(store);
 }
 
 // Reads go through `typeof`, never `map[id] !== undefined` or `id in map`: the maps are
@@ -598,6 +669,20 @@ export function migrateLegacyUiState(store: Storage = globalThis.localStorage): 
 
 /** Dev-server endpoint owning the durable copy: GET returns the snapshot, POST replaces it. */
 export const UI_STATE_ENDPOINT = "/api/ui-state";
+// FORK 2026-10-06 (the user: "each user needs to have his own tabs, and have them reopen on reconnect
+// exactly as they were"). When the page is served by the gateway plugin (no dev server, no prod-ui
+// proxy), the root path above answers 404 and the state file lives under the app's base path. The
+// first 404 switches this page to the plugin's endpoint for the rest of its life; a 200 never does.
+export const UI_STATE_PLUGIN_ENDPOINT = "/tinker/api/ui-state";
+let uiStateEndpoint = UI_STATE_ENDPOINT;
+/** Which endpoint this page settled on (exported for tests and the boot trace). */
+export function currentUiStateEndpoint(): string {
+  return uiStateEndpoint;
+}
+/** Tests only: forget the settled endpoint. */
+export function resetUiStateEndpointForTests(): void {
+  uiStateEndpoint = UI_STATE_ENDPOINT;
+}
 
 /**
  * The four namespaces in one payload — exactly what the endpoint stores on disk.
@@ -614,16 +699,60 @@ export type UiStateSnapshot = {
   flags: Record<string, boolean>;
   choices: Record<string, string>;
   tabs?: TabRecord[];
+  /** Closed-tab tombstones. Optional like `tabs`, and only ever UNIONED, never replaced. */
+  closedTabs?: ClosedTabs;
 };
 
 /** Long enough for a busy dev server, short enough that boot never visibly stalls. */
 const HYDRATE_TIMEOUT_MS = 1500;
+/**
+ * FORK 2026-09-16 (the architect: "sometimes I switch to a tab and it is just empty … sometimes it
+ * never gets restored") — the retry budget for a hydrate that already failed once.
+ *
+ * The boot hydrate's 1500 ms is a page-start budget: the whole module awaits it, so it has to
+ * be short. A RETRY is awaited by nobody (the hello path awaits it only on the failed branch,
+ * and the timer below awaits nothing), so it can afford the budget the endpoint actually
+ * needs on a machine that is still booting — the same UI server that just served the page.
+ */
+const REHYDRATE_TIMEOUT_MS = 4000;
+/**
+ * How long a page that could not read the file waits before asking again, by attempt. The
+ * ladder tops out at one minute and then stays there: a page that is open for eight hours
+ * with the mirror off is the failure this exists to end, and one GET a minute against a
+ * local file server is the cheapest insurance there is.
+ */
+const REHYDRATE_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
 /** A drag across a row of toggles must cost ONE POST, not thirty. */
 const MIRROR_DEBOUNCE_MS = 250;
+/**
+ * FORK 2026-09-24 — how long a mirror that did not land waits before trying again, by
+ * consecutive failure. Tops out at a minute and stays there, like REHYDRATE_BACKOFF_MS: a page
+ * whose writes keep failing must keep asking, because every minute it does not is a minute of
+ * tabs the next reboot will not bring back.
+ */
+const MIRROR_RETRY_MS = [2_000, 5_000, 15_000, 60_000];
 
 let mirrorTimer: ReturnType<typeof setTimeout> | null = null;
 let mirrorStore: Storage | null = null;
+/** The store of the last scheduled mirror, kept after the debounce consumes `mirrorStore`. */
+let lastMirrorStore: Storage | null = null;
 let hydrating = false;
+/** Consecutive mirror POSTs that did not land (rejected, or answered non-2xx). */
+let mirrorFailures = 0;
+let mirrorRetryTimer: ReturnType<typeof setTimeout> | null = null;
+/** Routine (non-keepalive) mirror POSTs issued and not yet settled — see the pagehide flush. */
+let mirrorsInFlight = 0;
+/**
+ * FORK 2026-09-16 — the self-retry. The 2026-09-16 morning fix retried a failed boot hydrate
+ * on the next WebSocket `hello`; measured the same afternoon, the page loaded at 12:17 never
+ * mirrored again (durable file frozen at 12:52 while the page opened and closed tabs until
+ * 15:51), because its one retry failed too and nothing else ever asked. A gate that fails shut
+ * with no retry is a slow leak: the file goes stale silently and the next reboot restores the
+ * stale file over the live tabs. So a failed hydrate now ARMS a timer that keeps asking on a
+ * backoff ladder until the file has been read once; a `hello` still retries immediately.
+ */
+let rehydrateTimer: ReturnType<typeof setTimeout> | null = null;
+let rehydrateFailures = 0;
 /**
  * FORK 2026-08-04 (the user: "the state of the UI is not kept after restart").
  *
@@ -666,6 +795,39 @@ let hydrateOutcome: HydrateOutcome = "pending";
  */
 export function __resetUiStateHydrationForTests(): void {
   hydrateOutcome = "pending";
+  rehydrateFailures = 0;
+  if (rehydrateTimer !== null) {
+    clearTimeout(rehydrateTimer);
+    rehydrateTimer = null;
+  }
+  mirrorFailures = 0;
+  mirrorsInFlight = 0;
+  lastMirrorStore = null;
+  fileTabsCanon = null;
+  fileTabs = null;
+  tabsStaleSince = null;
+  visibleAgainAt = null;
+  if (mirrorRetryTimer !== null) {
+    clearTimeout(mirrorRetryTimer);
+    mirrorRetryTimer = null;
+  }
+}
+
+/** Arm the next self-retry of a failed hydrate. Idempotent: one timer, never two. */
+function armRehydrateRetry(store: Storage): void {
+  if (hydrateOutcome === "ok" || rehydrateTimer !== null) {
+    return;
+  }
+  if (typeof fetch !== "function") {
+    return;
+  }
+  const step = Math.min(Math.max(rehydrateFailures - 1, 0), REHYDRATE_BACKOFF_MS.length - 1);
+  const delay = REHYDRATE_BACKOFF_MS[step] ?? 60_000;
+  rehydrateTimer = setTimeout(() => {
+    rehydrateTimer = null;
+    void rehydrateUiState(store, REHYDRATE_TIMEOUT_MS);
+  }, delay);
+  unrefTimer(rehydrateTimer);
 }
 
 /** Node's timer handle can hold the process open; the browser's is a number and ignores this. */
@@ -685,6 +847,9 @@ function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
  * so an absent id stays absent and keeps meaning "the caller's stated default".
  */
 export function readUiStateSnapshot(store: Storage = globalThis.localStorage): UiStateSnapshot {
+  // Emitted only when non-empty: tombstones are union-only, so an empty map says nothing,
+  // and leaving it out keeps the wire format unchanged for a profile that never closed a tab.
+  const closedTabs = loadClosedTabs(store);
   return {
     collapsed: loadCollapsed(store),
     flags: loadFlags(store),
@@ -692,6 +857,7 @@ export function readUiStateSnapshot(store: Storage = globalThis.localStorage): U
     // Always emitted, never optional on this side: a POST that omitted it would leave the
     // file's tab list frozen at whatever it held when the key was introduced.
     tabs: loadTabList(store),
+    ...(Object.keys(closedTabs).length > 0 ? { closedTabs } : {}),
   };
 }
 
@@ -708,6 +874,9 @@ export function writeUiStateSnapshot(
   writeMap(COLLAPSED_KEY, snap.collapsed, store);
   writeMap(FLAGS_KEY, snap.flags, store);
   writeMap(CHOICES_KEY, snap.choices, store);
+  // Tombstones FIRST and as a union: a file that predates a local close must not undo it,
+  // and writeTabList below filters through whatever this leaves in the store.
+  writeMap(CLOSED_TABS_KEY, unionClosedTabs(loadClosedTabs(store), snap.closedTabs), store);
   // PRESENT-ONLY, and the asymmetry with the three maps above is the point. Those are
   // replaced wholesale because absence there is a MEANINGFUL value ("every control is at
   // its default"). For the tab list, absence is a store that predates the key — writing
@@ -740,6 +909,7 @@ function parseUiStateSnapshot(payload: unknown): UiStateSnapshot | null {
     // present but not an array coerces to `[]`, which is the same "unusable, so nothing
     // is saved" answer `coerceMap` gives, rather than a third state to reason about.
     tabs: raw.tabs === undefined ? undefined : coerceTabs(raw.tabs),
+    closedTabs: raw.closedTabs === undefined ? undefined : coerceMap(raw.closedTabs, isEpoch),
   };
 }
 
@@ -758,59 +928,396 @@ function seatHeaders(): Record<string, string> {
   }
 }
 
-export async function hydrateUiState(
-  store: Storage = globalThis.localStorage,
-  timeoutMs: number = HYDRATE_TIMEOUT_MS,
-): Promise<boolean> {
+// FORK 2026-09-21 — tab-resurrection tracing (the architect: closed tabs came back after a rebuild).
+// Every POST names the bundle that sent it, so the server log shows whether a stale window
+// or an old bundle wrote a tab back. `[tabs]` console lines trace the same path in the page.
+declare const __UI_BUILD__: string;
+function uiBuild(): string {
+  return typeof __UI_BUILD__ === "string" ? __UI_BUILD__ : "unknown";
+}
+function tabIds(tabs: readonly TabRecord[] | undefined): string {
+  return (tabs ?? [])
+    .map((t) => `${String(t.id)}(${String(t.title ?? "").slice(0, 24)})`)
+    .join(", ");
+}
+
+/**
+ * One GET of the durable file, or `null`. Shared by the boot hydrate and the reconnect
+ * re-hydrate so the two cannot drift on timeout, seat header or the `degraded` contract.
+ * `hydrating` is held across the await so a mirror armed meanwhile cannot POST the
+ * pre-hydrate cache over the very file it is being seeded from.
+ */
+async function fetchUiStateSnapshot(
+  timeoutMs: number,
+  holdMirror = true,
+): Promise<UiStateSnapshot | null> {
   if (typeof fetch !== "function" || typeof AbortController !== "function") {
-    return false;
+    return null;
   }
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
   unrefTimer(timer);
-  // Held across the await so a mirror armed before boot finished cannot POST the
-  // pre-hydrate cache over the very file it is being seeded from.
-  hydrating = true;
+  // FORK 2026-10-19 — a re-sync PEEK replaces nothing, so it must not hold a mirror back.
+  if (holdMirror) hydrating = true;
   try {
     const seat = seatHeaders();
-    const res = await fetch(UI_STATE_ENDPOINT, {
-      method: "GET",
-      headers: { Accept: "application/json", ...seat },
-      signal: controller.signal,
-    });
+    const get = (url: string) =>
+      fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json", ...seat },
+        signal: controller.signal,
+      });
+    let res = await get(uiStateEndpoint);
+    if (res.status === 404 && uiStateEndpoint === UI_STATE_ENDPOINT) {
+      const alt = await get(UI_STATE_PLUGIN_ENDPOINT);
+      if (alt.ok) {
+        uiStateEndpoint = UI_STATE_PLUGIN_ENDPOINT;
+        res = alt;
+      }
+    }
     if (!res.ok) {
-      return false;
+      return null;
     }
     const payload: unknown = await res.json();
-    const snap = parseUiStateSnapshot(payload);
+    return parseUiStateSnapshot(payload);
+  } catch {
+    // Aborted, offline, no such endpoint, or a body that is not JSON. All the same
+    // answer: the UI boots on whatever the cache holds, which may be nothing.
+    return null;
+  } finally {
+    clearTimeout(timer);
+    if (holdMirror) hydrating = false;
+  }
+}
+
+export async function hydrateUiState(
+  store: Storage = globalThis.localStorage,
+  timeoutMs: number = HYDRATE_TIMEOUT_MS,
+): Promise<boolean> {
+  try {
+    const snap = await fetchUiStateSnapshot(timeoutMs);
     if (snap === null) {
       return false;
     }
     writeUiStateSnapshot(snap, store);
+    noteFileTabs(snap.tabs, store); // FORK 2026-10-19 — the list the file holds, see fileTabsCanon
+    console.info(
+      `[tabs] boot hydrate (build ${uiBuild()}): file tabs [${tabIds(snap.tabs)}] · ` +
+        `tombstones ${Object.keys(snap.closedTabs ?? {}).length} · restored [${tabIds(loadTabList(store))}]`,
+    );
     // The only path that reached the file. Every other exit falls through to the
     // `finally`, which records "failed" and blocks the mirror.
     hydrateOutcome = "ok";
     return true;
-  } catch {
-    // Aborted, offline, no such endpoint, or a body that is not JSON. All the same
-    // answer: the UI boots on whatever the cache holds, which may be nothing.
-    return false;
   } finally {
-    clearTimeout(timer);
-    hydrating = false;
     // Only promote from "pending". A page that hydrated cleanly once holds
     // authoritative maps, so a later transient failure must not silently stop it
     // mirroring; and a re-hydrate that succeeds flips "failed" back to "ok" above.
     if (hydrateOutcome === "pending") {
       hydrateOutcome = "failed";
+      rehydrateFailures = 1;
+      armRehydrateRetry(store);
+      // Loud on purpose. This state used to be invisible for hours (2026-09-16): the page
+      // kept working from its cache while nothing it did reached the file.
+      console.warn(
+        "[ui-state] boot hydrate failed — mirroring is OFF until the file has been read; retrying",
+      );
     }
   }
 }
 
-/** The debounce tail: reads the snapshot NOW, so a burst posts only its final state. */
-function flushUiStateMirror(): void {
+/** Which way the boot hydrate went. `app.ts` consults it on every WebSocket handshake. */
+export function uiStateHydrateOutcome(): HydrateOutcome {
+  return hydrateOutcome;
+}
+
+// --- live tab re-sync --------------------------------------------------------
+// FORK 2026-10-19 (the architect: phone app) — the phone and the laptop open the SAME desk, so a tab
+// opened, closed or renamed on one has to show up on the other without a reload. Until now the
+// file was read once at boot ("the file wins") and only ever WRITTEN after that, so two live pages
+// drifted apart until one of them reloaded. These three pieces let app.ts re-read it safely; the
+// adopt-or-not rule itself is pure and lives in tab-resync.ts.
+
+/** The server's tab list and tombstones, as one GET saw them. */
+export type ServerTabs = { tabs: TabRecord[]; closedTabs: ClosedTabs };
+
+/**
+ * One GET of the durable file, NOT applied: same endpoint, seat header, timeout and defensive
+ * parsing as the boot hydrate (it is the same fetch). `null` for every failure, and also for a
+ * store with no `tabs` key, which is "no answer about tabs", never "no tabs".
+ */
+export async function peekUiStateTabs(
+  timeoutMs: number = HYDRATE_TIMEOUT_MS,
+): Promise<ServerTabs | null> {
+  try {
+    const snap = await fetchUiStateSnapshot(timeoutMs, false);
+    if (snap === null || snap.tabs === undefined) {
+      return null;
+    }
+    return { tabs: snap.tabs, closedTabs: snap.closedTabs ?? {} };
+  } catch {
+    return null;
+  }
+}
+
+/** Bumped by every scheduled mirror, so a re-sync can tell a local write landed mid-GET. */
+let mirrorEpoch = 0;
+export function uiStateMirrorEpoch(): number {
+  return mirrorEpoch;
+}
+
+/**
+ * Is a local write still on its way to the file? A debounce armed, a POST unanswered, or a
+ * failure streak waiting to retry all mean the file is BEHIND this page, so the page must not
+ * take the file's word over its own.
+ */
+export function uiStateMirrorPending(): boolean {
+  return mirrorTimer !== null || mirrorsInFlight > 0 || mirrorRetryTimer !== null || hydrating;
+}
+
+/**
+ * Put a re-synced tab list into the local cache WITHOUT scheduling a mirror: the list came from
+ * the file, so posting it back would only be the echo that starts a ping-pong between pages.
+ * Tombstones union first, exactly as on hydrate, so the write below filters through them.
+ */
+export function adoptServerTabList(
+  tabs: TabRecord[],
+  closedTabs: ClosedTabs | undefined,
+  store: Storage = globalThis.localStorage,
+  /** What the file held, when the adopted list is a merge that keeps local edits on top. */
+  fileList: TabRecord[] = tabs,
+): void {
+  writeMap(CLOSED_TABS_KEY, unionClosedTabs(loadClosedTabs(store), closedTabs), store);
+  writeTabList(coerceTabs(tabs), store);
+  noteServerTabList(fileList, store);
+}
+
+// FORK 2026-10-19 (review: "a stale page spreads its old tab list") — the mirror POSTs the WHOLE
+// snapshot, tabs included, on every setter and every saveTabs(), and loadSessions() calls
+// saveTabs() at each turn end whether or not a tab changed. A page left open in the background
+// (the laptop while the architect uses the phone, or the other way round) kept posting the list it had
+// when it went hidden, and the server replaces the file's list wholesale: a chat attached on the
+// phone jumped back to the old session on the next laptop turn end. Two rules close it, on the
+// WRITER side, where the stale knowledge is:
+//   1. A POST carries `tabs` only when the page's list differs from what the file is known to
+//      hold (read at hydrate, re-sync or adopt; written by a landed POST). Without `tabs` the
+//      server keeps the file's list (scripts/tinker-prod-ui.mjs), so a no-op save changes nothing.
+//   2. A page hidden longer than TAB_STALE_GRACE_MS holds back even a real change until a
+//      re-sync has read the file again (noteServerTabList). The re-sync merges three ways
+//      (tab-resync.ts), so the held-back edit survives and is pushed then, on top of the file.
+//      Tombstones are always posted, so a close never waits.
+
+/** The file's tab list as this page last knew it (canonical text), or null when unknown. */
+let fileTabsCanon: string | null = null;
+let fileTabs: TabRecord[] | null = null;
+/** When the page went hidden; cleared once a re-sync has read the file again. */
+let tabsStaleSince: number | null = null;
+/** When a stale page became visible again; the hold gives up TAB_STALE_GIVE_UP_MS later. */
+let visibleAgainAt: number | null = null;
+/** A hide shorter than this (a reload, a quick app switch) is not "stale". */
+export const TAB_STALE_GRACE_MS = 1_500;
+/** A page visible this long without a successful re-sync posts its list again anyway. */
+export const TAB_STALE_GIVE_UP_MS = 60_000;
+
+/** Text of a tab list for "did it change?": key order and the transient titleGenerating do not count. */
+export function tabListCanon(tabs: readonly TabRecord[]): string {
+  return JSON.stringify(
+    tabs.map((t) =>
+      Object.keys(t)
+        .filter((k) => k !== "titleGenerating" && t[k] !== undefined)
+        .toSorted()
+        .map((k) => [k, t[k]]),
+    ),
+  );
+}
+
+function noteFileTabs(tabs: TabRecord[] | undefined, store: Storage): void {
+  if (tabs === undefined) return;
+  const list = withoutClosedTabs(coerceTabs(tabs), loadClosedTabs(store));
+  fileTabs = list;
+  fileTabsCanon = tabListCanon(list);
+}
+
+/**
+ * A re-sync read the file: remember its list as the baseline and end the hidden-page hold.
+ * app.ts calls it for every peek it acted on (adopted, or found nothing to take).
+ */
+export function noteServerTabList(
+  tabs: TabRecord[],
+  store: Storage = globalThis.localStorage,
+): void {
+  noteFileTabs(tabs, store);
+  tabsStaleSince = null;
+  visibleAgainAt = null;
+}
+
+/** The file's tab list as last known: the base of the three-way merge in tab-resync.ts. */
+export function uiStateFileTabs(): TabRecord[] | null {
+  return fileTabs;
+}
+
+/** Is this page's tab list possibly older than the file (hidden a while, not re-synced since)? */
+export function uiStateTabsMayBeStale(now: number = Date.now()): boolean {
+  if (tabsStaleSince === null || fileTabsCanon === null) return false;
+  if (now - tabsStaleSince < TAB_STALE_GRACE_MS) return false;
+  if (visibleAgainAt !== null && now - visibleAgainAt > TAB_STALE_GIVE_UP_MS) return false;
+  return true;
+}
+
+/** Track page visibility for the hold above. app.ts calls it once, next to the re-sync listeners. */
+export function watchTabStaleness(doc: Document = globalThis.document): void {
+  if (!doc || typeof doc.addEventListener !== "function") return;
+  doc.addEventListener("visibilitychange", () => {
+    if (doc.visibilityState === "hidden") {
+      if (tabsStaleSince === null) tabsStaleSince = Date.now();
+      visibleAgainAt = null;
+    } else if (tabsStaleSince !== null && visibleAgainAt === null) {
+      visibleAgainAt = Date.now();
+    }
+  });
+}
+
+/**
+ * Fold the durable file INTO a live store instead of over it: an id the store already
+ * holds keeps its local value, an id only the file knows is added. Tabs merge by `id` —
+ * local list first, in its order, then the file's tabs the page has never seen. Exported
+ * for the tests; `rehydrateUiState` is the one production caller.
+ *
+ * "Local wins" is the right bias for the only situation this runs in — a page that
+ * booted WITHOUT the file. If Chrome wiped site data on exit, the local store is empty
+ * and the file is taken wholesale. If it did not (crash, or a mid-session reload against
+ * a restarting gateway), the local store IS the last good hydrate plus everything the
+ * user did since, and that is newer than the file by construction. The one cost is a tab
+ * closed while non-durable coming back from the file; a tab silently LOST for good is
+ * the failure this replaces.
+ */
+export function mergeUiStateSnapshot(
+  snap: UiStateSnapshot,
+  store: Storage = globalThis.localStorage,
+): void {
+  writeMap(COLLAPSED_KEY, { ...snap.collapsed, ...loadCollapsed(store) }, store);
+  writeMap(FLAGS_KEY, { ...snap.flags, ...loadFlags(store) }, store);
+  writeMap(CHOICES_KEY, { ...snap.choices, ...loadChoices(store) }, store);
+  // Before the tab merge: this is what stops the "file-only" tabs below being tabs this page
+  // (or any page whose close reached the file) already closed.
+  writeMap(CLOSED_TABS_KEY, unionClosedTabs(loadClosedTabs(store), snap.closedTabs), store);
+  if (snap.tabs !== undefined) {
+    const local = loadTabList(store);
+    const seen = new Set(local.map((t) => t.id));
+    const fileOnly = withoutClosedTabs(snap.tabs, loadClosedTabs(store)).filter(
+      (t) => !seen.has(t.id),
+    );
+    writeTabList(coerceTabs([...local, ...fileOnly]), store);
+  }
+}
+
+/**
+ * FORK 2026-09-16 (the architect: "I just restarted the computer and Jarvis does not have the tabs
+ * open the same way they were when I turned it off").
+ *
+ * The boot hydrate runs ONCE, as the first statement of app.ts. When it failed — the
+ * gateway mid-restart (three crash-restarts between 23:26 and 00:18 that night), or the
+ * 1500ms timeout on a cold machine — the mirror gate correctly refused to POST the
+ * page's defaults over the file… and then nothing ever re-read the file. The page kept
+ * working from its cache, looked perfectly normal, and for the next eight hours every
+ * tab it opened, closed or renamed reached the server session store but NEVER the
+ * durable file. The cold start after the reboot faithfully restored the file: the
+ * evening's state, minus everything after the failed hydrate.
+ *
+ * This is the retry, and the WebSocket handshake is where it runs: a `hello` that just
+ * landed proves the gateway is up, and app.ts calls this BEFORE the tab restore, so on
+ * the first connect the tabs come from the merged truth, not the stale cache. A page
+ * that hydrated cleanly at boot returns immediately — no second GET, no timing change
+ * on the common path. On success the outcome flips to "ok" and a mirror is scheduled,
+ * so the merged state lands on disk without waiting for the user to touch something.
+ */
+export async function rehydrateUiState(
+  store: Storage = globalThis.localStorage,
+  timeoutMs: number = HYDRATE_TIMEOUT_MS,
+): Promise<boolean> {
+  if (hydrateOutcome === "ok") {
+    return true;
+  }
+  const snap = await fetchUiStateSnapshot(timeoutMs);
+  if (snap === null) {
+    // Still unreadable. Count it and keep asking — the ladder, not the next reconnect, is
+    // now what ends this state (see `rehydrateTimer` above).
+    rehydrateFailures += 1;
+    armRehydrateRetry(store);
+    return false;
+  }
+  if (rehydrateTimer !== null) {
+    clearTimeout(rehydrateTimer);
+    rehydrateTimer = null;
+  }
+  rehydrateFailures = 0;
+  mergeUiStateSnapshot(snap, store);
+  noteFileTabs(snap.tabs, store); // FORK 2026-10-19 — the merge may differ: the mirror below posts it
+  console.info(
+    `[tabs] re-hydrate MERGE, local wins (build ${uiBuild()}): file tabs [${tabIds(snap.tabs)}] · ` +
+      `restored [${tabIds(loadTabList(store))}]`,
+  );
+  hydrateOutcome = "ok";
+  console.info("[ui-state] file re-read after a failed boot hydrate — mirroring is back ON");
+  scheduleUiStateMirror(store);
+  return true;
+}
+
+/**
+ * FORK 2026-09-24 — read the response to the end, whatever it says. For a `keepalive` request
+ * this is what hands Chrome's in-flight budget back (see `flushUiStateMirror`); for an ordinary
+ * one it frees the connection sooner. A test double without a body is not an error.
+ */
+function drainResponse(res: Response): void {
+  try {
+    void res.text().catch(() => {
+      /* the body failed mid-read — the status already said what we needed */
+    });
+  } catch {
+    /* not a real Response */
+  }
+}
+
+/**
+ * FORK 2026-09-24 — a mirror that did not land is a durable file that is now BEHIND the page.
+ * Say so, and ask again on a backoff: the snapshot is read when the retry fires, so the retry
+ * carries the latest state, not the one that failed.
+ */
+function mirrorFailed(store: Storage, why: string): void {
+  mirrorFailures += 1;
+  const delay = MIRROR_RETRY_MS[Math.min(mirrorFailures - 1, MIRROR_RETRY_MS.length - 1)] ?? 60_000;
+  console.warn(
+    `[ui-state] mirror #${mirrorFailures} in a row did not land (${why}) — the durable file is ` +
+      `behind this page; retrying in ${Math.round(delay / 1000)}s`,
+  );
+  if (mirrorRetryTimer !== null) {
+    clearTimeout(mirrorRetryTimer);
+  }
+  mirrorRetryTimer = setTimeout(() => {
+    mirrorRetryTimer = null;
+    scheduleUiStateMirror(store);
+  }, delay);
+  unrefTimer(mirrorRetryTimer);
+}
+
+function mirrorLanded(): void {
+  if (mirrorFailures > 0) {
+    console.info(`[ui-state] mirror landed after ${mirrorFailures} failed attempt(s)`);
+  }
+  mirrorFailures = 0;
+  if (mirrorRetryTimer !== null) {
+    clearTimeout(mirrorRetryTimer);
+    mirrorRetryTimer = null;
+  }
+}
+
+/**
+ * The debounce tail: reads the snapshot NOW, so a burst posts only its final state.
+ * `finalFlush` is the pagehide path — the one request that must outlive the document.
+ */
+function flushUiStateMirror(finalFlush = false): void {
   mirrorTimer = null;
   const store = mirrorStore;
   mirrorStore = null;
@@ -841,16 +1348,66 @@ function flushUiStateMirror(): void {
     // nine tabs sat in the file. Which desk a seat-less request lands on is the SERVER's
     // decision (owner desk, or 400 under TINKER_REQUIRE_SEAT=1 in a hive) — see
     // scripts/tinker-prod-ui.mjs, tinker-ui/vite.config.ts and the plugin route.
-    void fetch(UI_STATE_ENDPOINT, {
+    //
+    // FORK 2026-09-24 (the architect: "I have been deleting the SharePoint tab many times, and every time
+    // I restart the machine it appears again, and the tab I leave open all the time goes back to
+    // being closed"). Every mirror used to be `keepalive: true`, and nothing ever read the
+    // response. Chrome counts a keepalive request's body against a 64 KB per-page budget until
+    // its response has been consumed, so the budget was never handed back: a ~6.7 KB snapshot
+    // meant the 10th mirror of every page was rejected INSIDE the browser ("TypeError: Failed to
+    // fetch"), and so was every mirror after it, for the rest of the page's life. The rejection
+    // went to a `.catch(() => {})`; the server never saw a request, so its tab trace had nothing
+    // to log. Boot plus a few tab switches spent the nine; every close and open after that lived
+    // only in localStorage, which this profile wipes on exit, and the reboot restored the file.
+    // Measured headless against a private prod-ui: 9 landed, 37 rejected; with the body drained
+    // or without keepalive, 36/36. So: routine mirrors are ordinary requests whose body is always
+    // read; keepalive is reserved for the pagehide flush, the one POST that must outlive the page.
+    const failures = mirrorFailures;
+    // FORK 2026-10-19 — `tabs` only when this page has something new to say (see fileTabsCanon).
+    const body = readUiStateSnapshot(store);
+    let postedTabs: TabRecord[] | undefined = body.tabs;
+    if (
+      body.tabs !== undefined &&
+      fileTabsCanon !== null &&
+      (tabListCanon(body.tabs) === fileTabsCanon || uiStateTabsMayBeStale())
+    ) {
+      delete body.tabs;
+      postedTabs = undefined;
+    }
+    if (!finalFlush) {
+      mirrorsInFlight += 1;
+    }
+    void fetch(uiStateEndpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...seatHeaders() },
-      body: JSON.stringify(readUiStateSnapshot(store)),
-      // The tab closing is exactly when localStorage is wiped, so the last mirror is the
-      // most important one: it must outlive the document that started it.
-      keepalive: true,
-    }).catch(() => {
-      /* offline or no endpoint — the cache is still correct, only the file lags */
-    });
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tinker-Build": uiBuild(),
+        // Lets the server put a failure streak in its journal once a write gets through.
+        ...(failures > 0 ? { "X-Tinker-Mirror-Failures": String(failures) } : {}),
+        ...seatHeaders(),
+      },
+      body: JSON.stringify(body),
+      keepalive: finalFlush,
+    }).then(
+      (res) => {
+        if (!finalFlush) {
+          mirrorsInFlight -= 1;
+        }
+        drainResponse(res);
+        if (res.ok) {
+          if (postedTabs !== undefined) noteFileTabs(postedTabs, store);
+          mirrorLanded();
+        } else if (!finalFlush) {
+          mirrorFailed(store, `HTTP ${res.status}`);
+        }
+      },
+      (err: unknown) => {
+        if (!finalFlush) {
+          mirrorsInFlight -= 1;
+          mirrorFailed(store, err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+        }
+      },
+    );
   } catch {
     /* a relative URL in a non-browser runtime throws synchronously — nothing to mirror */
   }
@@ -868,9 +1425,39 @@ export function scheduleUiStateMirror(store: Storage = globalThis.localStorage):
   // Last store wins, which is the same store at every production call site; the tests
   // are the only callers that pass a different one, and they pass it consistently.
   mirrorStore = store;
+  lastMirrorStore = store;
+  mirrorEpoch += 1;
   if (mirrorTimer !== null) {
     clearTimeout(mirrorTimer);
   }
   mirrorTimer = setTimeout(flushUiStateMirror, MIRROR_DEBOUNCE_MS);
   unrefTimer(mirrorTimer);
+}
+
+/**
+ * FORK 2026-09-21 — a mirror still inside its 250ms debounce used to die with the page: close a
+ * tab, hit Ctrl+Shift+R, and the file (which then WINS the boot hydrate) still held the tab.
+ * `pagehide` fires on reload, navigation and close alike; the flush posts with `keepalive`,
+ * which is exactly the transport built to outlive the document.
+ *
+ * FORK 2026-09-24 — routine mirrors are no longer keepalive (see `flushUiStateMirror`), so one
+ * still in flight when the page goes away could be cancelled with it. That is the case keepalive
+ * used to cover, and it is covered here instead: a pending timer, a routine POST not yet
+ * answered, or a failure streak all mean the file may be behind, so the last word is sent again
+ * on the one transport built to survive the unload.
+ */
+export function flushPendingUiStateMirror(): void {
+  const store = mirrorStore ?? (mirrorsInFlight > 0 || mirrorFailures > 0 ? lastMirrorStore : null);
+  if (store === null) {
+    return;
+  }
+  if (mirrorTimer !== null) {
+    clearTimeout(mirrorTimer);
+  }
+  mirrorStore = store;
+  flushUiStateMirror(true);
+}
+
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("pagehide", flushPendingUiStateMirror);
 }

@@ -418,10 +418,8 @@ USAGE:
   amazon-shopper set-spec <task-id> <asin> --concentration <pct> [--ingredient <name>] [--source <url>]
   amazon-shopper close <task-id>
 
-STORES (--store, default: amazon):
-  amazon       Amazon.es (Apify → Creators API → HTML; default).
-  milanuncios  Milanuncios classifieds (HTML __INITIAL_PROPS__ parse).
-  wallapop     Wallapop (stub — 403-gated, needs browser-relay).
+STORES (--store, default and only: amazon):
+  amazon       Amazon.es (Apify → Creators API → anonymous HTML fetch).
 
 ENV:
   AMAZON_SHOPPER_TMPDIR        Override /tmp location for the per-task SQLite.
@@ -429,7 +427,6 @@ ENV:
   MOCK_LLM_RESPONSE_FILE       Path to a JSON file of mocked LLM responses (testing only).
   AMAZON_SHOPPER_LLM_CMD       Subprocess CLI for LLM calls (allowlisted; default: claude --print).
   AMAZON_SHOPPER_ALLOW_WEB_RESEARCH=1   Opt in to the off-Amazon spec-research rungs (default: off).
-  AMAZON_SHOPPER_ENABLE_OTHER_STORES=1  Opt in to the non-Amazon store adapters (default: off).
 
 See SKILL.md.
 `;

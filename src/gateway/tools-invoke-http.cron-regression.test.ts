@@ -170,3 +170,40 @@ describe("tools invoke HTTP denylist", () => {
     expect(gatewayRes.status).toBe(404);
   });
 });
+
+// FORK 2026-09-22: GET /tools/list advertises exactly what /tools/invoke would run.
+describe("tools list HTTP", () => {
+  async function list() {
+    return await fetch(`http://127.0.0.1:${port}/tools/list?sessionKey=main`, {
+      headers: { authorization: `Bearer ${TEST_GATEWAY_TOKEN}` },
+    });
+  }
+
+  it("lists tools with schemas and applies the same default deny", async () => {
+    const res = await list();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      tools: Array<{ name: string; parameters: { type?: string } }>;
+    };
+    expect(body.ok).toBe(true);
+    const names = body.tools.map((t) => t.name);
+    expect(names).not.toContain("gateway");
+    expect(names).not.toContain("cron");
+    expect(body.tools.every((t) => t.parameters.type === "object")).toBe(true);
+  });
+
+  it("includes a tool once gateway.tools.allow re-enables it", async () => {
+    cfg = { gateway: { tools: { allow: ["cron"] } } };
+    const body = (await (await list()).json()) as { tools: Array<{ name: string }> };
+    expect(body.tools.map((t) => t.name)).toContain("cron");
+  });
+
+  it("rejects POST on /tools/list", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/tools/list`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TEST_GATEWAY_TOKEN}` },
+    });
+    expect(res.status).toBe(405);
+  });
+});

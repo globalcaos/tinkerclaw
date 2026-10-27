@@ -39,7 +39,7 @@ const visible = (msg: string, extra?: Record<string, unknown>) => {
 /**
  * Extract text from a whatsmeow-node message payload.
  */
-function extractText(msg: Record<string, unknown>): { text: string | null; type: string } {
+export function extractText(msg: Record<string, unknown>): { text: string | null; type: string } {
   if (typeof msg.conversation === "string") {
     return { text: msg.conversation, type: "text" };
   }
@@ -92,18 +92,21 @@ function extractText(msg: Record<string, unknown>): { text: string | null; type:
 
 /**
  * Extract quoted message info from contextInfo.
+ *
+ * FORK 2026-10-03: the Go bridge writes protojson, which spells the id `stanzaID`; reading only
+ * `stanzaId` left quoted_id empty on every whatsmeow row (0 of 82,835, while 4,357 carried a quote).
  */
-function extractQuotedInfo(msg: Record<string, unknown>): {
+export function extractQuotedInfo(msg: Record<string, unknown>): {
   quotedId: string | null;
   quotedText: string | null;
 } {
   const ext = msg.extendedTextMessage as Record<string, unknown> | undefined;
   const ctx = ext?.contextInfo as Record<string, unknown> | undefined;
+  const quotedId = ((ctx?.stanzaID ?? ctx?.stanzaId) as string | undefined) || null;
   if (!ctx?.quotedMessage) {
-    return { quotedId: null, quotedText: null };
+    return { quotedId, quotedText: null };
   }
 
-  const quotedId = (ctx.stanzaId as string) || null;
   const qm = ctx.quotedMessage as Record<string, unknown>;
   let quotedText: string | null = null;
   if (typeof qm.conversation === "string") {

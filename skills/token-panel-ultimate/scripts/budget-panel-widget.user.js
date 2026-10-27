@@ -1,40 +1,38 @@
 // ==UserScript==
 // @name         OpenClaw Budget Panel v4
 // @namespace    https://openclaw.ai
-// @version      4.0.0
+// @version      4.1.0
 // @description  Real-time budget panel — Claude, ChatGPT, Gemini, Manus
 // @match        http://127.0.0.1:18789/*
 // @match        http://localhost:18789/*
 // @run-at       document-idle
-// @grant        GM_xmlhttpRequest
-// @connect      file://*
+// @grant        none
 // ==/UserScript==
 // Diagnostics are OFF by default: this widget handles provider account and quota data,
 // and anything written to the console is readable by anyone with local browser access or
 // any script sharing the page. Turn it on deliberately:  localStorage.BP_DEBUG = "1"
-const BP_DEBUG = (() => {
-  try {
-    return localStorage.getItem("BP_DEBUG") === "1";
-  } catch {
-    return false;
-  }
-})();
+const BP_DEBUG = (() => { try { return localStorage.getItem("BP_DEBUG") === "1"; } catch { return false; } })();
 
 // Error paths count as diagnostics. An exception from a provider fetch can carry the
 // request URL, response body and account detail, so console.error was contradicting the
 // "off by default" promise above. Everything the widget prints goes through here.
-const bpErr = (...a) => {
-  if (BP_DEBUG) console.error(...a);
-};
+const bpErr = (...a) => { if (BP_DEBUG) console.error(...a); };
+
 
 (function () {
   "use strict";
 
-  // Paths to usage JSON files (update if different)
-  const USAGE_FILES = {
-    claude: "~/.openclaw/workspace/memory/claude-usage.json",
-    gemini: "~/.openclaw/workspace/memory/gemini-usage.json",
-    manus: "~/.openclaw/workspace/memory/manus-usage.json",
+  // Everything rendered below comes from provider API responses and local JSON files the
+  // gateway relays. None of it is trusted markup: every string is HTML-escaped and every
+  // number is coerced to a finite Number before it is placed into innerHTML, so a plan
+  // name, model id or credit field containing "<img onerror=...>" renders as text.
+  const esc = (v) =>
+    String(v ?? "").replace(/[&<>"'`]/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;",
+    })[ch]);
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
   };
 
   // Gemini models in fallback order (performance-ranked)
@@ -202,23 +200,25 @@ const bpErr = (...a) => {
       }
     }
 
+    // `name`, `detail` and `resetTime` are plain text; they are escaped here, once.
     function renderBar(name, pct, detail = "", resetTime = "") {
+      pct = num(pct);
       const color = getColor(pct);
-      const resetHtml = resetTime ? `<div class="bpw-reset">↻ ${resetTime}</div>` : "";
+      const resetHtml = resetTime ? `<div class="bpw-reset">↻ ${esc(resetTime)}</div>` : "";
       return `<div class="bpw-row">
         <div class="bpw-label">
-          <span class="bpw-name">${name}</span>
+          <span class="bpw-name">${esc(name)}</span>
           <span class="bpw-value ${pct >= 100 ? "bpw-exceeded" : ""}" style="color:${color}">${pct.toFixed(0)}%</span>
         </div>
         <div class="bpw-bar"><div class="bpw-fill" style="width:${Math.min(pct, 100)}%;background:${color}"></div></div>
-        ${detail ? `<div class="bpw-detail">${detail}</div>` : ""}
+        ${detail ? `<div class="bpw-detail">${esc(detail)}</div>` : ""}
         ${resetHtml}
       </div>`;
     }
 
     function renderUnlimited(name) {
       return `<div class="bpw-row">
-        <div class="bpw-label"><span class="bpw-name">${name}</span><span class="bpw-unlimited">∞ UNLIMITED</span></div>
+        <div class="bpw-label"><span class="bpw-name">${esc(name)}</span><span class="bpw-unlimited">∞ UNLIMITED</span></div>
         <div class="bpw-bar"><div class="bpw-fill" style="width:5%;background:#22c55e"></div></div>
       </div>`;
     }
@@ -228,7 +228,7 @@ const bpErr = (...a) => {
 
       // CLAUDE - Real data from OAuth API
       const c = data.claude || {};
-      const plan = c.plan || "max";
+      const plan = String(c.plan || "max");
       const tier = c.rateLimitTier || "";
       const fiveHour = c.limits?.five_hour || {};
       const sevenDay = c.limits?.seven_day || {};
@@ -238,7 +238,7 @@ const bpErr = (...a) => {
 
       html += `<div class="bpw-section">
         <div class="bpw-section-header">
-          <span>Claude<span class="bpw-plan">${plan.toUpperCase()}</span></span>
+          <span>Claude<span class="bpw-plan">${esc(plan.toUpperCase())}</span></span>
           ${liveIndicator}
         </div>
         ${renderBar("5h Window", fiveHour.utilization || 0, "", formatResetTime(fiveHour.resets_at))}
@@ -259,9 +259,9 @@ const bpErr = (...a) => {
 
         // Calculate max percentage across RPM, TPM, RPD
         const metrics = [
-          { name: "RPD", used: usage.rpd || 0, limit: limits.rpd },
-          { name: "RPM", used: usage.rpm || 0, limit: limits.rpm },
-          { name: "TPM", used: usage.tpm || 0, limit: limits.tpm },
+          { name: "RPD", used: num(usage.rpd), limit: num(limits.rpd) },
+          { name: "RPM", used: num(usage.rpm), limit: num(limits.rpm) },
+          { name: "TPM", used: num(usage.tpm), limit: num(limits.tpm) },
         ];
 
         let pct = 0,
@@ -292,7 +292,7 @@ const bpErr = (...a) => {
               : "";
 
           html += `<div class="bpw-model ${statusClass}">
-            <div class="bpw-model-name">${statusIcon} ${model.name}</div>
+            <div class="bpw-model-name">${statusIcon} ${esc(model.name)}</div>
             ${isUnlimited ? renderUnlimited(metric) : renderBar(metric, pct, detail)}
           </div>`;
 
@@ -311,9 +311,9 @@ const bpErr = (...a) => {
 
       html += `<div class="bpw-section">
         <div class="bpw-section-header"><span>Manus Pro</span><span style="font-size:8px;color:#666">↻ 01:00</span></div>
-        ${renderBar("Daily", mDaily.pct || 0, `${mDaily.used || 0}/${mDaily.limit || 300}`)}
-        ${renderBar("Monthly", mMonthly.pct || 0, `${mMonthly.used || 0}/${mMonthly.limit || 4000}`)}
-        ${m.addon ? `<div class="bpw-detail" style="margin-top:4px;">💰 ${m.addon.toLocaleString()} addon credits</div>` : ""}
+        ${renderBar("Daily", mDaily.pct, `${num(mDaily.used)}/${num(mDaily.limit) || 300}`)}
+        ${renderBar("Monthly", mMonthly.pct, `${num(mMonthly.used)}/${num(mMonthly.limit) || 4000}`)}
+        ${num(m.addon) ? `<div class="bpw-detail" style="margin-top:4px;">💰 ${esc(num(m.addon).toLocaleString())} addon credits</div>` : ""}
       </div>`;
 
       // CHATGPT / OPENAI — only show models in our fallback chain
@@ -328,9 +328,9 @@ const bpErr = (...a) => {
           html += `<div class="bpw-section">
             <div class="bpw-section-header"><span>ChatGPT</span><span style="font-size:8px;color:#666">API</span></div>`;
           for (const [model, info] of showModels) {
-            const pct = info.utilization_pct || 0;
-            const req = info.requests || {};
-            const detail = `${req.remaining || 0}/${req.limit || 0} req left`;
+            const pct = num(info?.utilization_pct);
+            const req = info?.requests || {};
+            const detail = `${num(req.remaining)}/${num(req.limit)} req left`;
             html += renderBar(model, pct, detail);
           }
           html += `</div>`;
@@ -341,7 +341,7 @@ const bpErr = (...a) => {
       const updateTime = data.claude?.fetchedAt
         ? new Date(data.claude.fetchedAt).toLocaleTimeString()
         : new Date().toLocaleTimeString();
-      html += `<div style="font-size:8px;color:#888;text-align:center;margin-top:6px;">Updated: ${updateTime}</div>`;
+      html += `<div style="font-size:8px;color:#888;text-align:center;margin-top:6px;">Updated: ${esc(updateTime)}</div>`;
 
       panel.querySelector(".bpw-content").innerHTML = html;
     }
@@ -358,26 +358,24 @@ const bpErr = (...a) => {
       // Try to fetch from OpenClaw's plugin endpoint
       try {
         const app = document.querySelector("openclaw-app");
-        BP_DEBUG &&
-          console.log(
-            "[Budget] app:",
-            !!app,
-            "client:",
-            !!app?.client,
-            "request:",
-            !!app?.client?.request,
-          );
+        BP_DEBUG && console.log(
+          "[Budget] app:",
+          !!app,
+          "client:",
+          !!app?.client,
+          "request:",
+          !!app?.client?.request,
+        );
         if (app?.client?.request) {
           const result = await app.client.request("budget.usage", {}).catch((e) => {
             bpErr("[Budget] Request failed:", e);
             return null;
           });
           BP_DEBUG && console.log("[Budget] Raw result:", JSON.stringify(result, null, 2));
-          BP_DEBUG &&
-            console.log(
-              "[Budget] Gemini keys:",
-              result?.gemini ? Object.keys(result.gemini) : "none",
-            );
+          BP_DEBUG && console.log(
+            "[Budget] Gemini keys:",
+            result?.gemini ? Object.keys(result.gemini) : "none",
+          );
           if (result) {
             if (result.claude) data.claude = result.claude;
             if (result.gemini) data.gemini = result.gemini;
@@ -406,7 +404,7 @@ const bpErr = (...a) => {
     // Initial load and periodic refresh
     setTimeout(refresh, 1500);
     setInterval(refresh, 30000);
-    BP_DEBUG && console.log("[Budget Panel] v4.0.0 - Claude + ChatGPT + Gemini + Manus");
+    BP_DEBUG && console.log("[Budget Panel] v4.1.0 - Claude + ChatGPT + Gemini + Manus");
   }
 
   if (document.readyState === "complete") setTimeout(init, 800);

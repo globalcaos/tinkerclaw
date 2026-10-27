@@ -1,6 +1,6 @@
-// FORK 2026-07-25 (the user): the ORCA card in the Models side panel, under the model slider.
+// FORK 2026-07-25 (the architect): the ORCA card in the Models side panel, under the model slider.
 // Three VERY short sections — MODEL, EFFORT, FAN-OUT — each answering "why this?" in plain
-// language. Two hard rules from the user:
+// language. Two hard rules from the architect:
 //   1. If a model or effort is FIXED, just say so. No justification for a decision the user
 //      already made; extra words there are noise, not transparency.
 //   2. Within a turn THALAMUS routes each job separately, so FAN-OUT lists those calls and
@@ -16,7 +16,7 @@
 // Pure render model (no DOM deps, returns an HTML string) — same shape as the other panels/
 // modules, so every sentence is unit-testable without a browser.
 //
-// FORK 2026-09-03 (the user, ask 4: "clear visibility on how Thalamus is doing things by looking
+// FORK 2026-09-03 (the architect, ask 4: "clear visibility on how Thalamus is doing things by looking
 // at the Thalamus panel"): FOUR more blocks sit ABOVE those three — SUPPLIES, WHY THIS,
 // IF IT FAILS, BALLISTIC — from the THALAMUS v2 design (jarvis-icu
 // docs/superpowers/specs/2026-09-03-thalamus-v2-design.md §6). They are driven by OPTIONAL
@@ -32,6 +32,7 @@
 import type { CompositionMode, ReservedReason } from "../../../src/shared/thalamus-plan.js";
 import { windowBallistic, type SupplyState } from "../../../src/shared/thalamus-supply.js";
 import { eegStopLeftCss } from "./eeg-trace.js";
+import { renderThalamusV4, type ThalamusV4View } from "./thalamus-v4-card.js";
 
 /** Convexity of the urgency ramp toward the weekly reset (effort-allocator URGENCY_EXP). */
 const URGENCY_EXP = 2.5;
@@ -129,6 +130,11 @@ export interface RoutingSignals {
   /** FORK 2026-09-03: the plan for this turn — primary, recovery chain, composition, and the
    *  reasons behind them. Absent ⇒ none of the three plan blocks render. */
   thalamusPlan?: ThalamusPlanView;
+  /** FORK 2026-10-01 (THALAMUS v4, phase G): what the v4 plugin reports, from `thalamus.panel`. Absent ⇒ the block draws
+   *  nothing, which is how a gateway without the plugin (or with it off) keeps today's card byte for byte. */
+  thalamusV4?: ThalamusV4View;
+  /** The v4 block's expanders the reader has open, so a repaint does not close them. */
+  thalamusV4Open?: ReadonlySet<string>;
 }
 
 /** The renderable projection of `ThalamusPlan` (src/shared/thalamus-plan.ts).
@@ -195,7 +201,7 @@ export function explainBurn(s: RoutingSignals): BurnExplanation | null {
   return { burnDemand, weekElapsed, headroom, floor: LADDER[idx] };
 }
 
-/** FORK 2026-07-26 (the user): the fast↔smart dial. Seven stops like the EFFORT slider, left
+/** FORK 2026-07-26 (the architect): the fast↔smart dial. Seven stops like the EFFORT slider, left
  *  "fast" and right "smart", answering one question — how many tokens is a better answer
  *  worth on this session? It biases ORCHESTRATION spend (how many models, how much
  *  composition), which is a different axis from the EFFORT slider above it (how hard ONE
@@ -237,9 +243,9 @@ export function biasStop(idx?: number) {
 }
 
 /** The fast↔smart slider, rendered directly under the ORCA title. Deliberately the SAME
- *  markup/classes as the EFFORT slider so the two read as siblings (the user's request).
+ *  markup/classes as the EFFORT slider so the two read as siblings (the architect's request).
  *
- *  FORK 2026-08-29 (the user): "the thalamus panel slider should then become usable, otherwise
+ *  FORK 2026-08-29 (the architect): "the thalamus panel slider should then become usable, otherwise
  *  the circle should not be there at all." The dial only means something while the MODEL
  *  slider is on Auto — pin a model and THALAMUS is out of the loop, so the dial drives
  *  nothing. When it is inert the input is `disabled` (so it cannot be dragged, and the
@@ -297,7 +303,7 @@ function renderBiasStops(activeIdx: number): string {
 
 // Each section states the CHOICE and its WHY — nothing about the standing rule that
 // produced it. The policy is fixed, lives in orca-policy.md, and is one click away at the
-// foot of the card (the user 2026-07-25: "should not explain the policy behind it all, which
+// foot of the card (the architect 2026-07-25: "should not explain the policy behind it all, which
 // is fixed"). Keeping the rule out of here is what makes a badly-routed job visible: the
 // line is short enough that a wrong domain or a wrong model jumps out.
 
@@ -380,7 +386,7 @@ export function fanOutLine(s: RoutingSignals): string {
   if (routes.length === 0) {
     return cap;
   }
-  // ONE LINE, always (the user 2026-07-29: "Fan-out should only be one line"). A <ul> of one
+  // ONE LINE, always (the architect 2026-07-29: "Fan-out should only be one line"). A <ul> of one
   // <li> per route grew the card without bound on a fan-out, and the `why` note I added
   // earlier today made every route two lines — the opposite of what this card is for.
   //
@@ -402,7 +408,7 @@ export function fanOutLine(s: RoutingSignals): string {
   );
 }
 
-/** The footer link. The user 2026-07-26: "swap the 'why these rules?' button with a link to the
+/** The footer link. the architect 2026-07-26: "swap the 'why these rules?' button with a link to the
  *  actual md, which should open the orca-policy.md". Uses the app's `.fs-link` convention (a
  *  globally delegated click → `config.openExternalFile`), so it opens the REAL file in the
  *  system viewer — the same file orca-policy-drift.test.ts pins against the running code.
@@ -476,7 +482,7 @@ function thalamusBlock(key: string, body: string): string {
   );
 }
 
-/** Billing pool → the name the user uses for it. A SupplyId is a pool, not a provider id. */
+/** Billing pool → the name the architect uses for it. A SupplyId is a pool, not a provider id. */
 const SUPPLY_LABEL: Readonly<Record<string, string>> = {
   anthropic: "Claude",
   openai: "ChatGPT",
@@ -715,7 +721,13 @@ export function ballisticBlock(s: RoutingSignals): string {
 /** The four blocks, in the order the design names them. Empty string when the gateway has told
  *  us nothing new, which is what keeps today's card byte-identical. */
 export function thalamusBlocks(s: RoutingSignals): string {
-  return suppliesBlock(s) + whyModelBlock(s) + chainBlock(s) + ballisticBlock(s);
+  return (
+    renderThalamusV4(s.thalamusV4, { nowMs: s.nowMs, open: s.thalamusV4Open }) +
+    suppliesBlock(s) +
+    whyModelBlock(s) +
+    chainBlock(s) +
+    ballisticBlock(s)
+  );
 }
 
 /** The ORCA card: the fast↔smart dial, the frontier line, the four THALAMUS blocks, then this

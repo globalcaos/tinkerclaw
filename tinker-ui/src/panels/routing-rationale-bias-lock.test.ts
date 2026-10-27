@@ -1,4 +1,4 @@
-// FORK 2026-08-29 (the user): "the thalamus panel slider should then become usable, otherwise
+// FORK 2026-08-29 (the architect): "the thalamus panel slider should then become usable, otherwise
 // the circle should not be there at all."
 //
 // Two halves have to hold TOGETHER, and each is worthless alone:

@@ -1,7 +1,7 @@
-// FORK 2026-07-25 (the user): prompt-cache telemetry — single owner of the
+// FORK 2026-07-25 (the architect): prompt-cache telemetry — single owner of the
 // `stream:"cache"` agent-event contract.
 //
-// LAYERING DOCTRINE (the user 2026-07-25): the cache lane must collect its data
+// LAYERING DOCTRINE (the architect 2026-07-25): the cache lane must collect its data
 // from the DEEPEST practical layer of each serving pipe, decoupled from higher
 // mechanisms, so changes/bugs in upper layers (runner heuristics, session
 // plumbing, UI) cannot silence the instrument. The stack, bottom → top:

@@ -42,7 +42,6 @@ test("end-to-end: start → answer → rank with mocked fetch + LLM", (t) => {
     },
     choose_metric: {
       metric_id: "eur_per_kg_active",
-      formula_js: "p.current_price_eur / (p.package_size_kg * (p.concentration_pct/100))",
     },
   };
   const mockFile = join(dir, "mock.json");

@@ -71,7 +71,7 @@ export interface UsageWindowLine {
 /**
  * "3d 12h 34m" — time remaining until a window rolls over.
  *
- * A countdown rather than a wall-clock date (FORK 2026-07-31, the user: "reset:
+ * A countdown rather than a wall-clock date (FORK 2026-07-31, the architect: "reset:
  * 3d 12h 34m"): the question a reset line answers is "how long until I get
  * capacity back", and a date makes the reader do the subtraction. Units below
  * the largest are kept so the number stays actionable near the boundary.
@@ -119,7 +119,7 @@ export function formatResetClock(iso: unknown, nowMs = Date.now()): string | nul
 /**
  * The one place a usage hover is formatted, for every provider.
  *
- * FORK 2026-07-31 (the user: "unify, as much as possible, the mouseover message").
+ * FORK 2026-07-31 (the architect: "unify, as much as possible, the mouseover message").
  * Before this, each provider branch invented its own wording — "shared: 5h 1%",
  * "RPM: 0/15 (0%)", "Weekly: 100% of quota", "Premium: 100% used" — so two
  * adjacent rows in the same panel could not be compared at a glance. The shape
@@ -167,7 +167,7 @@ const RESET_ROW = /^reset: .*$/m;
  * The countdown is minted at PAINT time, and the MODELS panel only repaints when
  * `budget.usage` lands — a five-minute poll. So the row a user reads while waiting
  * out an exhausted window could be five minutes stale, which is exactly the moment
- * the number matters most (FORK 2026-08-28, the user: "refreshed every minute").
+ * the number matters most (FORK 2026-08-28, the architect: "refreshed every minute").
  * Rewriting the one row in place keeps the minute tick off the panel's innerHTML
  * swap, which would otherwise drop hover state and scroll position every minute.
  *
@@ -195,7 +195,7 @@ export function refreshTooltipReset(
  *
  * But a FULL window changes the question from "when do I plan around this" to
  * "when can I send the next message", and the answer is the shortest exhausted
- * window's reset (FORK 2026-08-28, the user, with codex/sol pinned at `5h: 100%`:
+ * window's reset (FORK 2026-08-28, the architect, with codex/sol pinned at `5h: 100%`:
  * the row quoted the weekly reset a week out while capacity was in fact ~1h40m
  * away — the one number he needed was the one window whose reset we hid).
  */
@@ -351,7 +351,7 @@ function getChatGptUsage(chatgptValue: unknown, nowMs: number): ModelUsageInfo |
       iso: firstString(window, ["resets_at", "reset_at", "resetAt"]),
     })),
   );
-  // No trailing plan line (the user 2026-07-31: "do not care about plan"). The block
+  // No trailing plan line (the architect 2026-07-31: "do not care about plan"). The block
   // is the windows and the reset; account identity is panel chrome, not quota.
   const tooltip = formatUsageTooltip(lines, resetIso, nowMs);
 
@@ -550,7 +550,7 @@ export function getModelUsage(
       return null;
     }
     const usage = clampPct(rawPct);
-    // Grok has NO short window (the user 2026-07-31: "Grok does not have a 5h window,
+    // Grok has NO short window (the architect 2026-07-31: "Grok does not have a 5h window,
     // but openai and anthropic do"), so the 5h row is genuinely ABSENT rather than
     // rendered as a zero — the reason this shape has to tolerate missing rows at
     // all. The account's period type names the one row it does have: a unified

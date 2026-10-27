@@ -19,6 +19,16 @@
  * A resume prompt is an instruction to CONTINUE work, so a duplicate is an
  * instruction to redo it. These tests pin the three guards that stop it.
  *
+ * FORK 2026-09-08 — a FOURTH guard, the boot-storm window. The three above
+ * still let ONE interruption produce TWO different answers: boot #1 resumed
+ * the turn, a systemd restart storm ("Scheduled restart" every 10 s) killed
+ * that resumed run, and boot #2 found it `running` with a resumable tail — the
+ * resume's own [System] row — and resumed it again (journal: 10:16:41 AND
+ * 10:19:25 on 09-01; the ClawHub tab 41 s apart on 09-07). No toolCallId is
+ * involved on that path, so guard 3 never sees it. `lastResumeAt` is written
+ * where the dispatch happens and both boot sweeps hold back inside
+ * RESUME_COOLDOWN_MS.
+ *
  * Harness conventions match the stale-dangling / interrupted-tool siblings.
  */
 import fs from "node:fs/promises";
@@ -27,7 +37,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type SessionEntry, loadSessionStore } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
-import { recoverRestartAbortedMainSessions } from "./main-session-restart-recovery.js";
+import {
+  RESUME_COOLDOWN_MS,
+  buildResumeMessage,
+  hostBootedAtMs,
+  markRunningMainSessionsAsInterrupted,
+  rebootedAtMs,
+  recoverRestartAbortedMainSessions,
+} from "./main-session-restart-recovery.js";
 
 vi.mock("../gateway/call.js", () => ({
   callGateway: vi.fn(async () => ({ runId: "run-resumed" })),
@@ -42,6 +59,9 @@ let tmpDir: string;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // A host up for a month: every interruption seeded below happened after this boot, so the
+  // plain "gateway restarted" path holds on any machine, however recently it booted.
+  vi.spyOn(os, "uptime").mockReturnValue(30 * 24 * 3600);
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-restart-recovery-resume-loop-"));
 });
 
@@ -180,6 +200,95 @@ async function seedStuckMidToolSession(toolCallId: string): Promise<string> {
   return sessionsDir;
 }
 
+/**
+ * Both RPCs ack normally. Explicit because `vi.clearAllMocks()` clears recorded
+ * calls but NOT implementations, so the ECONNREFUSED implementation an earlier
+ * test installs would otherwise leak into every test declared after it.
+ */
+function mockGatewayOk(): void {
+  vi.mocked(callGateway).mockImplementation(async () => ({ runId: "run-resumed" }) as never);
+}
+
+const THREE_MINUTES = 3 * 60_000;
+const ELEVEN_MINUTES = 11 * 60_000;
+
+/**
+ * The BOOT-STORM shape: a plain gateway restart with NO tool records, so neither
+ * `restartResumeToolCallId` nor the idle check applies. The user prompt is the
+ * tail (tinker-bridge mid-flight) — a genuine interruption that resumes with the
+ * "[System] The gateway restarted…" prompt, the exact row that appeared twice
+ * in the 09-01 transcript.
+ */
+function midFlightEntries(interruptedAt: number): RawEntry[] {
+  return [
+    messageEntry(
+      "m1",
+      null,
+      { role: "user", content: "run the tool", timestamp: interruptedAt },
+      interruptedAt,
+    ),
+  ];
+}
+
+/** What boot #1's resume appends: its own [System] row, still a `user` tail. */
+function resumedTurnEntries(interruptedAt: number, resumedAt: number): RawEntry[] {
+  return [
+    ...midFlightEntries(interruptedAt),
+    messageEntry(
+      "m2",
+      "m1",
+      {
+        role: "user",
+        content: "[System] The gateway restarted and interrupted your previous turn. Resume it.",
+        timestamp: resumedAt,
+      },
+      resumedAt,
+    ),
+  ];
+}
+
+async function seedRestartInterruptedSession(interruptedAt: number): Promise<string> {
+  const sessionsDir = await makeSessionsDir();
+  await writeStore(sessionsDir, { "agent:main:main": runningAbortedEntry(interruptedAt) });
+  await writeTranscript(sessionsDir, "main-session", midFlightEntries(interruptedAt));
+  return sessionsDir;
+}
+
+/**
+ * Boot #1 has already resumed the session (`lastResumeAt` ≈ now). Re-create what
+ * boot #2's sweeps see `elapsedMs` later when the restart storm killed THAT
+ * resumed run: the entry is `running` again with the resumed run's own
+ * `startedAt`, the stale-lock sweep has re-armed `abortedLastRun`, and the
+ * transcript tail is the resume's [System] row. Elapsed time is simulated by
+ * ageing `lastResumeAt` rather than faking the clock — the module reads
+ * Date.now() against the store, and the store is the only input under test.
+ */
+async function rebootAfter(
+  sessionsDir: string,
+  interruptedAt: number,
+  elapsedMs: number,
+): Promise<void> {
+  const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+  const entry = store["agent:main:main"] as SessionEntry;
+  expect(typeof entry.lastResumeAt).toBe("number");
+  const lastResumeAt = (entry.lastResumeAt as number) - elapsedMs;
+  const resumedRunStartedAt = lastResumeAt + 1_000;
+  await writeStore(sessionsDir, {
+    "agent:main:main": {
+      ...entry,
+      status: "running",
+      abortedLastRun: true,
+      startedAt: resumedRunStartedAt,
+      lastResumeAt,
+    } as SessionEntry,
+  });
+  await writeTranscript(
+    sessionsDir,
+    "main-session",
+    resumedTurnEntries(interruptedAt, resumedRunStartedAt),
+  );
+}
+
 describe("main-session restart recovery - the phantom resume loop", () => {
   // DEFECT 1. The prompt is delivered before the RPC acks, so a missed ack is
   // "dispatched", never "failed". Reporting `failed` is what arms the retry.
@@ -255,6 +364,10 @@ describe("main-session restart recovery - the phantom resume loop", () => {
         status: "running",
         abortedLastRun: true,
         startedAt: T,
+        // FORK 2026-09-08 — this second boot must sit OUTSIDE the boot-storm
+        // window: inside it, even a NEW dangling call is the first resume's own
+        // run dying in the storm and is held back on purpose (pinned below).
+        lastResumeAt: Date.now() - RESUME_COOLDOWN_MS - 60_000,
       } as SessionEntry,
     });
     await writeTranscript(sessionsDir, "main-session", [
@@ -299,5 +412,200 @@ describe("main-session restart recovery - the phantom resume loop", () => {
     expect(message).not.toContain("The gateway restarted");
     expect(message).toContain("Bash");
     expect(message.toLowerCase()).toContain("already complete");
+  });
+});
+
+describe("main-session restart recovery - the boot-storm window", () => {
+  // The two boot tests below are tuned to this number; if it moves, move them.
+  it("holds the window at ten minutes", () => {
+    expect(RESUME_COOLDOWN_MS).toBe(10 * 60_000);
+  });
+
+  // DEFECT 4 (measured 2026-09-08): ONE interruption, TWO different answers.
+  // agent:main:tinker:mthk0fck was resumed at 09-01 10:16:41 AND 10:19:25 —
+  // 2m44s apart — with a "[System] The gateway restarted" row and a full answer
+  // after each. Boot #2 runs the real boot order: the running-at-boot sweep,
+  // then recovery. Red before the window: agentDispatches() reaches 2.
+  it("boot #2 three minutes after boot #1 does not dispatch a second resume", async () => {
+    const interruptedAt = Date.now() - THREE_MINUTES - 10_000;
+    const sessionsDir = await seedRestartInterruptedSession(interruptedAt);
+    mockGatewayOk();
+
+    const first = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+    expect(first).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    expect(agentDispatches()).toHaveLength(1);
+
+    await rebootAfter(sessionsDir, interruptedAt, THREE_MINUTES);
+    const sweep = await markRunningMainSessionsAsInterrupted({ sessionsDir });
+    const second = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(sweep.marked).toBe(0);
+    expect(agentDispatches()).toHaveLength(1);
+    expect(second).toEqual({ recovered: 0, failed: 0, skipped: 1 });
+    // The window DEFERS; it does not settle. The flag stays armed so the first
+    // boot after the window still resumes a genuinely unfinished turn.
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.status).toBe("running");
+  });
+
+  // The window is a boot-storm bound, not a mute: past it, a session still
+  // flagged running + aborted is a real unfinished turn and must be resumed —
+  // on the plain restart path, and the window re-arms from THIS dispatch.
+  it("boot #2 eleven minutes later does", async () => {
+    const interruptedAt = Date.now() - ELEVEN_MINUTES - 10_000;
+    const sessionsDir = await seedRestartInterruptedSession(interruptedAt);
+    mockGatewayOk();
+
+    await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+    expect(agentDispatches()).toHaveLength(1);
+
+    await rebootAfter(sessionsDir, interruptedAt, ELEVEN_MINUTES);
+    const sweep = await markRunningMainSessionsAsInterrupted({ sessionsDir });
+    const before = Date.now();
+    const second = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(sweep.marked).toBe(0); // already armed by the stale-lock sweep
+    expect(agentDispatches()).toHaveLength(2);
+    expect(second).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    const message = String(
+      (agentDispatches()[1] as { params?: { message?: unknown } }).params?.message ?? "",
+    );
+    expect(message).toContain("The gateway restarted");
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.lastResumeAt).toBeGreaterThanOrEqual(before);
+  });
+
+  // Guard (4), the graceful-restart sweep on its own: a `running` entry whose
+  // resume we dispatched inside the window IS that resume's run. Re-marking it
+  // is what handed recovery the second turn.
+  it("the running-at-boot sweep does not re-mark a run resumed inside the window", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const lastResumeAt = Date.now() - THREE_MINUTES;
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: lastResumeAt,
+        startedAt: lastResumeAt + 1_000,
+        status: "running",
+        abortedLastRun: false,
+        lastResumeAt,
+      } as SessionEntry,
+    });
+
+    const result = await markRunningMainSessionsAsInterrupted({ sessionsDir });
+
+    expect(result).toEqual({ marked: 0, skipped: 1 });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+  });
+
+  it("the running-at-boot sweep marks a run resumed outside the window", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const lastResumeAt = Date.now() - ELEVEN_MINUTES;
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: lastResumeAt,
+        startedAt: lastResumeAt + 1_000,
+        status: "running",
+        abortedLastRun: false,
+        lastResumeAt,
+      } as SessionEntry,
+    });
+
+    const result = await markRunningMainSessionsAsInterrupted({ sessionsDir });
+
+    expect(result).toEqual({ marked: 1, skipped: 0 });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+  });
+
+  // Ordering: the window sits AFTER the idle check. A resumed turn that FINISHED
+  // before the next boot has nothing to resume and must still settle to done —
+  // holding it back would leave a completed turn flagged for ten minutes.
+  it("still settles a resumed turn that completed inside the window", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const lastResumeAt = Date.now() - THREE_MINUTES;
+    const resumedRunStartedAt = lastResumeAt + 1_000;
+    await writeStore(sessionsDir, {
+      "agent:main:main": runningAbortedEntry(resumedRunStartedAt, { lastResumeAt }),
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      ...resumedTurnEntries(lastResumeAt - 10_000, resumedRunStartedAt),
+      messageEntry(
+        "m3",
+        "m2",
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Resumed and finished." }],
+          timestamp: resumedRunStartedAt + 2_000,
+        },
+        resumedRunStartedAt + 2_000,
+      ),
+    ]);
+    mockGatewayOk();
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
+    expect(agentDispatches()).toHaveLength(0);
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.status).toBe("done");
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+  });
+});
+
+// FORK 2026-10-01 — a freeze and power-off was resumed as "The gateway restarted" (OrbisVision
+// worker, interrupted 06:35, back 07:13); the agent recorded the wrong cause and did not know
+// its /tmp files were gone. The turn's newest transcript entry against this boot tells them apart.
+describe("main-session restart recovery - a reboot is not a gateway restart", () => {
+  const dispatchedMessage = () =>
+    String((agentDispatches()[0] as { params?: { message?: unknown } }).params?.message ?? "");
+
+  it("names the reboot and when the machine came back", async () => {
+    await seedRestartInterruptedSession(Date.now() - 5 * 60_000);
+    mockGatewayOk();
+    vi.spyOn(os, "uptime").mockReturnValue(2 * 60); // booted 2 min ago, after the turn's last entry
+
+    await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    const message = dispatchedMessage();
+    expect(message).toMatch(
+      /^\[System\] The machine was shut down or rebooted \(it was back at \d\d:\d\d\), so the gateway restarted and interrupted your previous turn\. Every process the turn started is gone; check \/tmp before trusting files there\. Resume it/,
+    );
+    // The Tinker UI recognises the resume notice by this clause (tinker-ui/src/fractal-prompt-strip.ts).
+    expect(message).toMatch(/The gateway restarted and interrupted your previous turn/i);
+  });
+
+  it("keeps the plain wording when the machine stayed up", async () => {
+    await seedRestartInterruptedSession(Date.now() - 5 * 60_000);
+    mockGatewayOk();
+
+    await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    const message = dispatchedMessage();
+    expect(message).toMatch(
+      /^\[System\] The gateway restarted and interrupted your previous turn\. Resume it/,
+    );
+    expect(message).not.toContain("rebooted");
+  });
+
+  it("adds the reboot after a dangling tool's sentence", () => {
+    const message = buildResumeMessage({ name: "Bash", toolCallId: "tc-1" }, Date.now());
+    expect(message).toMatch(
+      /^\[System\] Your previous turn stopped while the tool `Bash` \(tc-1\) was still running, so its result never arrived\. The machine was shut down or rebooted meanwhile \(it was back at \d\d:\d\d\)\. Every process the turn started is gone/,
+    );
+    expect(buildResumeMessage({ name: "Bash", toolCallId: "tc-1" }, null)).not.toContain(
+      "rebooted",
+    );
+  });
+
+  it("calls it a reboot only when the turn's newest entry predates the boot", () => {
+    expect(hostBootedAtMs(10_000, 4)).toBe(6_000);
+    expect(rebootedAtMs(1_000, 6_000)).toBe(6_000);
+    expect(rebootedAtMs(7_000, 6_000)).toBeNull();
+    expect(rebootedAtMs(undefined, 6_000)).toBeNull();
   });
 });

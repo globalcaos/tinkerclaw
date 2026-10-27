@@ -5,6 +5,15 @@ import ai.openclaw.app.chat.ChatPendingToolCall
 import ai.openclaw.app.chat.ChatSessionEntry
 import ai.openclaw.app.chat.OutgoingAttachment
 import ai.openclaw.app.gateway.GatewayEndpoint
+import ai.openclaw.app.jarvis.JarvisDoor
+import ai.openclaw.app.jarvis.JarvisPairLink
+import ai.openclaw.app.jarvis.JarvisScreen
+import ai.openclaw.app.jarvis.defaultJarvisDoorCandidates
+import ai.openclaw.app.jarvis.isAllowedJarvisDoorHost
+import ai.openclaw.app.jarvis.jarvisDoorHostPort
+import ai.openclaw.app.jarvis.normalizeJarvisDoorOrigin
+import ai.openclaw.app.jarvis.parseJarvisPairLink
+import ai.openclaw.app.jarvis.withDoorFirst
 import ai.openclaw.app.node.CameraCaptureManager
 import ai.openclaw.app.node.CanvasController
 import ai.openclaw.app.node.SmsManager
@@ -134,6 +143,103 @@ class MainViewModel(
     if (prefs.onboardingCompleted.value) {
       ensureRuntime()
     }
+  }
+
+  // FORK 2026-10-19 (the architect: phone app) — Jarvis door pairing and the Tinker home screen.
+  val jarvisPaired: StateFlow<Boolean> = prefs.jarvisPaired
+  val jarvisDoorCandidates: StateFlow<List<String>> = prefs.jarvisDoorCandidates
+  val jarvisDoorOrigin: StateFlow<String?> = JarvisDoor.origin
+  private val _jarvisScreen = MutableStateFlow(JarvisScreen.Tinker)
+  val jarvisScreen: StateFlow<JarvisScreen> = _jarvisScreen
+  private val _jarvisPairGeneration = MutableStateFlow(0)
+
+  /** Bumped by every new pairing, so a WebView that is already open picks up the new token. */
+  val jarvisPairGeneration: StateFlow<Int> = _jarvisPairGeneration
+  private val _pendingJarvisPair = MutableStateFlow<JarvisPairLink?>(null)
+  val pendingJarvisPair: StateFlow<JarvisPairLink?> = _pendingJarvisPair
+
+  fun openJarvisScreen(screen: JarvisScreen) {
+    _jarvisScreen.value = screen
+  }
+
+  fun jarvisDeviceToken(): String? = prefs.loadJarvisDeviceToken()
+
+  /** Parses a pair link with this phone's own door list as the "known doors". */
+  fun parseJarvisPairLinkHere(raw: String?) = parseJarvisPairLink(raw, knownDoors = prefs.jarvisDoorCandidates.value + defaultJarvisDoorCandidates)
+
+  /** The door this phone is paired with now (null when not paired), for the "replaces" warning. */
+  fun currentJarvisDoor(): String? {
+    if (!prefs.jarvisPaired.value) return null
+    return JarvisDoor.origin.value ?: prefs.jarvisDoorCandidates.value.firstOrNull()
+  }
+
+  /** A jarvis://pair link from outside the app (deep link): parked until the user confirms it. */
+  fun offerJarvisPairLink(raw: String?): String? {
+    val parsed = parseJarvisPairLinkHere(raw)
+    val link = parsed.link ?: return parsed.error
+    _pendingJarvisPair.value = link
+    return null
+  }
+
+  fun confirmJarvisPair() {
+    val link = _pendingJarvisPair.value ?: return
+    _pendingJarvisPair.value = null
+    applyJarvisPairLink(link)
+  }
+
+  fun dismissJarvisPair() {
+    _pendingJarvisPair.value = null
+  }
+
+  /** Stores the door and both tokens, then points the node's gateway connection at the door. */
+  fun applyJarvisPairLink(link: JarvisPairLink) {
+    prefs.setJarvisDoorCandidates(withDoorFirst(link.doorOrigin, prefs.jarvisDoorCandidates.value))
+    ensureRuntime().resetGatewaySetupAuth()
+    prefs.saveJarvisDeviceToken(link.deviceToken)
+    prefs.setGatewayToken(link.gatewayToken)
+    _jarvisScreen.value = JarvisScreen.Tinker
+    _jarvisPairGeneration.value += 1
+    pointNodeAtDoor(link.doorOrigin)
+  }
+
+  /** Comma or newline separated door addresses; returns an error message or null when saved. */
+  fun setJarvisDoorCandidates(text: String): String? {
+    val raw = text.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+    if (raw.isEmpty()) return "Add at least one door address."
+    val origins = mutableListOf<String>()
+    for (entry in raw) {
+      val origin = normalizeJarvisDoorOrigin(entry) ?: return "Not an address: $entry"
+      val host = jarvisDoorHostPort(origin)?.first
+      if (!isAllowedJarvisDoorHost(host)) return "Not a Tailscale address: $entry"
+      origins += origin
+    }
+    prefs.setJarvisDoorCandidates(origins.distinct())
+    return null
+  }
+
+  /** Probes the candidates; when the answering door is not the one the node uses, moves the node. */
+  suspend fun resolveJarvisDoor(): String? {
+    val origin = JarvisDoor.resolve(prefs.jarvisDoorCandidates.value) ?: return null
+    val (host, port) = jarvisDoorHostPort(origin) ?: return origin
+    val nodeOnDoor = prefs.manualEnabled.value && prefs.manualHost.value == host && prefs.manualPort.value == port
+    if (!nodeOnDoor && prefs.loadJarvisDeviceToken() != null) {
+      pointNodeAtDoor(origin)
+    }
+    return origin
+  }
+
+  fun connectJarvisDoor() {
+    val origin = JarvisDoor.origin.value ?: prefs.jarvisDoorCandidates.value.firstOrNull() ?: return
+    pointNodeAtDoor(origin)
+  }
+
+  private fun pointNodeAtDoor(origin: String) {
+    val (host, port) = jarvisDoorHostPort(origin) ?: return
+    prefs.setManualEnabled(true)
+    prefs.setManualHost(host)
+    prefs.setManualPort(port)
+    prefs.setManualTls(origin.startsWith("https://"))
+    ensureRuntime().connect(GatewayEndpoint.manual(host = host, port = port))
   }
 
   val canvas: CanvasController

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GOOGLE_G_LOGO_SVG, getProviderLogoSvg, getRoutedLogoSvg } from "./provider-logos.js";
 
 /**
- * FORK 2026-09-03 (the user: "The logo in the models panel next to the gemini
+ * FORK 2026-09-03 (the architect: "The logo in the models panel next to the gemini
  * models is flashing… Use the one we had before, the G from google, the
  * colorful one").
  *

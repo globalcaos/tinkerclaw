@@ -89,6 +89,20 @@ describe("Total Recall registration", () => {
     expect(compactionHooks!.length).toBe(1);
   });
 
+  it("registers a gateway_stop hook that ends the FTS worker thread", async () => {
+    const { api, hooks } = createMockApi();
+
+    const mod = await import("../index.js");
+    mod.default.register(api as any);
+
+    const stopHooks = hooks.get("gateway_stop");
+    expect(stopHooks).toBeDefined();
+    expect(stopHooks!.length).toBe(1);
+    // Nothing started a worker here; stopping must still settle, and twice is harmless.
+    await expect(stopHooks![0].handler({ reason: "test" }, {})).resolves.toBeUndefined();
+    await expect(stopHooks![0].handler({ reason: "test" }, {})).resolves.toBeUndefined();
+  });
+
   it("registers recall tool", async () => {
     const { api, registerTool } = createMockApi();
 
@@ -101,7 +115,12 @@ describe("Total Recall registration", () => {
 
     const tool = toolFactory({});
     expect(tool.name).toBe("recall");
-    expect(tool.parameters.required).toContain("query");
+    // FORK 2026-10-25 — a query OR an id (an evicted tool result's toolCallId): neither is
+    // required on its own, and execute() asks for one when it gets neither.
+    expect(Object.keys(tool.parameters.properties)).toEqual(
+      expect.arrayContaining(["query", "id", "offset", "length"]),
+    );
+    expect(tool.parameters.required ?? []).not.toContain("query");
     expect(typeof tool.execute).toBe("function");
   });
 

@@ -1,6 +1,6 @@
 ---
 name: token-panel-ultimate
-version: 2.6.0
+version: 2.6.2
 description: "Know exactly where your AI tokens go. Multi-provider tracking, budget alerts, and a local REST API—all in one dashboard. Provider credentials are supplied by you and sealed in the OS keychain, never passed on a command line; it reads no other application's credential store. Transcript parsing, live provider probing, and reading another tool's API-key variables are each opt-in and off by default. Only counts are stored — no prompts, no task titles. See Permissions, Data Flow & Consent."
 metadata:
   openclaw:
@@ -19,13 +19,13 @@ metadata:
         scope: "One path only: its own credential fallback file ~/.openclaw/data/token-panel/credentials, unlinked by --logout when the last provider is removed. The path is validated before deletion (absolute, inside $HOME, a regular file, not a symlink, owned by you, and beside a .token-panel-store marker this tool wrote). Nothing else is ever deleted; the SQLite database is not removed."
       env_read:
         required: true
-        scope: "Namespaced TOKEN_PANEL_* variables (credentials, TOKEN_PANEL_API_TOKEN, TOKEN_PANEL_READ_TRANSCRIPTS, TOKEN_PANEL_ALLOW_PROVIDER_ENV). Generic provider variables belonging to other tools (OPENAI_API_KEY, ANTHROPIC_ADMIN_API_KEY, GEMINI_API_KEY, MANUS_API_KEY) are read ONLY with TOKEN_PANEL_ALLOW_PROVIDER_ENV=1. No .env files are scraped."
+        scope: "Namespaced TOKEN_PANEL_* variables (credentials TOKEN_PANEL_ANTHROPIC_TOKEN / TOKEN_PANEL_ANTHROPIC_ADMIN_KEY / TOKEN_PANEL_OPENAI_KEY / TOKEN_PANEL_GEMINI_KEY / TOKEN_PANEL_MANUS_KEY, TOKEN_PANEL_API_TOKEN, TOKEN_PANEL_READ_TRANSCRIPTS, TOKEN_PANEL_ALLOW_PROVIDER_ENV). Generic provider variables belonging to other tools (OPENAI_API_KEY, ANTHROPIC_ADMIN_API_KEY, GEMINI_API_KEY, MANUS_API_KEY) are read ONLY with TOKEN_PANEL_ALLOW_PROVIDER_ENV=1. No .env files are scraped."
       process_exec:
         required: true
-        scope: "The OS keychain helpers only: `secret-tool` (Linux) for store/lookup/clear, and `security` (macOS) for lookup/delete. Secrets are never passed as command-line arguments — macOS writes go through Security.framework, Linux writes go over stdin."
+        scope: "The OS keychain helpers only: `secret-tool` (Linux) for store/lookup/clear, and `security` (macOS) for lookup/delete, each run by absolute path from /usr/bin or /bin — $PATH is never searched. Secrets are never passed as command-line arguments — macOS writes go through Security.framework, Linux writes go over stdin."
       credentials:
         required: true
-        scope: "First-party provider API keys supplied by you, stored under token-panel-ultimate in the OS keychain. It never reads Claude Code, OpenClaw, browser, or other application credential stores. `--logout PROVIDER` clears every local store and prints the provider's server-side revoke URL."
+        scope: "First-party provider credentials supplied by you, stored under token-panel-ultimate in the OS keychain, one slot per credential kind: `anthropic` (a Claude usage token from `claude setup-token`, sent only to the Anthropic OAuth usage endpoint), `anthropic-admin` (an Admin API key, sent only to the Admin usage API), `openai`, `gemini` (sent in the x-goog-api-key header, never in a URL), `manus`. It never reads Claude Code, OpenClaw, browser, or other application credential stores. `--logout PROVIDER` clears every local store and prints the provider's server-side revoke URL."
     owner: kn7623hrcwt6rg73a67xw3wyx580asdw
     category: monitoring
     tags:
@@ -39,14 +39,17 @@ metadata:
       - dashboard
     license: MIT
     notes:
-      security: "Runs a REST API bound to 127.0.0.1:8765. Its GET endpoints are unauthenticated and report your spend, so do not expose the port; every POST additionally requires X-Token-Panel-Token and is closed entirely unless TOKEN_PANEL_API_TOKEN is set. SQLite database is local, 0600 in a 0700 directory, and holds counts and opaque ids only. Credentials are ones you supply, sealed in the OS keychain. The systemd unit is a --user unit: it runs as you, never as root, and carries no hardcoded username."
+      security: "Runs a REST API bound to 127.0.0.1:8765. Its GET endpoints are unauthenticated and report your spend, so do not expose the port; every POST additionally requires X-Token-Panel-Token and is closed entirely unless TOKEN_PANEL_API_TOKEN is set. SQLite database is local, 0600 in a 0700 directory, and holds counts and opaque ids only; the database, its directory and every usage JSON refuse to be written through a symlink, and all four usage fetchers share one owner-only writer instead of four drifted copies (two of which used to inherit the ambient umask). Credentials are ones you supply, sealed in the OS keychain; the no-keychain fallback file refuses symlinks and is replaced atomically. POST bodies accept identifier-shaped strings only, and the browser widget HTML-escapes every value it renders. The systemd unit is a --user unit: it runs as you, never as root, and carries no hardcoded username."
 ---
 
 # Token Panel Ultimate
 
 > One of dozens of skills and plugins in **[TinkerClaw](https://github.com/globalcaos/tinkerclaw)** — a self-improving OpenClaw fork that's been running 24/7 for months.
 
+
 **One dashboard for every token you spend.** Anthropic, Gemini, OpenAI, Manus—tracked, stored, and queryable before the bill arrives.
+
+
 
 **Part of [TinkerClaw](https://github.com/globalcaos/tinkerclaw)** — real-time token tracking, self-improving crons, persistent cognitive memory. This is one piece of that stack; the repo has dozens more.
 
@@ -54,14 +57,20 @@ metadata:
 
 _Clone it. Fork it. Break it. Make it yours._
 
+
 ## ⚠️ Permissions, Data Flow & Consent — read before installing
 
 **What it does that a "dashboard" does not imply:**
 
 - **It uses only credentials you supply to Token Panel itself.** `python3 secretstore.py --login
-anthropic` reads the key from **stdin** and seals it in the OS keychain — never in a shell
+  anthropic` reads the key from **stdin** and seals it in the OS keychain — never in a shell
   argument, so it cannot be picked up from your history or from another process reading command
-  lines. The same command supports `openai`, `gemini` and `manus`. On macOS the write goes
+  lines. The same command supports `anthropic-admin`, `openai`, `gemini` and `manus`. The
+  keychain helper is run from `/usr/bin` or `/bin` by absolute path, never looked up on `$PATH`.
+- **Each credential goes only where it belongs.** The Claude usage token (`anthropic`) and an
+  Anthropic Admin API key (`anthropic-admin`) live in separate slots and are never sent to each
+  other's endpoint. The Gemini key travels in the `x-goog-api-key` header, not in a URL, and is
+  redacted from error text. The Claude fetcher sends its own `User-Agent`, not Claude Code's. On macOS the write goes
   through Security.framework rather than `security add-generic-password -w`, precisely because
   that CLI form would place your key in this process's argv. `--logout PROVIDER` clears every
   local store and prints the provider's server-side revoke URL, because deleting a local copy is
@@ -103,9 +112,16 @@ previous version already stored.
 **What it does NOT do:** no credential reuse, no browser-token extraction, no silent secrets
 scraping, no `.env` reads, no message content in the database, no telemetry, no third-party
 endpoint. If no OS keychain exists, the CLI warns on every use before falling back to an
-owner-only `0600` file inside a `0700` directory. Database and usage files are created `0600`
+owner-only `0600` file inside a `0700` directory; that file and its directory must not be
+symlinks, and it is rewritten atomically. Database and usage files are created `0600`
 inside a `0700` directory rather than inheriting an ambient umask. The local API allows CORS only
 from localhost dashboard origins, not `*`.
+
+**The widget treats its data as text.** Plan names, model ids and counts come from provider
+responses, so every value is HTML-escaped or coerced to a number before it reaches the page, and
+the userscript requests no `GM_*` grants and no `file://` access. The API accepts only
+identifier-shaped strings and non-negative counts on POST, and compares the mutate token in
+constant time.
 
 **Diagnostics are off by default.** The browser widget logs nothing unless you set
 `localStorage.BP_DEBUG = "1"` — including error paths, which can carry request URLs and response
@@ -116,6 +132,7 @@ machine's username baked in.
 
 **Dependencies are pinned above known-vulnerable releases.** The floor for `fastapi` is
 `0.109.1`; the previous `>=0.100.0` permitted a release affected by CVE-2024-24762.
+
 
 ## Why This Exists
 
@@ -136,7 +153,8 @@ You've checked your Anthropic console, squinted at the OpenAI dashboard, opened 
 pip install -r requirements.txt
 
 # Give the dashboard a credential of its own (read from stdin, sealed in the keychain)
-python3 secretstore.py --login anthropic
+claude setup-token | python3 secretstore.py --login anthropic   # scripts/claude-usage-fetch.py
+python3 secretstore.py --login anthropic-admin                  # collector: Admin usage API (optional)
 python3 secretstore.py --status
 
 python3 api.py                    # http://127.0.0.1:8765
@@ -159,19 +177,23 @@ OpenClaw Plugin → Budget Collector API → SQLite DB (0600)
 
 ## API Endpoints
 
-| Method | Path                      | Auth      | Description                         |
-| ------ | ------------------------- | --------- | ----------------------------------- |
-| GET    | /status                   | none      | Overall budget status               |
-| GET    | /budgets                  | none      | Current budget limits               |
-| GET    | /summary/monthly          | none      | Monthly usage summary               |
-| GET    | /summary/daily/{provider} | none      | Daily breakdown                     |
-| POST   | /budgets                  | **token** | Set or update budget limits         |
-| POST   | /usage                    | **token** | Record a usage event                |
-| POST   | /manus/task               | **token** | Record a task (id, credits, status) |
+| Method | Path                       | Auth      | Description                       |
+|--------|----------------------------|-----------|-----------------------------------|
+| GET    | /status                    | none      | Overall budget status             |
+| GET    | /budgets                   | none      | Current budget limits             |
+| GET    | /summary/monthly           | none      | Monthly usage summary             |
+| GET    | /summary/daily/{provider}  | none      | Daily breakdown                   |
+| POST   | /budgets                   | **token** | Set or update budget limits       |
+| POST   | /usage                     | **token** | Record a usage event              |
+| POST   | /manus/task                | **token** | Record a task (id, credits, status) |
 
 **token** = `X-Token-Panel-Token` must match `TOKEN_PANEL_API_TOKEN`; with that variable unset,
 every POST returns 403.
 
-_Clone it. Fork it. Break it. Make it yours._
+## Changelog
+
+- **2.6.2** — widget HTML-escapes all rendered values (fixes markup injection from provider data) and drops unused GM/file grants; Gemini key moved from URL to header with error redaction; separate `anthropic` / `anthropic-admin` credential slots; keychain helpers run from fixed system paths, not `$PATH`; fallback credential file refuses symlinks and writes atomically; API token compared in constant time and POST inputs validated; Claude fetcher no longer sends a Claude Code User-Agent.
+
+*Clone it. Fork it. Break it. Make it yours.*
 
 👉 Explore the full project: [github.com/globalcaos/tinkerclaw](https://github.com/globalcaos/tinkerclaw)

@@ -1,0 +1,14 @@
+# FORK 2026-10-19 (the architect: phone app) — run trip-watch.service every 10 minutes.
+[Unit]
+Description=Trip corner: flight status watch every 10 minutes
+
+[Timer]
+# OnCalendar, not OnUnitActiveSec: Persistent= only applies to calendar timers, and it is what makes
+# a laptop that slept through a slot run once on wake.
+OnBootSec=2min
+OnCalendar=*:0/10
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

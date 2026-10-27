@@ -11,6 +11,7 @@
  * FORK-ISOLATED: unique to our fork (ENGRAM paper §5.3).
  */
 
+import { emitJConsolidationRun } from "../../infra/events/j-rows.js";
 import type { Skill } from "../storage/types.js";
 import type { ArtifactStore } from "./artifact-store.js";
 import {
@@ -137,6 +138,12 @@ export interface SleepConsolidationConfig {
   skillExtraction?: SkillExtractionDeps;
   /** Opt-in Mem0 write-reconciliation sweep (Upgrade 8). */
   reconciliation?: ReconciliationDeps;
+  /**
+   * Emit the J5 `j.consolidation.run` row for this call (default true). A caller that loops over
+   * many stores owns the cycle and passes false, then emits ONE aggregated row itself: one row per
+   * store put 4,736 rows into one night's cycle (2026-10-10).
+   */
+  emitCycleRow?: boolean;
 }
 
 export interface ConsolidationResult {
@@ -250,6 +257,18 @@ export async function runSleepConsolidation(
   }
 
   if (unprocessed.length === 0) {
+    // logging.md §4.12 (J5) + L10: an idle night is a MEASUREMENT. Emitting nothing here would
+    // make "the cycle never ran" and "the cycle ran and found nothing" the same reading, and the
+    // first is the failure this row exists to catch.
+    if (config.emitCycleRow !== false) {
+      emitJConsolidationRun({
+        durMs: Date.now() - start,
+        eventsScanned: 0,
+        skillsExtracted: 0,
+        skillsDeprecated: 0,
+        sessionKey: store.sessionKey,
+      });
+    }
     return {
       newEpisodes: [],
       summariesGenerated: 0,
@@ -441,11 +460,27 @@ export async function runSleepConsolidation(
   state.lastConsolidatedAt = new Date().toISOString();
   state.episodeCount += episodes.length;
 
+  const durationMs = Date.now() - start;
+  // logging.md §4.12 (J5): what this cycle added to and removed from the skill library.
+  // `skillsDeprecated` is a MEASURED zero, not a missing number: SkillLibrary.deprecate() exists
+  // (skill-library.ts) and this pipeline never calls it, so the series will show a library that
+  // only ever grows — which is the weak half of the J5 claim and exactly why the slot is recorded
+  // rather than left out. The moment a deprecation step lands it is counted here.
+  if (config.emitCycleRow !== false) {
+    emitJConsolidationRun({
+      durMs: durationMs,
+      eventsScanned: unprocessed.length,
+      skillsExtracted,
+      skillsDeprecated: 0,
+      sessionKey: store.sessionKey,
+    });
+  }
+
   return {
     newEpisodes: episodes,
     summariesGenerated,
     eventsProcessed: unprocessed.length,
-    durationMs: Date.now() - start,
+    durationMs,
     ...(config.recipeEvolution ? { recipeMutationsProposed, recipeMutationsAutoPromotable } : {}),
     ...(config.strategySwitch ? { strategySwitchesProposed } : {}),
     ...(config.skillExtraction ? { skillsExtracted } : {}),

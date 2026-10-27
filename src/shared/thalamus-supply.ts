@@ -232,7 +232,16 @@ export function supplyStateFrom(
   // never as an obligation to spend.
   if (kind === "free-tier") shadow = Math.min(0, shadow);
 
-  const ballistic = kind === "subscription" && windows.some((w) => windowBallistic(w));
+  // A burn window is only free if EVERY window of the supply can afford it. Tokens spent to use up
+  // a short window's surplus are also spent from the longer windows, so a 5-hour bucket about to
+  // reset half-empty is NOT free while the same account's weekly bucket is at 99%: burning it would
+  // price the nearly-exhausted supply at σ = −1 and push work onto it. (Counterexample raised by
+  // the J19 concept review, 2026-09-29, and reproduced against this function before the fix.)
+  const burning = windows.filter((w) => windowBallistic(w));
+  const ballistic =
+    kind === "subscription" &&
+    burning.length > 0 &&
+    windows.every((w) => burning.includes(w) || w.pace === undefined || w.pace <= 0);
 
   const resets = windows.map((w) => w.resetAtMs).filter((n): n is number => typeof n === "number");
 

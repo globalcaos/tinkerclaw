@@ -19,6 +19,9 @@ class NodeApp : Application() {
 
   override fun onCreate() {
     super.onCreate()
+    // 2026-10-26: crash and abnormal-exit reports go to the Pi's door (the architect: "keeps stopping").
+    if (BuildConfig.JARVIS_APP) ai.openclaw.app.jarvis.JarvisCrash.install(this)
+    ai.openclaw.app.jarvis.JarvisLook.attachApp(this)
     if (BuildConfig.DEBUG) {
       StrictMode.setThreadPolicy(
         StrictMode.ThreadPolicy

@@ -153,6 +153,9 @@ export type SessionEntry = {
   /** Durable one-shot prompt additions drained before the next agent turn. */
   pluginNextTurnInjections?: Record<string, SessionPluginNextTurnInjection[]>;
   sessionId: string;
+  /** Hivemind seat. Panel filter only; archive jsonl is unfiltered. */
+  operatorId?: string;
+  seatId?: string;
   updatedAt: number;
   sessionFile?: string;
   /** Parent session key that spawned this session (used for sandbox session-tool scoping). */
@@ -163,6 +166,11 @@ export type SessionEntry = {
   parentSessionKey?: string;
   /** True after a thread/topic session has been forked from its parent transcript once. */
   forkedFromParent?: boolean;
+  /**
+   * FORK 2026-09-30: sessions this tab pointed at before each Rewind (newest last). Undo pops one and points back.
+   * The files are never modified by a rewind.
+   */
+  rewoundFrom?: Array<{ sessionId: string; sessionFile?: string; ts: number }>;
   /** Subagent spawn depth (0 = main, 1 = sub-agent, 2 = sub-sub-agent). */
   spawnDepth?: number;
   /** Explicit role assigned at spawn time for subagent tool policy/control decisions. */
@@ -181,6 +189,22 @@ export type SessionEntry = {
    * turns from one stuck Bash call).
    */
   restartResumeToolCallId?: string;
+  /**
+   * FORK 2026-09-08 — epoch ms of the last restart-recovery resume DISPATCHED to
+   * this session (`resumeMainSession`), written on the acked path and on the
+   * ack-timeout path alike (both deliver the prompt); never written when the
+   * dispatch hard-errors, so that legitimate retry is not suppressed.
+   *
+   * `restartResumeToolCallId` bounds only the dangling-tool path. A plain
+   * gateway restart carries no toolCallId, so nothing bounded it: a systemd
+   * restart storm ("Scheduled restart" every 10 s, 09-03) re-armed the RESUMED
+   * run on every boot and ONE interruption produced TWO different answers
+   * (measured 2026-09-08: `agent:main:tinker:mthk0fck` resumed 2m44s apart on
+   * 09-01; the ClawHub tab 41 s apart on 09-07). Both boot sweeps and the
+   * recovery gate hold back while this is younger than RESUME_COOLDOWN_MS —
+   * write-once at the source, not a dedup of the prompt downstream.
+   */
+  lastResumeAt?: number;
   /** Timestamp (ms) when the current sessionId first became active. */
   sessionStartedAt?: number;
   /** Timestamp (ms) of the last user/channel interaction that should extend idle lifetime. */

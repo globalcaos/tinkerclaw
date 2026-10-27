@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "title": "Test trip · Oct–Nov 2025",
+  "homeTz": "Europe/Madrid",
+  "updatedAt": "2025-10-20T16:00:00.000Z",
+  "travellers": [{ "name": "Alex Example" }, { "name": "Sam Example" }],
+  "segments": [
+    {
+      "id": "f1",
+      "type": "flight",
+      "confirmed": true,
+      "source": "fixture",
+      "airline": "Example Air",
+      "carrier": "ZX",
+      "number": "101",
+      "confirmation": "ABC123",
+      "from": { "iata": "BCN", "name": "Valencia El Prat", "tz": "Europe/Madrid" },
+      "to": { "iata": "SFO", "name": "San Francisco Intl", "tz": "America/Los_Angeles" },
+      "depLocal": "2025-10-21T16:05",
+      "arrLocal": "2025-10-21T19:20",
+      "seats": "32A, 32B",
+      "notes": "Bags checked through."
+    },
+    {
+      "id": "c1",
+      "type": "car",
+      "confirmed": false,
+      "source": "fixture",
+      "company": "Example Rentals",
+      "pickup": { "place": "SFO Rental Car Center", "local": "2025-10-21T21:00" },
+      "dropoff": { "place": "LAX Rental Car Return", "local": "2025-11-03T10:00" },
+      "confirmation": null,
+      "notes": ""
+    },
+    {
+      "id": "s1",
+      "type": "stay",
+      "confirmed": true,
+      "source": "fixture",
+      "name": "Example Inn Union Square",
+      "address": "1 Example St, San Francisco, CA 94102",
+      "lat": 37.7879,
+      "lon": -122.4075,
+      "tz": "America/Los_Angeles",
+      "checkIn": "2025-10-21",
+      "checkOut": "2025-10-25",
+      "notes": "Late arrival noted."
+    },
+    {
+      "id": "a1",
+      "type": "activity",
+      "confirmed": false,
+      "source": "fixture",
+      "date": "2025-10-23",
+      "title": "Ferry to the island",
+      "notes": "Tickets sell out, book a day ahead."
+    },
+    {
+      "id": "s2",
+      "type": "stay",
+      "confirmed": false,
+      "source": "fixture",
+      "name": "",
+      "address": null,
+      "lat": null,
+      "lon": null,
+      "tz": "America/Los_Angeles",
+      "checkIn": "2025-10-25",
+      "checkOut": "2025-11-03",
+      "notes": "Somewhere on the coast."
+    },
+    {
+      "id": "f2",
+      "type": "flight",
+      "confirmed": true,
+      "source": "fixture",
+      "airline": "Example Air",
+      "carrier": "ZX",
+      "number": "102",
+      "confirmation": "ABC123",
+      "from": { "iata": "LAX", "name": "Los Angeles Intl", "tz": "America/Los_Angeles" },
+      "to": { "iata": "BCN", "name": "Valencia El Prat", "tz": "Europe/Madrid" },
+      "depLocal": "2025-11-03T15:30",
+      "arrLocal": "2025-11-04T11:45",
+      "seats": null,
+      "notes": ""
+    }
+  ],
+  "checklist": [
+    { "text": "ESTA approved for both", "done": true, "due": "2025-10-16" },
+    { "text": "Online check-in", "done": false, "due": "2025-10-20" },
+    { "text": "Download offline maps", "done": false, "due": null }
+  ],
+  "contacts": [
+    { "name": "Example Inn front desk", "role": "hotel", "phone": "+1 415 555 0100" },
+    { "name": "Example Air", "role": "airline", "phone": null }
+  ],
+  "alerts": [
+    {
+      "at": "2025-10-20T15:00:00.000Z",
+      "segmentId": "f1",
+      "level": "warn",
+      "text": "ZX 101 delayed +40 min, now departs 16:45 CEST"
+    },
+    {
+      "at": "2025-10-20T14:00:00.000Z",
+      "segmentId": "f1",
+      "level": "info",
+      "text": "ZX 101 check-in is open"
+    },
+    {
+      "at": "2025-10-11T09:00:00.000Z",
+      "segmentId": "f1",
+      "level": "critical",
+      "text": "old alert that must not show"
+    }
+  ],
+  "openQuestions": ["Which beach house for the second week?", "Car seat for the youngest?"]
+}

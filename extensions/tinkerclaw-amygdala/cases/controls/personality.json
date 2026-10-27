@@ -1,0 +1,144 @@
+{
+  "cases": [
+    {
+      "id": "ctl-pe-expected-matched",
+      "kind": "control",
+      "description": "The agent expected the tests to pass and they passed: no surprise.",
+      "situation": {
+        "originKind": "synthetic",
+        "expectation": { "value": "The test suite will pass.", "origin": "observed" },
+        "toolRecord": {
+          "value": [
+            {
+              "tool": "Bash",
+              "argsDigest": "pytest: 12 passed",
+              "exit": 0,
+              "filesWritten": [],
+              "effects": ["read"],
+              "ts": 1
+            }
+          ],
+          "origin": "observed"
+        }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "surprise": { "answer": 0 } }
+    },
+    {
+      "id": "ctl-pe-familiar-file",
+      "kind": "control",
+      "description": "A file the record has touched many times: familiar, not new.",
+      "situation": {
+        "originKind": "synthetic",
+        "tool": { "value": "Read", "origin": "observed" },
+        "targets": {
+          "value": [
+            {
+              "path": "/work/demo/src/main.py",
+              "kind": "file",
+              "resolvedFrom": "Read /work/demo/src/main.py"
+            }
+          ],
+          "origin": "derived"
+        },
+        "contextCounts": { "value": { "seen": 7, "alarms": 0 }, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "novelty": { "answer": 0.05, "prob": 0.05 } }
+    },
+    {
+      "id": "ctl-pe-hurried-session",
+      "kind": "control",
+      "description": "A hurried session: the last prompts came seconds apart, so curiosity is muted and no question is asked.",
+      "situation": {
+        "originKind": "synthetic",
+        "tool": { "value": "Read", "origin": "observed" },
+        "targets": {
+          "value": [
+            {
+              "path": "/work/demo/docs/overview.md",
+              "kind": "file",
+              "resolvedFrom": "Read /work/demo/docs/overview.md"
+            }
+          ],
+          "origin": "derived"
+        },
+        "contextCounts": { "value": { "seen": 5, "alarms": 0 }, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": {}
+    },
+    {
+      "id": "ctl-pe-low-relevance-read",
+      "kind": "control",
+      "description": "A read of a file unrelated to the user's goals: not worth an interruption.",
+      "situation": {
+        "originKind": "synthetic",
+        "request": { "value": "Fix the failing export test.", "origin": "observed" },
+        "tool": { "value": "Read", "origin": "observed" },
+        "targets": {
+          "value": [
+            {
+              "path": "/work/demo/assets/logo-notes.txt",
+              "kind": "file",
+              "resolvedFrom": "Read /work/demo/assets/logo-notes.txt"
+            }
+          ],
+          "origin": "derived"
+        },
+        "contextCounts": { "value": { "seen": 4, "alarms": 0 }, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "worth-knowing": { "answer": 0 } }
+    },
+    {
+      "id": "ctl-pe-trivial-first-read",
+      "kind": "control",
+      "description": "A first read of a trivial file: new to the record but not a kind of thing worth a note.",
+      "situation": {
+        "originKind": "synthetic",
+        "tool": { "value": "Read", "origin": "observed" },
+        "targets": {
+          "value": [
+            {
+              "path": "/work/demo/.gitkeep",
+              "kind": "file",
+              "resolvedFrom": "Read /work/demo/.gitkeep"
+            }
+          ],
+          "origin": "derived"
+        },
+        "contextCounts": { "value": { "seen": 0, "alarms": 0 }, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "novelty": { "answer": 0.2, "prob": 0.2 } }
+    },
+    {
+      "id": "ctl-pe-partial-expectation-no-alarm",
+      "kind": "control",
+      "description": "The agent expected a quick listing and got one with an extra line: no surprise worth a note.",
+      "situation": {
+        "originKind": "synthetic",
+        "expectation": {
+          "value": "The listing will show the export folder.",
+          "origin": "observed"
+        },
+        "toolRecord": {
+          "value": [
+            {
+              "tool": "Bash",
+              "argsDigest": "ls /work/demo: exports, notes",
+              "exit": 0,
+              "filesWritten": [],
+              "effects": ["read"],
+              "ts": 1
+            }
+          ],
+          "origin": "observed"
+        }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "surprise": { "answer": 0 } }
+    }
+  ]
+}

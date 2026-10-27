@@ -35,6 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import secretstore
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _secure_write import write_private_json  # owner-only JSON writes
 
 USAGE_JSON_PATH = Path.home() / '.openclaw/workspace/memory/gemini-usage.json'
 BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
@@ -95,27 +97,36 @@ def get_api_key():
     return key
 
 
+def _redact(text, api_key):
+    """Never let the key reach stdout, a log, or the usage JSON via an error string."""
+    text = str(text)
+    return text.replace(api_key, "[REDACTED]") if api_key else text
+
+
 def list_models(api_key):
     """List available models."""
-    url = f'{BASE_URL}/models?key={api_key}'
+    # The key travels in the x-goog-api-key HEADER, not a ?key= query parameter: a URL
+    # is what proxies, access logs and exception messages record.
+    req = urllib.request.Request(f'{BASE_URL}/models', headers={'x-goog-api-key': api_key})
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
             return [m['name'].split('/')[-1] for m in data.get('models', [])]
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": _redact(e, api_key)}
 
 
 def probe_model(api_key, model):
     """Make a 1-token call to verify access and get token counts."""
-    url = f'{BASE_URL}/models/{model}:generateContent?key={api_key}'
+    url = f'{BASE_URL}/models/{model}:generateContent'
     data = json.dumps({
         "contents": [{"parts": [{"text": "x"}]}],
         "generationConfig": {"maxOutputTokens": 1}
     }).encode()
 
     req = urllib.request.Request(url, data=data, headers={
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'x-goog-api-key': api_key,
     })
 
     try:
@@ -130,9 +141,9 @@ def probe_model(api_key, model):
             }
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:300]
-        return {"status": "error", "code": e.code, "message": body}
+        return {"status": "error", "code": e.code, "message": _redact(body, api_key)}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": _redact(e, api_key)}
 
 
 def detect_tier(api_key):
@@ -257,9 +268,8 @@ def main():
     if '--json' in args:
         print(json.dumps(output, indent=2))
     elif '--update' in args:
-        USAGE_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(USAGE_JSON_PATH, 'w') as f:
-            json.dump(output, f, indent=2)
+        # Reports your plan and rate limits — owner-only, never through a symlink.
+        write_private_json(USAGE_JSON_PATH, output)
         print(f"✓ Updated {USAGE_JSON_PATH}")
         for model, info in output["models"].items():
             status = info.get("status", "?")

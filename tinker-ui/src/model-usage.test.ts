@@ -12,7 +12,7 @@ import {
 const NOW = Date.parse("2026-07-26T12:00:00.000Z");
 
 describe("unified usage tooltip", () => {
-  it("renders the user's three-line block when every field is available", () => {
+  it("renders the architect's three-line block when every field is available", () => {
     const tip = formatUsageTooltip(
       [
         { label: "5h", pct: 20 },
@@ -190,7 +190,7 @@ describe("getModelUsage", () => {
     expect(usage).toMatchObject({ topPct: 12.5, bottomPct: 2 });
     expect(usage?.tooltip).toContain("7d: 2%");
     expect(usage?.tooltip).toContain("5h: 13%");
-    // The reset is the point of the third row (the user 2026-07-31: "for
+    // The reset is the point of the third row (the architect 2026-07-31: "for
     // sol-terra-luna, I am missing the reset time and do not care about plan").
     expect(usage?.tooltip).toContain("reset: ");
     expect(usage?.tooltip).not.toContain("plan:");
@@ -198,7 +198,7 @@ describe("getModelUsage", () => {
     expect(usage?.tooltip).not.toContain("Weekly");
   });
 
-  // the user 2026-07-31: "is there no 5h window in openai?" — correct, and it is not
+  // the architect 2026-07-31: "is there no 5h window in openai?" — correct, and it is not
   // us hiding it: chatgpt.com/backend-api/wham/usage returns `secondary_window:
   // null` with a single 604800s primary, because OpenAI suspended the 5-hour limit
   // on 2026-07-12 and began restoring it on 2026-07-30. Nothing needs changing when
@@ -232,7 +232,7 @@ describe("getModelUsage", () => {
     ]);
   });
 
-  // the user 2026-08-28, with codex/sol sitting at 0 of 100 requests: "when a model
+  // the architect 2026-08-28, with codex/sol sitting at 0 of 100 requests: "when a model
   // reaches the 5-hour window limit, the message about reset time should be set to
   // the reset time of the 5-hour window". Verbatim payload from
   // ~/.openclaw/workspace/memory/chatgpt-usage.json at 12:19Z that day, only the

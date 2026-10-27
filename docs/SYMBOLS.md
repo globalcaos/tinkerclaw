@@ -12,10 +12,10 @@ grep -P '^performGatewaySessionReset\t' ~/src/tinkerclaw/docs/SYMBOLS.tsv   # ex
 grep -iP '^[^\t]*sessionreset' ~/src/tinkerclaw/docs/SYMBOLS.tsv           # fuzzy
 ```
 
-Format: `symbol<TAB>path:line<TAB>kind`. **65,897 symbols** across
-**15,293 source files**.
+Format: `symbol<TAB>path:line<TAB>kind`. **68,665 symbols** across
+**15,639 source files**.
 
-**Provenance.** Generated 2026-08-16 at commit `fd787c19abc` by `scripts/build-symbol-map.mjs`.
+**Provenance.** Generated 2026-09-25 at commit `88347a7672d` by `scripts/build-symbol-map.mjs`.
 Exported declarations plus top-level `function`/`def`/`class`; excludes `node_modules`,
 `dist`, `.d.ts` and files over 3 MB (1 skipped).
 
@@ -33,15 +33,16 @@ but check the map first.
 
 | directory                              | symbols |
 | -------------------------------------- | ------- |
-| `src/agents`                           | 7,465   |
-| `src/plugins`                          | 3,774   |
-| `src/gateway`                          | 3,748   |
-| `src/infra`                            | 3,507   |
-| `src/commands`                         | 2,250   |
-| `src/auto-reply`                       | 2,002   |
-| `src/config`                           | 1,668   |
+| `src/agents`                           | 7,578   |
+| `src/gateway`                          | 4,088   |
+| `src/infra`                            | 3,986   |
+| `src/plugins`                          | 3,780   |
+| `src/commands`                         | 2,254   |
+| `src/auto-reply`                       | 2,080   |
+| `src/config`                           | 1,722   |
+| `tinker-ui/src`                        | 1,716   |
 | `extensions/discord`                   | 1,551   |
-| `src/cli`                              | 1,449   |
+| `src/cli`                              | 1,461   |
 | `extensions/matrix`                    | 1,385   |
 | `src/plugin-sdk`                       | 1,339   |
 | `src/channels`                         | 1,278   |
@@ -49,11 +50,10 @@ but check the map first.
 | `extensions/codex`                     | 1,126   |
 | `extensions/telegram`                  | 1,119   |
 | `extensions/qa-lab`                    | 994     |
+| `src/memory`                           | 881     |
 | `extensions/qqbot`                     | 870     |
 | `extensions/whatsapp.disabled-hostver` | 862     |
 | `extensions/feishu`                    | 850     |
-| `extensions/tinkerclaw-whatsapp`       | 816     |
-| `src/memory`                           | 772     |
+| `extensions/tinkerclaw-whatsapp`       | 835     |
 | `extensions/slack`                     | 735     |
-| `tinker-ui/src`                        | 712     |
 | `src/cron`                             | 707     |

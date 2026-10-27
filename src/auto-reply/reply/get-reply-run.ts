@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
+import type { ThinkSource } from "../../agents/embedded-agent-runner/run/types.js";
 import { resolveEmbeddedFullAccessState } from "../../agents/embedded-agent-runner/sandbox-info.js";
 import type { EmbeddedFullAccessBlockedReason } from "../../agents/embedded-agent-runner/types.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
@@ -195,6 +196,14 @@ type RunPreparedReplyParams = {
   directives: InlineDirectives;
   defaultActivation: Parameters<typeof buildGroupIntro>[0]["defaultActivation"];
   resolvedThinkLevel: ThinkLevel | undefined;
+  /**
+   * FORK 2026-10-09 (effort slider): who chose resolvedThinkLevel, from resolveReplyDirectives.
+   * Optional because a caller that resolved no provenance (the fast-test bootstrap) passes none;
+   * absent reads as "default".
+   */
+  thinkSource?: ThinkSource;
+  /** FORK 2026-10-09: Thalamus's ultracode call; honoured only while thinkSource stays "thalamus". */
+  ultracode?: boolean;
   resolvedVerboseLevel: VerboseLevel | undefined;
   resolvedReasoningLevel: ReasoningLevel;
   resolvedElevatedLevel: ElevatedLevel;
@@ -297,6 +306,10 @@ export async function runPreparedReply(
     execOverrides,
     abortedLastRun,
   } = params;
+  // FORK 2026-10-09 (effort slider): who chose resolvedThinkLevel. Reassigned below only where
+  // this function changes where the level CAME FROM; the support clamp changes its value, not its
+  // origin, and keeps the source.
+  let thinkSource: ThinkSource = params.thinkSource ?? "default";
   const useFastReplyRuntime = shouldUseReplyFastTestRuntime({
     cfg,
     isFastTestEnv: process.env.OPENCLAW_TEST_FAST === "1",
@@ -545,6 +558,7 @@ export async function runPreparedReply(
       isThinkingLevelSupported({ provider, model, level: maybeLevel, catalog: thinkingCatalog })
     ) {
       resolvedThinkLevel = maybeLevel;
+      thinkSource = "pin";
       prefixedBodyBase = parts.slice(1).join(" ").trim();
     }
   }
@@ -614,6 +628,7 @@ export async function runPreparedReply(
   let { prefixedCommandBody, queuedBody, transcriptCommandBody } = await rebuildPromptBodies();
   if (!resolvedThinkLevel) {
     resolvedThinkLevel = await modelState.resolveDefaultThinkingLevel();
+    thinkSource = "default";
   }
   const thinkingCatalog = await modelState.resolveThinkingCatalog();
   if (
@@ -853,6 +868,11 @@ export async function runPreparedReply(
       authProfileId,
       authProfileIdSource,
       thinkLevel: resolvedThinkLevel,
+      // FORK 2026-10-09 (effort slider): who chose that level, and Thalamus's ultracode call, ride
+      // the run beside it to the attempt's `__openclawThinkSource` / `__openclawUltracode` smuggle
+      // keys, the way `thalamusChain` above rides it to the failover machinery. Persisted nowhere.
+      thinkSource,
+      ultracode: params.ultracode === true && thinkSource === "thalamus",
       fastMode: useFastReplyRuntime
         ? false
         : resolveFastModeState({

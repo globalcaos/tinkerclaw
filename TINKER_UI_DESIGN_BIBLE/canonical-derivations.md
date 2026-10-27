@@ -22,17 +22,17 @@ verify:
   # can be linted, reviewed and — the reason this one moved — TESTED. The ratchet is the most
   # load-bearing gate the bible has, and it had no test for as long as it lived in this frontmatter.
   - name: no concept in the ledger gains another implementation (ratchet — counts may fall, never rise)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-ledger-ratchet.mjs
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-ledger-ratchet.mjs
   - name: the ratchet itself trips — a simulated extra implementation fails every ledger row, and no ledger regex has rotted into matching nothing
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-ledger-ratchet.mjs --self-test
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-ledger-ratchet.mjs --self-test
   - name: the counts table in this file and the enforced LEDGER caps say the same thing (one fact, two readable homes)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-ledger-ratchet.mjs --check-table
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-ledger-ratchet.mjs --check-table
   - name: the leak-grep pattern has exactly one definition (collapsed 3 -> 1 on 2026-08-03)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-singletons.mjs --check=pii-re
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-singletons.mjs --check=pii-re
   - name: the chrome extension has exactly one tree (collapsed 2 -> 1 on 2026-08-03)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-singletons.mjs --check=chrome-extension
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-singletons.mjs --check=chrome-extension
   - name: the ENGRAM library is not vendored back into an extension, and its sanctioned crossing still exists (collapsed 2 -> 1 on 2026-08-03)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-singletons.mjs --check=engram
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-singletons.mjs --check=engram
 ---
 
 # Canonical derivations — the ledger and the ratchet
@@ -72,9 +72,9 @@ divergence nobody notices.
 **The invariant that replaced the cap.** Both new matches are one function:
 `assembleRetrievalPackAsync`, the yielding twin added 2026-09-03 so a gateway-side caller stops
 holding the event loop. `retrieval-integration.ts` states the contract — equal output, different
-scheduling — and `index.cold-pack.test.ts` tests byte identity on a production-shaped 2,000-event
-tie-order corpus plus the empty and no-match edges. That is stronger evidence for the risk this
-row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
+scheduling — and `extensions/tinkerclaw-total-recall/__tests__/cold-pack.test.ts` tests byte
+identity on a production-shaped 2,000-event tie-order corpus plus the empty and no-match edges.
+That is stronger evidence for the risk this row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
 this protecting here?_ — the answer is "none": these are not two uncoordinated derivations; they
 are an intentional pair with an explicit equivalence contract and a regression test.
 
@@ -313,3 +313,16 @@ When you collapse a concept, or find a new one that must be singular:
   effort-resolution paths as a lesson, and `bible.md:1368` sanctions a triple-derived provider value
   as "a belt to the suspenders". Both are duplications wearing a policy costume.
 - A concept that is computed but not registered here is a future redundancy already in flight (#18).
+
+## Thalamus v4: single owners declared, not yet in the ratchet (2026-10-01)
+
+**What this is for.** Four concepts the v4 branch took care to derive once. They are listed here so the next change finds the owner instead of writing a second one (#18). **Derived from** the D2 and C reviews, each of which found or avoided a twin. **What would change it:** the ratchet gaining matching rows (then move them into the counts table and the `LEDGER` constant in the same commit).
+
+| Concept                                                                     | The one owner                                                  | The twin that was avoided or removed                                                                                            |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| The Jev client                                                              | `src/infra/jev/jev.ts` (`JevClient`)                           | a second client in the plugin; the amygdala now holds a three-line shim                                                         |
+| The routing board (the signals both v2's plan and the per-call router read) | `src/infra/thalamus-board-build.ts`                            | `readThalamusBoard` had copied v2's inline block in `model-selection.ts` (D1); pinned against the old block and collapsed in D2 |
+| The cache-aware price of a call                                             | `src/shared/thalamus-cache-ledger.ts` with `thalamus-price.ts` | per-token sticker prices                                                                                                        |
+| N\* and the digest rule                                                     | `src/shared/thalamus-switch.ts` (`breakEvenN`)                 | a heuristic in the router                                                                                                       |
+
+Not counted by any script yet: this table is the register until a ratchet row exists.

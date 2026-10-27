@@ -1,5 +1,5 @@
 /**
- * FORK 2026-08-24 (the user: "The collapse-expand mechanism does not work") — THE SAME CSS TRAP,
+ * FORK 2026-08-24 (the architect: "The collapse-expand mechanism does not work") — THE SAME CSS TRAP,
  * THREE TIMES.
  *
  * A class rule that sets `display` OUTRANKS the user agent's `[hidden] { display: none }`. So any
@@ -35,6 +35,10 @@ const HIDDEN_TOGGLED_CONTAINERS = [
   ".reasoning-content",
   ".attach-strip",
   ".msg-phase-plugins",
+  // FORK 2026-10-05 — the Gantt tab's chart pane (gantt-tab.ts), display:flex when shown.
+  ".gantt-view",
+  // FORK 2026-10-06 — the chat history loading indicator (history-loading.ts), inline-flex.
+  ".history-loading",
 ] as const;
 
 /** Strip comments so a selector quoted inside a warning note cannot satisfy the assertion. */
@@ -70,4 +74,16 @@ describe("a hidden-toggled container must defeat its own display rule", () => {
       ).toBe(true);
     });
   }
+});
+
+// FORK 2026-10-20 (the architect: "remove the redundant plane and config icons"): the sixth sighting.
+// #phone-trip-btn / #phone-settings-btn carried `hidden` and stayed on screen because
+// `.phone-hbtn` sets `display`. Per-class lines above only cover classes someone already listed,
+// so the column fix is one global rule that no class `display` can outrank.
+describe("one global [hidden] rule beats every class display", () => {
+  it("base.css declares [hidden] { display: none !important }", () => {
+    expect(CSS_NO_COMMENTS).toMatch(
+      /(^|\n)\s*\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important/u,
+    );
+  });
 });

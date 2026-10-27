@@ -55,19 +55,7 @@ fi
 LINK="$(ask 'Code-linking — installed-copy (default) or dev-linked (edit the clone live)?' installed-copy)"
 if [ "$LINK" = dev-linked ]; then
   say "Linking the gateway CLI globally so edits to this clone are live…"
-  # pnpm refuses to link if it has no global bin dir (measured 2026-09-08 on Goku:
-  # ERR_PNPM_NO_GLOBAL_BIN_DIR, and the installer used to swallow that as non-fatal).
-  export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-  mkdir -p "$PNPM_HOME"
-  case ":$PATH:" in *":$PNPM_HOME:"*) ;; *) export PATH="$PNPM_HOME:$PATH" ;; esac
-  if ! pnpm config get global-bin-dir >/dev/null 2>&1 || [ "$(pnpm config get global-bin-dir 2>/dev/null)" = "undefined" ]; then
-    pnpm config set global-bin-dir "$PNPM_HOME" >/dev/null
-  fi
-  if pnpm link --global; then
-    say "openclaw → $(command -v openclaw)"
-  else
-    die "pnpm link --global failed. The CLI is not dev-linked."
-  fi
+  pnpm link --global || warn "pnpm link --global failed (non-fatal)."
 fi
 
 # ---- 4. Agent identity (personalization lives in the workspace) -------------
@@ -76,10 +64,16 @@ mkdir -p "$WS"
 AGENT_NAME="$(ask 'Agent name' Assistant)"
 SETTING="$(ask 'Setting — personal or company?' personal)"
 COMPANY=""; DEPT=""; ROLE=""
+HIVE_DOOR="no"; HIVE_OWNER=""
 if [ "$SETTING" = company ]; then
   COMPANY="$(ask 'Company name' '')"; DEPT="$(ask 'Department' '')"; ROLE="$(ask 'This agent'\''s role' overseer)"
+  # Multi-user mode is opt-in and OFF by default: a personal install never sees this question.
+  HIVE_DOOR="$(ask 'Several people will use this agent, each with their own token? Turns on the hive door so nobody can pose as someone else [yes/no]' no)"
+  case "$HIVE_DOOR" in yes|y) HIVE_OWNER="$(ask 'Your name (the first person who gets a token)' Owner)" ;; esac
 fi
 OBJECTIVE="$(ask 'One-line objective/personality for the agent' 'A capable, direct assistant.')"
+# Download daemon is opt-in and OFF by default: it needs aria2 and a systemd user unit.
+DOWNLOADER="$(ask 'Download daemon for torrents and large files (aria2, Linux)? Lets the agent start a download that survives the chat and a reboot [yes/no]' no)"
 
 IDFILE="$WS/IDENTITY.md"
 if [ -e "$IDFILE" ]; then
@@ -95,55 +89,67 @@ else
   } > "$IDFILE"
 fi
 
-# Workspace starter kit — copy only files that do not already exist.
-KIT="$REPO/extensions/tinkerclaw-tinker-bridge/workspace-kit"
-if [ -d "$KIT" ]; then
-  say "Seeding workspace starter kit (existing files are left untouched)…"
-  for f in AGENTS.md HEARTBEAT.md SESSION.md CRON-REPORT-CONTRACT.md TOOLS.md USER.md; do
-    if [ ! -e "$WS/$f" ] && [ -f "$KIT/$f" ]; then
-      cp "$KIT/$f" "$WS/$f"
-      say "  $f"
-    fi
-  done
-fi
+# ---- 4b. Multi-user door (opt-in; see scripts/hive-door/README.md) ---------------
+HIVE_NOTE=""
+case "$HIVE_DOOR" in
+  yes|y)
+    say "Turning on the hive door (one token per person)…"
+    HIVE_ID="$(printf '%s' "$HIVE_OWNER" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')"
+    if node scripts/hive-door/setup.mjs --owner-id "${HIVE_ID:-owner}" --owner-name "${HIVE_OWNER:-Owner}" --title "$AGENT_NAME"; then
+      HIVE_NOTE="Multi-user door is ON. Your first token is in ~/.openclaw/data/door/ (read it, delete the file). Add people: ${BOLD}node scripts/hive-door/door-tokens.mjs add <id> <Name>${N}"
+    else
+      warn "The hive door is configured but NOT running yet (see the command printed above)."
+      HIVE_NOTE="Multi-user door is configured but NOT running. Start it with the command printed above, or re-run: ${BOLD}node scripts/hive-door/setup.mjs${N}"
+    fi ;;
+esac
 
-# ---- 5. Product pack (plugins + nightly jobs) --------------------------------
-# One question, default Y: enable every bundled tinkerclaw-* plugin except
-# WhatsApp, seed the six structural crons ON, and slot Total Recall as memory.
-# n = skip. off = plugins on, crons installed disabled (they burn tokens).
-say "Product pack — Tinker UI, every bundled plugin except WhatsApp, and six nightly"
-echo "   self-maintenance jobs. Default is ON so a clone is the product, not a kit."
-echo "   The jobs burn tokens every night and pay it back in cheaper later sessions."
-echo "   They never send messages. WhatsApp stays off until you link a phone."
-PRODUCT_ANSWER="$(ask 'Enable the full product pack? [Y/n/off]  (Y = everything on, n = skip, off = install crons disabled)' Y)"
+# ---- 4c. Download daemon (opt-in; see extensions/tinkerclaw-downloader/README.md) ---
+DOWNLOADER_NOTE=""
+case "$DOWNLOADER" in
+  yes|y)
+    say "Installing the download daemon (aria2 on a systemd user unit)…"
+    if node scripts/downloader/setup.mjs; then
+      DOWNLOADER_NOTE="Download daemon is ON. Check it any time: ${BOLD}node scripts/downloader/setup.mjs --check${N}"
+    else
+      warn "The download daemon is NOT running (see the message above)."
+      DOWNLOADER_NOTE="Download daemon is NOT running. Fix what the message above says, then re-run: ${BOLD}node scripts/downloader/setup.mjs${N}"
+    fi ;;
+esac
+
+# ---- 5. Structural crons (the habits, not just the engine) -------------------
+# These are the jobs that make the fork maintain ITSELF overnight: consolidate
+# memory, tidy the workspace, sweep for security updates, refresh model ranks,
+# scan the agent-OSS ecosystem. They ship with the repo under
+# extensions/tinkerclaw-tinker-bridge/crons/ and each one is a readable brief.
+#
+# They are seeded ON, so a fresh clone behaves like a mature one out of the box.
+# Be clear-eyed about what that means: each job wakes an agent on a schedule and
+# spends model tokens on YOUR account — the whole nightly cycle is roughly one
+# euro a night. Answer "off" to install them switched off, or "skip" to not
+# install them at all; either way you can change your mind later.
+say "Structural crons — nightly self-maintenance jobs bundled with this repo:"
+node scripts/seed-structural-crons.mjs --list 2>/dev/null || true
+CRON_ANSWER="$(ask 'Install them? "on" = running tonight (~1 EUR/night of tokens), "off" = installed but idle, "skip" = not at all [on/off/skip]' on)"
 CRON_NOTE=""
-PLUGIN_NOTE=""
-case "$PRODUCT_ANSWER" in
-  skip|no|n|N)
-    say "Skipping product pack. Later: pnpm tinker:plugins && pnpm tinker:crons" ;;
-  off|disabled|OFF)
-    if node --import tsx scripts/seed-fork-plugins.mjs; then :; else
-      warn "Could not seed fork plugins. Re-run: pnpm tinker:plugins"
-      PLUGIN_NOTE="Enable the fork UI: ${BOLD}pnpm tinker:plugins${N}"
-    fi
-    if node --import tsx scripts/seed-structural-crons.mjs --disabled; then :; else
-      warn "Could not seed crons yet. Re-run: pnpm tinker:crons:disable"
-      CRON_NOTE="Seed the nightly jobs (disabled): ${BOLD}pnpm tinker:crons:disable${N}"
+case "$CRON_ANSWER" in
+  skip|no|n) say "Skipping cron seeding. Run 'pnpm tinker:crons' any time." ;;
+  off|disabled)
+    if node scripts/seed-structural-crons.mjs --disabled; then :; else
+      warn "Could not seed crons yet (the cron CLI needs a running gateway)."
+      CRON_NOTE="Seed the nightly jobs: ${BOLD}pnpm tinker:crons -- --disabled${N}"
     fi ;;
   *)
-    if node --import tsx scripts/seed-fork-plugins.mjs; then :; else
-      warn "Could not seed fork plugins. Re-run: pnpm tinker:plugins"
-      PLUGIN_NOTE="Enable the fork UI: ${BOLD}pnpm tinker:plugins${N}"
-    fi
-    if node --import tsx scripts/seed-structural-crons.mjs; then :; else
-      warn "Could not seed crons yet. Re-run: pnpm tinker:crons"
+    if node scripts/seed-structural-crons.mjs; then :; else
+      warn "Could not seed crons yet (the cron CLI needs a running gateway)."
       CRON_NOTE="Seed the nightly jobs: ${BOLD}pnpm tinker:crons${N}"
     fi ;;
 esac
 
-# ---- 6. Optional components -------------------------------------------------
+# ---- 5. Optional components -------------------------------------------------
 say "Optional components (install later from ClawHub / plugins as needed):"
-echo "   • browser plugin   • downloader app   • mesh-VPN join   • messaging channels"
+echo "   • browser plugin   • mesh-VPN join   • messaging channels"
+echo "   • download daemon  (node scripts/downloader/setup.mjs)"
+echo "   • multi-user door  (company setting only: node scripts/hive-door/setup.mjs)"
 
 # ---- 6. Done ----------------------------------------------------------------
 cat <<DONE
@@ -153,12 +159,17 @@ $(printf "${BOLD}Setup complete.${N}")
   Code-linking  : $LINK
   Agent         : $AGENT_NAME${COMPANY:+ @ $COMPANY}
   Workspace     : $WS
+  Multi-user    : ${HIVE_DOOR:-no}
+  Downloader    : ${DOWNLOADER:-no}
 
 Start the gateway:   ${BOLD}openclaw gateway start${N}     (or: node openclaw.mjs)
 Open the UI:         the address the gateway prints on start.
 ${CRON_NOTE:+
-$CRON_NOTE}${PLUGIN_NOTE:+
-$PLUGIN_NOTE}
+$CRON_NOTE}
+${HIVE_NOTE:+
+$HIVE_NOTE}
+${DOWNLOADER_NOTE:+
+$DOWNLOADER_NOTE}
 
 Personalize by editing files in your workspace ($WS) — never in this repo,
 so future 'git pull' stays clean. See FORK_SETUP.md for the git-pull contract.

@@ -90,6 +90,7 @@ export type PreparedCliRunContext = {
   systemPrompt: string;
   systemPromptReport: SessionSystemPromptReport;
   bootstrapPromptWarningLines: string[];
+  bootstrapMemoryIndexLines?: string[];
   openClawHistoryPrompt?: string;
   heartbeatPrompt?: string;
   authEpoch?: string;

@@ -388,6 +388,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.experimental": "Experimental Agent Flags",
   "agents.defaults.experimental.localModelLean": "Enable Lean Local Model Mode (Experimental)",
   "agents.defaults.bootstrapPromptTruncationWarning": "Bootstrap Prompt Truncation Warning",
+  "agents.defaults.memoryIndexMaxChars": "Memory Index Max Chars",
+  "agents.defaults.memoryIndexWarning": "Memory Index Warning",
   "agents.defaults.startupContext": "Startup Context",
   "agents.defaults.startupContext.enabled": "Enable Startup Context",
   "agents.defaults.startupContext.applyOn": "Startup Context Apply On",

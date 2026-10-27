@@ -16,12 +16,18 @@ vi.mock("openclaw/plugin-sdk/channel-activity-runtime", async () => {
 describe("createWebSendApi", () => {
   const sendMessage = vi.fn(async () => ({ key: { id: "msg-1" } }));
   const sendPresenceUpdate = vi.fn(async () => {});
+  const otherSockCalls = {
+    presenceSubscribe: vi.fn(async () => {}),
+    groupUpdateSubject: vi.fn(async () => {}),
+    updateProfilePicture: vi.fn(async () => {}),
+    groupLeave: vi.fn(async () => {}),
+  };
   let api: ReturnType<typeof createWebSendApi>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     api = createWebSendApi({
-      sock: { sendMessage, sendPresenceUpdate },
+      sock: { sendMessage, sendPresenceUpdate, ...otherSockCalls },
       defaultAccountId: "main",
     });
   });
@@ -265,7 +271,7 @@ describe("createWebSendApi", () => {
   describe("outbound persona prefix", () => {
     it("prepends the configured prefix to plain text bodies", async () => {
       const prefixed = createWebSendApi({
-        sock: { sendMessage, sendPresenceUpdate },
+        sock: { sendMessage, sendPresenceUpdate, ...otherSockCalls },
         defaultAccountId: "main",
         resolveOutboundPrefix: () => "🤖",
       });
@@ -277,7 +283,7 @@ describe("createWebSendApi", () => {
 
     it("is idempotent — does not double-prefix already-prefixed text", async () => {
       const prefixed = createWebSendApi({
-        sock: { sendMessage, sendPresenceUpdate },
+        sock: { sendMessage, sendPresenceUpdate, ...otherSockCalls },
         defaultAccountId: "main",
         resolveOutboundPrefix: () => "🤖",
       });
@@ -289,7 +295,7 @@ describe("createWebSendApi", () => {
 
     it("prefixes media captions but not empty captions", async () => {
       const prefixed = createWebSendApi({
-        sock: { sendMessage, sendPresenceUpdate },
+        sock: { sendMessage, sendPresenceUpdate, ...otherSockCalls },
         defaultAccountId: "main",
         resolveOutboundPrefix: () => "🤖",
       });
@@ -315,7 +321,7 @@ describe("createWebSendApi", () => {
 
     it("prefixes the poll question only", async () => {
       const prefixed = createWebSendApi({
-        sock: { sendMessage, sendPresenceUpdate },
+        sock: { sendMessage, sendPresenceUpdate, ...otherSockCalls },
         defaultAccountId: "main",
         resolveOutboundPrefix: () => "🤖",
       });
@@ -333,7 +339,7 @@ describe("createWebSendApi", () => {
 
     it("does not prefix reactions (the reaction is the icon itself)", async () => {
       const prefixed = createWebSendApi({
-        sock: { sendMessage, sendPresenceUpdate },
+        sock: { sendMessage, sendPresenceUpdate, ...otherSockCalls },
         defaultAccountId: "main",
         resolveOutboundPrefix: () => "🤖",
       });
@@ -354,5 +360,46 @@ describe("createWebSendApi", () => {
         text: "no prefix here",
       });
     });
+  });
+});
+
+describe("createWebSendApi edit and group changes", () => {
+  const sendMessage = vi.fn(async () => ({ key: { id: "msg-2" } }));
+  const groupUpdateSubject = vi.fn(async () => {});
+  const updateProfilePicture = vi.fn(async () => {});
+  const groupLeave = vi.fn(async () => {});
+  const api = createWebSendApi({
+    sock: {
+      sendMessage,
+      sendPresenceUpdate: vi.fn(async () => {}),
+      presenceSubscribe: vi.fn(async () => {}),
+      groupUpdateSubject,
+      updateProfilePicture,
+      groupLeave,
+    },
+    defaultAccountId: "main",
+    resolveOutboundPrefix: () => "🤖",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends the Baileys edit shape for our own message, with the persona prefix", async () => {
+    await api.editMessage("+1555", "orig-1", "fixed");
+    expect(sendMessage).toHaveBeenCalledWith("1555@s.whatsapp.net", {
+      text: "🤖 fixed",
+      edit: { remoteJid: "1555@s.whatsapp.net", id: "orig-1", fromMe: true },
+    });
+  });
+
+  it("maps each group change onto the socket call", async () => {
+    const group = "1203630000@g.us";
+    await api.updateGroup(group, { kind: "subject", subject: "Team" });
+    await api.updateGroup(group, { kind: "icon", imagePath: "/tmp/icon.jpg" });
+    await api.updateGroup(group, { kind: "leave" });
+    expect(groupUpdateSubject).toHaveBeenCalledWith(group, "Team");
+    expect(updateProfilePicture).toHaveBeenCalledWith(group, { url: "/tmp/icon.jpg" });
+    expect(groupLeave).toHaveBeenCalledWith(group);
   });
 });

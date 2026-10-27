@@ -4,14 +4,20 @@ Scan GitHub forks and ClawHub skills to discover valuable changes and emerging t
 
 ## Setup
 
-- **Forks:** Execute as part of your GitHub intelligence module; automate via cron.
-- **Skills:** Identify and explore top ClawHub skills.
+This is a written workflow, not a program. To use it, implement the phases below
+in your own agent: scan the forks of a repository you care about, and review the
+top skills on a registry. Automate the runs with cron once you have something that
+works.
 
-## Code Layout
+## What's in this package
 
-- **Skill Code:** Located in `scripts/`
-- **Data & Logs:** Track analysis in `data/`
-- **Reports:** Auto-generates in `Cron_Tasks/` with detailed insights.
+Two documents and an empty directory. There is no code here:
+
+- `README.md` — this file: the workflow, and what it does and does not do.
+- `SKILL.md` — the same workflow stated for an agent, including the plain warning
+  that there is nothing here to execute.
+- `data/` — an empty directory held open by a `.gitkeep`, a place for *you* to put
+  scan output. Nothing in this package writes to it, or to anywhere else.
 
 ## Key Phases
 
@@ -25,12 +31,24 @@ Scan GitHub forks and ClawHub skills to discover valuable changes and emerging t
 ### Skill Scanner
 
 1. **Evaluate 10 Skills:** Score by functionality, relevance, and maintenance.
-2. **In-Depth Author Scan:** Check top author’s other skills.
+2. **In-Depth Author Scan:** Check top author's other skills.
 3. **Compile Insights:** Lay practical improvement steps.
 
-## Continuous Improvement
+## Keeping your interests current
 
-- Integrate learnings into day-to-day operations.
-- Continually update skill interests, reflecting evolving needs.
+The "interests" this workflow tracks are **your** list of what to watch — the repos,
+authors and topics you care about — kept in a file you own and edit. Refining that
+list between runs is the point of running it repeatedly.
 
-For more information and advanced configurations, please refer to the META or detailed execution recipes in the skill package.
+Stating it plainly, because "continuous improvement" inside an agent skill reads the
+wrong way otherwise: **this skill does not modify itself.** It has no code, no
+installer, no update step, and no write path to its own files or to your agent's
+configuration. The only thing that changes between runs is the note *you* keep about
+what you want scanned next.
+
+## What it touches
+
+Read-only, and only once you implement it: public GitHub repository data and public
+registry listings. No credentials are requested or stored. Nothing is written outside
+the output directory you choose. There is no write access to GitHub, to any registry,
+or to any skill — including this one.

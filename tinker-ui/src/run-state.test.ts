@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   bareModelTail,
+  catalogKeyIn,
   clientRunIsFresh,
   liveCountForModel,
   liveRunCountsByModel,
+  liveRunSessionsByModel,
+  liveSessionsForModel,
   modelCountKey,
   resolveSessionRunState,
   RUN_STALE_MS,
@@ -46,7 +49,7 @@ describe("resolveSessionRunState — precedence", () => {
   const key = "agent:main:tinker:abc";
 
   it("THE BUG: a terminal server status kills an orphaned client entry", () => {
-    // Exactly the user's case: tab + row + count glowed off a stale activeRuns entry while the
+    // Exactly the architect's case: tab + row + count glowed off a stale activeRuns entry while the
     // store already said done. Every surface must now go dark.
     const state = resolveSessionRunState({
       sessionKey: key,
@@ -119,7 +122,7 @@ describe("resolveSessionRunState — precedence", () => {
   });
 
   it("THE BUG: a snapshot taken BEFORE the turn ended cannot keep the chat saying 'working'", () => {
-    // the user on Main: the answer finished and Fractal delivered, but a sessions[] row captured
+    // the architect on Main: the answer finished and Fractal delivered, but a sessions[] row captured
     // mid-turn still said running, and the chat rendered the server-fallback row off it.
     const state = resolveSessionRunState({
       sessionKey: key,
@@ -173,7 +176,7 @@ describe("resolveSessionRunState — precedence", () => {
   });
 
   it("THE REGRESSION: a stale end stamp must not veto a NEWER turn", () => {
-    // the user: "chat thinking indicators but no tab nor sessions highlighting". The end stamp is
+    // the architect: "chat thinking indicators but no tab nor sessions highlighting". The end stamp is
     // never cleared and rowsFetchedAt only moves on loadSessions(), so every later server claim
     // was vetoed and non-viewed tabs went dark. A row whose run began after that end stands.
     const state = resolveSessionRunState({
@@ -224,7 +227,7 @@ describe("terminal status vs a client that is still streaming", () => {
   const key = "agent:main:tinker:abc";
 
   it("THE REGRESSION: a stale 'done' snapshot must not silence a live stream", () => {
-    // the user: "no thinking indicator in the chat but yet the llm is spitting out responses".
+    // the architect: "no thinking indicator in the chat but yet the llm is spitting out responses".
     // The snapshot says done, but this client received a delta AFTER that snapshot was taken.
     const state = resolveSessionRunState({
       sessionKey: key,
@@ -467,6 +470,77 @@ describe("liveRunCountsByModel", () => {
   });
 });
 
+// FORK 2026-10-02: the hover on a model row names the sessions behind its count badge.
+describe("liveRunSessionsByModel / liveSessionsForModel", () => {
+  const rows: SessionRow[] = [
+    { key: "agent:main:tinker:a", status: "running", model: "gpt-5.6-sol", modelProvider: "codex" },
+    { key: "agent:main:tinker:b", status: "running", model: "gpt-5.6-sol", modelProvider: "codex" },
+    {
+      key: "agent:main:cron:c",
+      status: "running",
+      model: "claude-opus-5",
+      modelProvider: "claude-code",
+    },
+    { key: "agent:main:tinker:d", status: "done", model: "gpt-5.6-sol", modelProvider: "codex" },
+  ];
+
+  it("names exactly the sessions the count counts, in both lanes", () => {
+    const params = {
+      rows,
+      runs: [run({ sessionKey: "agent:main:tinker:fresh" })],
+      matches,
+      now: NOW,
+    };
+    const sessions = liveRunSessionsByModel(params);
+    const counts = liveRunCountsByModel(params);
+    expect(sessions.get("codex/gpt-5.6-sol")).toEqual([
+      "agent:main:tinker:a",
+      "agent:main:tinker:b",
+      "agent:main:tinker:fresh",
+    ]);
+    expect(sessions.get("claude-code/claude-opus-5")).toEqual(["agent:main:cron:c"]);
+    for (const [key, list] of sessions) {
+      expect(counts.get(key)).toBe(list.length);
+    }
+    expect(counts.size).toBe(sessions.size);
+  });
+
+  it("looks a catalog row up by the count's rule: exact key, then the bare tail", () => {
+    const sessions = liveRunSessionsByModel({
+      rows: [
+        ...rows,
+        // provider-less (a cc-bridge effort event shape): lands on the bare tail
+        { key: "agent:main:tinker:e", status: "running", model: "gemini-3.1-pro-preview" },
+      ],
+      runs: [],
+      matches,
+      now: NOW,
+    });
+    expect(liveSessionsForModel(sessions, "codex/gpt-5.6-sol")).toHaveLength(2);
+    expect(liveSessionsForModel(sessions, "google/gemini-3.1-pro-preview")).toEqual([
+      "agent:main:tinker:e",
+    ]);
+    // a twin on another provider does not borrow a qualified key's sessions
+    expect(liveSessionsForModel(sessions, "github-copilot/gpt-5.6-sol")).toEqual([]);
+    expect(liveSessionsForModel(sessions, undefined)).toEqual([]);
+    expect(liveSessionsForModel(sessions, "")).toEqual([]);
+  });
+
+  it("catalogKeyIn and liveCountForModel agree on every row", () => {
+    const sessions = liveRunSessionsByModel({ rows, runs: [], matches, now: NOW });
+    const counts = liveRunCountsByModel({ rows, runs: [], matches, now: NOW });
+    for (const id of [
+      "codex/gpt-5.6-sol",
+      "github-copilot/gpt-5.6-sol",
+      "claude-code/claude-opus-5",
+      "openrouter/moonshotai/kimi-k3",
+    ]) {
+      expect(liveSessionsForModel(sessions, id).length).toBe(liveCountForModel(counts, id));
+      expect(catalogKeyIn(sessions, id)).toBe(catalogKeyIn(counts, id));
+    }
+  });
+});
+
 describe("bareModelTail / liveCountForModel", () => {
   it("strips a provider prefix and matches a prefixed catalog id", () => {
     expect(bareModelTail("claude-code/claude-opus-4-8")).toBe("claude-opus-4-8");
@@ -497,7 +571,7 @@ describe("bareModelTail / liveCountForModel", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FORK 2026-08-04 (the user: "one model running lights up the same model under another provider").
+// FORK 2026-08-04 (the architect: "one model running lights up the same model under another provider").
 // The models panel renders one row PER PROVIDER, so a bare-tail count key is not a model — it is a
 // column of twins. These pin the qualification down, INCLUDING the residue it deliberately keeps:
 // the provider-less case is asserted so the day someone deletes the fallback they see exactly what
@@ -601,7 +675,7 @@ describe("modelCountKey — provider-qualified live counts", () => {
 });
 
 describe("resolveSessionRunState — run-set branch honours the Stop stamp (2026-08-06)", () => {
-  // the user: "qwen 3.8 is thinking and no matter how many times I click on stop, it keeps showing
+  // the architect: "qwen 3.8 is thinking and no matter how many times I click on stop, it keeps showing
   // the thinking progress bar". Recurrence of the 2026-08-05 Grok report — that fix only covered
   // the legacy branches; the run-set branch returned before any end-stamp was consulted.
   const key = "agent:main:tinker:abc";

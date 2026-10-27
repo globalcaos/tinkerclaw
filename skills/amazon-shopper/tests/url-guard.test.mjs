@@ -103,3 +103,40 @@ test("fetchImageSafely refuses a host that is not an Amazon image CDN", async ()
     /not an Amazon image CDN/,
   );
 });
+
+test("isPrivateAddress: IPv6 forms the URL parser produces, and embedded IPv4", () => {
+  for (const a of [
+    "::ffff:7f00:1", // WHATWG URL normalises [::ffff:127.0.0.1] to this
+    "::ffff:a00:1", // 10.0.0.1 mapped, hex form
+    "[::1]", // bracketed, as URL.hostname returns it
+    "::127.0.0.1", // IPv4-compatible (deprecated)
+    "64:ff9b::a9fe:a9fe", // NAT64 → 169.254.169.254
+    "2002:c0a8:101::1", // 6to4 → 192.168.1.1
+    "fec0::1",
+    "2001:db8::1",
+    "fe80:0:0:0:0:0:0:1",
+    "not-an-ip:zz",
+    "198.18.0.1",
+    "203.0.113.5",
+  ]) {
+    assert.equal(isPrivateAddress(a), true, `${a} must be treated as private`);
+  }
+  for (const a of ["::ffff:5db8:d822", "2002:5db8:d822::1", "2a00:1450:4001:80b::200e"]) {
+    assert.equal(isPrivateAddress(a), false, `${a} is public`);
+  }
+});
+
+test("publicOnlyLookup refuses loopback and returns public addresses", async () => {
+  const { publicOnlyLookup } = await import("../scripts/url-guard.mjs");
+  const call = (host, opts) =>
+    new Promise((resolve) => {
+      publicOnlyLookup(host, opts, (err, address, family) => resolve({ err, address, family }));
+    });
+  const lo = await call("localhost", {});
+  assert.ok(lo.err instanceof UrlNotAllowed, "localhost must be refused at connect time");
+  const lit = await call("8.8.8.8", {});
+  assert.equal(lit.err, null);
+  assert.equal(lit.address, "8.8.8.8");
+  const all = await call("8.8.8.8", { all: true });
+  assert.deepEqual(all.address, [{ address: "8.8.8.8", family: 4 }]);
+});

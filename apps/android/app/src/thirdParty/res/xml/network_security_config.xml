@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FORK 2026-10-19 (the architect: phone app) — the Jarvis build talks plain HTTP only to the phone door on
+     the tailnet (WireGuard already encrypts it). Everything else must be HTTPS. A door on a new
+     address needs its IP here, or a MagicDNS *.ts.net name. -->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="false" />
+  <domain-config cleartextTrafficPermitted="true">
+    <!-- Raspberry Pi door (after the cutover) and the laptop door (until then). -->
+    <domain includeSubdomains="false">100.64.0.10</domain>
+    <domain includeSubdomains="false">100.64.0.20</domain>
+    <domain includeSubdomains="true">ts.net</domain>
+  </domain-config>
+</network-security-config>

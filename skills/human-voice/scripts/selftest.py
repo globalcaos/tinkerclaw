@@ -77,6 +77,12 @@ Best regards""", "chat", "", "en", True, "structure-vs-thread",
     ("en-thread-match", """From the vendor's own price page, and the speeds from my last two backups. For backups I use the bigger external disk""",
      "chat", "", "en", False, None,
      ["nice one, where did you get the numbers", "ok makes sense", "which disk do you use for the backups"]),
+    # 2026-10-02: the Catalan marker "i" (and) matched the English pronoun "I", so an English
+    # thread ending in "...otherwise I lose 20 euros" read as Catalan and raised a false HIGH.
+    ("en-thread-pronoun-i", """Hi Anna, here's the logo case study, with the reasoning behind each version""",
+     "chat", "", "en", False, None,
+     ["On the way home", "Can you get these shoes for the kids please. Size 34",
+      "They also require a 12 hour cancellation, otherwise I lose 20 euros"]),
     ("es-forgotten-signoff", """Te paso las tres opciones de proveedor con sus precios. Si necesitas más ideas, no dudes en pedírmelo.""",
      "chat", "", "es", True, "stock-phrase"),
     ("ca-parlem-posso", """Hola! Sí, parlém Català! Què tal? Com posso ajudar-te?""", "chat", "", "ca", True, "stock-phrase"),

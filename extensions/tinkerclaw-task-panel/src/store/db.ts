@@ -45,6 +45,7 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   // ALTER TABLE ADD COLUMN (SQLite supports it for NULL-default columns with
   // a FK target); idempotent via PRAGMA table_info check.
   addAxisParentIdColumn(db);
+  addTaskOperatorIdColumn(db);
 
   // FORK 2026-05-22: Todoist deprecation cleanup. Walk task.metadata_json and
   // remove every `todoist_*` key. Idempotent one-shot — subsequent boots find
@@ -182,6 +183,13 @@ function migrateWidenStatusCheck(db: Database.Database): void {
 // ALTER TABLE works here because the new column is nullable + has no
 // CHECK constraint. Idempotent via PRAGMA table_info — re-running on an
 // already-migrated DB is a no-op.
+export function addTaskOperatorIdColumn(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(task)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "operator_id")) return;
+  db.exec("ALTER TABLE task ADD COLUMN operator_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS task_operator ON task(operator_id)");
+}
+
 export function addAxisParentIdColumn(db: Database.Database): void {
   const cols = db.prepare("PRAGMA table_info(task_axis)").all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === "parent_id")) return; // idempotent

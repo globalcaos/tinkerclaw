@@ -385,4 +385,61 @@ describe("resolveGoogleGeminiForwardCompatModel", () => {
       reasoning: false,
     });
   });
+
+  // 2026-10-17: Gemini 4 Argon (`gemini-4-argon`, released 2026-10-13) is in no catalog yet, and the gateway
+  // answered "Unknown model" for it and for the configured gemini-3.6/3.7/3.8-flash (the `gemini` alias).
+  it("resolves Gemini 4 Argon from the 3 Pro template with reasoning on and a 1M window", () => {
+    const model = resolveGoogleGeminiForwardCompatModel({
+      providerId: "google",
+      ctx: createContext({
+        provider: "google",
+        modelId: "gemini-4-argon",
+        models: [createTemplateModel("google", "gemini-3-pro-preview", { reasoning: false })],
+      }),
+    });
+
+    expect(model).toMatchObject({
+      provider: "google",
+      id: "gemini-4-argon",
+      reasoning: true,
+      contextWindow: 1_048_576,
+    });
+  });
+
+  it("resolves a Gemini 4 flash id from the flash template", () => {
+    const model = resolveGoogleGeminiForwardCompatModel({
+      providerId: "google",
+      ctx: createContext({
+        provider: "google",
+        modelId: "gemini-4-flash",
+        models: [createTemplateModel("google", "gemini-3-flash-preview")],
+      }),
+    });
+
+    expect(model).toMatchObject({ provider: "google", id: "gemini-4-flash", reasoning: true });
+  });
+
+  it("resolves every Gemini flash after 3.5 from the flash template, not only 3.5", () => {
+    for (const modelId of [
+      "gemini-3.5-flash",
+      "gemini-3.6-flash",
+      "gemini-3.8-flash",
+      "gemini-3.10-flash",
+    ]) {
+      const model = resolveGoogleGeminiForwardCompatModel({
+        providerId: "google",
+        ctx: createContext({
+          provider: "google",
+          modelId,
+          models: [createTemplateModel("google", "gemini-3-flash-preview")],
+        }),
+      });
+      expect(model, modelId).toMatchObject({ provider: "google", id: modelId });
+    }
+  });
+
+  it("treats gemini 4 ids as modern google models", () => {
+    expect(isModernGoogleModel("gemini-4-argon")).toBe(true);
+    expect(isModernGoogleModel("gemini-4-flash")).toBe(true);
+  });
 });

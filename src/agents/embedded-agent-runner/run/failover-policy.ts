@@ -1,7 +1,7 @@
 import type { FailoverReason } from "../../embedded-agent-helpers.js";
 
 /**
- * FORK 2026-09-03 (the user pressed Stop and the chat answered
+ * FORK 2026-09-03 (the architect pressed Stop and the chat answered
  * "⚠️ Agent failed before reply: LLM request timed out.", transcript 12a0e0c4).
  *
  * A user Stop reaches the runner as an AbortError whose message is

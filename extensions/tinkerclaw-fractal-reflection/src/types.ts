@@ -6,9 +6,12 @@
  * block (see triage-prompt.md — the committed parse contract); these types
  * are its type-side mirror and MUST stay in lockstep with that prompt.
  *
- * No imports. The only runtime exports are DEFAULT_FRACTAL_CONFIG and the
- * canonical run-kind predicate (FRACTAL_SESSION_PREFIX / isFractalSessionKey).
+ * Runtime exports: DEFAULT_FRACTAL_CONFIG, the canonical run-kind predicate
+ * (FRACTAL_SESSION_PREFIX / isFractalSessionKey), the triage-lane tool
+ * allowlist, and the bounded evidence reader. Only node:fs is imported.
  */
+
+import { readFileSync, statSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Ledger row status machine
@@ -184,10 +187,11 @@ export interface FractalConfig {
 }
 
 export const DEFAULT_FRACTAL_CONFIG: FractalConfig = {
-  // Config-layer default. Manifest-level enablement (`enabledByDefault: false`;
-  // the witnessed plugins.entries flag flip = Drop 1's exit criterion) is a
-  // separate gate — this key being true does NOT arm the plugin by itself.
-  enabled: true,
+  // OFF at the config layer too. Manifest-level enablement
+  // (`enabledByDefault: false`) is a separate gate, but a plugin that spawns a
+  // billed subagent after every finished turn should not arm itself the moment
+  // someone enables the entry — go-live is an explicit `config.enabled: true`.
+  enabled: false,
   triageArm: "cold",
   triageThinkLevel: "low",
   fixThinkLevel: "max",
@@ -225,5 +229,60 @@ export const FRACTAL_SESSION_PREFIX = "fractal-reflection:";
  * run" — not this classifier.)
  */
 export function isFractalSessionKey(sessionKey: unknown): boolean {
-  return typeof sessionKey === "string" && sessionKey.startsWith(FRACTAL_SESSION_PREFIX);
+  if (typeof sessionKey !== "string" || !sessionKey) return false;
+  // Runtime wraps plugin-minted keys as `agent:<id>:<pluginKey>`. Nested
+  // fractal:triage keys also embed the prefix mid-string. startsWith alone
+  // missed `agent:main:fractal-reflection:…` and spawned recursively
+  // (Goku 2026-09-09, 71 attempts / 44 switches).
+  return (
+    sessionKey.startsWith(FRACTAL_SESSION_PREFIX) ||
+    sessionKey.includes(`:${FRACTAL_SESSION_PREFIX}`)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Triage-lane tool policy — what makes "read-only" enforced, not just prompted
+// ---------------------------------------------------------------------------
+
+/**
+ * The only tools a fractal lane may call. `subagent.run` has no tool-restriction
+ * parameter, so index.ts registers a `before_tool_call` hook that BLOCKS every
+ * other tool whenever the calling session is a fractal lane (isFractalSessionKey)
+ * or a run this plugin spawned. An allowlist, not a blocklist: a tool this list
+ * has never heard of is refused, so a newly added write-capable tool cannot slip
+ * through.
+ */
+export const FRACTAL_LANE_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "memory_search",
+  "memory_get",
+]);
+
+export function isFractalLaneToolAllowed(toolName: unknown): boolean {
+  return (
+    typeof toolName === "string" && FRACTAL_LANE_TOOL_ALLOWLIST.has(toolName.trim().toLowerCase())
+  );
+}
+
+/**
+ * Largest file the plugin itself will read when re-checking a quoted finding or
+ * an action claim. Paths come from model output, so the read is bounded: regular
+ * files only (no FIFOs, devices or directories) and nothing above this size.
+ */
+export const MAX_EVIDENCE_READ_BYTES = 2 * 1024 * 1024;
+
+/** Read a regular file of at most MAX_EVIDENCE_READ_BYTES; null otherwise. */
+export function readEvidenceFile(absPath: string): string | null {
+  try {
+    const st = statSync(absPath);
+    if (!st.isFile() || st.size > MAX_EVIDENCE_READ_BYTES) {
+      return null;
+    }
+    return readFileSync(absPath, "utf8");
+  } catch {
+    return null;
+  }
 }

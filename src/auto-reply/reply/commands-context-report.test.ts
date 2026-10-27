@@ -86,6 +86,28 @@ describe("buildContextReply", () => {
     expect(result.text).not.toContain("Bootstrap context is over configured limits");
   });
 
+  it("flags a MEMORY.md over its index budget without calling it truncated", async () => {
+    const params = makeParams("/context list", false);
+    const report = params.sessionEntry?.systemPromptReport;
+    report?.injectedWorkspaceFiles.push({
+      name: "MEMORY.md",
+      path: "/tmp/workspace/MEMORY.md",
+      missing: false,
+      rawChars: 9_500,
+      injectedChars: 9_500,
+      truncated: false,
+    });
+    const result = await buildContextReply(params);
+    expect(result.text).toContain("⚠ MEMORY.md is 9,500 chars, over its 8,000-char index budget");
+    expect(result.text).not.toContain("Bootstrap context is over configured limits");
+
+    const off = await buildContextReply({
+      ...params,
+      cfg: { agents: { defaults: { memoryIndexWarning: "off" } } },
+    } as HandleCommandsParams);
+    expect(off.text).not.toContain("index budget");
+  });
+
   it("falls back to config defaults when legacy reports are missing bootstrap limits", async () => {
     const result = await buildContextReply(
       makeParams("/context list", false, {

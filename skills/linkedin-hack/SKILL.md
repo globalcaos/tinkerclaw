@@ -1,7 +1,7 @@
 ---
 name: linkedin-hack
-version: 1.2.0
-description: "Your agent crawls LinkedIn through the browser session you already have — profiles, search, connections, inbox, feed. No official API, no app review. Session cookies + Voyager. By default the cookies never leave your browser tab: persisting them requires the OS keychain, and if there is no keychain the skill refuses to save rather than dropping a password-equivalent cookie in a file. Sending a message needs an explicit flag, the relay must be on loopback, and `session logout` erases every local trace and hands you LinkedIn's revoke page. Built for the TinkerClaw fork — github.com/globalcaos/tinkerclaw. See Permissions, Data Flow & Consent."
+version: 1.2.2
+description: "Your agent crawls LinkedIn through the browser session you already have — profiles, search, connections, inbox, feed. No official API, no app review. Your cookies never leave the browser: API calls are a fetch() run inside the linkedin.com tab you shared (people-search navigates that tab to a LinkedIn search page and reads the results), and 1.2.1 DELETED the cookie-extraction, session-store and external-replay code from the package rather than leaving it switched off — there is no longer anything to store or steal. Every request, navigation and tab pick is pinned to exactly https://www.linkedin.com, including the LINKEDIN_TARGET_ID override, so a look-alike host cannot borrow your session. Reads and drafts freely; the one write, message-send, needs per-action consent that repeats the exact conversation URN, and without it you get the draft and nothing is sent. The browser relay must be a literal loopback IP, with no override. Daily ceilings count every record requested and are reserved before the request goes out. Built for the TinkerClaw fork — github.com/globalcaos/tinkerclaw. See Permissions, Data Flow & Consent."
 metadata:
   openclaw:
     emoji: "🔗"
@@ -9,34 +9,13 @@ metadata:
     requires:
       # Must match the permissions block below, one for one.
       capabilities:
-        [
-          "browser",
-          "network",
-          "credentials",
-          "shell",
-          "file_read",
-          "file_write",
-          "file_delete",
-          "env_read",
-        ]
+        ["browser", "network", "credentials", "shell", "file_read", "file_write", "file_delete", "env_read"]
       bins: ["node"]
     notes:
-      security: "Handles a LinkedIn session cookie (li_at + JSESSIONID, optional bcookie/bscookie). That cookie is password-equivalent: whoever holds it is signed in as you, with no password prompt and no second factor. Default transport is in-browser, so on the default path the cookies are never extracted at all. If you do persist a session, the OS keychain is the only store this skill will use on its own (secret-tool on Linux, security on macOS, entry openclaw-linkedin-hack/linkedin-session); the secret is passed over stdin on BOTH platforms so it never appears in argv or shell history, and the write is read back to confirm it landed. With no usable keychain, saving FAILS CLOSED and nothing is written — a 0600 file store exists but requires an explicit per-run --allow-plaintext-store (or LINKEDIN_ALLOW_PLAINTEXT_STORE=1), keeps only the fields needed to make a request, and self-expires after 24h. There is no switch that disables the keychain. Off switch: `linkedin session logout` clears BOTH stores AND deletes the cached profiles and activity counters by default (--keep-data opts out), then prints LinkedIn's server-side revoke URL (https://www.linkedin.com/psettings/sessions) — logout is LOCAL ONLY and does not invalidate the cookie at LinkedIn. Every deletion is guarded: absolute path, inside $HOME, regular file, never a symlink, and carrying the marker this skill stamps into its own files. The browser relay must resolve to loopback (LINKEDIN_ALLOW_REMOTE_RELAY=1 to override, with a warning), and the shared tab is only ever navigated within linkedin.com. The only endpoint that writes to LinkedIn is message-send, refused without --i-mean-it. Caching other people's crawled profile data is OFF by default (LINKEDIN_CACHE=1 to enable, 12h TTL). Daily ceilings live in ~/.openclaw/workspace/memory/linkedin-activity.json (0600). See the Permissions, Data Flow & Consent section."
+      security: "Rides a LinkedIn session cookie (li_at + JSESSIONID) that is password-equivalent — whoever holds it is signed in as you, with no password prompt and no second factor. So this version never holds it: every Voyager call is a fetch() executed INSIDE the linkedin.com tab you shared, the cookies stay in the browser, and there is no code left that extracts, stores or replays them. Removed outright in 1.2.1 (deleted, not disabled): the cookie extractor (session extract-cdp / extract-browser), the session store (session store, the OS-keychain write and the 0600 plaintext file, along with --allow-plaintext-store), the external cookie-replay transport and its automatic fallback (LINKEDIN_TRANSPORT), and the LINKEDIN_ALLOW_REMOTE_RELAY escape hatch. Origin pinning: every request target, every tab navigation and every tab pick must be exactly https://www.linkedin.com, compared by parsed origin, so www.linkedin.com.evil.example, a bare linkedin.com, plain http and a non-default port are all refused — and LINKEDIN_TARGET_ID goes through the same check instead of being trusted blind, which previously allowed script execution in any shared tab. Requests are additionally confined to /voyager/api/, and the in-page fetch re-checks same-origin before sending, so the csrf-token can never be carried to another host. The browser relay must be a literal loopback IP (127.0.0.0/8 or [::1]) — hostnames, localhost included, are refused rather than resolved, so DNS rebinding cannot move it — with no override, because that channel is full control of a signed-in tab. The only write to LinkedIn is message-send, which requires per-action consent: --i-mean-it must repeat the exact conversation URN, so a blanket yes cannot be reused on another recipient; without it the message is printed as a draft and nothing is sent. Daily ceilings count RECORDS REQUESTED (each command's --top, or 1 per lookup), the full amount is reserved before the first request and not refunded, --top has a hard per-command maximum and an out-of-range value is rejected, limits in the activity file can only lower a ceiling, and the guard cannot be wound backwards (activity bump refuses a non-positive step). Off switch: `linkedin session logout` deletes the cached profiles and activity counters AND purges any session left behind by version <= 1.2.0, then prints LinkedIn's server-side revoke URL (https://www.linkedin.com/psettings/sessions) — logout is LOCAL ONLY and does not invalidate a cookie at LinkedIn. No keychain lookup exists in the code: logout runs only the fixed delete command, and session status does not query the keychain at all. Every deletion is guarded: absolute path, inside $HOME, regular file, never a symlink, and carrying the marker this skill stamps into its own files — except the legacy session file at its one fixed path, which is deleted on those structural checks alone because its contents are never opened. Caching other people's crawled profile data is OFF by default (LINKEDIN_CACHE=1, 12h TTL). See the Permissions, Data Flow & Consent section."
     env:
-      - name: LINKEDIN_TRANSPORT
-        description: "browser (default, cookies stay in the shared tab) or external (offline cookie replay; fragile and burns li_at)."
-        required: false
-        sensitive: false
       - name: LINKEDIN_CACHE
         description: "Set to 1 to allow caching other people's crawled profile data on disk. OFF by default."
-        required: false
-        sensitive: false
-      - name: LINKEDIN_ALLOW_PLAINTEXT_STORE
-        description: "Set to 1 to permit the 0600 file store when no OS keychain exists. Without it, saving a session fails closed and nothing is written. Equivalent to --allow-plaintext-store."
-        required: false
-        sensitive: false
-      - name: LINKEDIN_ALLOW_REMOTE_RELAY
-        description: "Set to 1 to allow a browser relay that is not on loopback. Off by default because that channel carries your session cookies and full tab control."
         required: false
         sensitive: false
       - name: LINKEDIN_PACE_MS
@@ -48,11 +27,15 @@ metadata:
         required: false
         sensitive: false
       - name: LINKEDIN_CDP_URL
-        description: "OpenClaw browser relay CDP websocket (default ws://127.0.0.1:18792/cdp)."
+        description: "OpenClaw browser relay CDP websocket (default ws://127.0.0.1:18792/cdp). Must use a literal loopback IP; hostnames are refused."
         required: false
         sensitive: false
       - name: LINKEDIN_RELAY_HTTP
-        description: "OpenClaw browser relay HTTP endpoint (default http://127.0.0.1:18792)."
+        description: "OpenClaw browser relay HTTP endpoint (default http://127.0.0.1:18792). Must use a literal loopback IP (127.0.0.1 or [::1]); hostnames, localhost included, are refused. There is no override."
+        required: false
+        sensitive: false
+      - name: LINKEDIN_TARGET_ID
+        description: "Pin the crawl to one specific shared tab by relay target id. The id must be a tab the relay is actually sharing AND that tab must be on exactly https://www.linkedin.com — it is not trusted blind."
         required: false
         sensitive: false
     # Declared capabilities. Each is used for exactly the reason given; anything
@@ -60,28 +43,28 @@ metadata:
     permissions:
       browser:
         required: true
-        scope: "Drives one linkedin.com tab that YOU explicitly shared with the OpenClaw relay. This is full browser automation on that one tab, and it is worth naming precisely: it runs fetch() inside the page, reads the tab's cookies via CDP, NAVIGATES the tab to linkedin.com search URLs, and SCRAPES the rendered DOM of the results page (LinkedIn's SDUI broke the classic Voyager search endpoint, so people-search is a DOM read). Navigation is restricted in code to https://*.linkedin.com — the tab cannot be sent anywhere else. It cannot see or open any tab you have not shared, and it opens no tab of its own. This is the default transport, and on it the cookies are never extracted from the browser at all."
+        scope: "Drives one linkedin.com tab that YOU explicitly shared with the OpenClaw relay. This is full browser automation on that one tab, and it is worth naming precisely: it runs fetch() inside the page, NAVIGATES the tab to LinkedIn search URLs, and SCRAPES the rendered DOM of the results page (LinkedIn's SDUI broke the classic Voyager search endpoint, so people-search is a DOM read). It no longer reads the tab's cookies at all — that code was deleted in 1.2.1. The tab must be on exactly https://www.linkedin.com, re-checked from inside the page immediately before any script runs there, and navigation is pinned to the same origin, so the tab cannot be sent or spoofed anywhere else. Choosing the tab by LINKEDIN_TARGET_ID goes through the identical check. It cannot see or open any tab you have not shared, and it opens no tab of its own."
       network:
         required: true
-        scope: "Outbound HTTPS to www.linkedin.com only (the /voyager/api endpoints), plus the loopback OpenClaw relay at 127.0.0.1:18792. No third party, no telemetry, no analytics endpoint is ever contacted."
+        scope: "Outbound HTTPS to https://www.linkedin.com only, confined to /voyager/api/ and enforced by an exact-origin check on every target, plus the loopback OpenClaw relay at 127.0.0.1:18792. The relay address is overridable but must be a literal loopback IP — no hostname is resolved and relay redirects are refused — with no escape hatch. No third party, no telemetry, no analytics endpoint is ever contacted."
       credentials:
         required: true
-        scope: "Your LinkedIn session cookies (li_at, JSESSIONID, optional bcookie/bscookie/li_a/lidc). Read from the tab you shared, sealed in the OS keychain, replayed only against www.linkedin.com. Never printed: `session extract-cdp` reports cookie NAMES and LENGTHS, never values."
+        scope: "DELETE ONLY. This version reads, stores and replays no credential: your cookies stay inside the browser tab. The capability remains declared for one reason — `session logout` still deletes the OS-keychain entry and the 0600 file that versions <= 1.2.0 could create, so upgrading does not strand a password-equivalent cookie on your disk. The keychain is never queried for a value: logout runs only the delete command with its output discarded, and `session status` reports the keychain entry as not checked (it only tests whether the legacy FILE path exists, without opening it). logout deletes that legacy file without opening it either. No credential value is ever read into this process or printed."
       shell:
         required: true
-        scope: "Runs exactly one binary per platform, with a fixed argument list and no shell interpreter: secret-tool (Linux) or security (macOS), to seal, read and erase the keychain entry. The secret is written to that process's stdin, never passed as an argument, so it does not appear in ps output or shell history. No other command is executed, ever."
+        scope: "Runs exactly one binary per platform, with a fixed argument list and no shell interpreter: secret-tool (Linux) or security (macOS). It is used ONLY by `session logout` to delete a keychain entry left by version <= 1.2.0 (`secret-tool clear` / `security delete-generic-password`), output discarded. No lookup form of either command is ever run, and this version never writes a keychain entry. No other command is executed, ever."
       file_read:
         required: true
-        scope: "The keychain entry or ~/.openclaw/credentials/linkedin-session.json, plus its own cache and activity counters under ~/.openclaw/workspace/memory/. It reads nothing else on your disk."
+        scope: "Its own cache and activity counters under ~/.openclaw/workspace/memory/, plus an existence check (existsSync, not a read) on the legacy ~/.openclaw/credentials/linkedin-session.json path; logout deletes that file without opening it. It reads nothing else on your disk."
       file_write:
         required: true
-        scope: "At most three files, all mode 0600, all under ~/.openclaw: the credentials file (ONLY when there is no keychain AND you passed --allow-plaintext-store; minimal fields, 24h expiry), linkedin-activity.json (the daily counters), and linkedin-cache.json (crawled third-party profiles, written only when you set LINKEDIN_CACHE=1). Nothing is written outside ~/.openclaw."
+        scope: "At most two files, both mode 0600, both under ~/.openclaw/workspace/memory: linkedin-activity.json (the daily counters) and linkedin-cache.json (crawled third-party profiles, written only when you set LINKEDIN_CACHE=1). Each is written to a 0600 sibling <name>.<pid>.tmp and renamed into place, and counter updates hold a short-lived 0600 linkedin-activity.json.lock that is removed when the update finishes. No credential file is written under any flag — that code path is gone. Nothing is written outside ~/.openclaw."
       file_delete:
         required: true
-        scope: "`session logout` clears the keychain entry and deletes all three files (credentials, cache, counters) by default; --keep-data keeps the cache and counters. A successful keychain write deletes any older file copy, and an expired file store is deleted on the next run that reads it. Every deletion goes through one guard that requires the path to be absolute, inside $HOME, a regular file, NOT a symlink, and to carry the openclaw-linkedin-hack marker this skill stamps into the files it creates — so it cannot be pointed at anything it did not write. No other deletion path exists."
+        scope: "`session logout` deletes the cache and counters by default (--keep-data keeps them) and purges any credential a version <= 1.2.0 left in the keychain or in ~/.openclaw/credentials/linkedin-session.json. Every deletion goes through one guard that requires the path to be absolute, inside $HOME, a regular file, NOT a symlink, and to carry the openclaw-linkedin-hack marker this skill stamps into the files it creates — so it cannot be pointed at anything it did not write. The one exception is the legacy session file at the fixed path ~/.openclaw/credentials/linkedin-session.json: it holds a cookie, so it is never opened to look for the marker and is deleted on the structural checks alone. The same guard also removes the counters' short-lived lock file. No other deletion path exists."
       env_read:
         required: true
-        scope: "The LINKEDIN_* variables listed above. No secret is read from the environment; the session comes from the browser or the keychain."
+        scope: "The LINKEDIN_* variables listed above. No secret is read from the environment, and none of them can widen a boundary: the relay must still be loopback and the target must still be the LinkedIn origin whatever they are set to."
 repository: https://github.com/globalcaos/tinkerclaw
 homepage: https://github.com/globalcaos/tinkerclaw
 ---
@@ -90,7 +73,7 @@ homepage: https://github.com/globalcaos/tinkerclaw
 
 No official LinkedIn API. No app review. No OAuth dance that dies in 60 days.
 
-LinkedIn's product surface is a private REST API called **Voyager**. The website already talks to it with cookies from your signed-in browser. This skill does the same thing: share a `linkedin.com` tab, extract the session once, then crawl profiles / people search / companies / connections / inbox / feed from a zero-dep Node CLI.
+LinkedIn's product surface is a private REST API called **Voyager**. The website already talks to it with cookies from your signed-in browser. This skill does the same thing: share a `linkedin.com` tab, then crawl profiles / people search / companies / connections / inbox / feed from a zero-dep Node CLI.
 
 **Part of [TinkerClaw](https://github.com/globalcaos/tinkerclaw)** — real-time token tracking, self-improving crons, persistent cognitive memory.
 
@@ -107,24 +90,24 @@ It is explicitly **not** built to evade anything. There is no jitter, no randomi
 </why_this_matters>
 
 <capabilities>
-- Crawl through a **shared LinkedIn tab** (browser transport — default). Cookies stay in-browser.
+- Crawl through a **shared LinkedIn tab**. API calls are a `fetch()` inside that tab; `search people` navigates the tab to a LinkedIn search page and reads the results. Either way your cookies stay in the browser.
 - Identity: `me`, `profile <vanity>` via Voyager in-tab fetch
 - People search via search-results page DOM scrape (LinkedIn SDUI broke classic Voyager search)
 - Company/profile/connections/inbox/feed: Voyager in-tab (best-effort where endpoints still live)
-- Optional external cookie-jar transport (`LINKEDIN_TRANSPORT=external`) — fragile; often burns `li_at`
-- Optional message send (hard-gated: requires `--i-mean-it`)
-- Daily activity counters with published ceilings + a fixed, deterministic request interval
-- Session sealed in the OS keychain (`secret-tool` / `security`) — secret over stdin, write verified by read-back
-- No keychain? Saving **fails closed**. The 0600 file store needs an explicit `--allow-plaintext-store` and expires in 24h
-- Browser relay pinned to loopback; the shared tab can only be navigated within `linkedin.com`
-- One-command off switch: `session logout` — clears both stores **and** local data, then points at LinkedIn's revoke page
+- **No credential store at all** — no cookie extraction, no keychain write, no plaintext file, no external replay. That code was **deleted** in 1.2.1, not switched off
+- **Exact-origin pin**: every request, navigation and tab pick must be `https://www.linkedin.com` — including the `LINKEDIN_TARGET_ID` override, which used to be trusted blind
+- Requests confined to `/voyager/api/`, and the in-page fetch re-checks same-origin before it sends
+- Message send is the only write, and consent is **per action**: `--i-mean-it` must repeat the exact conversation URN. Without it you get the draft and nothing is sent
+- Daily activity counters with published ceilings + a fixed, deterministic request interval that cannot be wound backwards
+- Browser relay pinned to loopback, with **no override**
+- One-command off switch: `session logout` — deletes local data **and** purges anything a version ≤ 1.2.0 stored, then points at LinkedIn's revoke page
 </capabilities>
 
 ## Quick Start
 
 ### 0. Relay Preflight — DO THIS FIRST
 
-Extraction runs **through the OpenClaw browser relay**, which only exposes tabs the user actively clicked **Share** on. Empty tab list ≠ broken code.
+Every call runs **through the OpenClaw browser relay**, which only exposes tabs the user actively clicked **Share** on. Empty tab list ≠ broken code.
 
 1. Confirm relay is up: `GET http://127.0.0.1:<relayPort>/extension/status` → `connected:true`, `count>=1`
    (`<relayPort>` = `browser.profiles.chrome-relay.cdpUrl` in `~/.openclaw/openclaw.json`, usually `18792`)
@@ -132,64 +115,24 @@ Extraction runs **through the OpenClaw browser relay**, which only exposes tabs 
 
 If count is 0 or LinkedIn isn't listed: reload the OpenClaw extension (`chrome://extensions`) in the browser holding LinkedIn, click **Share** on the tab, re-check.
 
-### 1. Session Extraction (one-time, ~30 seconds)
+### 1. Share a tab (one-time, ~10 seconds)
 
-Open `https://www.linkedin.com/feed/` while signed in. Share the tab via the OpenClaw extension.
+Open `https://www.linkedin.com/feed/` while signed in, and share the tab via the OpenClaw extension. That is the whole setup.
 
-**Default transport is in-tab** (`LINKEDIN_TRANSPORT=browser`). No cookie extract required for crawl — share a feed tab and call commands, and the cookies never leave the browser.
+**There is no session extraction step any more.** Every command works inside the tab you shared (`fetch()`, or for `search people` a navigation plus a page read), so `li_at` never leaves the browser. Version 1.2.1 removed the cookie extractor, the session store (keychain and plaintext alike) and the external cookie-replay transport **from the package** — they are not disabled behind a flag, they are gone. Nothing to store means nothing to leak, and nothing to re-extract when it expires.
 
-Persisting the session is **opt-in**: without `--store`, `extract-cdp` only reports which cookies it can see (names and lengths, never values). Pass `--store` and the session is sealed in your OS keychain. If you have no keychain, the save **fails and nothing is written** — `--store` on its own is not consent to put a password-equivalent cookie in a file. Either install a keychain, or stay on the default browser transport, which needs no stored session at all:
+Consequences worth knowing before you upgrade:
 
-```bash
-node {baseDir}/scripts/linkedin.mjs session extract-cdp --store
-node {baseDir}/scripts/linkedin.mjs session status    # says where it landed
-node {baseDir}/scripts/linkedin.mjs session logout    # erases it from both stores
-```
+- `session extract-cdp`, `session extract-browser` and `session store` no longer exist. They exit `2` with an explanation rather than silently doing nothing.
+- A tab must be shared for every run. There is no offline mode, because offline mode meant replaying a password-equivalent cookie from disk — and LinkedIn 302'd it anyway (observed 2026-07-29).
+- If you used a previous version, run `session logout` once: it deletes the keychain entry and the `0600` file that version could create. `session status` cannot tell you whether the keychain entry exists — checking would mean reading the secret — so just run logout; it is a no-op when nothing is there.
 
-**Do not use external cookie replay as the main path.** Live 2026-07-29: external `/me` after extract worked once, then every further external call 302'd and the browser lost `li_at` (login wall). In-tab fetch does not burn the session the same way.
-
-**Do not burst.** A fixed minimum interval between calls is built in (`LINKEDIN_PACE_MS`, default 1500ms). One command at a time after login.
-
-**B. Fallback — evaluate in page** (usually misses httpOnly `li_at`):
-
-```javascript
-(() => {
-  const want = ["li_at", "JSESSIONID", "bcookie", "bscookie", "li_a", "lidc", "liap"];
-  const cookies = {};
-  for (const part of document.cookie
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean)) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    const k = part.slice(0, eq);
-    if (want.includes(k)) cookies[k] = part.slice(eq + 1);
-  }
-  return {
-    cookies,
-    csrf: cookies.JSESSIONID?.replace(/^"|"$/g, "") || null,
-    has_li_at: Boolean(cookies.li_at),
-    note: cookies.li_at ? "ok" : "li_at httpOnly — use browser cookies action",
-  };
-})();
-```
-
-Store it. Cookies are read from **stdin as JSON** — never as command-line flags, because argv is
-readable by every process on the machine and lands in your shell history, and `li_at` is a password:
-
-```bash
-printf '%s' '{"li_at":"<value>","jsessionid":"<ajax:…>"}' \
-  | node {baseDir}/scripts/linkedin.mjs session store
-```
-
-Optional keys: `csrf_token`, `bcookie`, `bscookie`, `li_a`, `lidc`. `csrf_token` defaults to the
-unquoted JSESSIONID (Voyager's usual rule). Better still, skip the copy-paste entirely and use
-`session extract-cdp --store`, where the value is never typed anywhere.
+**Do not burst.** A fixed minimum interval between calls is built in (`LINKEDIN_PACE_MS`, default 1500ms). One command at a time.
 
 ### 2. Verify
 
 ```bash
-node {baseDir}/scripts/linkedin.mjs session test
+node {baseDir}/scripts/linkedin.mjs session check
 node {baseDir}/scripts/linkedin.mjs me
 ```
 
@@ -209,27 +152,24 @@ node {baseDir}/scripts/linkedin.mjs activity show
 ## How It Works
 
 1. LinkedIn web uses cookies (`li_at` session + `JSESSIONID` / CSRF) for Voyager.
-2. **Only if you asked it to persist**, the skill seals those cookies in your **OS keychain** (`secret-tool` on Linux, `security` on macOS, entry `openclaw-linkedin-hack/linkedin-session`). The value goes over the helper's **stdin on both platforms**, so it never appears in `ps` or shell history, and the write is **read back** before the skill reports success. With no usable keychain it **refuses to save**; the `0600` file at `~/.openclaw/credentials/linkedin-session.json` happens only with an explicit `--allow-plaintext-store`, keeps only the fields needed to make a request, expires after 24h, and warns loudly. Only one copy is ever kept: a successful keychain write deletes the file.
-3. CLI replays them against `https://www.linkedin.com/voyager/api/*` with:
-   - `csrf-token: <unquoted JSESSIONID>`
-   - `Cookie: li_at=…; JSESSIONID="…"; …`
-   - `x-restli-protocol-version: 2.0.0`
-   - desktop Chrome UA + linkedin.com Origin/Referer
-4. Responses are Rest.li "normalized" JSON (`data` + `included`). The CLI flattens the useful bits.
+2. **The skill never handles them.** It attaches to the tab you shared over the local relay, checks from inside the page that `location.origin` is exactly `https://www.linkedin.com`, and evaluates a `fetch()` there. The browser attaches the cookies itself, same-origin, exactly as it does when you click around the site.
+3. The in-page request carries `csrf-token` (the unquoted `JSESSIONID`) and `x-restli-protocol-version: 2.0.0`, and resolves its target against `location.origin` first — a cross-origin target is refused inside the page, so the CSRF token cannot be carried to another host.
+4. Every target is checked twice before that: `buildUrl` refuses anything that is not exactly `https://www.linkedin.com` and inside `/voyager/api/`, and the tab it runs in is re-verified by origin equality rather than a substring match on "linkedin.com".
+5. Responses are Rest.li "normalized" JSON (`data` + `included`). The CLI flattens the useful bits.
 
 Same family as:
 
-| Skill                     | Auth model                                               | Stores secrets?                                                           |
-| ------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------- |
-| teams-hack / outlook-hack | MSAL refresh token from Teams localStorage               | yes (`outlook-msal.json`)                                                 |
-| factorial-hack            | live page `fetch` (httpOnly cookies never leave browser) | no                                                                        |
-| **linkedin-hack**         | in-tab fetch by default; cookie jar optional             | only if you ask — OS keychain, or an opt-in 0600 file that expires in 24h |
+| Skill | Auth model | Stores secrets? |
+| ----- | ---------- | --------------- |
+| teams-hack / outlook-hack | MSAL refresh token from Teams localStorage | yes (`outlook-msal.json`) |
+| factorial-hack | live page `fetch` (httpOnly cookies never leave browser) | no |
+| **linkedin-hack** | in-tab fetch only (httpOnly cookies never leave browser) | no — the store was deleted in 1.2.1 |
 
-LinkedIn needs the offline jar because Voyager is same-site cookie auth and we want CLI use without a live tab on every call. Re-extract when you get 401/403.
+linkedin-hack now sits in the same column as factorial-hack: the session stays in the browser, and the price is that a shared tab has to be open. That is the trade we took deliberately — the offline jar bought convenience with a password-equivalent secret at rest, and LinkedIn rejected it in practice anyway.
 
 ## Rate Guard (do not skip)
 
-LinkedIn will challenge or ban aggressive automation. Soft daily ceilings live in:
+LinkedIn will challenge or ban aggressive automation. Daily ceilings and today's counts live in:
 
 ```
 ~/.openclaw/workspace/memory/linkedin-activity.json
@@ -238,23 +178,26 @@ LinkedIn will challenge or ban aggressive automation. Soft daily ceilings live i
 Pacing (rewritten 2026-09-08): a **fixed, deterministic minimum interval** between Voyager calls — `LINKEDIN_PACE_MS`, default 1500ms, floor 500ms. Same input, same timing. The previous release randomised this interval and injected occasional long pauses to look more human; that was anti-detection behaviour, it has been **removed**, and what is left is plain rate limiting you can read off the source. Raising `LINKEDIN_PACE_MS` only ever slows the skill down. Throughput comes from **fat payloads**, never from parallelism — there is none in the code.
 
 - Optional local cache at `~/.openclaw/workspace/memory/linkedin-cache.json`, **off unless you set `LINKEDIN_CACHE=1`** — `profile` and `company` results cached 12h (`LINKEDIN_CACHE_TTL_H`, capped at 168h; entries past the TTL are pruned on write). Cache hits cost zero requests and zero rate-guard counters. `--no-cache` forces live.
-- `connections` defaults to `--top 100` in one request (Voyager happily serves fat pages).
+- `connections` defaults to `--top 100` in one request (Voyager happily serves fat pages), which reserves 100 of the 500 `connections_listed` for the day.
 
-Defaults (override by editing `limits` in that file):
+**What a counter counts: records requested.** Each command is charged the `count` it asks LinkedIn for — its `--top` (default shown below), or 1 for a single-entity lookup. The full amount is **reserved before the first request goes out**; a fallback request reuses that reservation and a failed request is not refunded. A value outside the per-call range is **rejected**, not clamped. Reservations are made under a lock file and written by atomic rename, so two runs at once cannot both pass the check and overshoot a ceiling. You can **lower** any ceiling by editing `limits` in that file; a higher number there is ignored.
 
-| counter          | default / day |
-| ---------------- | ------------- |
-| profile_views    | 40            |
-| messages_read    | 200           |
-| messages_sent    | 25            |
-| connections_sent | 15            |
-| likes            | 40            |
-| sessions         | 15            |
-| total_minutes    | 90            |
+| counter | ceiling / day | charged by | `--top` default / max |
+| ------- | ------------- | ---------- | --------------------- |
+| sessions | 15 | `session check` (1) | — |
+| profile_views | 40 | `me`, `profile`, `company` (1 each, cache hit free), `posts` profile lookup (1) | — |
+| search_results | 100 | `search people`, `search companies` | 10 / 25 (`--page` ≤ 40) |
+| connections_listed | 500 | `connections` | 100 / 100 (`--start` ≤ 10000) |
+| conversations_listed | 100 | `conversations` | 20 / 50 |
+| messages_read | 200 | `messages` | 30 / 50 |
+| feed_items | 100 | `feed` | 10 / 25 |
+| notifications_read | 100 | `notifications` | 15 / 50 |
+| posts_read | 100 | `posts` | 10 / 25 |
+| messages_sent | 25 | `message-send` (1) | — |
 
-Commands that would exceed a counter throw instead of calling Voyager.
+Commands that would exceed a counter throw instead of calling Voyager, and book nothing.
 
-`message-send` additionally requires `--i-mean-it`. No flag → exit 2, no request.
+`message-send` additionally requires **per-action** consent: `--i-mean-it` must repeat the exact conversation URN you are writing to, so an approval for one recipient cannot be reused on another. No consent, or consent naming a different conversation → the draft is printed, exit 2, no request.
 
 Usage guidance for the agent, under the ceilings — this is about not wasting requests and keeping
 a human in the loop, not about staying invisible:
@@ -271,27 +214,27 @@ Read this before you install. It is the honest version.
 
 ### What it touches
 
-- **One browser tab that you shared.** The default transport runs `fetch` inside a `linkedin.com` tab you explicitly clicked **Share** on in the OpenClaw extension. The skill cannot reach a tab you did not share, and it opens nothing on its own.
-- **Your LinkedIn session cookies** — `li_at`, `JSESSIONID`, and optionally `bcookie` / `bscookie` / `li_a` / `lidc`. Treat `li_at` as a password: it is a full sign-in as you, with no second factor. The skill never prints cookie values; `session extract-cdp` reports names and lengths only.
-- **It navigates and scrapes that tab.** Naming this plainly, because it is more than passive API use: people-search works by sending the shared tab to a `linkedin.com` search URL and reading the rendered DOM (LinkedIn's SDUI broke the classic Voyager search endpoint). Navigation is restricted **in code** to `https://*.linkedin.com`, so the tab cannot be steered anywhere else — but it is browser automation on a live, signed-in session, and you should treat it as such.
-- **At most three files, all mode 0600, all under `~/.openclaw`** — the opt-in credentials file, the rate-guard counters (`linkedin-activity.json`), and the opt-in crawl cache (`linkedin-cache.json`). It reads nothing else on your disk.
-- **One binary per platform, run with a fixed argument list and no shell** — `secret-tool` (Linux) or `security` (macOS), for the keychain only, with the secret on stdin.
-- **The local browser relay, and only on loopback.** `LINKEDIN_CDP_URL` / `LINKEDIN_RELAY_HTTP` are overridable, so both are parsed and their hostnames **resolved** before use; anything that does not resolve to loopback is refused unless you set `LINKEDIN_ALLOW_REMOTE_RELAY=1`. That channel carries your session cookies and full control of the tab, which is why it is not left open by default.
+- **One browser tab that you shared.** Every command runs `fetch` inside a `linkedin.com` tab you explicitly clicked **Share** on in the OpenClaw extension. The skill cannot reach a tab you did not share, and it opens nothing on its own.
+- **Your LinkedIn session cookies — indirectly, and it never sees them.** Treat `li_at` as a password: it is a full sign-in as you, with no second factor. This version has no code that reads it. The browser attaches it to a same-origin request; the skill neither receives nor stores the value.
+- **It navigates and scrapes that tab.** Naming this plainly, because it is more than passive API use: people-search works by sending the shared tab to a LinkedIn search URL and reading the rendered DOM (LinkedIn's SDUI broke the classic Voyager search endpoint). It is browser automation on a live, signed-in session, and you should treat it as such.
+- **Two files, both mode 0600, both under `~/.openclaw/workspace/memory`** — the rate-guard counters (`linkedin-activity.json`) and the opt-in crawl cache (`linkedin-cache.json`), each written via a temp file and atomic rename; counter updates also hold a short-lived `linkedin-activity.json.lock`. No credential file is written under any flag. It reads nothing else on your disk.
+- **One binary per platform, run with a fixed argument list and no shell** — `secret-tool clear` (Linux) or `security delete-generic-password` (macOS), run **only** by `session logout` to delete a keychain entry an older version could have created, with its output discarded. The code contains no keychain lookup.
+- **The local browser relay, and only on loopback.** `LINKEDIN_CDP_URL` / `LINKEDIN_RELAY_HTTP` are overridable, so both are parsed and the host must be a **literal loopback IP** (`127.0.0.1`, anything in `127.0.0.0/8`, or `[::1]`). A hostname — `localhost` included — is refused rather than resolved, so a name that answers loopback at check time and something else at connect time (DNS rebinding) cannot get through, and the relay's HTTP redirects are refused. Anything else is refused outright — the `LINKEDIN_ALLOW_REMOTE_RELAY` escape hatch has been removed, because that channel is full control of a tab that is signed in as you.
 
 ### Where the secret lives
 
-1. **OS keychain, and by default nowhere else** — `secret-tool` on Linux, `security` on macOS, entry `openclaw-linkedin-hack` / `linkedin-session`. On **both** platforms the value is passed over the helper's stdin, so it never appears in `ps`, in an audit log, or in your shell history. (Earlier releases passed it as an argument to `security` on macOS; that is fixed.) The write is then **read back and compared** — the skill will not tell you a session is sealed unless it can prove it landed.
-2. **Nowhere, if there is no keychain.** This is the important one: with no usable keychain the save **fails closed** and nothing is written. You are told to install a keychain, or to stay on the default browser transport where no session is stored at all.
-3. **A 0600 file, only if you explicitly ask for one** — `~/.openclaw/credentials/linkedin-session.json`, and only with `--allow-plaintext-store` (or `LINKEDIN_ALLOW_PLAINTEXT_STORE=1`) passed on that run. It stores the **minimum** fields needed to make a request, stamps a **24h expiry** and deletes itself once past it, and prints a warning every single time it writes. There is no way to disable the keychain and go straight here — the earlier `LINKEDIN_NO_KEYCHAIN` switch has been removed.
+**In your browser, and nowhere else.** That is the whole answer, and it is the main change in 1.2.1.
 
-A successful keychain write **deletes** the file, so the secret never exists in two places.
+Previous versions could persist the session: sealed in the OS keychain by default, or — with an explicit `--allow-plaintext-store` — in a `0600` file that expired after 24h. All of that is **deleted from the package**, along with the cookie extractor that fed it and the external replay path that consumed it. There is no flag, no environment variable and no fallback that writes a credential now.
+
+What remains of that machinery is a **purge**: `session logout` still deletes the old keychain entry and the old file, so upgrading does not strand a password-equivalent cookie on your disk. It deletes blind — the keychain is never asked for the value, not even to check it exists. `session status` reports whether the old **file** is still there and marks the keychain entry as not checked. Run logout once after upgrading.
 
 ### What leaves your machine
 
-- **To `www.linkedin.com` only:** the Voyager API calls you asked for, carrying your own cookies — exactly what your browser sends when you use the site normally.
-- **To `127.0.0.1:18792`:** the local OpenClaw browser relay. That is loopback, not the network.
+- **To `https://www.linkedin.com` only:** the Voyager API calls you asked for, issued by your own browser from a tab that is already on that origin — exactly what the site sends when you use it normally. The origin is checked by parsed-origin equality on every target, so `www.linkedin.com.evil.example`, `https://linkedin.com`, plain `http`, and a non-default port are all refused.
+- **To `127.0.0.1:18792`:** the local OpenClaw browser relay. That is loopback, not the network, and it is enforced rather than assumed.
 - **To anyone else: nothing.** No telemetry, no analytics, no third-party host, no phone-home. The skill has zero dependencies, so there is no transitive package doing it either.
-- **Outbound writes to LinkedIn:** exactly one endpoint, `message-send`, and it is refused without `--i-mean-it`. Everything else is a read.
+- **Outbound writes to LinkedIn:** exactly one endpoint, `message-send`, and it is refused unless `--i-mean-it` names the exact conversation URN.
 
 ### Third-party data, and the cost of it
 
@@ -314,102 +257,119 @@ You are responsible for what you do with that data. In the EU, scraped profile d
 ### How to turn it off
 
 ```bash
-node {baseDir}/scripts/linkedin.mjs session logout               # keychain + file + cache + counters
-node {baseDir}/scripts/linkedin.mjs session logout --keep-data   # same, but keep cache + counters
+node {baseDir}/scripts/linkedin.mjs session logout               # cache + counters + any legacy session
+node {baseDir}/scripts/linkedin.mjs session logout --keep-data   # legacy session only; keep cache + counters
 ```
 
-`logout` clears **both** credential stores and, by default, **also deletes** the cached profiles and the
-activity counters. Every one of those deletions is checked first: absolute path, inside `$HOME`, a regular
-file, never a symlink, and carrying the marker this skill stamps into files it created — so the off switch
-cannot be talked into removing anything else.
+`logout` deletes the cached profiles and the activity counters, and purges any credential a version ≤ 1.2.0 left
+in the keychain or at `~/.openclaw/credentials/linkedin-session.json`. Every one of those deletions is checked
+first: absolute path, inside `$HOME`, a regular file, never a symlink, and carrying the marker this skill stamps
+into files it created — so the off switch cannot be talked into removing anything else. The legacy session file
+is the exception to the marker check: it is never opened, so it is removed on the other checks at its fixed path.
+
+Stopping the crawl itself needs no command at all: **unshare the tab**, and there is no path left into your account.
 
 It is **local only**, and the command says so before and after it runs. It prints LinkedIn's own revoke page:
 
 **https://www.linkedin.com/psettings/sessions**
 
-**Use it — that is the step that actually revokes access.** Deleting the local copy does not invalidate the cookie: until you sign that session out at LinkedIn, anyone who already copied it stays signed in as you. Uninstalling the skill does not revoke anything either. This skill has no way to revoke a LinkedIn session server-side, so it does not claim one.
+**Use it if you ever ran an older version** — that is the step that actually revokes a cookie someone may have copied. Deleting a local copy does not invalidate it at LinkedIn, and uninstalling the skill does not either. This skill has no way to revoke a LinkedIn session server-side, so it does not claim one.
 
 ### What it will not do
 
-There is no endpoint in this skill for connecting, following, liking, posting, endorsing, or deleting. `message-send` is the only write, and it is flag-gated. The `likes` and `connections_sent` counters exist so those actions stay accounted for if they are ever added — today nothing increments them.
+There is no endpoint in this skill for connecting, following, liking, posting, endorsing, or deleting. `message-send` is the only write, and it needs per-action consent naming the target conversation. It will not read your cookies, write a credential anywhere, talk to any host but `https://www.linkedin.com`, or accept a relay that is not on loopback — and there is no flag that changes any of those.
 
 ## CLI Reference
 
-| Command                                           | Description                                                                                                                                                                        |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session extract-cdp [--store]`                   | Pull httpOnly `li_at` via OpenClaw CDP relay (preferred)                                                                                                                           |
-| `session extract-browser`                         | Print in-page extract snippet (often misses `li_at`)                                                                                                                               |
-| `session store`                                   | Read `{"li_at":…,"jsessionid":…}` as JSON on **stdin**, save + auto-test. Cookies are never accepted as flags                                                                      |
-| `session test`                                    | `GET /voyager/api/me`                                                                                                                                                              |
-| `session status`                                  | Where the session is stored + today's counters                                                                                                                                     |
-| `session logout [--keep-data]`                    | Erase the session from keychain **and** file, **and** delete the cached profiles and counters; print LinkedIn's revoke URL. Local only. `--keep-data` keeps the cache and counters |
-| `me`                                              | Mini-profile                                                                                                                                                                       |
-| `profile <vanity>`                                | Profile + positions (+ education)                                                                                                                                                  |
-| `search people "q" [--top N] [--network F\|S\|O]` | People search                                                                                                                                                                      |
-| `search companies "q" [--top N]`                  | Company search                                                                                                                                                                     |
-| `connections [--top N] [--start N]`               | 1st-degree connections                                                                                                                                                             |
-| `company <vanity>`                                | Company page summary                                                                                                                                                               |
-| `posts <vanity> [--top N]`                        | Member share feed (best-effort)                                                                                                                                                    |
-| `conversations [--top N]`                         | Inbox list                                                                                                                                                                         |
-| `messages <urn> [--top N]`                        | Thread events                                                                                                                                                                      |
-| `message-send <urn> --message "…" --i-mean-it`    | Send (gated)                                                                                                                                                                       |
-| `feed [--top N]`                                  | Home feed (best-effort)                                                                                                                                                            |
-| `notifications [--top N]`                         | Notifications (best-effort)                                                                                                                                                        |
-| `activity show`                                   | Counters + limits                                                                                                                                                                  |
-| `activity bump <counter> [--by N]`                | Manual counter bump                                                                                                                                                                |
+| Command | Description |
+| ------- | ----------- |
+| `session check` | `GET /voyager/api/me` inside the shared tab — confirms you are signed in. `session test` is kept as an alias |
+| `session status` | Posture (transport, pinned origin, relay), today's counters and ceilings, and whether the legacy session **file** is still on disk. Does not query the keychain. Prints no secret |
+| `session logout [--keep-data]` | Delete the cached profiles and counters **and** purge any session a version ≤ 1.2.0 stored; print LinkedIn's revoke URL. Local only. `--keep-data` keeps the cache and counters |
+| `me` | Mini-profile |
+| `profile <vanity>` | Profile + positions (+ education) |
+| `search people "q" [--top N≤25] [--page N≤40] [--network F\|S\|O]` | People search |
+| `search companies "q" [--top N≤25]` | Company search |
+| `connections [--top N≤100] [--start N≤10000]` | 1st-degree connections |
+| `company <vanity>` | Company page summary |
+| `posts <vanity> [--top N≤25]` | Member share feed (best-effort) |
+| `conversations [--top N≤50]` | Inbox list |
+| `messages <urn> [--top N≤50]` | Thread events |
+| `message-send <urn> --message "…" --i-mean-it <urn>` | Send. Consent is per action: `--i-mean-it` must repeat the exact URN. Without it, the draft is printed and nothing is sent |
+| `feed [--top N≤25]` | Home feed (best-effort) |
+| `notifications [--top N≤50]` | Notifications (best-effort) |
+| `activity show` | Counters + limits |
+| `activity bump <counter> [--by N]` | Manual counter bump. `N` must be positive — the guard cannot be wound backwards |
 
-## Extraction: httpOnly `li_at`
+## Why there is no extraction step
 
-`li_at` is frequently **httpOnly**, so `document.cookie` will not see it. Prefer:
+`li_at` is `httpOnly`, so `document.cookie` never sees it, and reaching it at all meant asking CDP for the tab's
+cookie jar and then keeping the result somewhere. Earlier versions did exactly that. The trouble is what you are
+left holding: a password-equivalent, second-factor-free sign-in as you, sitting on disk, useful to anything that
+can read a file — while the offline replay it enabled was rejected by LinkedIn in practice anyway (observed
+2026-07-29: one external call worked, the rest 302'd, and the browser lost the session).
 
-1. `browser(action=cookies, domain="linkedin.com")` when the tool path is available
-2. Or CDP `Network.getCookies` on the shared LinkedIn target through the relay
+So 1.2.1 removed the reason to hold it. The request is issued by the page, the browser attaches the cookie
+same-origin, and the skill never has a copy. Nothing to extract, nothing to store, nothing to rotate, nothing to
+leak. The cost is honest and worth stating: **a shared tab has to be open for every call.**
 
-`JSESSIONID` is usually readable and doubles as the CSRF token (strip surrounding quotes).
-
-Never paste full `li_at` values into chat transcripts, git commits, or clawhub packages. Store → test → discard from the message.
+Never paste `li_at` values into chat transcripts, git commits, or ClawHub packages — that advice outlives any one
+skill.
 
 ## Failure Modes
 
-| Symptom                        | Likely cause                                      | Fix                                                                                  |
-| ------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `401` / `403`                  | Session expired, challenge, or missing csrf       | Re-login in browser, `session extract-cdp --store`                                   |
-| `302 redirect` / redirect loop | Dead/rotated `li_at` (CLI uses `redirect:manual`) | Same: re-login + extract-cdp                                                         |
-| `429`                          | LinkedIn rate limit                               | Stop for minutes; do not retry in a loop                                             |
-| `Rate guard: daily …`          | Soft ceiling hit                                  | Wait for next day or edit limits deliberately                                        |
-| Empty search results           | Voyager decorationId drift                        | CLI already falls back to `/search/hits`; re-check with `--raw` on profile if needed |
-| `li_at` missing from evaluate  | httpOnly cookie                                   | Use `session extract-cdp`, not document.cookie                                       |
-| Tab on `/login`                | Session burned (often after a request burst)      | Human re-login, open feed, re-share, extract once                                    |
-| Send refused                   | Missing `--i-mean-it`                             | Intentional; only pass when a human has explicitly approved that exact message       |
+| Symptom | Likely cause | Fix |
+| ------- | ------------ | --- |
+| `401` / `403` | Session expired or challenged | Re-login in the browser, open the feed, re-share the tab |
+| `Shared tab is on …, not https://www.linkedin.com` | The tab navigated away, or the relay metadata was stale | Send that tab back to the feed and retry. Working as intended — it will not run in another origin |
+| `429` | LinkedIn rate limit | Stop for minutes; do not retry in a loop |
+| `Rate guard: daily …` | Daily ceiling hit | Wait for the next day (UTC). Limits in the activity file can only lower a ceiling |
+| `--top must be an integer between …` | Value outside the per-command range | Ask for less; page with `--start` / `--page` |
+| Empty search results | Voyager decorationId drift | CLI already falls back to `/search/hits`; re-check with `--raw` on profile if needed |
+| `… points off loopback` | Relay URL uses a hostname (even `localhost`) or a non-loopback IP | Use `127.0.0.1` |
+| `No https://www.linkedin.com tab in the relay` | No LinkedIn tab is shared | Share a feed tab via the OpenClaw extension |
+| Tab on `/login` | Session burned (often after a request burst) | Human re-login, open feed, re-share the tab |
+| `draft-only`, exit 2 | `--i-mean-it` missing, bare, or naming a different conversation | Intentional. Pass `--i-mean-it <the exact URN>` only when a human has approved that exact message to that exact thread |
 
 ## Architecture
 
 ```
 linkedin-hack/
 ├── SKILL.md
-└── scripts/
-    └── linkedin.mjs    # zero-dep CLI (session + voyager + rate guard)
+├── scripts/
+│   └── linkedin.mjs    # zero-dep CLI (in-tab voyager + origin pin + rate guard)
+└── tests/
+    ├── origin.test.mjs # the origin pin, as unit tests
+    └── cli.test.mjs    # consent, relay and origin gates, end to end
 ```
 
+Run them with `node --test tests/origin.test.mjs tests/cli.test.mjs` (Node 22+, no dev dependencies).
+
 - **Zero external deps** — pure Node 22+ (`fetch` built-in)
-- **Credentials** — OS keychain `openclaw-linkedin-hack/linkedin-session` (secret over stdin, write verified by read-back). No keychain ⇒ saving fails closed; `--allow-plaintext-store` opts into `~/.openclaw/credentials/linkedin-session.json` (0600, minimal fields, 24h expiry)
+- **Credentials** — none stored, none read. In-tab `fetch` only; the extractor, the keychain write and the plaintext file were deleted in 1.2.1. The one keychain helper is delete-only, for cleaning up after an older install; there is no keychain lookup
+- **Origin pin** — one check (`assertLinkedInUrl`, exact `origin` equality) covers every request, navigation and tab pick, `LINKEDIN_TARGET_ID` included; requests are confined to `/voyager/api/` and re-verified same-origin inside the page
 - **Activity** — `~/.openclaw/workspace/memory/linkedin-activity.json` (0600)
 - **Cache** — off unless `LINKEDIN_CACHE=1`; then `~/.openclaw/workspace/memory/linkedin-cache.json` (0600, 12h TTL)
-- **Relay** — must resolve to loopback; `LINKEDIN_ALLOW_REMOTE_RELAY=1` to override, with a warning
-- **Deletes** — one guarded helper: absolute, inside `$HOME`, regular file, not a symlink, marker-stamped
+- **Relay** — literal loopback IP only, no hostname resolution, no redirects; there is no override
+- **Rate guard** — records requested, reserved in full before the request under a cross-process lock; strict `--top` ranges; file limits can only lower a ceiling
+- **Deletes** — one guarded helper: absolute, inside `$HOME`, regular file, not a symlink, marker-stamped (the legacy session file at its fixed path is deleted unopened, on the structural checks only)
 - **API** — LinkedIn Voyager (`/voyager/api`), Rest.li normalized JSON
 - **Off switch** — `node scripts/linkedin.mjs session logout`
 
 ## Sibling Skills
 
-| Skill                                                          | What it does                            |
-| -------------------------------------------------------------- | --------------------------------------- |
-| [teams-hack](https://clawhub.ai/globalcaos/teams-hack)         | Teams chat via Graph + MSAL refresh     |
-| [outlook-hack](https://clawhub.ai/globalcaos/outlook-hack)     | Outlook read/draft (send code-disabled) |
-| [factorial-hack](https://clawhub.ai/globalcaos/factorial-hack) | Factorial HR GraphQL in-page            |
+| Skill | What it does |
+| ----- | ------------ |
+| [teams-hack](https://clawhub.ai/globalcaos/teams-hack) | Teams chat via Graph + MSAL refresh |
+| [outlook-hack](https://clawhub.ai/globalcaos/outlook-hack) | Outlook read/draft (send code-disabled) |
+| [factorial-hack](https://clawhub.ai/globalcaos/factorial-hack) | Factorial HR GraphQL in-page |
 
 ## The Full Stack
 
 Pair with [outlook-hack](https://clawhub.ai/globalcaos/outlook-hack) for email, [whatsapp-ultimate](https://clawhub.ai/globalcaos/whatsapp-ultimate) for messaging, and [teams-hack](https://clawhub.ai/globalcaos/teams-hack) for org chat.
 
 [Clone it. Fork it. Break it. Make it yours.](https://github.com/globalcaos/tinkerclaw)
+
+## Changelog
+
+- **1.2.2** — `session status` no longer runs a keychain lookup (the value-returning `keychainGet` is deleted; logout deletes blind); daily ceilings now charge the full requested `--top` before the request, with strict per-command maximums and file limits that can only lower a ceiling; the relay must be a literal loopback IP (no DNS resolution, no redirects); logout deletes the legacy session file without opening it (no marker read); counter reservations are locked and written atomically so concurrent runs cannot overshoot a ceiling.

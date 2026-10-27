@@ -4,7 +4,7 @@ import { AA_EFFORT_INDEX, aaEstimateAt, aaFamilyOf, aaScoreAt } from "./aa-effor
 
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-// FORK 2026-09-02 (the user: "you must certainly be able to find other benchmarks … even
+// FORK 2026-09-02 (the architect: "you must certainly be able to find other benchmarks … even
 // if you have to approximate"). The estimate table fills effort cells AA never
 // published from other public per-effort benchmark runs. These tests pin the contract
 // that makes that honest: an estimate never touches a measurement, it always says
@@ -53,10 +53,17 @@ describe("aa-effort-estimate — the estimate contract", () => {
   it("aaEstimateAt refuses where AA measured, and answers where it did not", () => {
     expect(aaScoreAt("claude-code/claude-opus-5", "max")).toBeDefined();
     expect(aaEstimateAt("claude-code/claude-opus-5", "max")).toBeUndefined();
-    expect(aaScoreAt("claude-code/claude-sonnet-5", "high")).toBeUndefined();
-    const est = aaEstimateAt("claude-code/claude-sonnet-5", "high");
+    // AA scored Sonnet 5 high on 2026-09-11 and xhigh on 2026-09-12, so the estimate
+    // refuses both cells now.
+    expect(aaScoreAt("claude-code/claude-sonnet-5", "high")).toBeDefined();
+    expect(aaEstimateAt("claude-code/claude-sonnet-5", "high")).toBeUndefined();
+    expect(aaScoreAt("claude-code/claude-sonnet-5", "xhigh")).toBeDefined();
+    expect(aaEstimateAt("claude-code/claude-sonnet-5", "xhigh")).toBeUndefined();
+    // Opus 4.8 is measured only at max; its xhigh is the estimated cell, clamped at max.
+    expect(aaScoreAt("claude-code/claude-opus-4-8", "xhigh")).toBeUndefined();
+    const est = aaEstimateAt("claude-code/claude-opus-4-8", "xhigh");
     expect(est).toBeDefined();
-    expect(est!.v).toBeLessThan(55.2612);
+    expect(est!.v).toBeLessThanOrEqual(aaScoreAt("claude-code/claude-opus-4-8", "max")!);
   });
 
   // FORK 2026-09-02 (the architect: "No claude models should ever route through openrouter").

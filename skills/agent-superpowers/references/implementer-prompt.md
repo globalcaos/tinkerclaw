@@ -72,8 +72,8 @@ Verification:
 sessions_spawn({
   task: `[paste template above with filled placeholders]`,
   runtime: "subagent",
-  model: "sonnet",  // coding strength
+  model: "sonnet", // coding strength
   mode: "run",
-  cwd: "/path/to/project"
-})
+  cwd: "/path/to/project",
+});
 ```

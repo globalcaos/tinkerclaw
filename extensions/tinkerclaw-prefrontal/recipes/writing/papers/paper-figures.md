@@ -35,7 +35,7 @@ Produce a paper's figures at `images/fig-*.png` in ONE consistent visual languag
 
 Not for: photographic assets or product screenshots.
 
-## THE ROUTING RULE (the user, 2026-08-02 — read this before drawing anything)
+## THE ROUTING RULE (the architect, 2026-08-02 — read this before drawing anything)
 
 | Figure carries…                                                                         | Tool                                                     | Why                                                           |
 | --------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
@@ -107,6 +107,7 @@ Route each conceptual PNG through `nano-banana-pro` edit mode (`-i <in>.png`) wi
 - **Never restyle a numeric chart through the image model.** It will silently redraw ticks, values, and axis labels — a corrupted chart that still looks plausible. Numeric figures get their cohesion from the rcParams block in Step 2, full stop.
 - Compare before/after and **keep the better one**. A restyle that drops a label or re-authors an arrow is a regression: discard it and ship the Napkin original.
 - Skipping the pass is acceptable (budget, credits, a one-off figure). Skipping it silently is not — say so in the report.
+- Check the key before planning the pass: `printenv GEMINI_API_KEY`, then `grep -rl GEMINI_API_KEY ~/.openclaw/.env ~/.openclaw/credentials`. On the architect's laptop there has been none since 2026-08; the Gemini CLI login is free tier and has zero quota for this model. No key means the pass is skipped, and the report says why.
 
 ### 4. Visually verify
 
@@ -148,6 +149,18 @@ Insert figure references with descriptive captions at the right sections. Copy b
 - **Thin Napkin prompts:** a summarised paragraph makes the layout engine invent relationships. Feed the full section.
 - **Stale figure reuse:** a PNG on disk from an earlier pass routinely embeds sibling-paper names a text grep cannot see. Regenerate referenced figures; don't reuse.
 - **Unquoted-label parse error (D2):** fails on `(`/`[`/`:` in bare labels — quote the label.
+- **A long brief prints as small text (J19 v4.0, 2026-09-30).** Napkin puts the brief's words into the figure. A
+  340-word brief for a six-stage flow printed at text width came out near 5 pt against 10 pt body text; the same
+  flow from a 110-word brief (a few words per stage) printed at about 9 pt. The 250–330 words above suit a brief
+  that describes a figure, not one whose every word ends up drawn: for a flow printed at text width keep the drawn
+  label text near 100–120 words. Check it by hand, since `fig-legibility.py` ran past 170 s without an answer: glyph
+  x-height in pixels times (displayed width in inches / image width in pixels), times 72, should be at least 3.5 pt.
+- **The restyle misspells words (J19 v4.0).** Two Nano Banana passes over the same figure wrote "cources" and
+  "quots"; adding "copy every word letter for letter" to the house prompt fixed one of the two. Proofread every
+  word of a restyled figure at full resolution, in halves. A single wrong word can be patched with a word cut from
+  the same image or set in the nearest installed font; more than that, ship the Napkin original.
+- **Napkin's text size is fixed, so the canvas sets the print width (2026-10-03, temporal-network paper).** All five figures drew their smallest labels at about 33 px x-height, on canvases from 2,000 to 4,100 px wide. The width a figure needs for a 3.5 pt x-height is W × 3.5 / (33 × text width in inches × 72): about half the text width for a 2,000 px canvas, all of it for 4,000 px on a 6.3 in block. Trim the white margins first (`convert -fuzz 3% -trim +repage -bordercolor white -border 30`). An eight-step cycle on a 4,000 px canvas still takes a page of its own.
+- **A table drawn again comes back invented (2026-10-03).** HMAX's stages beside today's detector, a mapping the section already held as a table, came back in three of four variations as an "evolution" with made-up stages ("Modern detector: recurrent memory") and in the fourth on a street map. Four designs in a row became a staircase with the most ambitious on top, above the recommended one. When the section's table already carries a mapping or a comparison, the table is the figure: drop the request.
 - **Fractional stroke-width (D2):** `stroke-width: 1.5` is rejected; use integers.
 - **Truncated title/legend (D2):** markdown title blocks and unwidthed annotations clip at the canvas edge — use a `text` node with `width:`.
 - **Staggered tiers (D2):** upward/back edges distort ELK ranking; `dagre` gives clean top-down tiers for hierarchies.

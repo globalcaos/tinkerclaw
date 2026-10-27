@@ -11,10 +11,11 @@ verify:
   # "Three different jobs, three different homes": explaining is this file's job, checking that the
   # code still matches it is a script's, and a script gets linting, review and its own test.
   # Extracting them exposed that ALL THREE PASSED VACUOUSLY. All three are fixed and each script
-  # self-tests on every run — see §8.
+  # self-tests on every run — see §8. (The palette script gained its self-test, and three more
+  # modules, on 2026-09-24; until then that claim was false for it.)
   - name: every-viewed-session-surface-is-a-DIRECT-member-of-the-funnel
     cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/right-rail-funnel.mjs
-  - name: cache-panel-has-no-local-hex-and-does-import-the-palette
+  - name: segment-colour-modules-hold-no-local-hex-and-every-painter-imports-the-palette (context-cache.ts, call-timeline.ts, call-timeline-canvas.ts, context-buttons.ts)
     cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/right-rail-cache-palette.mjs
   - name: each-cache-bar-EMITS-its-own-legend
     cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/right-rail-cache-legends.mjs
@@ -64,11 +65,12 @@ elsewhere.
 ```mermaid
 flowchart TB
   subgraph RAIL[right-panels]
-    S[Sessions] --- M[Models: model slider, effort slider, routing card]
-    M --- E[EEG]
-    E --- P[Recipes / prefrontal]
+    S[Sessions] --- M[Models: model slider, effort slider, THINKING]
+    M --- C[Context window + call timeline, a fold inside Models]
+    C --- TH[Thalamus routing card, a fold inside Models]
+    TH --- E[EEG, a fold inside Models]
+    M --- P[Recipes / prefrontal]
     P --- A[Amygdala]
-    A --- C[Context cache]
   end
   subgraph BOTTOM[bottom surfaces]
     T[Context timeline]
@@ -189,36 +191,51 @@ allocator's calibration histogram and the schema all break. Note also that on An
 adaptive models (opus) a token budget is not expressible at all: the wire takes a string
 effort, so a percentage there is _intent_, re-bucketed to a named level.
 
-## 7. Context-cache panel contract
+## 7. Context-window panel — the rail's half of the contract
 
-**Where it lives (2026-08-06):** not its own `.rpanel` any more — a **static `.model-group`
-inside `#models-panel`, directly above the EEG** (the architect: _"move the context cache panel on top
-of the EEG, inside MODELS"_), so the rail reads SMART MODELS → MORE MODELS → THINKING →
-THALAMUS → CONTEXT CACHE → EEG. Static and outside `#budget-panel` for the same load-bearing
-reason the EEG is: `updateBudgetPanel()` reassigns that element's `innerHTML` on every repaint,
-while `renderCachePanel()` writes `#cache-panel-body` by id and the fold handler binds ONCE at
-boot. Fold it into the generated HTML and the panel goes silently dead. Fold state is
-`model:cache`; the `cache-panel` id stays on the wrapper because the read/write flash needs it.
+_Rewritten 2026-09-25 (context-window-panel.md §6.3 C1): this section described two bars and a panel
+called CONTEXT CACHE, neither of which has existed since 2026-08-29. The DATA contract — what each
+number means, where it comes from, what the bar may draw, principles P1–P12 — is
+**context-window-panel.md**. What stays here is what is a rail rule._
 
-Two bars, **different denominators on purpose** — which is exactly why each carries its
-own title row above it and its own legend below it:
+**Where it lives:** not its own `.rpanel` (until 2026-08-06 it was, below AMYGDALA) — a **static
+`.model-group` (`data-section="cache"`, `id="cache-panel"`) inside `#models-panel`**. Since
+2026-08-29 (the architect: _"move the context window up over thalamus, under thinking"_) the rail
+reads the groups `updateBudgetPanel()` generates inside `#budget-panel` (SMART MODELS → MORE MODELS
+→ THINKING) → CONTEXT WINDOW → THALAMUS → EEG. The label changed from CONTEXT CACHE on 2026-08-28;
+every identifier kept `cache`. Static and outside `#budget-panel` for the same load-bearing reason
+the EEG is: `updateBudgetPanel()` reassigns that element's `innerHTML` on every repaint, while
+`renderCachePanel()` writes `#cache-panel-body` by id and the fold handler binds ONCE at boot. Fold
+it into the generated HTML and the panel goes silently dead. Fold state is `model:cache`; the
+`cache-panel` id stays on the wrapper because the read/write flash and the busy pulse target it.
+The CALL TIMELINE (2026-09-24) has a second static host, `#cache-timeline`, the next sibling of
+`#cache-panel-body`, never inside it, because that body is rewritten on every event (panels.md).
 
-| Bar         | Denominator                                                      | Segments                                           |
-| ----------- | ---------------------------------------------------------------- | -------------------------------------------------- |
-| `WINDOW`    | the model's real context window (per-model, changes mid-session) | anatomy composition + `Unitemised` + free headroom |
-| `THIS CALL` | that one API call's `promptTokens`                               | cache-read / cache-write / fresh                   |
+**What it draws:** ONE bar, `WINDOW`: what went IN on one call, against a FIXED 1M-token ruler
+(`CONTEXT_SCALE_TOKENS`, never smaller than the model's window or the drawn total), with the model's
+own window as an OUTLINE and any excess blinking red. `THIS CALL` (headed `THIS TURN (aggregate)`
+when the billed figure is a turn aggregate) and `THIS SESSION` are NUMBERS. The `THIS CALL` bar was
+removed 2026-08-29: an unbounded value must not be drawn as a width.
 
-Rules:
+Rules that stay here, because they are about reading the rail, not about the data:
 
+- **Different denominators ⇒ each section names its own.** The WINDOW bar carries its title row and
+  its colour legend (`cache-legend--window`); THIS CALL carries its own title row and a words-only
+  legend naming ITS denominator (`cache-legend--split`: "cached + written + new = N billed on this
+  call · not the 1M ruler above"), because numbers printed under a bar are read against that bar
+  unless something says otherwise. The call timeline follows the same rule: each lane prints its own
+  scale (`in ↑`, `out ↓`). Gate: `each-cache-bar-EMITS-its-own-legend`.
 - Measured components render **at true scale**, never stretched onto the billed total. The
-  shortfall is drawn as one labelled `Unitemised` band.
+  shortfall is drawn as one labelled `Unitemised` span.
 - **Never** read `contextWindow.usedTokens` or `utilizationPercent` — turn-aggregate
   counters, observed at 2372%.
 - Any "snapshot" larger than the window is an accumulated counter, not a context size.
   Guard it (the anatomy `cacheReadTokens + cacheCreationTokens` fallback is exactly this —
   it produced a 938% bar).
-- The window denominator **changes when the model changes mid-session**. That is truthful
-  and must stay; annotate the rescale rather than pinning a session-wide denominator.
+- **The ruler does not move when the model does** (2026-08-28): with a fixed 1M ruler the same
+  tokens are the same width on every tab and every model. What follows the model is the OUTLINE (its
+  window) and the percentage printed above the bar, which stays against the model's own window —
+  the one that will reject the next call.
 
 ## 8. Verify — where the gates live, and what was wrong with them
 
@@ -249,11 +266,27 @@ What the scripts assert instead:
 - **`right-rail-cache-legends.mjs`** strips comments and accepts a class token only when it is
   actually **emitted inside a `class="…"` attribute**.
 - **`right-rail-cache-palette.mjs`** keeps the hex scan byte-for-byte — including inside comments,
-  where over-strictness is the safe direction — and adds the positive half: the panel must **import**
+  where over-strictness is the safe direction — and adds the positive half: a module must **import**
   a palette binding. The binding is matched by name, not by module path, so relocating the owner is
-  not a gate failure (no frozen list — design-principles.md #19).
+  not a gate failure (no frozen list — design-principles.md #19). **Widened 2026-09-24** (wave 2b,
+  `af341ded589`) from ONE file to the four modules that put segment colours on screen or hand them
+  on (`TARGETS`: `context-cache.ts`, `call-timeline.ts`, `call-timeline-canvas.ts`,
+  `context-buttons.ts`). context-window-panel.md P4 already said the call-timeline modules inherit
+  the rule, and a hex planted in `call-timeline-canvas.ts` left the old gate green: asserted in
+  prose, enforced nowhere. Every target gets the hex scan. The positive half now has two strengths:
+  a **painter** (`painter: true` — `context-cache.ts`, `call-timeline-canvas.ts`) must import the
+  palette, always, so an EMPTY painter still fails (the 2026-08-04 fix); a **non-painter** must
+  import it only once its CODE names a palette identifier (an UPPER_SNAKE or camelCase
+  COLOR / COLOUR / PALETTE token outside comments and imports). That is derived from the source, not
+  hand-flagged, so it re-arms by itself, and the exemption is printed, never silent. The import is
+  looked for in **comment-stripped** source: a commented-out import used to satisfy the positive
+  half. The target list is explicit on purpose (discovering targets by "imports the palette" would
+  exempt exactly the module that re-declares hex instead), and a listed file that is missing fails
+  loudly, so a rename cannot drop a module from the gate.
 
 Each script runs its own fixtures **before** the real check, on every invocation: a call named only
-in a comment, a call nested in an `if`, and a class named only in a comment must all be rejected, or
-the script refuses to run. A vacuity guard that is never exercised is the defect it was written to
-prevent. `pnpm bible:invariants` runs all three.
+in a comment, a call nested in an `if`, and a class named only in a comment — and, for the palette
+script since 2026-09-24, a planted hex, a hex only in a comment, a commented-out import, an empty
+painter and a colour named in a non-painter — must all be rejected, or the script refuses to run. A
+vacuity guard that is never exercised is the defect it was written to prevent.
+`pnpm bible:invariants` runs all three.

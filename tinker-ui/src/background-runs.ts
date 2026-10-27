@@ -1,4 +1,4 @@
-// FORK 2026-08-16 (the user: "the progress indicator in the neurocoin tab does not work, again" ->
+// FORK 2026-08-16 (the architect: "the progress indicator in the neurocoin tab does not work, again" ->
 // "when a tab is out of focus, the progress indicator should still show").
 //
 // THE BLIND SPOT BOTH LANES SHARED. A tab you are not looking at had NO source of truth that a run

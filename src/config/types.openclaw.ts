@@ -145,6 +145,8 @@ export type OpenClawConfig = {
       limbic?: "inline" | "extension" | "disabled";
       fractal?: "inline" | "extension" | "disabled";
       observation?: "inline" | "extension" | "disabled";
+      /** FORK 2026-10-25: the Fractal gate's tutor (`infra/fractal/gate-tutor.ts`); "disabled" turns it off. */
+      fractalGateReview?: "inline" | "extension" | "disabled";
     };
   };
 };

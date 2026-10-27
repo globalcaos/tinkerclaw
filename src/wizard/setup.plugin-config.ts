@@ -171,8 +171,8 @@ async function promptPluginFields(params: {
     const label = hint.label ?? key;
     const helpSuffix = hint.help ? ` — ${hint.help}` : "";
 
-    // Skip sensitive fields — WizardPrompter has no masked input;
-    // direct users to openclaw config set or the Web UI instead.
+    // Skip sensitive fields; direct users to openclaw config set or the Web UI instead. (Written when the
+    // prompter had no masked input; `text({ sensitive: true })` exists since 2026-10-09 and could ask for them.)
     if (hint.sensitive) {
       await prompter.note(
         `"${label}" is sensitive. Set it via:\n  openclaw config set plugins.entries.${plugin.id}.config.${key} <value>\nor use the Web UI Settings page.`,

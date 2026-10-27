@@ -5,6 +5,7 @@ import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import { resolveContextEngine } from "../../context-engine/registry.js";
+import { resolveChannelReplyTexts } from "../../fork/channel-reply.js";
 import { emitAgentPlanEvent } from "../../infra/agent-events.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
 import { freezeDiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
@@ -971,6 +972,7 @@ export async function runEmbeddedPiAgent(
             skillsSnapshot: params.skillsSnapshot,
             prompt,
             transcriptPrompt: params.transcriptPrompt,
+            promptKeys: params.promptKeys,
             images: params.images,
             imageOrder: params.imageOrder,
             clientTools: params.clientTools,
@@ -1000,6 +1002,11 @@ export async function runEmbeddedPiAgent(
             agentId: workspaceResolution.agentId,
             legacyBeforeAgentStartResult,
             thinkLevel,
+            // FORK 2026-10-09 (effort slider): forward who chose the level and Thalamus's ultracode
+            // call. Ultracode rides only while the level is still the one Thalamus chose: when this
+            // run lowers thinking (an unsupported level, a fallback model), the fan-out drops too.
+            thinkSource: params.thinkSource,
+            ultracode: params.ultracode === true && thinkLevel === initialThinkLevel,
             fastMode: params.fastMode,
             verboseLevel: params.verboseLevel,
             reasoningLevel: params.reasoningLevel,
@@ -1027,6 +1034,7 @@ export async function runEmbeddedPiAgent(
             inputProvenance: params.inputProvenance,
             streamParams: params.streamParams,
             modelRun: params.modelRun,
+            continueFromTranscript: params.continueFromTranscript,
             promptMode: params.promptMode,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
@@ -1970,8 +1978,22 @@ export async function runEmbeddedPiAgent(
           const finalAssistantVisibleText = resolveFinalAssistantVisibleText(sessionLastAssistant);
           const finalAssistantRawText = resolveFinalAssistantRawText(sessionLastAssistant);
 
-          const payloads = buildEmbeddedRunPayloads({
+          // FORK 2026-10-02 (channel-reply): a provider that coalesces a tool-loop turn into one
+          // text may stamp its message with the part a chat channel should get (src/fork/channel-reply.ts).
+          const channelReply = resolveChannelReplyTexts({
             assistantTexts: attempt.assistantTexts,
+            assistant: currentAttemptAssistant,
+          });
+          if (channelReply.applied) {
+            const line = `[channel-reply] applied=${channelReply.applied} runId=${params.runId} sessionKey=${params.sessionKey ?? params.sessionId}`;
+            if (channelReply.applied === "length-mismatch") {
+              log.warn(line);
+            } else {
+              log.info(line);
+            }
+          }
+          const payloads = buildEmbeddedRunPayloads({
+            assistantTexts: channelReply.assistantTexts,
             toolMetas: attempt.toolMetas,
             lastAssistant: attempt.lastAssistant,
             lastToolError: attempt.lastToolError,

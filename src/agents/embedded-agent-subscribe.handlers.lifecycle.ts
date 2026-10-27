@@ -40,7 +40,7 @@ export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
     stream: "lifecycle",
     data: { phase: "start" },
   });
-  // FORK 2026-07-24 (the user, EEG deep-layer feed): the embedded pipe's effort
+  // FORK 2026-07-24 (the architect, EEG deep-layer feed): the embedded pipe's effort
   // telemetry — see src/infra/effort-telemetry.ts for the layering doctrine.
   // Without this the EEG only ever saw the claude-CLI bridge's events and was
   // blind to every non-anthropic provider (bug [eeg-blind-to-non-anthropic-providers]).
@@ -128,7 +128,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
     ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId} isError=${isError}`);
   }
 
-  // FORK 2026-07-24 (the user, EEG deep-layer feed): final effort sample for the
+  // FORK 2026-07-24 (the architect, EEG deep-layer feed): final effort sample for the
   // embedded pipe — model/provider/usage from the run's own last assistant
   // message when present (truth of what executed), params as fallback. Errors
   // still emit (isError) so the EEG shows the attempt. Doctrine in

@@ -1,0 +1,5 @@
+# Changelog
+
+## 2026.4.26
+
+- Fix: install metadata no longer points at `@openclaw/whatsapp`; package name is `@globalcaos/tinker-whatsapp` and it is not published to npm. Recent-thread and chat-rhythm context now match the chat JID exactly (a substring match pulled legacy-group messages into DMs with the group's creator). whatsmeow event-payload logging is off unless `OPENCLAW_WHATSMEOW_EVENT_TRACE=1`. `OPENCLAW_WHATSMEOW_BINARY` must be an owner-controlled executable. Cross-chat history search is only suggested on owner-initiated turns unless `OPENCLAW_WHATSAPP_CROSS_CHAT_HINT=all`. History database and its -wal/-shm files are kept at 0600. Prompt prefetches no longer create the database on the Baileys backend. Unknown-contact web lookup and people profiles are off unless `OPENCLAW_WHATSAPP_CONTACT_RESEARCH=1`. Optional retention: `OPENCLAW_WHATSAPP_HISTORY_RETENTION_DAYS`. README documents the data sent to the model provider, the host `whatsapp_history` tool and the two bundled media-download helpers.

@@ -84,7 +84,7 @@ describe("cli session history provenance gate", () => {
     }
   });
 
-  // (a) The defect the user sees on grok/qwen: the tab keeps its claude-cli history.
+  // (a) The defect the architect sees on grok/qwen: the tab keeps its claude-cli history.
   it.each(["grok", "qwen", "openai"])(
     "still imports the claude-cli transcript when the model picker says %s",
     async (provider) => {

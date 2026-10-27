@@ -8,7 +8,6 @@ import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { ReplyPayload, ReplyThreadingPolicy } from "../types.js";
 import { formatBunFetchSocketError, isBunFetchSocketError } from "./agent-runner-utils.js";
 import { createBlockReplyContentKey, type BlockReplyPipeline } from "./block-reply-pipeline.js";
-import { applyJarvisVoiceMarkup } from "./jarvis-voice-markup.js";
 import {
   resolveOriginAccountId,
   resolveOriginMessageProvider,
@@ -125,8 +124,17 @@ export async function buildReplyPayloads(params: {
           text = formatBunFetchSocketError(text);
         }
 
+        // FORK 2026-09-24: the reply text leaves here exactly as the model wrote it. It used to be
+        // rewritten by `applyJarvisVoiceMarkup` (`**Jarvis:** x` → `**Jarvis:** <span
+        // class="jarvis-voice">x</span>`), which made the Tinker UI draw EVERY answer twice: these
+        // payloads become the backstop chat `final` (server-methods/chat.ts, `deliveredReplies`),
+        // the lifecycle `final` carries the raw streamed text, and the UI reconciles the two by
+        // finding the shown text inside the second body — which the inserted span made impossible,
+        // so the whole reply was appended again. The Tinker UI paints the voice line purple at render
+        // time from the raw text (tinker-ui app.ts, "Voice-line styling"), exactly as it does for
+        // history rows, which never held the span.
         if (!text || !text.includes("HEARTBEAT_OK")) {
-          return [{ ...payload, text: text ? applyJarvisVoiceMarkup(text) : text }];
+          return [{ ...payload, text }];
         }
         const stripped = stripHeartbeatToken(text, { mode: "message" });
         if (stripped.didStrip && !didLogHeartbeatStrip) {
@@ -137,12 +145,7 @@ export async function buildReplyPayloads(params: {
         if (stripped.shouldSkip && !hasMedia) {
           return [];
         }
-        return [
-          {
-            ...payload,
-            text: stripped.text ? applyJarvisVoiceMarkup(stripped.text) : stripped.text,
-          },
-        ];
+        return [{ ...payload, text: stripped.text }];
       });
 
   const replyTaggedPayloads = (

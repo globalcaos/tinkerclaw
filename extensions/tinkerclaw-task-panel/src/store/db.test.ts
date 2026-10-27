@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addAxisParentIdColumn,
+  addTaskOperatorIdColumn,
   closeDb,
   getDb,
   migrateRemoveAxisCheck,
@@ -195,6 +196,36 @@ describe("stripTodoistMetadata migration", () => {
     stripTodoistMetadata(db);
     const after = db.prepare("SELECT id, metadata_json FROM task ORDER BY id").all();
     expect(after).toEqual(before);
+  });
+});
+
+describe("addTaskOperatorIdColumn", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.exec(`CREATE TABLE task (id TEXT PRIMARY KEY, text TEXT NOT NULL, hands TEXT);`);
+    db.prepare("INSERT INTO task (id, text, hands) VALUES (?, ?, ?)").run(
+      "t1",
+      "ask a colleague later",
+      "user",
+    );
+  });
+  afterEach(() => db.close());
+  it("adds operator_id without losing rows", () => {
+    addTaskOperatorIdColumn(db);
+    const cols = db.prepare("PRAGMA table_info(task)").all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain("operator_id");
+    const row = db.prepare("SELECT id, operator_id FROM task WHERE id = 't1'").get() as {
+      id: string;
+      operator_id: string | null;
+    };
+    expect(row).toEqual({ id: "t1", operator_id: null });
+  });
+  it("is idempotent", () => {
+    addTaskOperatorIdColumn(db);
+    addTaskOperatorIdColumn(db);
+    const cols = db.prepare("PRAGMA table_info(task)").all() as Array<{ name: string }>;
+    expect(cols.filter((c) => c.name === "operator_id")).toHaveLength(1);
   });
 });
 

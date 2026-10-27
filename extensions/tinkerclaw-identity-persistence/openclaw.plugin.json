@@ -3,12 +3,18 @@
   "activation": {
     "onStartup": true
   },
+  "enabledByDefault": false,
   "name": "Identity Persistence",
-  "description": "CORTEX \u2014 Persona injection from SOUL.md, EWMA SyncScore drift detection, mid-context identity reinforcement, and observation extraction",
+  "description": "CORTEX — Persona injection from a persona markdown file, EWMA SyncScore drift detection, mid-context identity reinforcement, and observation extraction. OFF BY DEFAULT: when enabled it prepends a persona block to the system context of EVERY prompt and appends extracted observations to disk, so it requires both `enabled: true` and a persona file that already exists.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Master opt-in. MUST be set to true explicitly. While false the plugin registers no hooks: no persona is injected into any prompt, no SyncScore is evaluated, and no observations are written."
+      },
       "syncScoreThreshold": {
         "type": "number",
         "default": 0.6,
@@ -21,8 +27,13 @@
       },
       "personaPath": {
         "type": "string",
-        "default": "~/.openclaw/SOUL.md",
-        "description": "Path to persona markdown file"
+        "default": "~/.openclaw/workspace/SOUL.md",
+        "description": "Path to a persona markdown file you wrote. The file MUST already exist — the plugin never creates, bootstraps or overwrites a persona. If an explicit personaPath is set and does not exist, persona injection stays off (it does NOT silently fall back to the default path)."
+      },
+      "personalityNudge": {
+        "type": "boolean",
+        "default": false,
+        "description": "Also fold the AMYGDALA personality nudge (~/.openclaw/cognitive/personality-nudge.json, written by the Learned Intuition plugin) into the injected system context. OFF by default: it is a SECOND prompt mutation from a file this plugin does not own."
       }
     }
   }

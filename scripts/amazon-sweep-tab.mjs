@@ -1,5 +1,5 @@
 import fs from "node:fs";
-// Drive the user's SHARED amazon.es tab across several capacity queries, keeping
+// Drive the architect's SHARED amazon.es tab across several capacity queries, keeping
 // his "Get It Tomorrow" filter (rh=p_90:6820340031), and dump the result cards
 // for each. SAME-SITE ONLY (amazon.es → amazon.es), per the standing relay rule.
 // Restores the original URL when done.

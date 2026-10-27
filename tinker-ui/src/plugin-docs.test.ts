@@ -93,7 +93,7 @@ describe("plugin docs: every entry argues its own cost", () => {
 
   it("gives an unknown plugin a readable name rather than a package id", () => {
     expect(pluginDisplayName("tinkerclaw-total-recall")).toBe("Total Recall · ENGRAM");
-    // The naming convention (the user, 2026-08-23): descriptive name first, brain
+    // The naming convention (the architect, 2026-08-23): descriptive name first, brain
     // codename second, both from the J-series registry. A plugin with no registered
     // codename carries the descriptive name alone rather than an invented brain word —
     // the registry tracks which are taken, and inventing one collides with a future paper.

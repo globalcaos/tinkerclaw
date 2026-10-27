@@ -12,9 +12,10 @@ when that variable is unset. Bind to localhost: the GETs report your spend and q
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
+import hmac
 import os
 import db
 
@@ -23,7 +24,9 @@ MUTATE_TOKEN = os.environ.get("TOKEN_PANEL_API_TOKEN", "")
 def require_mutate_token(x_token: Optional[str] = Header(default=None, alias="X-Token-Panel-Token")):
     if not MUTATE_TOKEN:
         raise HTTPException(status_code=403, detail="TOKEN_PANEL_API_TOKEN is not set; mutating endpoints are closed")
-    if not x_token or x_token != MUTATE_TOKEN:
+    # Constant-time comparison: a plain != leaks, through response timing, how many
+    # leading characters of a guess were right.
+    if not x_token or not hmac.compare_digest(x_token.encode(), MUTATE_TOKEN.encode()):
         raise HTTPException(status_code=403, detail="mutating endpoints require X-Token-Panel-Token")
 
 app = FastAPI(
@@ -51,28 +54,34 @@ app.add_middleware(
 # Models
 # ============================================================================
 
+# Identifier-shaped fields only. These strings are echoed back by GET /status, whose
+# summary is meant to be placed in an agent prompt and shown on a dashboard, so a
+# recorded "provider" must not be able to carry markup or free-form instructions.
+IDENT = r"^[A-Za-z0-9._:/@+-]{1,128}$"
+
+
 class UsageRecord(BaseModel):
-    provider: str
-    model: str
-    input_tokens: int
-    output_tokens: int
-    cost_usd: float = 0
-    session_key: Optional[str] = None
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
+    provider: str = Field(pattern=IDENT)
+    model: str = Field(pattern=IDENT)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    cost_usd: float = Field(default=0, ge=0)
+    session_key: Optional[str] = Field(default=None, pattern=IDENT)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
 
 class ManusTask(BaseModel):
     # No description/prompt field: a usage record is an id, a credit count and a status.
     # Pydantic drops unknown keys, so an older client still POSTing "description" gets a
     # 200 and its prompt text goes nowhere.
-    task_id: str
-    credits_used: int
-    status: str = "completed"
+    task_id: str = Field(pattern=IDENT)
+    credits_used: int = Field(ge=0)
+    status: str = Field(default="completed", pattern=IDENT)
 
 class BudgetConfig(BaseModel):
-    provider: str
-    monthly_limit: float
-    alert_threshold: float = 0.8
+    provider: str = Field(pattern=IDENT)
+    monthly_limit: float = Field(ge=0)
+    alert_threshold: float = Field(default=0.8, ge=0, le=1)
 
 
 # ============================================================================

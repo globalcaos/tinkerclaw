@@ -38,6 +38,12 @@ export function resolveWhatsAppOutboundTarget(params: {
     if (hasWildcard || allowList.length === 0) {
       return { ok: true, to: normalizedTo };
     }
+    // allowFrom decides who may WAKE the agent, not whom the owner may write to.
+    // An explicit send (message tool / CLI, a target the owner named) goes to any
+    // number; implicit routing (replies, action auth) stays inside the list.
+    if (params.mode === "explicit") {
+      return { ok: true, to: normalizedTo };
+    }
     if (allowList.includes(normalizedTo)) {
       return { ok: true, to: normalizedTo };
     }

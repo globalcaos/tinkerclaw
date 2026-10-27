@@ -450,6 +450,51 @@ describe("config plugin validation", () => {
     });
   });
 
+  it("does not warn that a bundled plugin is disabled when its manifest enables it by default", async () => {
+    // A default-on bundled plugin with a config entry and no `enabled` key is on; the warning said it was off.
+    const bundledRoot = path.join(suiteHome, "default-on-bundled");
+    for (const [id, enabledByDefault] of [
+      ["default-on-plugin", true],
+      ["default-off-plugin", false],
+    ] as const) {
+      const dir = path.join(bundledRoot, id);
+      await mkdirSafe(dir);
+      await fs.writeFile(
+        path.join(dir, "index.js"),
+        `export default { id: "${id}", register() {} };`,
+        "utf-8",
+      );
+      await fs.writeFile(
+        path.join(dir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id,
+          enabledByDefault,
+          configSchema: { type: "object", properties: { level: { type: "string" } } },
+        }),
+        "utf-8",
+      );
+    }
+    const res = validateConfigObjectWithPlugins(
+      {
+        agents: { list: [{ id: "pi" }] },
+        plugins: {
+          entries: {
+            "default-on-plugin": { config: { level: "x" } },
+            "default-off-plugin": { config: { level: "x" } },
+          },
+        },
+      },
+      { env: { ...suiteEnv(), OPENCLAW_BUNDLED_PLUGINS_DIR: bundledRoot } },
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) {
+      return;
+    }
+    const warned = res.warnings.map((w) => w.path);
+    expect(warned).not.toContain("plugins.entries.default-on-plugin");
+    expect(warned).toContain("plugins.entries.default-off-plugin"); // control: still warns when off by default
+  });
+
   it("surfaces plugin config diagnostics", async () => {
     const res = validateInSuite({
       agents: { list: [{ id: "pi" }] },

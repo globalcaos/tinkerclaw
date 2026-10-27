@@ -99,6 +99,27 @@ export const AMYGDALA_CC_HOOK_SETTINGS_PATH = path.join(
 );
 
 /**
+ * FORK 2026-09-29 (digital amygdala): the new tinkerclaw-amygdala plugin's own claude-cli
+ * hook settings file, and the EFFECTIVE file it writes (the v3.1 entries merged with its own
+ * in shadow mode; its own alone in enforce mode). The plugin writes both; the bridge only
+ * stats them (amygdala-settings.ts) and passes ONE `--settings`. Absent = today's behaviour.
+ */
+export const AMYGDALA_JEV_HOOK_SETTINGS_PATH = path.join(
+  homedir(),
+  ".openclaw",
+  "data",
+  "amygdala-jev",
+  "cc-hook-settings.json",
+);
+export const AMYGDALA_JEV_EFFECTIVE_SETTINGS_PATH = path.join(
+  homedir(),
+  ".openclaw",
+  "data",
+  "amygdala-jev",
+  "cc-hook-settings.effective.json",
+);
+
+/**
  * FORK 2026-05-04: extra plugin directories the tinker-bridge passes to
  * claude-cli via `--plugin-dir`. Without this, Jarvis cannot see any of the
  * 88 skills in `~/.openclaw/workspace/skills/` (notably `outlook-hack` and
@@ -172,6 +193,27 @@ export const RESUME_MAX_TRANSCRIPT_LINES = 50_000;
 // Anthropic raises a model's output limit — single source of truth.
 export const DEFAULT_MODELS = [
   {
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 64_000,
+  },
+  {
+    id: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
     id: "claude-opus-5",
     name: "Claude Opus 5",
     reasoning: true,
@@ -216,8 +258,8 @@ export const DEFAULT_MODELS = [
 ] as const;
 
 export const MODEL_ALIASES: Record<string, string> = {
-  opus: "claude-opus-5",
-  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-5-5",
+  sonnet: "claude-sonnet-5-5",
   haiku: "claude-haiku-4-5",
 };
 

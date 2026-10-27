@@ -54,6 +54,60 @@ function isInsideAllowedRoots(resolvedPath: string): boolean {
   );
 }
 
+/**
+ * FORK 2026-09-23 (path-traversal fix): resolve a request path and confirm it really
+ * sits inside one of `roots`, or return null.
+ *
+ * The kit endpoints used to take an ABSOLUTE path as given and test it with
+ * `startsWith(root + sep)`. `<root>/../../.ssh/authorized_keys` starts with the root
+ * string and escapes it — a read and a write primitive over HTTP, and these routes
+ * answer without a token when `dangerouslyDisableDeviceAuth` is set.
+ *
+ * Both legs are needed: `path.resolve` collapses `..`, and realpath on the nearest
+ * EXISTING ancestor (the file itself may not exist yet on a write) stops a symlink
+ * inside a root from pointing out of it. Roots are realpath'd too, so the comparison
+ * happens in one namespace.
+ */
+export function resolveInsideRoots(rawPath: string, roots: string[]): string | null {
+  const raw = rawPath.trim();
+  if (!raw || raw.includes("\0")) {
+    return null;
+  }
+  const resolved = path.resolve(roots[0] ?? HOME, raw);
+  let existing = resolved;
+  for (;;) {
+    if (fs.existsSync(existing)) {
+      break;
+    }
+    const parent = path.dirname(existing);
+    if (parent === existing) {
+      return null;
+    }
+    existing = parent;
+  }
+  let realExisting: string;
+  try {
+    realExisting = fs.realpathSync(existing);
+  } catch {
+    return null;
+  }
+  const real = path.join(realExisting, path.relative(existing, resolved));
+  for (const root of roots) {
+    let realRoot: string;
+    try {
+      // A root that does not exist yet (e.g. the overlay dir before its first write)
+      // still counts: compare against its resolved path rather than rejecting.
+      realRoot = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+    } catch {
+      continue;
+    }
+    if (real === realRoot || real.startsWith(realRoot + path.sep)) {
+      return real;
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Direct SQLite fallback for anatomy queries — used when the gateway's
 // __anatomyDb global bridge isn't available yet (before first LLM call).
@@ -102,6 +156,24 @@ function parseRow(row: any) {
     cacheReadTokens: row.cache_read_tokens ?? undefined,
     cacheCreationTokens: row.cache_creation_tokens ?? undefined,
     responseContent: decompressJson(row.response_content) ?? undefined,
+  };
+}
+
+/** The fields of an anatomy row the EEG backfill reads; its prompt text is cut where the EEG cuts it. */
+function eegFields(ev: any): Record<string, unknown> {
+  const um = typeof ev?.userMessage === "string" ? ev.userMessage : undefined;
+  const total = ev?.contextSent?.totalTokens;
+  return {
+    turn: ev?.turn,
+    timestamp: ev?.timestamp,
+    timestampMs: ev?.timestampMs,
+    model: ev?.model,
+    provider: ev?.provider,
+    sessionKey: ev?.sessionKey,
+    runId: ev?.runId,
+    durationMs: ev?.durationMs,
+    ...(typeof total === "number" ? { contextSent: { totalTokens: total } } : {}),
+    ...(um !== undefined ? { userMessage: um.length > 300 ? um.slice(0, 300) : um } : {}),
   };
 }
 
@@ -158,15 +230,28 @@ function getAnatomyDb() {
           if (!root || !root.includes(":")) {
             return this.querySessionEvents(key, limit);
           }
-          return db
+          // FORK 2026-10-05 — as context-anatomy-db.ts querySessionTree: the session's own rows
+          // under their own limit; subagent rows only inside the span they cover (+1 h), never
+          // without own rows (one shared LIMIT let other tabs' fan-outs push a tab's turns out).
+          const own = db
             .prepare(
-              `SELECT * FROM (
-                SELECT * FROM anatomy_events
-                WHERE session_key = ? OR session_key LIKE ?
-                ORDER BY timestamp_ms DESC LIMIT ?
-              ) ORDER BY timestamp_ms ASC`,
+              "SELECT * FROM anatomy_events WHERE session_key = ? ORDER BY timestamp_ms DESC, id DESC LIMIT ?",
             )
-            .all(key, `${root}:subagent:%`, limit)
+            .all(key, limit) as any[];
+          if (own.length === 0) {
+            return [];
+          }
+          const from = Math.min(...own.map((r) => r.timestamp_ms));
+          const to = Math.max(...own.map((r) => r.timestamp_ms)) + 60 * 60 * 1000;
+          const subs = db
+            .prepare(
+              `SELECT * FROM anatomy_events
+               WHERE timestamp_ms BETWEEN ? AND ? AND session_key LIKE ?
+               ORDER BY timestamp_ms DESC, id DESC LIMIT ?`,
+            )
+            .all(from, to, `${root}:subagent:%`, limit) as any[];
+          return [...own, ...subs]
+            .toSorted((a, b) => a.timestamp_ms - b.timestamp_ms || a.id - b.id)
             .map(parseRow);
         },
         queryEventsBefore(beforeMs: number, limit: number) {
@@ -520,6 +605,101 @@ const plugin = {
           }
         }
 
+        // --- Jarvis voice for a remote page (FORK 2026-10-15) ---
+        // When the gateway runs on another machine (the Pi), its speaker is not where the architect is.
+        // `jarvis` drops every spoken line into ~/.openclaw/data/jarvis-voice/<epoch-ms>.wav;
+        // a page opened from elsewhere polls `latest` and plays new lines. House token only.
+        if (pathname.startsWith(`${PREFIX}/api/jarvis-voice/`)) {
+          if (!hasHouseToken(req)) {
+            res.statusCode = 401;
+            res.end("unauthorized");
+            return true;
+          }
+          const voiceDir = path.join(
+            process.env.HOME ?? "/home/user",
+            ".openclaw/data/jarvis-voice",
+          );
+          const sub = pathname.slice(`${PREFIX}/api/jarvis-voice/`.length);
+          // FORK 2026-10-23: the phone page went off screen with these chats waiting for an answer.
+          // One marker per chat in phone-away/; `jarvis` consumes it and calls jarvis-call --buzz.
+          if (sub === "away" && req.method === "POST") {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) {
+              chunks.push(chunk as Buffer);
+            }
+            let body: { chats?: unknown; away?: unknown; beat?: unknown } = {};
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString());
+            } catch {
+              body = {};
+            }
+            const awayDir = path.join(voiceDir, "phone-away");
+            fs.mkdirSync(awayDir, { recursive: true });
+            const chats = Array.isArray(body.chats) ? body.chats : [];
+            for (const chat of chats) {
+              if (typeof chat !== "string" || !/^[\w.-]{1,120}$/.test(chat)) continue;
+              const marker = path.join(awayDir, chat);
+              // v2 (2026-10-23 21:10): written at send, refreshed by the page's 3 s heartbeat while
+              // it is on screen; `jarvis` calls the phone when the refresh has gone quiet.
+              if (body.beat === true) {
+                if (fs.existsSync(marker) && fs.statSync(marker).size > 0) {
+                  fs.writeFileSync(marker, String(Date.now()));
+                }
+              } else if (body.away === true) fs.writeFileSync(marker, String(Date.now()));
+              else fs.rmSync(marker, { force: true });
+            }
+            if (body.beat !== true) {
+              fs.appendFileSync(
+                path.join(voiceDir, "phone-away.log"),
+                `${new Date().toISOString()}\t${body.away === true ? "away" : "clear"}\t${chats.join(",")}\n`,
+              );
+            }
+            res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify({ ok: true }));
+            return true;
+          }
+          if (sub === "latest") {
+            let latest: string | null = null;
+            try {
+              latest =
+                fs
+                  .readdirSync(voiceDir)
+                  .filter((f) => /^\d+\.wav$/.test(f))
+                  .sort((x, y) => Number.parseInt(y, 10) - Number.parseInt(x, 10))[0] ?? null;
+            } catch {
+              latest = null;
+            }
+            // 2026-10-22: the line's text too (latest.txt = "<id>\t<text>"), so the phone app can
+            // say it in its own voice (GBD). Only when it belongs to this wav.
+            let text: string | null = null;
+            try {
+              const [id, ...rest] = fs
+                .readFileSync(path.join(voiceDir, "latest.txt"), "utf8")
+                .split("\t");
+              if (id === latest) text = rest.join("\t");
+            } catch {
+              text = null;
+            }
+            res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify({ latest, text }));
+            return true;
+          }
+          if (/^\d+\.wav$/.test(sub)) {
+            try {
+              const buf = fs.readFileSync(path.join(voiceDir, sub));
+              res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
+              res.end(buf);
+            } catch {
+              res.statusCode = 404;
+              res.end("not found");
+            }
+            return true;
+          }
+          res.statusCode = 404;
+          res.end("not found");
+          return true;
+        }
+
         // --- Context Anatomy API (proxied through /tinker/api/context-anatomy/) ---
         if (pathname.startsWith(`${PREFIX}/api/context-anatomy/`)) {
           // Handle CORS preflight
@@ -583,7 +763,13 @@ const plugin = {
             const isLatest = subPath.endsWith("/latest");
             const sessionKey = decodeURIComponent(isLatest ? subPath.slice(0, -7) : subPath);
             const limitParam = url.searchParams.get("limit");
-            const limit = Math.min(Math.max(parseInt(limitParam ?? "50", 10) || 50, 1), 500);
+            // FORK 2026-10-05 — a tree read (the EEG's whole history: one row per turn, Main had
+            // 1,391) may ask up to 5000 of the session's own rows; every other read stays at 500.
+            const wantTree = url.searchParams.get("tree") === "1";
+            const limit = Math.min(
+              Math.max(parseInt(limitParam ?? "50", 10) || 50, 1),
+              wantTree ? 5000 : 500,
+            );
             if (isLatest) {
               const events = anatomyDb.querySessionEvents(sessionKey, 1);
               res.writeHead(events.length > 0 ? 200 : 404, jsonHeaders);
@@ -593,11 +779,14 @@ const plugin = {
             // FORK 2026-07-16 (EEG fan-out visibility): ?tree=1 pulls the viewed
             // session + every subagent under its agent root, so the seismograph can
             // paint fan-out branches reload-proof (single-session gap fix).
-            const wantTree = url.searchParams.get("tree") === "1";
-            const events =
+            const queried =
               wantTree && anatomyDb.querySessionTree
                 ? anatomyDb.querySessionTree(sessionKey, limit)
                 : anatomyDb.querySessionEvents(sessionKey, limit);
+            // FORK 2026-10-05 — `fields=eeg`: only what the EEG backfill reads (app.ts
+            // backfillEegFromAnatomy), so a tab's whole history is one light read.
+            const events =
+              url.searchParams.get("fields") === "eeg" ? queried.map(eegFields) : queried;
             api.logger.info(
               `context-anatomy session="${sessionKey}" tree=${wantTree} limit=${limit} → ${events.length} events`,
             );
@@ -696,12 +885,8 @@ const plugin = {
             res.end(JSON.stringify({ error: "path param required" }));
             return true;
           }
-          const resolved = path.isAbsolute(rawPath)
-            ? rawPath
-            : path.resolve(TINKERCLAW_ROOT, rawPath);
-          const inTinkerclaw = resolved.startsWith(TINKERCLAW_ROOT + path.sep);
-          const inWorkspaceKits = resolved.startsWith(WORKSPACE_KITS + path.sep);
-          if (!inTinkerclaw && !inWorkspaceKits) {
+          const resolved = resolveInsideRoots(rawPath, [TINKERCLAW_ROOT, WORKSPACE_KITS]);
+          if (!resolved) {
             res.statusCode = 403;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Path outside allowed kit directories" }));
@@ -764,13 +949,12 @@ const plugin = {
               targetPath = path.join(OVERLAY_DIR, slug, "recipe.md");
             }
           }
-          const resolved = path.isAbsolute(targetPath)
-            ? targetPath
-            : path.resolve(TINKERCLAW_ROOT, targetPath);
-          const inTinkerclaw = resolved.startsWith(TINKERCLAW_ROOT + path.sep);
-          const inWorkspaceKits = resolved.startsWith(WORKSPACE_KITS + path.sep);
-          const inOverlay = resolved.startsWith(OVERLAY_DIR + path.sep);
-          if (!inTinkerclaw && !inWorkspaceKits && !inOverlay) {
+          const resolved = resolveInsideRoots(targetPath, [
+            TINKERCLAW_ROOT,
+            WORKSPACE_KITS,
+            OVERLAY_DIR,
+          ]);
+          if (!resolved) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Path outside allowed kit directories" }));

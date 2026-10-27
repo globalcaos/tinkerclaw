@@ -10,7 +10,8 @@ import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { estimateTokens } from "./event-store.js";
 import type { EventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
-import { ftsSearch, type SearchFilters, type SearchResult } from "./search-index.js";
+import { ftsSearchOffThread } from "./fts-worker-client.js";
+import { beginFtsScan, ftsSearch, type SearchFilters, type SearchResult } from "./search-index.js";
 import { taskConditionedScore } from "./task-conditioned-scoring.js";
 import { createDefaultTaskState } from "./task-state.js";
 
@@ -32,11 +33,9 @@ const HEADER_TEXT = "## Retrieved Context";
 // pipeline; every later stage is bounded by FTS_TOP_N (50) candidates. So the scan is the
 // one that has to be cut into slices short enough that the gateway stays responsive.
 
-/** Upper bound on how many events one synchronous scan slice may cover. */
-const FTS_MAX_CHUNK_EVENTS = 200;
-/** Floor, so a pathologically expensive corpus cannot degrade to one event per tick. */
-const FTS_MIN_CHUNK_EVENTS = 16;
-/** Target ceiling for a single synchronous stretch, in ms. The chunk size adapts to it. */
+/** A corpus this small is scanned in one synchronous go — it fits the slice budget anyway. */
+const FTS_SINGLE_SLICE_MAX_EVENTS = 200;
+/** Ceiling for a single synchronous stretch of the scan, in ms (checked per event). */
 const MAX_SYNC_SLICE_MS = 50;
 
 export interface AssembleOptions {
@@ -257,100 +256,44 @@ export function assembleRetrievalPack(
 }
 
 /**
- * A read-only `EventStore` view over a fixed slice of events.
+ * `ftsSearch` in time slices, handing the event loop back between them.
  *
- * `ftsSearch` reads the corpus exclusively through `readAll()`, so scanning a slice
- * through this view runs the REAL scorer over a subset. That is the whole reason it
- * exists: the alternative — re-implementing the TF/position scoring loop here so it could
- * be interrupted — would put a second copy of the ranking rules in the tree, which is the
- * failure this library was consolidated to end.
+ * FORK 2026-09-23 (plan task 14) — it drives the same resumable, trigram-prefiltered scan that
+ * `ftsSearch` runs in one go (`beginFtsScan`), pausing whenever a slice has held the loop for
+ * `maxSliceMs`. It used to call `ftsSearch` on a read-only view per slice of events, halving
+ * or doubling the slice size after measuring the last one. The index now lives per store, so a
+ * view per slice would have built a throwaway index per slice; and a time check per event
+ * bounds a slice directly instead of correcting it one slice late.
  *
- * The mutating members throw rather than delegate. A view handed to a scan has no business
- * appending, and a silent delegation would write to the base store's real file.
+ * EXACT-EQUIVALENCE CLAIM: pausing only returns control between two events (or two index
+ * appends); the scan visits the same events in the same order either way, and re-verifies the
+ * shared index against its own snapshot when it resumes. So the hits, scores and stable tie
+ * order are those of `ftsSearch`, which is itself pinned to the linear oracle. Pinned by
+ * search-index.prefilter-parity.test.ts, not by this paragraph.
+ *
+ * EXPORTED FOR TESTING (`maxSliceMs` = 0 pauses after every event); production passes nothing.
  */
-function sliceView(base: EventStore, events: MemoryEvent[]): EventStore {
-  const readOnly = (): never => {
-    throw new Error("engram: retrieval slice view is read-only");
-  };
-  return {
-    filePath: base.filePath,
-    sessionKey: base.sessionKey,
-    append: readOnly,
-    appendRaw: readOnly,
-    readAll: () => events,
-    readByKind: (kind) => events.filter((e) => e.kind === kind),
-    readRange: (startTurnId, endTurnId) =>
-      events.filter((e) => e.turnId >= startTurnId && e.turnId <= endTurnId),
-    readById: (id) => events.find((e) => e.id === id),
-    count: () => events.length,
-  };
-}
-
-/**
- * `ftsSearch` over the corpus in slices, handing the event loop back between them.
- *
- * EXACT-EQUIVALENCE CLAIM, not an approximation:
- *   - an event's FTS score depends only on (its own content, the query terms) — nothing in
- *     `ftsSearch` is cross-event — so scoring a partition and concatenating yields the same
- *     multiset of hits;
- *   - the per-slice `topN` is deliberately unbounded (`Number.MAX_SAFE_INTEGER`), so no hit
- *     is dropped before the global sort;
- *   - slices are concatenated in corpus order and `Array#sort` is stable, so tied scores end
- *     up in the same corpus order the single-pass version produces;
- *   - `applyFilters` is a per-event predicate, so filtering slices == filtering the whole.
- * Pinned by a byte-identity test, not by this paragraph.
- */
-async function ftsSearchChunked(
+export async function ftsSearchChunked(
   store: EventStore,
   query: string,
   topN: number,
   filters: SearchFilters | undefined,
+  maxSliceMs: number = MAX_SYNC_SLICE_MS,
 ): Promise<SearchResult[]> {
-  const events = store.readAll();
-  if (events.length <= FTS_MAX_CHUNK_EVENTS) {
-    // Small corpus: one slice is already inside the budget, and routing it through the view
-    // would only add allocations.
+  if (store.count() <= FTS_SINGLE_SLICE_MAX_EVENTS) {
     return ftsSearch(store, query, topN, filters);
   }
-
-  const merged: SearchResult[] = [];
-  let chunkSize = FTS_MAX_CHUNK_EVENTS;
-  let index = 0;
-
-  while (index < events.length) {
-    const end = Math.min(index + chunkSize, events.length);
-    const startedAt = Date.now();
-    const hits = ftsSearch(
-      sliceView(store, events.slice(index, end)),
-      query,
-      Number.MAX_SAFE_INTEGER,
-      filters,
-    );
-    // Deliberately a loop, not `push(...hits)` — a spread of a large array becomes an
-    // argument list and blows the stack on a corpus where every event matches.
-    for (const hit of hits) {
-      merged.push(hit);
-    }
-    const tookMs = Date.now() - startedAt;
-    index = end;
-
-    if (index < events.length) {
-      await yieldToEventLoop();
-      // Adapt to the corpus actually in front of us. On the architect's live store a
-      // 200-event slice of ~5KB events against a 1,300-term query is hundreds of ms, while
-      // 200 short events are sub-millisecond. A fixed size is wrong for one of those two, so
-      // measure and halve/double. `chunkSize` never drops below FTS_MIN_CHUNK_EVENTS, so
-      // `end > index` always holds and the loop cannot stall.
-      if (tookMs > MAX_SYNC_SLICE_MS && chunkSize > FTS_MIN_CHUNK_EVENTS) {
-        chunkSize = Math.max(FTS_MIN_CHUNK_EVENTS, Math.floor(chunkSize / 2));
-      } else if (tookMs * 4 < MAX_SYNC_SLICE_MS && chunkSize < FTS_MAX_CHUNK_EVENTS) {
-        chunkSize = Math.min(FTS_MAX_CHUNK_EVENTS, chunkSize * 2);
-      }
-    }
+  const scan = beginFtsScan(store, query, filters);
+  if (!scan) {
+    return [];
   }
-
-  merged.sort((a, b) => b.score - a.score);
-  return merged.slice(0, topN);
+  for (;;) {
+    const deadline = performance.now() + maxSliceMs;
+    if (scan.step(() => performance.now() >= deadline)) {
+      return scan.results(topN);
+    }
+    await yieldToEventLoop();
+  }
 }
 
 /**
@@ -364,13 +307,20 @@ async function ftsSearchChunked(
  *
  * INVARIANT. `assembleRetrievalPackAsync(q, s, o)` resolves to the same string
  * `assembleRetrievalPack(q, s, o)` returns, for every input. Pinned by a test rather than
- * by this sentence (extensions/tinkerclaw-total-recall/index.cold-pack.test.ts).
+ * by this sentence (extensions/tinkerclaw-total-recall/__tests__/cold-pack.test.ts).
+ *
+ * FORK 2026-09-23 (plan task 16) — THE FTS NOW RUNS IN A WORKER THREAD when it can, via
+ * `ftsSearchOffThread` (fts-worker-client.ts): the worker reads the store's own file and keeps it
+ * parsed, so no events cross the port, and it answers only for the exact snapshot this thread
+ * holds. Otherwise — the `OPENCLAW_TOTAL_RECALL_FTS_WORKER=0` kill switch, or any worker failure —
+ * the scan runs here in slices, as before. Either way the same `ftsSearch` scoring code runs over
+ * the same events, so the invariant below still holds. Everything after the FTS stays here.
  *
  * ALTERNATIVES REJECTED.
  *   - Make `assembleRetrievalPack` itself async: it has a synchronous caller whose type says
  *     `=> string` (`PushPackFn`), which would then inject `[object Promise]`.
- *   - A worker thread: the corpus is already parsed in this process; posting ~20MB of events
- *     across a port costs more than the search it would move.
+ *   - Post the parsed events to a worker: ~70M chars for cc-experience, per search. (The worker
+ *     that shipped reads the file itself instead.)
  *   - Cap the corpus instead: that changes WHAT is retrieved, invisibly, and the cap has to
  *     keep shrinking as the store grows.
  */
@@ -383,17 +333,20 @@ export async function assembleRetrievalPackAsync(
   const taskId = options?.taskId;
 
   // Fast-path: nothing to retrieve
-  if (eventStore.count() === 0) {
+  const eventCount = eventStore.count();
+  if (eventCount === 0) {
     return "";
   }
 
-  // 1. FTS search — the only unbounded per-event loop, so the only one chunked.
-  const ftsResults = await ftsSearchChunked(
-    eventStore,
-    query,
-    FTS_TOP_N,
-    taskId ? { taskId } : undefined,
-  );
+  // 1. FTS search — the only unbounded per-event loop. In the worker thread when it can answer
+  // for this snapshot (plan task 16); otherwise here, in time slices. A corpus small enough for
+  // one slice is not worth the round trip.
+  const filters = taskId ? { taskId } : undefined;
+  const offThread =
+    eventCount > FTS_SINGLE_SLICE_MAX_EVENTS
+      ? await ftsSearchOffThread(eventStore, query, FTS_TOP_N, filters)
+      : undefined;
+  const ftsResults = offThread ?? (await ftsSearchChunked(eventStore, query, FTS_TOP_N, filters));
   if (ftsResults.length === 0) {
     return "";
   }

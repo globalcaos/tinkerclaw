@@ -121,6 +121,51 @@ object InvokeCommandRegistry {
         requiresForeground = true,
       ),
       InvokeCommandSpec(
+        name = "jarvis.screenshot",
+        requiresForeground = true,
+      ),
+      InvokeCommandSpec(
+        name = "jarvis.tinker.eval",
+        requiresForeground = true,
+      ),
+      InvokeCommandSpec(
+        name = "jarvis.update",
+        requiresForeground = false,
+      ),
+      InvokeCommandSpec(name = "jarvis.backup.run"),
+      InvokeCommandSpec(name = "jarvis.backup.status"),
+      InvokeCommandSpec(
+        name = "jarvis.ring",
+        requiresForeground = false,
+      ),
+      // 2026-10-22: Jarvis speaks a (discreet) line on the phone, app open or closed (JarvisSay.kt).
+      InvokeCommandSpec(
+        name = "jarvis.say",
+        requiresForeground = false,
+      ),
+      InvokeCommandSpec(
+        name = "jarvis.ring.stop",
+        requiresForeground = false,
+      ),
+      // 2026-10-23 (plan "phone app self-update"): the layer-1 verbs and the content pack (JarvisVerbs.kt,
+      // JarvisPack.kt). Each also needs gateway.nodes.allowCommands, or the gateway refuses it.
+      InvokeCommandSpec(name = "jarvis.buzz"),
+      InvokeCommandSpec(name = "jarvis.play"),
+      InvokeCommandSpec(name = "jarvis.notify"),
+      InvokeCommandSpec(name = "jarvis.open"),
+      InvokeCommandSpec(name = "jarvis.keepAwake"),
+      InvokeCommandSpec(name = "jarvis.pack.status"),
+      InvokeCommandSpec(name = "jarvis.pack.update"),
+      InvokeCommandSpec(name = "jarvis.pack.run"),
+      InvokeCommandSpec(
+        name = "jarvis.files.list",
+        requiresForeground = false,
+      ),
+      InvokeCommandSpec(
+        name = "jarvis.files.get",
+        requiresForeground = false,
+      ),
+      InvokeCommandSpec(
         name = OpenClawCanvasA2UICommand.Push.rawValue,
         requiresForeground = true,
       ),

@@ -6,6 +6,17 @@ export function stripSystemPromptCacheBoundary(text: string): string {
   return text.replaceAll(SYSTEM_PROMPT_CACHE_BOUNDARY, "\n");
 }
 
+/**
+ * FORK 2026-10-10: how many leading characters of `text` sit above the cache boundary, or undefined when there is no
+ * boundary. The strip above keeps those characters in place, so the same count marks the end of the stable prefix in
+ * the stripped prompt a provider-owned transport receives. tinker-bridge keys its worker and writes its system prompt
+ * from that prefix and carries the rest per turn (stream.ts `__openclawStablePromptChars`).
+ */
+export function systemPromptStableChars(text: string | undefined): number | undefined {
+  const boundaryIndex = text ? text.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY) : -1;
+  return boundaryIndex === -1 ? undefined : boundaryIndex;
+}
+
 export function splitSystemPromptCacheBoundary(
   text: string,
 ): { stablePrefix: string; dynamicSuffix: string } | undefined {

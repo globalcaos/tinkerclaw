@@ -57,7 +57,24 @@ export interface SupersedeApplyResult {
   closed: string[];
   /** chunk ids that were targeted but already had a closed interval (no-op). */
   skipped: string[];
+  /**
+   * chunk ids a closure was decided for but NOT applied: no judgement step approved it, or the
+   * prior is a sibling from the same file and the same validity_start (2026-10-09).
+   */
+  held: string[];
 }
+
+/**
+ * A judgement step that must approve every closure (2026-10-09). Without one, nothing is closed:
+ * the chunk-identity trigger alone made 22,340 false closures between 2026-08-04 and 09-03, all
+ * sibling fragments of one split chunk, and hid them from default search for five weeks (J2, J14
+ * gap reports). Wire a judge only once a trigger shows >= 0.9 precision on a hand-audited sample.
+ */
+export type SupersedeJudge = (ctx: {
+  candidateId: string;
+  priorIds: string[];
+  reason: string;
+}) => boolean;
 
 /**
  * Find the currently-valid (validity_end IS NULL) prior chunk(s) that a candidate chunk
@@ -183,13 +200,54 @@ export function applySupersede(
      * pure memory layer and unit-testable with a spy. Never throws into the write path.
      */
     onClosed?: (closedIds: string[], reason: string) => void;
+    /** Must approve the closures; absent or false means they are held, not applied. */
+    judge?: SupersedeJudge;
   },
 ): SupersedeApplyResult {
-  const result: SupersedeApplyResult = { closed: [], skipped: [] };
+  const result: SupersedeApplyResult = { closed: [], skipped: [], held: [] };
   if (decision.action !== "supersede") {
     return result;
   }
+  // Never close against a successor from the same file with the same validity_start: those are
+  // fragments of one indexing pass, not revisions. Checked here as well as in
+  // findSupersededChunkIds because a decision can be built by any caller.
+  const candidatePath = (
+    db.prepare("SELECT path FROM chunks WHERE id = ?").get(candidate.id) as
+      | { path: string }
+      | undefined
+  )?.path;
+  const priorRow = db.prepare("SELECT path, validity_start AS vs FROM chunks WHERE id = ?");
+  const eligible: string[] = [];
   for (const priorId of decision.supersedes) {
+    const prior = priorRow.get(priorId) as { path: string; vs: number | null } | undefined;
+    const sibling =
+      prior !== undefined &&
+      prior.vs === candidate.validityStart &&
+      (candidatePath === undefined || prior.path === candidatePath);
+    (sibling ? result.held : eligible).push(priorId);
+  }
+  let approved = false;
+  if (eligible.length > 0 && opts?.judge) {
+    try {
+      approved = opts.judge({
+        candidateId: candidate.id,
+        priorIds: eligible,
+        reason: decision.reason,
+      });
+    } catch (err) {
+      console.error("[supersede-writer] judge threw; closure held", err);
+    }
+  }
+  if (!approved) {
+    result.held.push(...eligible);
+  }
+  if (result.held.length > 0) {
+    opts?.log?.(
+      `[supersede-writer] candidate=${candidate.id} held ${result.held.length} closure(s): ` +
+        (opts?.judge ? "not approved or same-pass sibling" : "no judgement step"),
+    );
+  }
+  for (const priorId of approved ? eligible : []) {
     const res = invalidate(db, priorId, candidate.id, decision.reason, {
       validAt: candidate.validityStart,
       log: opts?.log,
@@ -243,6 +301,8 @@ export function supersedeContradictions(
     log?: (msg: string) => void;
     /** Producer hook (see applySupersede.onClosed) — fires only when an interval is closed. */
     onClosed?: (closedIds: string[], reason: string) => void;
+    /** See SupersedeJudge: without an approving judge nothing is closed. */
+    judge?: SupersedeJudge;
   },
 ): { decision: WriteDecision; applied: SupersedeApplyResult } {
   const mode = opts?.mode ?? "supersede";
@@ -250,6 +310,7 @@ export function supersedeContradictions(
   const applied = applySupersede(db, decision, candidate, {
     log: opts?.log,
     onClosed: opts?.onClosed,
+    judge: opts?.judge,
   });
   return { decision, applied };
 }

@@ -6,7 +6,7 @@ import { loadSessionStore, type SessionEntry } from "../config/sessions.js";
 import { markFailedOnSurfaceError } from "./attempt-hooks.js";
 
 /**
- * FORK 2026-07-30 (the user: "Grok is firing without stop. I stop its thinking
+ * FORK 2026-07-30 (the architect: "Grok is firing without stop. I stop its thinking
  * indicator and it starts again").
  *
  * A `stage:"assistant"` surface_error (live: xai/grok-4.5, runId 755f5fd8) left

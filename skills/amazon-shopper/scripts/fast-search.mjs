@@ -1,105 +1,76 @@
 #!/usr/bin/env node
-// fast-search.mjs — the default search path: parallel cookie-replay HTTP.
+// fast-search.mjs — multi-phrasing anonymous sweep over amazon.es search pages.
 //
-// Speed comes from three places, in order of impact:
-//   1. No browser. Driving the shared tab costs ~40-60 s per page (navigate,
-//      settle, chunked DOM read). Cookie replay is ~1.5 s.
-//   2. Queries run CONCURRENTLY. A capacity sweep is N independent requests;
-//      running them in series was the other half of the old slowness.
-//   3. One parse pass, deduped by ASIN.
+// WHY IT EXISTS: one keyword query is one slice of the catalogue. Sweeping
+// variants ("micro sd 1tb", "micro sd 512gb") found 18 x 1 TB and 31 x 512 GB
+// where a single query found none and one. This runs the variants, parses each
+// results page once, and dedupes by ASIN.
 //
-// It also fixes a correctness bug the old path had: ONE keyword query is one
-// slice of the catalogue. Sweeping variants ("micro sd 1tb", "micro sd 512gb")
-// found 18 x 1 TB and 31 x 512 GB where a single query found none and one.
+// WHAT IT NO LONGER DOES (removed in 1.2.1): it used to shell out to a Python
+// fetcher that replayed your stored amazon.es login cookies, with --session and
+// --next-day flags that made delivery promises address-specific. That whole
+// credential path is gone from this package, so this reads amazon.es exactly the
+// way an anonymous visitor does — no account, no cookies, no subprocess. Price,
+// stock, title and images do not need a login; a personalised delivery promise
+// does, and is therefore simply not something this skill reports any more.
+//
+// Requests are paced by scripts/fetch.mjs at a fixed interval, so a sweep is
+// deliberately sequential and polite rather than parallel and loud.
 //
 // Usage:
 //   node fast-search.mjs --query "micro sd" [--sweep "1tb,512gb,256gb,128gb"]
-//                        [--next-day] [--pages 2] [--out dataset.json]
+//                        [--pages 2] [--out dataset.json]
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { extractSearchResults } from "./extract-search.mjs";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FETCH_PY = path.join(HERE, "amazon_fetch.py");
+import { createFetcher } from "./fetch.mjs";
 
 const argv = process.argv.slice(2);
 const flag = (n, d) => {
   const i = argv.indexOf(`--${n}`);
   return i < 0 ? d : argv[i + 1];
 };
-const has = (n) => argv.includes(`--${n}`);
 
 const baseQuery = flag("query");
 if (!baseQuery) {
   console.error(
-    'usage: fast-search.mjs --query "micro sd" [--sweep "1tb,512gb"] [--next-day] [--session] [--pages N]',
+    'usage: fast-search.mjs --query "micro sd" [--sweep "1tb,512gb"] [--pages N] [--out dataset.json]',
   );
   process.exit(5);
 }
+
 const sweep = (flag("sweep", "") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const pages = Number(flag("pages", "1"));
-const nextDay = has("next-day");
-// Anonymous unless asked. --session replays the stored amazon.es session, which is
-// what makes a delivery promise address-specific rather than a generic estimate;
-// without it these runs carry no credential at all.
-const useSession = has("session");
-if (nextDay && !useSession) {
-  console.error(
-    "note: --next-day without --session returns Amazon's GENERIC delivery estimate, not a promise " +
-      "for your address. Add --session (after `node scripts/session-capture.mjs --yes`) for the real one.",
-  );
-}
-const CONCURRENCY = Number(flag("concurrency", "5"));
+const pages = Math.max(1, Number(flag("pages", "1")) || 1);
 
-/** One amazon_fetch.py run → HTML string (or null, with the reason logged). */
-function fetchOne(query, page) {
-  return new Promise((resolve) => {
-    const args = [FETCH_PY, "--query", query, "--page", String(page)];
-    if (nextDay) args.push("--next-day");
-    if (useSession) args.push("--session");
-    const p = spawn("python3", args, { maxBuffer: 64 * 1024 * 1024 });
-    let out = "",
-      err = "";
-    p.stdout.on("data", (d) => (out += d));
-    p.stderr.on("data", (d) => (err += d));
-    p.on("close", (code) => {
-      if (code !== 0) {
-        // Surface the machine-readable prefix (SESSION_STALE / BLOCKED) so the
-        // caller can tell "needs a re-capture" from "no results".
-        console.error(`  ✗ ${query} p${page}: ${err.trim().split("\n").pop()}`);
-        return resolve(null);
-      }
-      resolve(out);
-    });
-  });
-}
+const searchUrl = (query, page) => {
+  const u = new URL("https://www.amazon.es/s");
+  u.searchParams.set("k", query);
+  if (page > 1) u.searchParams.set("page", String(page));
+  return u.toString();
+};
 
-async function pool(tasks, n) {
-  const results = [];
-  let i = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(n, tasks.length) }, async () => {
-      while (i < tasks.length) {
-        const idx = i++;
-        results[idx] = await tasks[idx]();
-      }
-    }),
-  );
-  return results;
+const fetcher = createFetcher();
+
+/** One anonymous search page → HTML string (or null, with the reason logged). */
+async function fetchOne(query, page) {
+  const r = await fetcher.get(searchUrl(query, page));
+  if (r.outcome !== "OK") {
+    console.error(`  ✗ ${query} p${page}: BLOCKED:${r.reason}`);
+    return null;
+  }
+  return r.body;
 }
 
 const queries = sweep.length ? sweep.map((s) => `${baseQuery} ${s}`) : [baseQuery];
-const jobs = [];
-for (const q of queries) for (let p = 1; p <= pages; p++) jobs.push(() => fetchOne(q, p));
 
 const t0 = Date.now();
-const htmls = await pool(jobs, CONCURRENCY);
+const htmls = [];
+for (const q of queries) {
+  for (let p = 1; p <= pages; p++) htmls.push(await fetchOne(q, p));
+}
 const fetchMs = Date.now() - t0;
 
 const byAsin = new Map();
@@ -120,12 +91,12 @@ const okPages = htmls.filter(Boolean).length;
 
 const summary = {
   ok: okPages > 0,
+  anonymous: true,
   queries: queries.length,
-  pages_requested: jobs.length,
+  pages_requested: htmls.length,
   pages_ok: okPages,
   rows_seen: parsed,
   unique_asins: rows.length,
-  next_day: rows.filter((r) => r.delivery_tomorrow).length,
   fetch_seconds: +(fetchMs / 1000).toFixed(2),
   total_seconds: +((Date.now() - t0) / 1000).toFixed(2),
 };

@@ -36,6 +36,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../../config/paths.js";
+import { ERROR_ENVELOPE_MARKER } from "../../fork/turn-outcome.js";
 import { logVerbose } from "../../globals.js";
 import { CommandLane } from "../../process/lanes.js";
 
@@ -347,6 +348,45 @@ export function parseRateLimitReset(
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
+
+/**
+ * FORK 2026-10-09 — the reset of a usage limit that arrived as a FINISHED turn.
+ *
+ * The Tinker bridge (extensions/tinkerclaw-tinker-bridge/src/stream.ts) reports a
+ * provider usage limit as a normal assistant turn whose only text is an
+ * `__ERR_ENV__:` envelope, with stopReason "stop". Nothing is thrown, so the catch
+ * block in agent-runner-execution.ts that arms the retry never ran for Tinker
+ * chats: on 2026-10-09 a 19:30 prompt sat dead until the owner typed "keep going"
+ * at 20:52, 22 minutes past the 20:30 reset. This reads the envelope instead.
+ * Only `category: "rate_limit"` counts; the reset comes from the provider's own
+ * `raw` text, never from the friendly explanation.
+ */
+export function parseRateLimitEnvelopeReset(
+  payloads: ReadonlyArray<{ text?: string }> | undefined,
+  now: number = Date.now(),
+): number | undefined {
+  for (const payload of payloads ?? []) {
+    const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+    if (!text.startsWith(ERROR_ENVELOPE_MARKER)) {
+      continue;
+    }
+    let envelope: unknown;
+    try {
+      envelope = JSON.parse(text.slice(ERROR_ENVELOPE_MARKER.length));
+    } catch {
+      continue;
+    }
+    if (!envelope || typeof envelope !== "object") {
+      continue;
+    }
+    const { category, raw } = envelope as { category?: unknown; raw?: unknown };
+    if (category !== "rate_limit") {
+      continue;
+    }
+    return parseRateLimitReset(typeof raw === "string" ? raw : undefined, now);
+  }
+  return undefined;
+}
 
 export function resolveRateLimitRetryStorePath(override?: string): string {
   const explicit = override?.trim();

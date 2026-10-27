@@ -63,8 +63,8 @@ export interface PrefrontalRecoveryState {
 // on every call. Runtime config in openclaw.json can still override per-deploy.
 export const DEFAULT_PREFRONTAL_CONFIG: PrefrontalConfig = {
   enabled: false,
-  model: "claude-code/claude-opus-4-7",
-  summaryModel: "claude-code/claude-sonnet-4-6",
+  model: "claude-code/claude-opus-5-5",
+  summaryModel: "claude-code/claude-sonnet-5-5",
   monitorIntervalMs: 120_000,
   staleThresholdMs: 180_000,
   guardianStaleThresholdMs: 300_000,
@@ -72,8 +72,8 @@ export const DEFAULT_PREFRONTAL_CONFIG: PrefrontalConfig = {
   autoRoute: true,
   effortRouting: {
     minimal: ["claude-code/claude-haiku-4-5", "ollama/qwen3:14b"],
-    standard: ["claude-code/claude-sonnet-4-6", "google/gemini-2.5-pro"],
-    maximum: ["claude-code/claude-opus-4-7"],
+    standard: ["claude-code/claude-sonnet-5-5", "google/gemini-2.5-pro"],
+    maximum: ["claude-code/claude-opus-5-5"],
   },
 };
 

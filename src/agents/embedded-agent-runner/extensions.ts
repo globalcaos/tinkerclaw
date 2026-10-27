@@ -208,7 +208,7 @@ export function buildEmbeddedExtensionFactories(params: {
         linkBuilder,
       });
 
-      // FORK 2026-07-26 (the user: "why so many compactions if the context cache is
+      // FORK 2026-07-26 (the architect: "why so many compactions if the context cache is
       // so empty?") — createPointerCompactionHandler() defaults ctxTokens to
       // 100_000, so pointerCompact() evicted at ctx-headroom = 96k REGARDLESS of
       // the model's real window. On claude-opus-5 (1M) that compacted every turn

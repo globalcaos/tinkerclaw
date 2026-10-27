@@ -1,4 +1,4 @@
-// FORK 2026-08-13 (the user) — "preparing context" is a GUESS; these helpers render the
+// FORK 2026-08-13 (the architect) — "preparing context" is a GUESS; these helpers render the
 // gateway's own account of the pre-turn gap.
 //
 // After `chat.send` resolves, the gateway spends a measured 21-36s assembling the turn
@@ -238,7 +238,7 @@ export function pendingPillLabel(state: {
   return state.preparing ? "preparing context" : "sending";
 }
 
-// ─── Itemised trail (FORK 2026-08-15, the user: "itemized as much as possible") ───
+// ─── Itemised trail (FORK 2026-08-15, the architect: "itemized as much as possible") ───
 //
 // The single-label pill answers "what is it doing NOW". It cannot answer "where did the
 // 30 seconds go", which is the question the architect actually has while he waits. So we
@@ -291,7 +291,7 @@ export type PhaseStep = {
   /**
    * Milliseconds this step held — the UNROUNDED value.
    *
-   * FORK 2026-08-16 (the user: "All the phase elapsed times should always show even though the time
+   * FORK 2026-08-16 (the architect: "All the phase elapsed times should always show even though the time
    * is small or zero"). `seconds` is a rounded integer, so every sub-second stage collapsed to
    * `0` and rendered as "0s" — which reads as "did not happen" for the stages that are FAST,
    * i.e. exactly the ones a warm cache produces. The renderer formats from this instead.

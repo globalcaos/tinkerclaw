@@ -36,6 +36,43 @@ class NodeForegroundService : Service() {
       stopSelf()
       return
     }
+    // FORK 2026-10-21 (the architect: phone picture backup) — nightly/weekly upload to the Pi (PhotoBackup.kt).
+    if (BuildConfig.JARVIS_APP) ai.openclaw.app.jarvis.PhotoBackup.start(applicationContext)
+    // 2026-10-23 (plan "phone app self-update"): the content pack's start script, then a pack check.
+    if (BuildConfig.JARVIS_APP) ai.openclaw.app.jarvis.JarvisPack.onAppStart(applicationContext)
+    // 2026-10-22 (the architect: "a message sent to you after every new installation"): the first start of
+    // each build tells the Pi's door which versionCode is running; retried until the door has it.
+    if (BuildConfig.JARVIS_APP) {
+      scope.launch {
+        val vc = BuildConfig.VERSION_CODE
+        val sp = getSharedPreferences("jarvis-update", MODE_PRIVATE)
+        while (sp.getInt("reportedVersionCode", 0) != vc) {
+          kotlinx.coroutines.delay(10_000L)
+          val prefs = (applicationContext as NodeApp).prefs
+          val token = prefs.loadJarvisDeviceToken() ?: continue
+          val origin =
+            ai.openclaw.app.jarvis.JarvisDoor.origin.value
+              ?: ai.openclaw.app.jarvis.JarvisDoor.resolve(prefs.jarvisDoorCandidates.value)
+              ?: continue
+          // 2026-10-23: who Android lists as installer and update owner. A silent self-update needs this
+          // app to be both; anything else and Android asks for the tap every time.
+          val src = runCatching { packageManager.getInstallSourceInfo(packageName) }.getOrNull()
+          val installer = java.net.URLEncoder.encode(src?.installingPackageName ?: "", "UTF-8")
+          val owner =
+            java.net.URLEncoder.encode(
+              if (android.os.Build.VERSION.SDK_INT >= 34) src?.updateOwnerPackageName ?: "" else "",
+              "UTF-8",
+            )
+          val ok =
+            ai.openclaw.app.jarvis.JarvisDoor.fetchText(
+              origin,
+              "/door/app/installed?versionCode=$vc&installer=$installer&owner=$owner",
+              token,
+            )
+          if (ok != null) sp.edit().putInt("reportedVersionCode", vc).apply() else kotlinx.coroutines.delay(50_000L)
+        }
+      }
+    }
     notificationJob =
       scope.launch {
         combine(

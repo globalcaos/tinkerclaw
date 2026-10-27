@@ -2,7 +2,7 @@
 //
 // THE BIAS DIAL, READ FROM THE GATEWAY.
 //
-// FORK 2026-09-02 (the user): "make sure … Thalamus actually automatically switches
+// FORK 2026-09-02 (the architect): "make sure … Thalamus actually automatically switches
 // among them smartly, following the BIAS selected in the slider". The dial already
 // existed and already persisted: `prefrontal.orcaBias`
 // (extensions/tinkerclaw-prefrontal/index.ts:906) writes `{biasIdx, ts}` to

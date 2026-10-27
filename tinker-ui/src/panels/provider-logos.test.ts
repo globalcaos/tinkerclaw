@@ -5,7 +5,7 @@ import { VENDOR_MARKS } from "./vendor-marks";
 /**
  * THE BUG, and why prose would not have caught it.
  *
- * the user, on a Claude turn: what looked like an OpenRouter icon in the thinking
+ * the architect, on a Claude turn: what looked like an OpenRouter icon in the thinking
  * indicator. It was not OpenRouter's — it was UNKNOWN_MARK_SVG, this file's neutral
  * "reached through a router, vendor unidentified" glyph, which is a wordless
  * node-and-branch mark and therefore looks exactly like a router logo.

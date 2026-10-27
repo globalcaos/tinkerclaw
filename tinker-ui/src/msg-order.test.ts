@@ -3,6 +3,7 @@ import {
   __resetMsgOrderForTests,
   bySeq,
   findByUid,
+  insertRenderedAt,
   isClientOnlyBubble,
   reinsertByTurnAnchor,
   renderOrder,
@@ -400,5 +401,114 @@ describe("_arrivedAt — the arrival clock, display-only", () => {
     expect(seqOf(frozen)).toBeUndefined();
     expect(arrivedAtOf(list[1])).toEqual(expect.any(Number));
     expect(seqOf(list[1])).toBe(1);
+  });
+});
+
+describe("insertRenderedAt — an older page lands ABOVE the rows on screen (plan task 8)", () => {
+  const drawn = () => {
+    const list = [user("u3"), assistant("a3"), user("u4"), assistant("a4")];
+    stampOrder(list);
+    return list;
+  };
+
+  it("CONTROL: a plain splice at the top renders at the TAIL — why this function exists", () => {
+    const list = drawn();
+    const older = user("u2");
+    list.unshift(older);
+    expect(renderOrder(list).at(-1)).toBe(older);
+  });
+
+  it("'top': the rows render above every row already drawn, in the order given", () => {
+    const list = drawn();
+    const [u3, a3, u4, a4] = list;
+    const seqsBefore = list.map(seqOf);
+    const uidsBefore = list.map(uidOf);
+    const older = [user("u1"), assistant("a1"), user("u2"), assistant("a2")];
+    insertRenderedAt(list, older, "top");
+    sameOrder(renderOrder(list), [...older, u3, a3, u4, a4]);
+    // Array order agrees, so array-scanning code (turn starts, anchors) sees the same page.
+    sameOrder(list, [...older, u3, a3, u4, a4]);
+    // Nothing already drawn was renumbered or re-identified.
+    expect([u3, a3, u4, a4].map(seqOf)).toEqual(seqsBefore);
+    expect([u3, a3, u4, a4].map(uidOf)).toEqual(uidsBefore);
+  });
+
+  it("'before': the rows render between the anchor and whatever rendered just above it", () => {
+    const list = drawn();
+    const [u3, a3, u4, a4] = list;
+    const gap = assistant("between a3 and u4");
+    insertRenderedAt(list, [gap], { before: u4 });
+    sameOrder(renderOrder(list), [u3, a3, gap, u4, a4]);
+    sameOrder(list, [u3, a3, gap, u4, a4]);
+  });
+
+  it("'after': the rows render right after the anchor", () => {
+    const list = drawn();
+    const [u3, a3, u4, a4] = list;
+    const rows = [assistant("x"), assistant("y")];
+    insertRenderedAt(list, rows, { after: a3 });
+    sameOrder(renderOrder(list), [u3, a3, ...rows, u4, a4]);
+  });
+
+  it("uses RENDER order, not array order, to find the gap", () => {
+    const list = drawn();
+    const [u3, a3, u4, a4] = list;
+    // A row spliced mid-array earlier still renders at the tail; the gap before u4 is (a3, u4).
+    const late: Msg = { role: "assistant", _isError: true };
+    list.splice(1, 0, late);
+    stampOrder(list);
+    const gap = assistant("gap");
+    insertRenderedAt(list, [gap], { before: u4 });
+    sameOrder(renderOrder(list), [u3, a3, gap, u4, a4, late]);
+  });
+
+  it("identities stay unique across repeated inserts and later stamping", () => {
+    const list = drawn();
+    insertRenderedAt(list, [user("o1")], "top");
+    insertRenderedAt(list, [user("o0")], "top");
+    list.push(assistant("new"));
+    stampOrder(list);
+    const uids = list.map(uidOf);
+    expect(new Set(uids).size).toBe(uids.length);
+    expect(renderOrder(list).map((m) => (m as Msg).content)).toEqual([
+      "o0",
+      "o1",
+      "u3",
+      "a3",
+      "u4",
+      "a4",
+      "new",
+    ]);
+  });
+
+  it("twelve older pages in a row above a FIXED lower neighbour never run out of room", () => {
+    // Paging back a trimmed page: each page is written directly above the previous page's first
+    // row, below a row that never moves (a live bubble). Even subdivision shrinks that gap ~101×
+    // per page, and float precision runs out around page 9.
+    const floor = user("floor");
+    const top = assistant("top");
+    const list: unknown[] = [floor, top];
+    stampOrder(list);
+    let above: unknown = top;
+    const pages: unknown[][] = [];
+    for (let p = 0; p < 12; p++) {
+      const rows = Array.from({ length: 100 }, (_, i) => assistant(`p${p}-${i}`));
+      insertRenderedAt(list, rows, { before: above });
+      pages.push(rows);
+      above = rows[0];
+    }
+    const expected = [floor, ...pages.toReversed().flat(), top];
+    sameOrder(renderOrder(list), expected);
+    const seqs = renderOrder(list).map(seqOf) as number[];
+    expect(new Set(seqs).size).toBe(seqs.length);
+  });
+
+  it("never moves or duplicates a row that is already on the list, even when it is handed in again", () => {
+    const list = drawn();
+    const [u3] = list;
+    const seq = seqOf(u3);
+    insertRenderedAt(list, [u3], "top");
+    expect(seqOf(u3)).toBe(seq);
+    expect(list).toHaveLength(4);
   });
 });

@@ -16,12 +16,12 @@ prudence gate uses). Output = the operator's current STATE across several axes. 
 selects a **behavioural guide** (the nudge). Labels are _generatable_ (LLM-score past
 conversation windows per axis), so unlike the old design this can actually be trained.
 
-## The axes (the user's + proposed additions)
+## The axes (the architect's + proposed additions)
 
 Each axis is a bounded scale; the net predicts a position on it (regression in [0,1] or
 3-bucket low/mid/high — decide at build, lean 3-bucket for clean per-class P/R).
 
-The user's:
+the architect's:
 
 1. **Pace** — in a hurry ↔ calm
 2. **Momentum** — winning (big results from little prompting) ↔ frustrated (recurring bugs)

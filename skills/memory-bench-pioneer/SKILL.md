@@ -10,7 +10,7 @@ metadata:
         "requires": { "bins": ["python3"] },
         "notes":
           {
-            "security": "Benchmarks a LIVE memory database, so disclosure matters more than usual. DEFAULT PATH IS LOCAL: the default judge (--judge local) sends retrieved excerpts only to a local embedding server on 127.0.0.1; nothing leaves the machine. Two actions can send data out and BOTH are opt-in and confirmed: --judge openai transmits the benchmark query plus up to 300 redacted characters of each RETRIEVED MEMORY to api.openai.com (typed confirmation, or --yes-send-to-openai), and scripts/submit.sh opens a PUBLIC GitHub pull request containing the statistics report (--dry-run to preview, typed confirmation to publish, refuses non-interactively). Attribution is anonymous unless you pass --contributor; token/cost totals are excluded unless you pass --include-token-stats. rate.py WRITES a retrieval_log table into the database you point it at — use --db on a copy to sandbox it. No daemon, no cron, nothing runs on its own. See the Permissions, Data Flow & Consent section."
+            "security": "Benchmarks a LIVE memory database, so disclosure matters more than usual. DEFAULT PATH IS LOCAL: the default judge (--judge local) sends retrieved excerpts only to a local embedding server on 127.0.0.1; nothing leaves the machine. Two actions can send data out and BOTH are opt-in and confirmed: --judge openai transmits the benchmark query plus up to 300 redacted characters of each RETRIEVED MEMORY to api.openai.com (typed confirmation, or --yes-send-to-openai), and scripts/submit.sh opens a PUBLIC GitHub pull request containing the statistics report (--dry-run to preview, typed confirmation to publish, refuses non-interactively). Attribution is anonymous unless you pass --contributor; token/cost totals are excluded unless you pass --include-token-stats. rate.py WRITES a retrieval_log table into the database you point it at — use --db on a copy to sandbox it. No daemon, no cron, nothing runs on its own. See the Permissions, Data Flow & Consent section.",
           },
       },
   }
@@ -62,10 +62,10 @@ python3 scripts/rate.py --testset path/to/queries.json --judge local
 
 **Judge methods — this is the privacy decision in this skill:**
 
-| Judge | What it sees | Where it goes | Cost |
-| --- | --- | --- | --- |
-| `local` **(default)** | query + 300 chars of each result | `http://127.0.0.1:8900/embed` on your own machine | free |
-| `openai` | query + 300 **redacted** chars of each result | `api.openai.com`, gpt-4o-mini | ~$0.01/run |
+| Judge                 | What it sees                                  | Where it goes                                     | Cost       |
+| --------------------- | --------------------------------------------- | ------------------------------------------------- | ---------- |
+| `local` **(default)** | query + 300 chars of each result              | `http://127.0.0.1:8900/embed` on your own machine | free       |
+| `openai`              | query + 300 **redacted** chars of each result | `api.openai.com`, gpt-4o-mini                     | ~$0.01/run |
 
 The `openai` judge is more discriminating and independent of the retrieval system, which is why the research protocol prefers it. It is also the option that puts pieces of your memories in someone else's logs. Both are legitimate; pick deliberately, and see the consent section below for exactly what is sent.
 
@@ -73,7 +73,7 @@ The `openai` judge is more discriminating and independent of the retrieval syste
 
 **Standard test set** (`scripts/testset.json`): 30 queries stratified across semantic/episodic/procedural/strategic types and easy/medium/hard difficulty. As of 2.1.0 the queries are phrased to probe the operational and technical side of your memory — configuration, procedures, incidents, architecture decisions — rather than family, health, contacts or calendar. All deployments run the same queries, so results are comparable across sites; reports produced with the pre-2.1.0 set are not directly comparable with these.
 
-Note the honest limit: the queries steer *what is asked*, not *what your memory system returns*. Retrieval searches whatever database you point it at. If your memory holds things you would not want an external judge to rate, use `--judge local` (the default), or benchmark a filtered copy with `--db`.
+Note the honest limit: the queries steer _what is asked_, not _what your memory system returns_. Retrieval searches whatever database you point it at. If your memory holds things you would not want an external judge to rate, use `--judge local` (the default), or benchmark a filtered copy with `--db`.
 
 ### 2. Collect Statistics
 
@@ -116,18 +116,18 @@ Short version: steps 1 and 2 are local; step 3 publishes, and so does the option
 
 **What it needs, and why.**
 
-| Capability | Why | Scope |
-| --- | --- | --- |
-| Read your memory DB | Counts, histograms, and running the benchmark queries | `~/.openclaw/workspace/db/{memory,cognitive_memory,jarvis}.db`, or `--db` |
-| **Write** your memory DB | `rate.py` logs one `retrieval_log` row per benchmark query | Same DB (or the copy you pass to `--db`); no other table is touched |
-| File write | `<db_dir>/.memory-bench-instance-id` (random UUID, so repeat reports group together) and the `--output` report path | Two files, both of which you can delete |
-| Read usage files | Token/cost totals — **only** with `--include-token-stats` | `~/.openclaw/workspace/memory/*-usage.json` |
-| Local shell exec | `git log` for the algorithm SHA, `node --version` for system info, `git`/`gh` in `submit.sh` | Fixed commands |
-| Network to localhost | Local judge embeddings | `http://127.0.0.1:8900/embed` — stays on the machine |
-| Network to OpenAI | **Opt-in.** Query + up to 300 redacted chars per retrieved memory | `api.openai.com`, only with `--judge openai` after confirmation |
-| Network to GitHub | **Opt-in.** Uploads the report and opens a public PR | `github.com`, only in `submit.sh` after confirmation |
-| Credentials | `OPENAI_API_KEY` (env or `--api-key`) only when you choose the OpenAI judge; `gh`'s existing login in `submit.sh` | Read at call time, never stored, never written to the report |
-| Scheduling | **None.** No daemon, no cron, no install hook. Nothing runs unless you run it | — |
+| Capability               | Why                                                                                                                 | Scope                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Read your memory DB      | Counts, histograms, and running the benchmark queries                                                               | `~/.openclaw/workspace/db/{memory,cognitive_memory,jarvis}.db`, or `--db` |
+| **Write** your memory DB | `rate.py` logs one `retrieval_log` row per benchmark query                                                          | Same DB (or the copy you pass to `--db`); no other table is touched       |
+| File write               | `<db_dir>/.memory-bench-instance-id` (random UUID, so repeat reports group together) and the `--output` report path | Two files, both of which you can delete                                   |
+| Read usage files         | Token/cost totals — **only** with `--include-token-stats`                                                           | `~/.openclaw/workspace/memory/*-usage.json`                               |
+| Local shell exec         | `git log` for the algorithm SHA, `node --version` for system info, `git`/`gh` in `submit.sh`                        | Fixed commands                                                            |
+| Network to localhost     | Local judge embeddings                                                                                              | `http://127.0.0.1:8900/embed` — stays on the machine                      |
+| Network to OpenAI        | **Opt-in.** Query + up to 300 redacted chars per retrieved memory                                                   | `api.openai.com`, only with `--judge openai` after confirmation           |
+| Network to GitHub        | **Opt-in.** Uploads the report and opens a public PR                                                                | `github.com`, only in `submit.sh` after confirmation                      |
+| Credentials              | `OPENAI_API_KEY` (env or `--api-key`) only when you choose the OpenAI judge; `gh`'s existing login in `submit.sh`   | Read at call time, never stored, never written to the report              |
+| Scheduling               | **None.** No daemon, no cron, no install hook. Nothing runs unless you run it                                       | —                                                                         |
 
 **About that redaction.** Before an excerpt goes to OpenAI, `rate.py` replaces email addresses, phone-shaped numbers, API-key-shaped strings, long hex blobs, home directory paths and URL credentials with placeholders. That is pattern matching, not comprehension — it will not catch a secret written in prose. Treat it as a seatbelt, not a force field. If the content is genuinely sensitive, the answer is `--judge local`, not better regexes.
 
@@ -192,13 +192,13 @@ An optional `notes` field is ignored by the runner.
 
 ## Included Files
 
-| File | Purpose |
-| --- | --- |
-| `scripts/rate.py` | Runs the benchmark, judges results, computes metrics. Writes `retrieval_log`. The only script that can call an external API — opt-in and confirmed |
-| `scripts/collect.py` | Builds the anonymous statistics report. Uploads nothing |
-| `scripts/submit.sh` | Opens the public PR. Preview with `--dry-run`; requires typed confirmation |
-| `scripts/testset.json` | The 30-query standard test set |
-| `scripts/test_metrics.py` | Unit tests for the IR metrics (`python3 scripts/test_metrics.py`) |
+| File                      | Purpose                                                                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/rate.py`         | Runs the benchmark, judges results, computes metrics. Writes `retrieval_log`. The only script that can call an external API — opt-in and confirmed |
+| `scripts/collect.py`      | Builds the anonymous statistics report. Uploads nothing                                                                                            |
+| `scripts/submit.sh`       | Opens the public PR. Preview with `--dry-run`; requires typed confirmation                                                                         |
+| `scripts/testset.json`    | The 30-query standard test set                                                                                                                     |
+| `scripts/test_metrics.py` | Unit tests for the IR metrics (`python3 scripts/test_metrics.py`)                                                                                  |
 
 Everything the documentation above describes is in this package. If you find a claim here that the code does not do, that is a bug — open an issue on [the repo](https://github.com/globalcaos/tinkerclaw/issues).
 

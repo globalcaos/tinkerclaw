@@ -1,0 +1,101 @@
+{
+  "firstColumn": "Project · hover for summary",
+  "kpis": [
+    { "value": "62%", "label": "built" },
+    { "value": "4", "label": "in beta", "color": "#b9780c" },
+    { "value": "2", "label": "docs behind", "color": "#c0392b" }
+  ],
+  "columns": [
+    {
+      "key": "built",
+      "label": "Built + beta",
+      "type": "bar",
+      "unit": "built",
+      "extraLabel": "beta"
+    },
+    { "key": "works", "label": "Works well", "type": "bar", "color": "#2e8b57" },
+    { "key": "tests", "label": "Tests pass·fail·skip", "type": "stack" },
+    { "key": "docs", "label": "Docs", "type": "pill" }
+  ],
+  "groups": [
+    {
+      "name": "Storage",
+      "color": "#2f6db5",
+      "rows": [
+        {
+          "id": "S1",
+          "name": "Object cache",
+          "sub": "CACHE",
+          "note": "v2.1",
+          "tip": "Keeps hot objects in memory so reads skip the disk.",
+          "cells": {
+            "built": { "value": 70, "extra": 10 },
+            "works": { "value": 55 },
+            "tests": {
+              "parts": [
+                [40, "good"],
+                [3, "bad"],
+                [5, "neutral"]
+              ],
+              "label": "40·3·5"
+            },
+            "docs": { "text": "current", "tone": "good" }
+          }
+        },
+        {
+          "id": "S2",
+          "name": "Backup sync",
+          "sub": "MIRROR",
+          "note": "v0.4",
+          "tip": "Copies each night's changes to a second disk.",
+          "cells": {
+            "built": { "value": 30, "extra": 20 },
+            "works": { "value": 10 },
+            "tests": {
+              "parts": [
+                [8, "good"],
+                [6, "bad"],
+                [2, "neutral"]
+              ],
+              "label": "8·6·2"
+            },
+            "docs": { "text": "v0.3", "tone": "warn" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Security",
+      "color": "#c0392b",
+      "rows": [
+        {
+          "id": "X1",
+          "name": "Login gate",
+          "sub": "DOOR",
+          "note": "v1.0",
+          "tip": "One door per person in front of a shared service.",
+          "cells": {
+            "built": { "value": 85 },
+            "works": { "value": 70 },
+            "tests": {
+              "parts": [
+                [22, "good"],
+                [0, "bad"],
+                [1, "neutral"]
+              ],
+              "label": "22·0·1"
+            },
+            "docs": { "text": "v0.8", "tone": "bad" }
+          }
+        }
+      ]
+    }
+  ],
+  "legend": [
+    ["reinforced / pass", "good"],
+    ["weakened", "warn"],
+    ["refuted / fail", "bad"],
+    ["untested", "neutral"]
+  ],
+  "footnote": "Example data"
+}

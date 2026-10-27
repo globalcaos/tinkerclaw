@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "about": "Jarvis's phone voice, ONE copy. The page is built with it (tinker-ui voice-in-browser.ts, voice-intonation.ts); the app reads it from the content pack (JarvisVoiceFx.kt). Tune here, then rebuild the page and publish the pack (scripts/phone-door/pack-publish.sh). Times in ms, frequencies in Hz.",
+  "speech": { "speed": 1.3, "playbackRate": 0.92 },
+  "pitch": { "minHz": 70, "maxHz": 300 },
+  "intonation": { "k": 3.0, "ratioMin": 0.4, "ratioMax": 2.5 },
+  "fork": {
+    "level": 0.32,
+    "partials": [
+      [1, 1],
+      [2.756, 0.7],
+      [5.404, 0.5],
+      [8.933, 0.35]
+    ],
+    "vowel": [
+      [700, 1, 25],
+      [1100, 0.7, 30],
+      [2600, 0.45, 45]
+    ],
+    "barMix": 1.5,
+    "layerBase": 0.14,
+    "layerLow": 0.175,
+    "layerHigh": 0.035,
+    "barOctave": 2,
+    "step": 4,
+    "forkIntonation": 2,
+    "octave": 1,
+    "gridHz": 110,
+    "forkMinHz": 40,
+    "forkMaxHz": 1200,
+    "ringMs": 30,
+    "fadeMs": 3,
+    "attackMs": 3,
+    "nyquist": 0.45,
+    "vowelMaxHz": 4500,
+    "buzz": 0.05,
+    "vowelGain": 0.7,
+    "norm": 3.06
+  },
+  "chain": {
+    "comb": [
+      [0, 0.8],
+      [4, 0.2],
+      [9, 0]
+    ],
+    "flanger": { "delayMs": 2, "depthMs": 2, "rateHz": 0.5, "feedback": 0.25, "wet": 0.3 },
+    "echo": [
+      [0, 0.8],
+      [10, 0]
+    ],
+    "highpass": { "hz": 300, "q": 1 },
+    "treble": { "hz": 3000, "gainDb": 7 },
+    "chorus": { "dry": 0.5, "delayMs": 20, "depthMs": 2, "rateHz": 0.25, "wet": 0 },
+    "tremolo": { "base": 0.95, "depth": 0.05, "rateHz": 60 },
+    "gain": 1.6,
+    "limiter": { "thresholdDb": -3, "ratio": 20, "kneeDb": 30, "attackS": 0.003, "releaseS": 0.25 }
+  }
+}

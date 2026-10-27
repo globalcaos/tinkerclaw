@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { rankProducts } from "../scripts/rank.mjs";
+import { rankProducts, applyMetric } from "../scripts/rank.mjs";
 
 function withMock(t, payload) {
   const dir = mkdtempSync(join(tmpdir(), "rank-"));
@@ -21,7 +21,6 @@ test("chemistry category → ranks by €/kg-active, excludes spec_unknown", asy
     choose_metric: {
       metric_id: "eur_per_kg_active",
       formula_human: "price ÷ (size × concentration/100)",
-      formula_js: "p.current_price_eur / (p.package_size_kg * (p.concentration_pct/100))",
     },
   });
   const products = [
@@ -73,7 +72,6 @@ test("returns exactly 3 when 5 candidates available", async (t) => {
   withMock(t, {
     choose_metric: {
       metric_id: "eur_per_kg",
-      formula_js: "p.current_price_eur / p.package_size_kg",
     },
   });
   const products = [
@@ -175,4 +173,48 @@ test("out-of-stock products drop to refund tier 0", async (t) => {
   const r = await rankProducts({ products, category_filter: {}, volume_bracket: null });
   const oos = r.top_3.find((p) => p.asin === "OOS");
   assert.equal(oos.refund_tier, 0);
+});
+
+// ── 1.2.1: metrics are functions chosen by id, never a compiled string ─────
+
+test("applyMetric computes each of the three metrics", () => {
+  const chem = { current_price_eur: 25, active_kg: 5 };
+  assert.equal(applyMetric("eur_per_kg_active", chem), 5);
+
+  assert.equal(applyMetric("eur_per_unit", { current_price_eur: 20, package_size_l: 4 }), 5);
+  assert.equal(applyMetric("eur_per_unit", { current_price_eur: 20, package_size_kg: 2 }), 10);
+
+  assert.equal(applyMetric("price_eur", { current_price_eur: 12.5 }), 12.5);
+});
+
+test("applyMetric scores an uncomputable row LAST, not first", () => {
+  // The failure this guards: a missing size must not read as "free".
+  assert.equal(
+    applyMetric("eur_per_kg_active", { current_price_eur: 25, active_kg: null }),
+    Number.POSITIVE_INFINITY,
+  );
+  assert.equal(applyMetric("eur_per_unit", { current_price_eur: 25 }), Number.POSITIVE_INFINITY);
+  assert.equal(applyMetric("price_eur", {}), Number.POSITIVE_INFINITY);
+});
+
+test("an unknown metric id yields no score instead of throwing or evaluating", () => {
+  assert.equal(applyMetric("eur_per_anything", { current_price_eur: 1 }), Number.POSITIVE_INFINITY);
+  // The old path took a JS string; passing one now names no metric and computes nothing.
+  assert.equal(
+    applyMetric("p.current_price_eur * 0", { current_price_eur: 10 }),
+    Number.POSITIVE_INFINITY,
+  );
+});
+
+test("the ranked metric carries no executable formula field", async (t) => {
+  withMock(t, {});
+  const products = [
+    { asin: "A", current_price_eur: 10, package_size_kg: 1, spec_status: "ok", title: "1kg" },
+    { asin: "B", current_price_eur: 18, package_size_kg: 3, spec_status: "ok", title: "3kg" },
+  ];
+  const r = await rankProducts({ products, category_filter: {}, volume_bracket: null });
+  assert.ok(r.metric, "a metric should be chosen");
+  assert.equal(r.metric.formula_js, undefined, "no JS-string formula may be handed back");
+  assert.ok(r.metric.metric_id, "the metric is identified by id");
+  assert.ok(r.metric.formula_human, "and described in words");
 });

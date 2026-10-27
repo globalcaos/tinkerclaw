@@ -78,7 +78,10 @@ describe("supersedeContradictions onClosed producer hook", () => {
     insertChunk(db, "A", "h-old", 1000);
     insertChunk(db, "B", "h-new", 5000);
     const onClosed = vi.fn();
-    const { applied } = supersedeContradictions(db, candidate("B", "h-new", 5000), { onClosed });
+    const { applied } = supersedeContradictions(db, candidate("B", "h-new", 5000), {
+      onClosed,
+      judge: () => true,
+    });
     expect(applied.closed).toEqual(["A"]);
     expect(onClosed).toHaveBeenCalledTimes(1);
     const [closedIds, reason] = onClosed.mock.calls[0];

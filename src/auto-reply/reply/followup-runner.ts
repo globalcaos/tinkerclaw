@@ -31,11 +31,35 @@ import {
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { refreshQueuedFollowupSession, type FollowupRun } from "./queue.js";
+import { resolveFollowupRunPromptKeys } from "./queue/types.js";
 import { createReplyOperation } from "./reply-run-registry.js";
 import { isRoutableChannel, routeReply } from "./route-reply.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
 import { createTypingSignaler } from "./typing-mode.js";
 import type { TypingController } from "./typing.js";
+
+/**
+ * FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 G3) — EVERY prompt key a
+ * follow-up run answers, as carried by its `followup` stream `start` event and by the run's reply
+ * operation (§7 G5: what sessions.list reports as PREPARING, then RUNNING).
+ *
+ * The one definition is queue/types.ts resolveFollowupRunPromptKeys: the run's `promptKeys` in
+ * arrival order, then its `messageId` when not already listed, trimmed and deduplicated. For
+ * webchat each key IS a client's chat.send idempotencyKey (chat.ts sets `MessageSid: clientRunId`,
+ * get-reply-run.ts copies it into `messageId`). A follow-up drained on its own (webchat's
+ * `steer-backlog`, queue/drain.ts `drainNextQueueItem`) carries that one key. Several come from:
+ *  - collect mode, whose batch run lists every batched item's keys (queue/drain.ts
+ *    collectQueuedPromptKeys);
+ *  - a lost steer delivery, re-enqueued as ONE follow-up holding every buffered caller's key
+ *    (agent-runner.ts `onDeliveryLost`; runs.ts keeps every caller's key, not only the last).
+ * An overflow-summary run carries none; queue/drain.ts says why at each summary site.
+ *
+ * Trimmed exactly as session-reset-service.ts trims the key it aborts a backlogged prompt under,
+ * so the client sees one key form from both events.
+ */
+function resolveFollowupPromptKeys(queued: FollowupRun): string[] {
+  return resolveFollowupRunPromptKeys(queued);
+}
 
 export function createFollowupRunner(params: {
   opts?: GetReplyOptions;
@@ -152,10 +176,18 @@ export function createFollowupRunner(params: {
         ? queued
         : { ...queued, run: { ...queued.run, config: runtimeConfig } };
     const run = effectiveQueued.run;
+    // FORK 2026-09-24 (prompt-queue.md §6.3, §7 G3 and G5): every prompt this run answers. The same
+    // list rides the `followup` start event below and this run's reply operation, which is what
+    // sessions.list reads to report them PREPARING, then RUNNING. A batch needs ALL of them on the
+    // operation: drain.ts keeps the batched items in `queue.items` until this run returns, so an
+    // operation that named none of them would leave every one reported BEHIND while its answer is
+    // already being written.
+    const promptKeys = resolveFollowupPromptKeys(queued);
     const replyOperation = createReplyOperation({
       sessionId: run.sessionId,
       sessionKey: replySessionKey ?? "",
       resetTriggered: false,
+      promptKeys,
       upstreamAbortSignal: opts?.abortSignal,
     });
     try {
@@ -172,6 +204,37 @@ export function createFollowupRunner(params: {
           sessionKey: run.sessionKey,
           verboseLevel: run.verboseLevel,
           isControlUiVisible: shouldSurfaceToControlUi,
+        });
+      }
+      // FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 G3, gap C3) —
+      // LINK THIS RUN TO THE PROMPT IT ANSWERS.
+      //
+      // The runId above stays a fresh UUID on purpose (§6.4: the UI has already
+      // `rememberTerminated`-ed the prompt's own key on its early `final`, so reusing that key
+      // would swallow this run's deltas). Without this event nothing tells the client which
+      // BEHIND prompt the run answers, so it cannot move that prompt to PREPARING. Emitted HERE:
+      // after the run context is registered, so the event inherits the run's Control-UI
+      // visibility, and before preflight compaction and the model, because that stretch IS
+      // PREPARING.
+      //
+      // Its own `followup` stream, NOT `lifecycle`. The gateway stamps a model onto every
+      // lifecycle event that lacks one (server-chat.ts, "Enrich lifecycle events with model
+      // info"), and the Tinker UI reads any model-bearing lifecycle event as "the model has
+      // started": app.ts's `p.data?.model` branch closes the pre-model window, and
+      // prompt-state.ts ends PREPARING at the first model event. On that stream a pre-model
+      // signal would say the opposite of what it means. A second lifecycle `phase: "start"`
+      // would also persist a running session status and restart the UI's run clock ahead of
+      // the real start.
+      //
+      // Only for a Control-UI-visible run with a session: the keys exist for the Tinker UI's
+      // pending bubbles, and a channel-originated follow-up has no client holding them. No key
+      // means no event, which is today's behaviour.
+      if (shouldSurfaceToControlUi && run.sessionKey && promptKeys.length > 0) {
+        emitAgentEvent({
+          runId,
+          sessionKey: run.sessionKey,
+          stream: "followup",
+          data: { phase: "start", promptKeys },
         });
       }
       let autoCompactionCount = 0;

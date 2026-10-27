@@ -5,7 +5,7 @@ import {
   EMPTY_RESULT_PLACEHOLDER,
 } from "./subagent-announce-outcome.js";
 
-// FORK 2026-09-07 (the user, on the work tab) — the incident these pin.
+// FORK 2026-09-07 (the architect, on the work tab) — the incident these pin.
 //
 // On 2026-09-03 a video-audit subagent ran for 3 SECONDS, spent 0 tokens
 // (in 0 / out 0), and returned an EMPTY string. The announce path reported

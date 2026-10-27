@@ -7,7 +7,7 @@ const SAMPLE_SEARCH_RESPONSE = {
     Items: [
       {
         ASIN: "B0BISUL001",
-        DetailPageURL: "https://www.amazon.es/dp/B0BISUL001/?tag=<your-associate-tag>",
+        DetailPageURL: "https://www.amazon.es/dp/B0BISUL001/?tag=globalcaos-21",
         ItemInfo: { Title: { DisplayValue: "Quimicamp Bisulfato Sódico 7kg" } },
         Images: { Primary: { Large: { URL: "https://m.media-amazon.com/images/I/x.jpg" } } },
         Offers: {
@@ -23,7 +23,7 @@ const SAMPLE_SEARCH_RESPONSE = {
       },
       {
         ASIN: "B0HCLLIQ02",
-        DetailPageURL: "https://www.amazon.es/dp/B0HCLLIQ02/?tag=<your-associate-tag>",
+        DetailPageURL: "https://www.amazon.es/dp/B0HCLLIQ02/?tag=globalcaos-21",
         ItemInfo: { Title: { DisplayValue: "Reductor PH Líquido 25L HCl 14,5%" } },
         Offers: {
           Listings: [
@@ -114,7 +114,7 @@ test("creatorsApiConfigured() is true when all 3 env vars present", (t) => {
   withEnv(t, {
     AMAZON_SHOPPER_CREATORS_ACCESS_KEY: "AKIAFAKE",
     AMAZON_SHOPPER_CREATORS_SECRET_KEY: "secretfake",
-    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "<your-associate-tag>",
+    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "globalcaos-21",
   });
   assert.equal(creatorsApiConfigured(), true);
 });
@@ -123,7 +123,7 @@ test("searchItems maps Creators API response to product[] shape", async (t) => {
   withEnv(t, {
     AMAZON_SHOPPER_CREATORS_ACCESS_KEY: "AKIAFAKE",
     AMAZON_SHOPPER_CREATORS_SECRET_KEY: "secretfake",
-    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "<your-associate-tag>",
+    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "globalcaos-21",
   });
   const products = await searchItems("ph minus piscina", {
     _fetch: makeFetchOk(SAMPLE_SEARCH_RESPONSE),
@@ -141,7 +141,7 @@ test("searchItems throws on HTTP error with body excerpt", async (t) => {
   withEnv(t, {
     AMAZON_SHOPPER_CREATORS_ACCESS_KEY: "AKIAFAKE",
     AMAZON_SHOPPER_CREATORS_SECRET_KEY: "secretfake",
-    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "<your-associate-tag>",
+    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "globalcaos-21",
   });
   await assert.rejects(
     () => searchItems("test", { _fetch: makeFetchErr(403, "AssociateNotEligible") }),
@@ -153,7 +153,7 @@ test("getItem maps Creators API GetItems response to spec shape", async (t) => {
   withEnv(t, {
     AMAZON_SHOPPER_CREATORS_ACCESS_KEY: "AKIAFAKE",
     AMAZON_SHOPPER_CREATORS_SECRET_KEY: "secretfake",
-    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "<your-associate-tag>",
+    AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG: "globalcaos-21",
   });
   const spec = await getItem("B0BISUL001", { _fetch: makeFetchOk(SAMPLE_GETITEM_RESPONSE) });
   assert.match(spec.title, /Bisulfato/);

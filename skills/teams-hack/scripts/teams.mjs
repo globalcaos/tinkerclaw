@@ -2,30 +2,19 @@
 /**
  * teams.mjs — Microsoft Teams via Graph API
  *
- * SAFETY MODEL (every rule below is enforced in code, not just documented):
- *   - The MSAL refresh token is stored in the OS keychain (secret-tool on Linux,
- *     security on macOS). If no keychain exists it falls back to a 0600 file and
- *     PRINTS A WARNING on every use.
- *   - The token is never accepted as a command-line argument (it would show up in
- *     `ps` and shell history). It is read from stdin.
- *   - Access tokens are held in memory for one run and never written to disk.
- *   - Credentialed requests go only to graph.microsoft.com and
- *     login.microsoftonline.com; any other host is refused before the token is read.
- *   - Sending messages is OFF by default: needs TEAMS_ALLOW_SEND=1 and --yes.
- *   - `token logout` clears the keychain entry AND the fallback file, and prints
- *     the Microsoft URL that revokes the token server-side.
+ * Shares the same MSAL refresh token as the Outlook skill.
+ * Token extracted once from Teams localStorage, auto-refreshes for 90+ days.
  *
  * Subcommands:
  *   token extract-browser    — Print JS to run in Teams tab (extracts refresh token)
- *   token store [--tenant-id <id>]          — reads the refresh token from STDIN
+ *   token store --refresh-token <token> [--tenant-id <id>]
  *   token test
- *   token logout                            — clear local credentials (alias: --revoke)
  *   chats [--top N]                         — List recent chats
  *   chat <chatId> [--top N]                 — Read messages from a chat
- *   chat-send <chatId> --message <text> --yes  — Send (needs TEAMS_ALLOW_SEND=1)
+ *   chat-send <chatId> --message <text>     — Send a message to a chat
  *   channels <teamId>                       — List channels in a team
  *   channel <teamId> <channelId> [--top N]  — Read channel messages
- *   channel-send <teamId> <channelId> --message <text> --yes
+ *   channel-send <teamId> <channelId> --message <text>
  *   teams                                   — List joined teams
  *   presence [--user-id <id>]               — Get presence status
  *   users [--search X] [--top N]            — Search users in org
@@ -35,217 +24,51 @@
  *   search <query>                          — Search messages across Teams
  */
 
-import { execFileSync } from "child_process";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
 const CREDS_DIR = join(homedir(), ".openclaw/credentials");
-// Non-secret metadata (client id, tenant, scope, timestamps) lives here.
-// The refresh token only lands here when NO OS keychain is available.
-const META_FILE = join(CREDS_DIR, "outlook-msal.json");
-const KEYCHAIN_SERVICE = "openclaw-teams-hack";
-const KEYCHAIN_ACCOUNT = "msal-refresh-token";
+const TOKEN_FILE = join(CREDS_DIR, "outlook-msal.json"); // Shared with Outlook!
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const GRAPH_BETA = "https://graph.microsoft.com/beta";
-// SAFETY: credentialed requests may reach these two hosts and nothing else.
-const ALLOWED_HOSTS = new Set(["graph.microsoft.com", "login.microsoftonline.com"]);
-// Server-side revoke — the only thing that actually kills a leaked refresh token.
-const REVOKE_URL = "https://myaccount.microsoft.com/device-list";
 
 mkdirSync(CREDS_DIR, { recursive: true });
 
-// ─── Network allowlist ───
-// Checked BEFORE the token is read, so a redirected/nextLink URL can never carry
-// your credentials to another host.
-function assertAllowedUrl(url) {
-  let u;
+// ─── Token Management (shared with Outlook) ───
+function loadCreds() {
+  if (!existsSync(TOKEN_FILE)) return {};
+  return JSON.parse(readFileSync(TOKEN_FILE, "utf8"));
+}
+
+function saveCreds(creds) {
+  writeFileSync(TOKEN_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
   try {
-    u = new URL(url);
-  } catch {
-    throw new Error(`Refusing to request a malformed URL: ${url}`);
-  }
-  if (
-    u.protocol !== "https:" ||
-    !ALLOWED_HOSTS.has(u.hostname) ||
-    u.username ||
-    u.password ||
-    u.port
-  ) {
-    throw new Error(
-      `Refusing to send credentials to ${u.protocol}//${u.host} — allowed: ${[...ALLOWED_HOSTS].join(", ")} over https, no port, no userinfo`,
-    );
-  }
-  return url;
-}
-
-// Graph ids (chat/team/channel/user) are interpolated into request paths, so they
-// are restricted to Graph-safe characters — no slash, query, fragment or traversal.
-const GRAPH_ID_RE = /^[A-Za-z0-9@._:|=+-]+$/;
-function safeId(value, label) {
-  if (typeof value !== "string" || !GRAPH_ID_RE.test(value) || value.includes("..")) {
-    throw new Error(
-      `Invalid ${label}: expected a Microsoft Graph id, got ${JSON.stringify(value)}`,
-    );
-  }
-  return value;
-}
-
-// ─── Keychain (OS secret store) ───
-function keychainBinName() {
-  if (process.platform === "darwin") return "security";
-  if (process.platform === "linux") return "secret-tool";
-  return null;
-}
-
-// PATH lookup without spawning anything, so absence costs no subprocess.
-function findBin(name) {
-  if (!name) return null;
-  for (const dir of (process.env.PATH || "").split(":")) {
-    if (!dir) continue;
-    const p = join(dir, name);
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
-function keychainAvailable() {
-  return Boolean(findBin(keychainBinName()));
-}
-
-function keychainGet() {
-  const bin = findBin(keychainBinName());
-  if (!bin) return null;
-  const args =
-    process.platform === "darwin"
-      ? ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"]
-      : ["lookup", "service", KEYCHAIN_SERVICE, "account", KEYCHAIN_ACCOUNT];
-  try {
-    const v = execFileSync(bin, args, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return v || null;
-  } catch {
-    return null;
-  }
-}
-
-// Secret goes in on STDIN in both branches — never on argv, where `ps` would see it.
-function keychainSet(secret) {
-  const bin = findBin(keychainBinName());
-  if (!bin) return false;
-  const args =
-    process.platform === "darwin"
-      ? ["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"]
-      : [
-          "store",
-          "--label",
-          "OpenClaw teams-hack MSAL refresh token",
-          "service",
-          KEYCHAIN_SERVICE,
-          "account",
-          KEYCHAIN_ACCOUNT,
-        ];
-  try {
-    execFileSync(bin, args, { input: `${secret}\n`, stdio: ["pipe", "ignore", "ignore"] });
-  } catch {
-    return false;
-  }
-  return keychainGet() === secret; // read back: a silent no-op must not look like success
-}
-
-function keychainClear() {
-  const bin = findBin(keychainBinName());
-  if (!bin) return false;
-  const args =
-    process.platform === "darwin"
-      ? ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT]
-      : ["clear", "service", KEYCHAIN_SERVICE, "account", KEYCHAIN_ACCOUNT];
-  try {
-    execFileSync(bin, args, { stdio: "ignore" });
-  } catch {
-    return false;
-  }
-  return keychainGet() === null;
-}
-
-// ─── Credential storage ───
-// Metadata file never holds an access token, and holds the refresh token only as
-// the warned fallback.
-function loadMeta() {
-  if (!existsSync(META_FILE)) return {};
-  try {
-    return JSON.parse(readFileSync(META_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveMeta(meta) {
-  const clean = { ...meta };
-  delete clean.access_token;
-  delete clean.expires_at;
-  writeFileSync(META_FILE, JSON.stringify(clean, null, 2), { mode: 0o600 });
-  try {
-    chmodSync(META_FILE, 0o600);
+    chmodSync(TOKEN_FILE, 0o600);
   } catch {}
-}
-
-function warnPlaintextToken() {
-  console.error(
-    `⚠️  SECURITY: your Teams refresh token is stored in PLAINTEXT at ${META_FILE} (mode 0600).`,
-  );
-  if (keychainAvailable()) {
-    console.error("    An OS keychain IS available — re-run `teams token store` to move it there.");
-  } else {
-    console.error(
-      `    No OS keychain found (${process.platform === "darwin" ? "expected `security`" : "install libsecret for `secret-tool`"}).`,
-    );
-  }
-  console.error("    Anything running as your user can read it. Clear it with: teams token logout");
-}
-
-function loadRefreshToken() {
-  const fromKeychain = keychainGet();
-  if (fromKeychain) return fromKeychain;
-  const meta = loadMeta();
-  if (meta.refresh_token) {
-    warnPlaintextToken();
-    return meta.refresh_token;
-  }
-  return null;
-}
-
-// Keychain first; 0600 file only as a warned fallback. On keychain success any
-// previous plaintext copy is stripped, so "moved to the keychain" is literally true.
-function storeRefreshToken(secret, meta = loadMeta()) {
-  if (keychainSet(secret)) {
-    const clean = { ...meta };
-    delete clean.refresh_token;
-    saveMeta(clean);
-    return "keychain";
-  }
-  saveMeta({ ...meta, refresh_token: secret });
-  warnPlaintextToken();
-  return "file";
 }
 
 let _accessToken = null;
 
 async function refreshAccessToken() {
-  const meta = loadMeta();
-  const clientId = meta.client_id || "5e3ce6c0-2b1f-4285-8d4b-75ee78787346";
-  const tenantId = meta.tenant_id || "common";
-  const origin = meta.origin || "https://teams.cloud.microsoft";
-  const scope = meta.scope || "https://graph.microsoft.com/.default offline_access";
+  const creds = loadCreds();
+  const clientId = creds.client_id || "5e3ce6c0-2b1f-4285-8d4b-75ee78787346";
+  const tenantId = creds.tenant_id || "common";
+  const origin = creds.origin || "https://teams.cloud.microsoft";
+  const scope = creds.scope || "https://graph.microsoft.com/.default offline_access";
 
-  const rt = loadRefreshToken();
+  if (creds.access_token && creds.access_token !== "pending" && creds.expires_at) {
+    const expiresAt = new Date(creds.expires_at);
+    if (expiresAt > new Date(Date.now() + 5 * 60 * 1000)) {
+      _accessToken = creds.access_token;
+      return _accessToken;
+    }
+  }
+
+  const rt = creds.refresh_token;
   if (!rt) throw new Error("No refresh token. Run: teams token extract-browser");
 
-  const tokenUrl = assertAllowedUrl(
-    `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`,
-  );
+  const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
   const body = new URLSearchParams({
     client_id: clientId,
     grant_type: "refresh_token",
@@ -261,14 +84,13 @@ async function refreshAccessToken() {
   const data = await resp.json();
   if (data.error) throw new Error(`Token refresh failed: ${data.error_description || data.error}`);
 
-  // Access token stays in memory for this run only — it is never written to disk.
   _accessToken = data.access_token;
-  const updated = { ...meta, updated_at: new Date().toISOString() };
-  if (data.refresh_token && data.refresh_token !== rt) {
-    storeRefreshToken(data.refresh_token, updated); // rotation lands in the keychain too
-  } else {
-    saveMeta(updated);
-  }
+  const updated = { ...creds };
+  updated.access_token = data.access_token;
+  if (data.refresh_token) updated.refresh_token = data.refresh_token;
+  updated.expires_at = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
+  updated.updated_at = new Date().toISOString();
+  saveCreds(updated);
   return _accessToken;
 }
 
@@ -279,10 +101,9 @@ async function getToken() {
 
 // ─── Graph API ───
 async function graphGet(path, beta = false, retried = false) {
-  const base = beta ? GRAPH_BETA : GRAPH;
-  // Host is checked BEFORE the credential is read, so a hostile URL never sees a token.
-  const url = assertAllowedUrl(path.startsWith("http") ? path : `${base}${path}`);
   const token = await getToken();
+  const base = beta ? GRAPH_BETA : GRAPH;
+  const url = path.startsWith("http") ? path : `${base}${path}`;
   const resp = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
@@ -296,9 +117,9 @@ async function graphGet(path, beta = false, retried = false) {
 }
 
 async function graphPost(path, body, beta = false, retried = false) {
-  const base = beta ? GRAPH_BETA : GRAPH;
-  const url = assertAllowedUrl(path.startsWith("http") ? path : `${base}${path}`);
   const token = await getToken();
+  const base = beta ? GRAPH_BETA : GRAPH;
+  const url = path.startsWith("http") ? path : `${base}${path}`;
   const resp = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -335,36 +156,6 @@ function parseArgs(argv) {
     i++;
   }
   return result;
-}
-
-// SAFETY: sending is a real message to real people and cannot be unsent.
-// It needs BOTH an environment opt-in and a per-call --yes.
-function assertSendAllowed(args, what) {
-  if (process.env.TEAMS_ALLOW_SEND !== "1") {
-    console.error(
-      `Refusing to ${what}: message sending is opt-in. Set TEAMS_ALLOW_SEND=1 to enable it.`,
-    );
-    process.exit(1);
-  }
-  if (args.flags.yes !== true && args.flags.yes !== "true") {
-    console.error(
-      `Refusing to ${what}: add --yes to confirm. This posts to real people and cannot be undone.`,
-    );
-    process.exit(1);
-  }
-}
-
-async function readSecretFromStdin(what) {
-  if (process.stdin.isTTY) {
-    throw new Error(
-      `Pipe the ${what} on stdin; command-line secrets are refused because they appear in \`ps\` and shell history`,
-    );
-  }
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
-  const value = Buffer.concat(chunks).toString("utf8").trim();
-  if (!value) throw new Error(`No ${what} received on stdin`);
-  return value;
 }
 
 function out(data) {
@@ -429,68 +220,32 @@ async function cmdTokenExtractBrowser() {
 }
 
 async function cmdTokenStore(args) {
-  if (args.flags["refresh-token"]) {
-    console.error(
-      "Refusing a token on the command line — it would be visible in `ps` and your shell history.",
-    );
-    console.error(
-      "Use:  printf '%s' \"$TEAMS_REFRESH_TOKEN\" | teams token store [--tenant-id <id>]",
-    );
+  const rt = args.flags["refresh-token"];
+  if (!rt) {
+    console.error("Usage: teams token store --refresh-token <token> [--tenant-id <id>]");
     process.exit(1);
   }
 
-  const rt = await readSecretFromStdin("refresh token");
-  const tenantId = args.flags["tenant-id"] || loadMeta().tenant_id || "common";
-  const where = storeRefreshToken(rt, {
+  const tenantId = args.flags["tenant-id"] || loadCreds().tenant_id || "common";
+  const creds = {
     client_id: "5e3ce6c0-2b1f-4285-8d4b-75ee78787346",
     tenant_id: tenantId,
+    refresh_token: rt,
     origin: "https://teams.cloud.microsoft",
     scope: "https://graph.microsoft.com/.default offline_access",
     api: "graph",
     updated_at: new Date().toISOString(),
-  });
-  console.error(
-    where === "keychain"
-      ? "✅ Token stored in the OS keychain. Testing..."
-      : `✅ Token stored at ${META_FILE} (0600). Testing...`,
-  );
+  };
+  saveCreds(creds);
+  console.error("✅ Token saved. Testing...");
   try {
     await refreshAccessToken();
     const me = await graphGet("/me?$select=displayName,mail");
-    out({ status: "ok", stored_in: where, user: me.displayName, email: me.mail });
+    out({ status: "ok", user: me.displayName, email: me.mail });
   } catch (e) {
     console.error(`❌ ${e.message}`);
     process.exit(1);
   }
-}
-
-// The off switch. Clears BOTH stores, then names the only action that revokes
-// the token at Microsoft — deleting a local copy does not.
-async function cmdTokenLogout() {
-  const hadKeychain = Boolean(keychainGet());
-  const clearedKeychain = hadKeychain ? keychainClear() : false;
-  let removedFile = false;
-  if (existsSync(META_FILE)) {
-    unlinkSync(META_FILE);
-    removedFile = true;
-  }
-  _accessToken = null;
-
-  out({
-    status: "logged_out",
-    keychain_entry_cleared: clearedKeychain,
-    keychain_entry_found: hadKeychain,
-    credentials_file_deleted: removedFile,
-    credentials_file: META_FILE,
-  });
-  console.error("");
-  console.error(
-    "Local credentials are gone. The refresh token is STILL VALID at Microsoft until you revoke it:",
-  );
-  console.error(`  ${REVOKE_URL}   →  "Sign out everywhere"`);
-  console.error(
-    "  (Entra ID admins can also revoke sessions for the account from the Microsoft Entra admin center.)",
-  );
 }
 
 async function cmdTokenTest() {
@@ -542,7 +297,7 @@ async function cmdChatMessages(args) {
   const top = parseInt(args.flags.top) || 30;
 
   const data = await graphGet(
-    `/me/chats/${safeId(chatId, "chatId")}/messages?$top=${top}&$orderby=createdDateTime desc`,
+    `/me/chats/${chatId}/messages?$top=${top}&$orderby=createdDateTime desc`,
   );
   out((data.value || []).map(formatMsg));
 }
@@ -551,12 +306,11 @@ async function cmdChatSend(args) {
   const chatId = args._[0];
   const message = args.flags.message;
   if (!chatId || !message) {
-    console.error("Usage: teams chat-send <chatId> --message <text> --yes");
+    console.error("Usage: teams chat-send <chatId> --message <text>");
     process.exit(1);
   }
-  assertSendAllowed(args, "send a chat message");
 
-  const result = await graphPost(`/me/chats/${safeId(chatId, "chatId")}/messages`, {
+  const result = await graphPost(`/me/chats/${chatId}/messages`, {
     body: { content: message, contentType: "text" },
   });
   out({ status: "sent", id: result.id, date: result.createdDateTime });
@@ -570,7 +324,7 @@ async function cmdChannels(args) {
   }
 
   const data = await graphGet(
-    `/teams/${safeId(teamId, "teamId")}/channels?$select=id,displayName,description,membershipType`,
+    `/teams/${teamId}/channels?$select=id,displayName,description,membershipType`,
   );
   out(
     (data.value || []).map((c) => ({
@@ -591,9 +345,7 @@ async function cmdChannelMessages(args) {
   }
   const top = parseInt(args.flags.top) || 20;
 
-  const data = await graphGet(
-    `/teams/${safeId(teamId, "teamId")}/channels/${safeId(channelId, "channelId")}/messages?$top=${top}`,
-  );
+  const data = await graphGet(`/teams/${teamId}/channels/${channelId}/messages?$top=${top}`);
   out((data.value || []).map(formatMsg));
 }
 
@@ -602,23 +354,19 @@ async function cmdChannelSend(args) {
   const channelId = args._[1];
   const message = args.flags.message;
   if (!teamId || !channelId || !message) {
-    console.error("Usage: teams channel-send <teamId> <channelId> --message <text> --yes");
+    console.error("Usage: teams channel-send <teamId> <channelId> --message <text>");
     process.exit(1);
   }
-  assertSendAllowed(args, "post to a channel");
 
-  const result = await graphPost(
-    `/teams/${safeId(teamId, "teamId")}/channels/${safeId(channelId, "channelId")}/messages`,
-    {
-      body: { content: message, contentType: "text" },
-    },
-  );
+  const result = await graphPost(`/teams/${teamId}/channels/${channelId}/messages`, {
+    body: { content: message, contentType: "text" },
+  });
   out({ status: "sent", id: result.id, date: result.createdDateTime });
 }
 
 async function cmdPresence(args) {
   const userId = args.flags["user-id"];
-  const path = userId ? `/users/${safeId(userId, "user-id")}/presence` : "/me/presence";
+  const path = userId ? `/users/${userId}/presence` : "/me/presence";
   const data = await graphGet(path);
   out({
     availability: data.availability,
@@ -630,19 +378,11 @@ async function cmdPresence(args) {
 async function cmdUsers(args) {
   const top = parseInt(args.flags.top) || 25;
   const search = args.flags.search;
-  // SAFETY: an unfiltered listing is a bulk read of your org's directory.
-  if (!search && args.flags.yes !== true && args.flags.yes !== "true") {
-    console.error(
-      "Refusing an unfiltered org directory dump. Pass --search <name>, or --yes to accept a bulk read.",
-    );
-    process.exit(1);
-  }
 
   let url = `/users?$top=${top}&$select=id,displayName,mail,jobTitle,department,officeLocation`;
-  if (search) url += `&$search=${encodeURIComponent(`"displayName:${search}"`)}`;
+  if (search) url += `&$search="displayName:${search}"&$header=ConsistencyLevel:eventual`;
 
   // Search requires ConsistencyLevel header
-  const target = assertAllowedUrl(`${GRAPH}${url}`);
   const token = await getToken();
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -650,7 +390,7 @@ async function cmdUsers(args) {
   };
   if (search) headers["ConsistencyLevel"] = "eventual";
 
-  const resp = await fetch(target, { headers });
+  const resp = await fetch(`${GRAPH}${url}`, { headers });
   if (!resp.ok) throw new Error(`Graph ${resp.status}: ${await resp.text()}`);
   const data = await resp.json();
 
@@ -734,10 +474,6 @@ async function cmdSearch(args) {
 
 // ─── Router ───
 const args = parseArgs(process.argv.slice(2));
-// `--logout` / `--revoke` anywhere on the line is the documented off switch.
-if (args.flags.logout || args.flags.revoke) {
-  args._ = ["token", "logout"];
-}
 const [cmd, sub, ...rest] = args._;
 const subArgs = { _: sub ? [sub, ...rest] : rest, flags: args.flags };
 
@@ -747,8 +483,7 @@ try {
       if (sub === "extract-browser") await cmdTokenExtractBrowser();
       else if (sub === "store") await cmdTokenStore({ _: rest, flags: args.flags });
       else if (sub === "test") await cmdTokenTest();
-      else if (sub === "logout" || sub === "revoke") await cmdTokenLogout();
-      else console.error("Usage: teams token [extract-browser|store|test|logout]");
+      else console.error("Usage: teams token [extract-browser|store|test]");
       break;
     case "me":
       await cmdMe();
@@ -792,38 +527,32 @@ try {
     default:
       console.log(`teams — Microsoft Teams via Graph API
 
-Token (stored in the OS keychain; 0600 file only if no keychain exists):
+Token:
   token extract-browser              Print JS to extract token from Teams tab
-  token store [--tenant-id <id>]     Store it — token is read from STDIN, never argv
+  token store --refresh-token <tok>  Store extracted token
   token test                         Verify token works
-  token logout                       Clear keychain + file, print the revoke URL
 
 Messaging:
   chats [--top 20]                   List recent chats
   chat <chatId> [--top 30]           Read chat messages
-  chat-send <chatId> --message <txt> --yes   Send (needs TEAMS_ALLOW_SEND=1)
+  chat-send <chatId> --message <txt> Send message to chat
   search "<query>"                   Search messages
 
 Teams & Channels:
   teams                              List joined teams
   channels <teamId>                  List channels
   channel <teamId> <channelId>       Read channel messages
-  channel-send <teamId> <channelId> --message <txt> --yes
+  channel-send <teamId> <channelId> --message <txt>
 
 People & Status:
   me                                 Your profile
-  users --search X [--top 25]        Search org directory (--yes for an unfiltered dump)
+  users [--search X] [--top 25]      Search org directory
   presence [--user-id <id>]          Presence status
 
 Calendar:
   calendar [--days 7]                Upcoming meetings
 
-Consent:
-  TEAMS_ALLOW_SEND=1                 Required before any message can be sent
-  --yes                              Required per send, and per unfiltered user listing
-
-Off switch:
-  teams token logout                 Deletes local credentials, prints ${REVOKE_URL}`);
+🔗 Shares token with Outlook skill (~/.openclaw/credentials/outlook-msal.json)`);
       break;
   }
 } catch (e) {

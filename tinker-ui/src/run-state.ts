@@ -1,4 +1,4 @@
-// FORK 2026-07-29 (the user: "I see the tab glowing, the session row glowing and the model glowing
+// FORK 2026-07-29 (the architect: "I see the tab glowing, the session row glowing and the model glowing
 // with one concurrency — but when I jump into the tab there is no thinking indicator. These
 // mechanisms should all be governed by the same trigger").
 //
@@ -39,7 +39,7 @@
 // gate in app.ts that made the server lane unreachable in the very case it was written for.
 //
 // FORK 2026-08-15, SAME DAY, THIRD REPORT — ONE ORACLE AND ONE CLOCK ARE STILL NOT ENOUGH.
-// the user: "now I have the opposite problem, the chat one is showing but the rest are mute. Again,
+// the architect: "now I have the opposite problem, the chat one is showing but the rest are mute. Again,
 // this all has to be gated from the same structure, they need to be synchronized."
 //
 // Two more gaps, both of which let a surface answer a question this module never asked:
@@ -66,7 +66,7 @@
 //      exclusion as "client-local knowledge about the viewed tab", and app.ts took that
 //      literally: `pending` lived in the `sending` boolean and `tabsRunningNow()` granted the
 //      glow only to `tab.id === activeTabId`, so sending a prompt and switching away blanked
-//      the tab you left for the whole 21-36s window (the user: "when I switch tabs, the progress
+//      the tab you left for the whole 21-36s window (the architect: "when I switch tabs, the progress
 //      indicator on the tab titles that are not focused should not go away"). It is now keyed by
 //      SESSION in pre-model-window.ts, exactly like `sessionEndedAt`, so every surface can ask
 //      about every session. Client-local, yes; viewed-local, no — those are different claims and
@@ -161,7 +161,7 @@ export const bareModelTail = (m?: string | null): string | undefined => {
 /**
  * The key a live run is COUNTED under — and the key a catalog row is LOOKED UP by.
  *
- * FORK 2026-08-04 (the user: one run on `google/gemini-3.1-pro-preview` also lit the zero-traffic
+ * FORK 2026-08-04 (the architect: one run on `google/gemini-3.1-pro-preview` also lit the zero-traffic
  * `github-copilot/gemini-3.1-pro-preview` row). The models panel deliberately renders ONE ROW PER
  * PROVIDER for the same base model, so the bare tail is not a model identity — it is a whole
  * COLUMN of twins, and keying the count map by it made every twin share a single bucket. Confirmed
@@ -343,7 +343,7 @@ export function resolveSessionRunState(params: {
   const { sessionKey, row, runs, matches, now, rowsFetchedAt, endedAt } = params;
   const status = typeof row?.status === "string" ? row.status : undefined;
   const mine = runsForSession(runs, sessionKey, matches, now);
-  // FORK 2026-07-29 (the user: "the indicator says 'working' without specifying the model").
+  // FORK 2026-07-29 (the architect: "the indicator says 'working' without specifying the model").
   // The client map is only ONE place a model can come from, and it is the place most likely to be
   // empty: `activeRuns` entries are created with model:"" and filled later by a lifecycle event,
   // and on the run-set path there is often no client entry at all. The session row already carries
@@ -378,7 +378,7 @@ export function resolveSessionRunState(params: {
       typeof rowsFetchedAt === "number" &&
       mine.some((r) => typeof r.lastEventAt === "number" && r.lastEventAt > rowsFetchedAt);
     if (row.run.live) {
-      // FORK 2026-08-06 (the user: "qwen 3.8 keeps thinking and Stop does nothing" — recurrence of
+      // FORK 2026-08-06 (the architect: "qwen 3.8 keeps thinking and Stop does nothing" — recurrence of
       // the 2026-08-05 Grok report, which only patched the LEGACY branches below). The run set
       // is authoritative about the gateway PROCESS, but `row` is still a SNAPSHOT of it taken
       // when sessions.list built the row. A Stop pressed AFTER that moment — the client's
@@ -393,7 +393,7 @@ export function resolveSessionRunState(params: {
       // turn's client run is newer than the snapshot and passes the guard below.
       const stoppedAfterSnapshot =
         typeof endedAt === "number" && typeof rowsFetchedAt === "number" && endedAt > rowsFetchedAt;
-      // FORK 2026-08-20 (the user: Stop Grok, it spins again). The dying run is
+      // FORK 2026-08-20 (the architect: Stop Grok, it spins again). The dying run is
       // still in the process map for hundreds of ms after Stop (Grok stream +
       // a process.poll that ignored abort). sessions.list taken AFTER Stop
       // therefore still says live, and the snapshot-vs-stamp test lifts the
@@ -412,14 +412,14 @@ export function resolveSessionRunState(params: {
     return { live: false, source: "run-set-idle" };
   }
 
-  // FORK 2026-07-29 (the user: "Main shows a thinking indicator saying working, but the answer
+  // FORK 2026-07-29 (the architect: "Main shows a thinking indicator saying working, but the answer
   // finished, even Fractal delivered"). NEWEST EVIDENCE WINS. `sessions[]` is a SNAPSHOT with no
   // fetch time and no automatic refresh at turn end, so a row captured mid-turn keeps claiming
   // "running" long after this client watched the turn finish. Trusting it unconditionally is what
   // pinned a "working" row on a finished chat. A server claim is only believed while it is at
   // least as recent as the client's own knowledge that the session ended.
   //
-  // FORK 2026-07-29 (second pass — the user: "chat thinking indicators but no tab nor sessions
+  // FORK 2026-07-29 (second pass — the architect: "chat thinking indicators but no tab nor sessions
   // highlighting"). The first version compared ONLY `endedAt > rowsFetchedAt`, and an end stamp is
   // never cleared while `rowsFetchedAt` moves only on loadSessions(). So once a session had ended
   // since the last fetch, EVERY later server claim was vetoed — across new turns, indefinitely —
@@ -434,7 +434,7 @@ export function resolveSessionRunState(params: {
     endedAt > rowsFetchedAt &&
     !rowStartedAfterEnd;
 
-  // FORK 2026-07-29 (third pass — the user: "no thinking indicator in the chat but yet the llm is
+  // FORK 2026-07-29 (third pass — the architect: "no thinking indicator in the chat but yet the llm is
   // spitting out responses"). This branch used to be UNCONDITIONAL, so a terminal status from an
   // arbitrarily old snapshot silenced a client that was streaming deltas right now. That is the
   // same mistake as the veto in the second pass, with the lanes swapped — I guarded one direction
@@ -477,7 +477,15 @@ export function resolveSessionRunState(params: {
  * still land on the bare tail — see `modelCountKey` for why that residue cannot be removed, and
  * `liveCountForModel` for what it costs at lookup time.
  */
-export function liveRunCountsByModel(params: {
+export function liveRunCountsByModel(params: LiveRunParams): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const [key, sessions] of liveRunSessionsByModel(params)) {
+    counts.set(key, sessions.length);
+  }
+  return counts;
+}
+
+type LiveRunParams = {
   rows: readonly SessionRow[] | null | undefined;
   runs: Iterable<ClientRun>;
   matches: KeyMatcher;
@@ -485,14 +493,33 @@ export function liveRunCountsByModel(params: {
   rowsFetchedAt?: number;
   /** sessionKey -> when this client last saw that session end. */
   endedAt?: Map<string, number>;
-}): Map<string, number> {
+};
+
+/**
+ * The sessions behind each live count, keyed exactly like `liveRunCountsByModel`.
+ *
+ * FORK 2026-10-02 (the architect: "On mouseover on them, I would like to see the names of the tabs that are
+ * using them"). The count is this list's length, so the badge and its hover read one walk and can
+ * never name a different number of sessions than the badge shows. A session appears once per live
+ * contribution; a duplicate key is a session counted twice, and stays visible as such.
+ */
+export function liveRunSessionsByModel(params: LiveRunParams): Map<string, string[]> {
   const { rows, runs, matches, now, rowsFetchedAt, endedAt } = params;
-  const counts = new Map<string, number>();
+  const sessions = new Map<string, string[]>();
   const seen = new Set<string>();
-  const add = (model?: string | null, provider?: string | null) => {
+  const add = (
+    model: string | null | undefined,
+    provider: string | null | undefined,
+    sk: string,
+  ) => {
     const key = modelCountKey(model, provider);
     if (key) {
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const list = sessions.get(key);
+      if (list) {
+        list.push(sk);
+      } else {
+        sessions.set(key, [sk]);
+      }
     }
   };
 
@@ -518,7 +545,7 @@ export function liveRunCountsByModel(params: {
       // `provider/model` pair that exists in no catalog, and the row would never light at all.
       const model = state.model || row.model;
       const provider = model === row.model ? row.modelProvider || state.provider : state.provider;
-      add(model, provider);
+      add(model, provider, row.key);
     }
   }
 
@@ -533,10 +560,38 @@ export function liveRunCountsByModel(params: {
     if (![...seen].some((k) => matches(key, k))) {
       // A client entry always carries its own provider — `providerOf(modelPin)` at send time, or the
       // provider on lifecycle:start — so this lane can qualify itself without consulting a row.
-      add(run.model, run.provider);
+      add(run.model, run.provider, key);
     }
   }
-  return counts;
+  return sessions;
+}
+
+/**
+ * Which key of a count-keyed map answers for catalog row `modelId` (`provider/model`)? The rule
+ * `liveCountForModel` documents below, as a key, so every map keyed by `modelCountKey` (the count,
+ * the sessions behind it, the recent-use ledger) is read the same way.
+ */
+export function catalogKeyIn<T>(
+  map: Map<string, T>,
+  modelId: string | undefined,
+): string | undefined {
+  if (typeof modelId !== "string" || modelId.length === 0) {
+    return undefined;
+  }
+  if (map.has(modelId)) {
+    return modelId;
+  }
+  const tail = bareModelTail(modelId);
+  return tail && map.has(tail) ? tail : undefined;
+}
+
+/** The sessions behind catalog row `modelId`'s live count; its length IS that count. */
+export function liveSessionsForModel(
+  sessions: Map<string, string[]>,
+  modelId: string | undefined,
+): readonly string[] {
+  const key = catalogKeyIn(sessions, modelId);
+  return key ? (sessions.get(key) ?? []) : [];
 }
 
 /**
@@ -555,15 +610,8 @@ export function liveCountForModel(
   counts: Map<string, number>,
   modelId: string | undefined,
 ): number {
-  if (typeof modelId !== "string" || modelId.length === 0) {
-    return 0;
-  }
-  const exact = counts.get(modelId);
-  if (typeof exact === "number") {
-    return exact;
-  }
-  const tail = bareModelTail(modelId);
-  return tail ? (counts.get(tail) ?? 0) : 0;
+  const key = catalogKeyIn(counts, modelId);
+  return key ? (counts.get(key) ?? 0) : 0;
 }
 
 /**

@@ -1,5 +1,5 @@
 // extensions/tinkerclaw-prefrontal/subagent-run-prune.ts
-// FORK 2026-08-04 (the user): bounded retention for terminal subagent runs.
+// FORK 2026-08-04 (the architect): bounded retention for terminal subagent runs.
 //
 // The Prefrontal run map in index.ts (`sharedSubagentRuns`) had no `.delete` and no
 // `.clear` anywhere in the plugin — its only mutations were two `.set()` calls. Every

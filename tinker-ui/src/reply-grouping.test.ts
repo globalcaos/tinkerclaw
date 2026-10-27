@@ -56,7 +56,7 @@ describe("narrationIndices (bug A: answer = text after the last tool, not 'the l
   });
 });
 
-// FORK 2026-08-15 (the user: "The turns now end up in a 'Reflection artifact verified' extra
+// FORK 2026-08-15 (the architect: "The turns now end up in a 'Reflection artifact verified' extra
 // thinking … I have to expand the thinking to see the answer").
 //
 // The 🌿 FRACTAL section became TOOL-BACKED: the per-turn injection (app.ts buildInjectedPrompt)

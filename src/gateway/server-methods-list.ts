@@ -12,6 +12,25 @@ const BASE_METHODS = [
   "doctor.memory.repairDreamingArtifacts",
   "doctor.memory.dedupeDreamDiary",
   "logs.tail",
+  "logs.writer.stats",
+  // FORK 2026-09-25 (logging.md §9 step 10): the query surface — saved queries by name and the
+  // catalog. Classified READ in method-scopes.ts in the same change.
+  "logs.query",
+  "logs.catalog",
+  // FORK 2026-09-25 (logging.md §9 step 7): the UI's telemetry ingest — the UI must be able to call
+  // it. Classified WRITE in method-scopes.ts in the same change: unclassified is default-deny for
+  // clients and silently ADMIN on the server.
+  "logs.ingest",
+  // FORK 2026-10-09: Fractal v2 trigger gate and run ledger (charter C1/C3), classified READ in method-scopes.ts.
+  // Listed so the names are reserved: a plugin cannot shadow the core handlers.
+  "fractal.gate",
+  "fractal.ledger",
+  // FORK 2026-10-25: the page's Fractal decisions into the journal, classified WRITE in method-scopes.ts.
+  "fractal.clientLog",
+  // FORK 2026-10-25: the chat's live background tasks from the tinker-bridge seam, classified READ in method-scopes.ts.
+  "ccBridge.backgroundTasks",
+  // FORK 2026-10-21: the ask-session card's transcript slice, classified READ in method-scopes.ts.
+  "askSession.slice",
   "channels.status",
   "channels.start",
   "channels.logout",
@@ -166,6 +185,7 @@ export const GATEWAY_EVENTS = [
   "connect.challenge",
   "agent",
   "chat",
+  "chat.notice",
   "session.message",
   "session.tool",
   "sessions.changed",

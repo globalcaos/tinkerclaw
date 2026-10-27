@@ -13,7 +13,13 @@ const GEMINI_2_5_FLASH_PREFIX = "gemini-2.5-flash";
 const GEMINI_3_1_PRO_PREFIX = "gemini-3.1-pro";
 const GEMINI_3_1_FLASH_LITE_PREFIX = "gemini-3.1-flash-lite";
 const GEMINI_3_1_FLASH_PREFIX = "gemini-3.1-flash";
-const GEMINI_3_5_FLASH_PREFIX = "gemini-3.5-flash";
+// FORK 2026-10-17: every flash after 3.1 (3.5 … 3.8 today). The exact `gemini-3.5-flash` prefix this replaced left
+// the configured gemini-3.6/3.7/3.8-flash, and with them the `gemini` alias, as "Unknown model".
+const GEMINI_3_NEWER_FLASH = /^gemini-3\.(?:[5-9]|\d{2,})-flash/;
+// FORK 2026-10-17: Gemini 4 (`gemini-4-argon`, 2026-10-13) is in no catalog yet. Its window is 1,048,576 tokens,
+// shared by input, thinking and output (Gemini API docs, "What's new in Gemini 4 Argon").
+const GEMINI_4_PREFIX = "gemini-4";
+const GEMINI_4_CONTEXT_WINDOW = 1_048_576;
 const GEMINI_PRO_LATEST_ID = "gemini-pro-latest";
 const GEMINI_FLASH_LATEST_ID = "gemini-flash-latest";
 const GEMINI_FLASH_LITE_LATEST_ID = "gemini-flash-lite-latest";
@@ -168,14 +174,29 @@ export function resolveGoogleGeminiForwardCompatModel(params: {
       cliTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
       antigravityTemplateIds: GEMINI_3_FLASH_ANTIGRAVITY_TEMPLATE_IDS,
     };
-  } else if (lower.startsWith(GEMINI_3_5_FLASH_PREFIX)) {
-    // Forward-compat: route 3.5-flash variants to the 3.1-flash template
-    // until a dedicated 3.5 template is registered in the catalog.
+  } else if (GEMINI_3_NEWER_FLASH.test(lower)) {
+    // Forward-compat: route 3.5+ flash variants to the 3.1-flash template
+    // until a dedicated template is registered in the catalog.
     family = {
       googleTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
       cliTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
       antigravityTemplateIds: GEMINI_3_FLASH_ANTIGRAVITY_TEMPLATE_IDS,
     };
+  } else if (lower.startsWith(GEMINI_4_PREFIX)) {
+    // Forward-compat: Gemini 4 clones the newest template of its tier (flash ids the flash one, the rest the pro
+    // one) until the catalog ships Gemini 4. It thinks, and its window is 1M; cost reads the template's until then.
+    family = lower.includes("-flash")
+      ? {
+          googleTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
+          cliTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
+          antigravityTemplateIds: GEMINI_3_FLASH_ANTIGRAVITY_TEMPLATE_IDS,
+        }
+      : {
+          googleTemplateIds: GEMINI_3_1_PRO_TEMPLATE_IDS,
+          cliTemplateIds: GEMINI_3_1_PRO_TEMPLATE_IDS,
+          antigravityTemplateIds: GEMINI_3_PRO_ANTIGRAVITY_TEMPLATE_IDS,
+        };
+    patch = { reasoning: true, contextWindow: GEMINI_4_CONTEXT_WINDOW };
   } else if (lower.startsWith(GEMMA_PREFIX)) {
     family = {
       googleTemplateIds: GEMMA_TEMPLATE_IDS,
@@ -214,6 +235,7 @@ export function isModernGoogleModel(modelId: string): boolean {
   return (
     lower.startsWith("gemini-2.5") ||
     lower.startsWith("gemini-3") ||
+    lower.startsWith(GEMINI_4_PREFIX) ||
     lower === GEMINI_PRO_LATEST_ID ||
     lower === GEMINI_FLASH_LATEST_ID ||
     lower === GEMINI_FLASH_LITE_LATEST_ID ||

@@ -3,10 +3,14 @@ export {
   DEFAULT_BOOTSTRAP_MAX_CHARS,
   DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE,
   DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS,
+  DEFAULT_MEMORY_INDEX_MAX_CHARS,
+  DEFAULT_MEMORY_INDEX_WARNING_MODE,
   ensureSessionHeader,
   resolveBootstrapMaxChars,
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
+  resolveMemoryIndexMaxChars,
+  resolveMemoryIndexWarningMode,
   stripThoughtSignatures,
 } from "./embedded-agent-helpers/bootstrap.js";
 export {

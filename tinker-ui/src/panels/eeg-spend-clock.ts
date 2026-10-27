@@ -102,8 +102,18 @@ function safeEuros(v: number): number {
 export function buildEegSpendClock(samples: EegClockSample[], now: number): EegSpendClock {
   type Norm = { key: string; start: number; end: number; euros: number; step: boolean };
 
+  // FINDING 7 (review 2026-10-01). COLLAPSE DUPLICATE KEYS FIRST, last write wins. `spans` is keyed
+  // by run id, so a run handed in twice used to bill the ledger twice and draw once — the surviving
+  // span twice as tall as the run's own cost. Later frames carry better data (a final frame brings
+  // the end stamp and the token count a live frame could not), so the last one is the one to keep.
+  // This lives in the clock rather than at a call site because the invariant the module promises
+  // ("advance over any window == euros spent in that window") is the caller's to rely on, not to
+  // re-establish.
+  const byKey = new Map<string, EegClockSample>();
+  for (const s of samples) byKey.set(s.key, s);
+
   const norm: Norm[] = [];
-  for (const s of samples) {
+  for (const s of byKey.values()) {
     const euros = safeEuros(s.euros);
     const start = Number.isFinite(s.startedAt) ? s.startedAt : now;
     // A live sample runs to `now` — but only while it is still CREDIBLY live (see
@@ -152,15 +162,30 @@ export function buildEegSpendClock(samples: EegClockSample[], now: number): EegS
   // `segRate[i]` = constant total rate on [times[i], times[i+1]).
   const segRate: number[] = new Array(Math.max(0, times.length - 1)).fill(0);
 
+  // FINDING 9 (review 2026-10-01). This was `for each breakpoint { for each spanning sample }` —
+  // clean N^2, measured 124ms / 425ms / 2009ms at 1k / 2k / 4k samples. EEG_PERSIST_CAP is 2000 and
+  // the paper repaints on every effort frame, so a long session blocked the UI for ~0.4s per frame.
+  //
+  // Same arithmetic as a SWEEP. Every sample's start and end IS a breakpoint, and a spanning sample
+  // is active on segment i exactly when idx(start) <= i < idx(end) — which is what the old pair of
+  // inequalities tested, since the active set is constant between consecutive breakpoints. So add
+  // +rate at its start index, -rate at its end index, then one prefix pass gives every segment's
+  // total rate. O(N) after the sort the breakpoint list already pays for.
+  const idxOf = new Map<number, number>();
+  for (let i = 0; i < times.length; i++) idxOf.set(times[i], i);
+  const rateDelta: number[] = new Array(times.length + 1).fill(0);
+  for (const n of spanning) {
+    const a = idxOf.get(n.start);
+    const b = idxOf.get(n.end);
+    if (a === undefined || b === undefined) continue;
+    const rate = rateOf.get(n.key) ?? 0;
+    rateDelta[a] += rate;
+    rateDelta[b] -= rate;
+  }
+  let running = 0;
   for (let i = 0; i < times.length - 1; i++) {
-    const t0 = times[i];
-    const t1 = times[i + 1];
-    let r = 0;
-    for (const n of spanning) {
-      // The active set is constant between breakpoints, so testing the left edge is sufficient.
-      if (n.start <= t0 && n.end >= t1) r += rateOf.get(n.key) ?? 0;
-    }
-    segRate[i] = r;
+    running += rateDelta[i];
+    segRate[i] = running;
   }
 
   // Where each step sits, so a step's own span is exactly its euros.
@@ -182,7 +207,14 @@ export function buildEegSpendClock(samples: EegClockSample[], now: number): EegS
 
   // ── S(t) ──
   const yOf = (t: number): number => {
-    if (!Number.isFinite(t) || t <= times[0]) return 0;
+    if (!Number.isFinite(t)) return 0;
+    // FINDING 10 (review 2026-10-01). The lower bound used to collapse `t <= times[0]` to 0, which
+    // is right strictly BEFORE the ledger opens and wrong AT its first instant: `acc[0]` already
+    // includes every step landing there, so a spanning sample that starts at times[0] must begin
+    // from acc[0]. Returning 0 drew it over the step beneath it and 50% too tall — and since
+    // backfilled history is all steps, a step at the session's first instant is the common case.
+    if (t < times[0]) return 0;
+    if (t === times[0]) return acc[0];
     if (t >= times[times.length - 1]) return total;
     // binary search for the segment containing t
     let lo = 0;

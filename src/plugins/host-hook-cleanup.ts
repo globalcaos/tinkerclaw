@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { updateSessionStore } from "../config/sessions/store.js";
+import { loadSessionStore, updateSessionStore } from "../config/sessions/store.js";
 import { resolveAllAgentSessionStoreTargetsSync } from "../config/sessions/targets.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -65,6 +65,40 @@ function matchesCleanupSession(
   );
 }
 
+type PluginCleanupScope = {
+  pluginId?: string;
+  sessionKey?: string;
+};
+
+/**
+ * The single predicate for "this entry holds plugin-owned state the cleanup
+ * must clear". Shared by the read-only pre-check and the locked mutator so the
+ * two can never drift: if the pre-check says "nothing to do", the mutator would
+ * have cleared nothing either.
+ */
+function entryNeedsPluginCleanup(
+  entryKey: string,
+  entry: SessionEntry,
+  scope: PluginCleanupScope,
+): boolean {
+  return (
+    matchesCleanupSession(entryKey, entry, scope.sessionKey) &&
+    hasPluginOwnedSessionState(entry, scope.pluginId)
+  );
+}
+
+function storeNeedsPluginCleanup(
+  store: Readonly<Record<string, SessionEntry>>,
+  scope: PluginCleanupScope,
+): boolean {
+  for (const [entryKey, entry] of Object.entries(store)) {
+    if (entryNeedsPluginCleanup(entryKey, entry, scope)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function clearPluginOwnedSessionStores(params: {
   cfg: OpenClawConfig;
   pluginId?: string;
@@ -78,16 +112,27 @@ async function clearPluginOwnedSessionStores(params: {
       .map((target) => target.storePath)
       .filter((storePath) => fs.existsSync(storePath)),
   );
+  const scope: PluginCleanupScope = { pluginId: params.pluginId, sessionKey: params.sessionKey };
   let cleared = 0;
   for (const storePath of storePaths) {
+    // FORK 2026-09-21: skip the locked rewrite when nothing in scope carries
+    // plugin-owned state. Every sessions.delete / sessions.reset lands here, and
+    // updateSessionStore on the live 16 MB sessions.json is a sync read +
+    // JSON.parse, maintenance, JSON.stringify, a write and a 16 MB
+    // structuredClone, all under the store lock. That was one contributor to a
+    // single delete taking 70-75 s, and on the live store it is almost always a
+    // no-op because few entries hold plugin state. The pre-check is read-only:
+    // `clone: false` hands back the cached object, which this code only reads.
+    // When state IS present we keep the old path, and the mutator re-reads under
+    // the lock, so correctness does not depend on this snapshot.
+    if (!storeNeedsPluginCleanup(loadSessionStore(storePath, { clone: false }), scope)) {
+      continue;
+    }
     cleared += await updateSessionStore(storePath, (store) => {
       let clearedInStore = 0;
       const now = Date.now();
       for (const [entryKey, entry] of Object.entries(store)) {
-        if (
-          !matchesCleanupSession(entryKey, entry, params.sessionKey) ||
-          !hasPluginOwnedSessionState(entry, params.pluginId)
-        ) {
+        if (!entryNeedsPluginCleanup(entryKey, entry, scope)) {
           continue;
         }
         clearPluginOwnedSessionState(entry, params.pluginId);

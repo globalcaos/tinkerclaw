@@ -105,11 +105,12 @@ Do NOT claim the command succeeded if it returned an error.
 prohibited. Explicit "do not claim success" prevents this.
 
 <anti_patterns>
+
 - Maintaining dual file versions — maintenance cost exceeds the benefit for fallback scenarios
 - Adding model-detection logic — the model can't reliably introspect which model it is
 - Over-specifying — keep each addendum under 200 chars; verbose guardrails waste cached tokens on the primary model
 - Trying to fix persona depth — no evidence that brief addenda improve persona adoption on fallback models; accept degraded persona on fallback
-</anti_patterns>
+  </anti_patterns>
 
 ## Measuring Impact
 

@@ -22,6 +22,11 @@ import {
   resolveApnsRelayConfigFromEnv,
 } from "../../infra/push-apns.js";
 import {
+  loadFcmRegistration,
+  resolveFcmServiceAccountFromEnv,
+  sendFcmWake,
+} from "../../infra/push-fcm.js";
+import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "../../shared/string-coerce.js";
@@ -331,7 +336,33 @@ export async function maybeWakeNodeWithApns(
     try {
       const registration = await loadApnsRegistration(nodeId);
       if (!registration) {
-        return withDuration({ available: false, throttled: false, path: "no-registration" });
+        // FORK 2026-10-22: Android nodes register an FCM token instead (push-fcm.ts).
+        const fcm = await loadFcmRegistration(nodeId);
+        if (!fcm) {
+          return withDuration({ available: false, throttled: false, path: "no-registration" });
+        }
+        const account = await resolveFcmServiceAccountFromEnv(process.env);
+        if (!account.ok) {
+          return withDuration({
+            available: false,
+            throttled: false,
+            path: "no-auth",
+            apnsReason: account.error,
+          });
+        }
+        state.lastWakeAtMs = Date.now();
+        const sent = await sendFcmWake({
+          registration: fcm,
+          account: account.account,
+          wakeReason: opts?.wakeReason ?? "node.invoke",
+        });
+        return withDuration({
+          available: true,
+          throttled: false,
+          path: sent.ok ? "sent" : "send-error",
+          apnsStatus: sent.status,
+          apnsReason: sent.reason ? `fcm:${sent.reason}` : "fcm",
+        });
       }
 
       let wakeResult;
@@ -1051,13 +1082,48 @@ export const nodeHandlers: GatewayRequestHandlers = {
         );
         return;
       }
-      const res = await context.nodeRegistry.invoke({
+      let res = await context.nodeRegistry.invoke({
         nodeId,
         command,
         params: forwardedParams.params,
         timeoutMs: p.timeoutMs,
         idempotencyKey: p.idempotencyKey,
       });
+      // FORK 2026-10-22: an Android app put to sleep keeps a socket the gateway still counts as
+      // connected but never answers on it. On a timeout, wake it through FCM, wait for the NEW
+      // connection it opens, and retry once.
+      if (!res.ok && res.error?.code === "TIMEOUT" && /android/i.test(nodeSession.platform ?? "")) {
+        const stale = nodeSession;
+        const wake = await maybeWakeNodeWithApns(nodeId, {
+          force: true,
+          cfg,
+          wakeReason: "invoke-timeout",
+        });
+        context.logGateway.info(
+          `node wake stage=timeout node=${nodeId} req=${req.id} command=${command} ` +
+            `path=${wake.path} reason=${wake.apnsReason ?? "-"}`,
+        );
+        if (wake.path === "sent") {
+          const deadline = Date.now() + 20_000; // an Android app needs seconds to wake and reconnect
+          let fresh = context.nodeRegistry.get(nodeId);
+          while ((!fresh || fresh === stale) && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 250));
+            fresh = context.nodeRegistry.get(nodeId);
+          }
+          context.logGateway.info(
+            `node wake stage=timeout-wait node=${nodeId} req=${req.id} reconnected=${Boolean(fresh && fresh !== stale)}`,
+          );
+          if (fresh && fresh !== stale) {
+            res = await context.nodeRegistry.invoke({
+              nodeId,
+              command,
+              params: forwardedParams.params,
+              timeoutMs: p.timeoutMs,
+              idempotencyKey: p.idempotencyKey,
+            });
+          }
+        }
+      }
       if (!res.ok) {
         if (
           shouldQueueAsPendingForegroundAction({

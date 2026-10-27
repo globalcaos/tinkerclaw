@@ -3,7 +3,7 @@ schema: "kit/1.0"
 slug: "interview-prep-test-printout"
 title: "Interview Brief from a Candidate's Online Test"
 summary: "Turn one candidate's graded competency-test attempt into a printable interview brief: every section on its own page, every question numbered N.M with a coloured score chip, the candidate's verbatim answer, the grader's one-line reason, the section's time / declared-AI / paste line, the skip reason for skipped sections, and a highlighted 'ask in the interview' box on each weak spot. Then map the chosen questions to page numbers so the interviewer can find them on paper."
-version: "1.1.0"
+version: "1.4.0"
 owner: "globalcaos"
 license: "MIT"
 category: "operations"
@@ -18,18 +18,22 @@ tags:
     "preparar entrevista",
     "preguntes entrevista",
     "imprimir prova",
+    "interview script",
+    "interview guide",
+    "guion de entrevista",
+    "guió d'entrevista",
   ]
 tools: ["read", "exec", "write"]
 testedHarnesses: ["Claude Code"]
 authoredBy: "jarvis-on-the-fly"
 model:
   provider: "anthropic"
-  name: "claude-opus-5"
+  name: "claude-opus-5-5"
   hosting: "cloud API"
 resolverHints:
   [
     {
-      "match": "interview prep | questions to ask | print his test | print the online test | test results pdf | preparar entrevista",
+      "match": "interview prep | interview script | interview guide | questions to ask | print his test | print the online test | test results pdf | preparar entrevista | guion de entrevista | guió d'entrevista",
       "load": ["recipe.md"],
       "purpose": "Build a printable, question-annotated interview brief from a graded test attempt.",
     },
@@ -58,8 +62,11 @@ exists to make the interview test what the grader could not see.
 
 One A4 PDF, portrait, in the language set in {{values_file}}:
 
-1. **Header** — candidate name, attempt id, submit date, minutes on the clock,
-   sections attempted, total pastes, window switches, grader average, interview time.
+1. **Page 1 — who they are** — name, slot tag, interview time and room, attempt id;
+   experience, the vacancy's priority direction (e.g. neural networks · vision · ROS)
+   with CV vs test for each, strengths and gaps, and a table of EVERY axis in the order
+   and colours of the candidate summary sheet (CV cell · test score · minutes, pastes,
+   AI declared, skip reason). The two documents must read the same way.
    1b. **Page 1 — "How they work with AI"** (mandatory, before section 1): the evidence
    from the test (step 2b), the working-style spectrum as a table with the preferred
    row tinted, a "do not reveal which profile we prefer" line, and a numbered ladder of
@@ -69,11 +76,18 @@ One A4 PDF, portrait, in the language set in {{values_file}}:
    `N. <section name>` with a score chip coloured by band (≥8 dark green, 6–7 green,
    4–5 amber, ≤3 red). Under it: minutes spent · submitted/skipped · AI declared
    yes/no · paste count. Then the grader's section summary in italics.
-3. **Skipped section** — the candidate's own skip reason and stated interest, quoted,
+3. **Skipped section** — the candidate's own skip reason and stated interest, quoted from
+   the stored TEXT, never translated from its index (the option lists change between test
+   versions: index 0 of "interest" was "No real interest" and later became "Yes"),
    plus one ask box.
 4. **Every question** — `N.M · <title>` with its score chip, the question id and
    its paste count/characters in small grey, the verbatim answer in a tinted box (self-rating grids expanded row by
    row), then `Grader: <why>` in small grey.
+   4b. **The drawing question shows the drawing** (2026-09-30, owner: _"I want to view the
+   diagram 4.1 the candidate made, even if the chapter spans 2 pages instead of only 1"_):
+   draw the saved components and cables as the test canvas did (same palette and box size,
+   data vs power cables distinguishable), with a legend and a cable list. Never print it as
+   "no answer" or as a count; the section may take two pages, the drawing never splits.
 5. **Ask box** (yellow, bordered) under each question chosen for the interview:
    one concrete question in the interviewer's voice, and — in brackets — what a good
    answer contains, when that helps.
@@ -155,6 +169,19 @@ image and looked at.
 Search each question id in the PDF page by page and report `N.M · page`. Page numbers
 come from the PDF that will be printed, never from the HTML.
 
+### 4b. "Interview script" means THIS brief — never a separate short script
+
+When the ask is an "interview script", "guide" or "guion/guió", the deliverable is this
+brief, built by the generator named in {{values_file}}, in its latest version: page 1 =
+who the candidate is, the CV summary (evidence already extracted into the candidate
+summary's data file — never read the CV itself for it), the "direction we are looking
+for" line (the vacancy's priority axis first — neural networks for the main slot), and
+every axis in the SAME order and colours as the candidate summary sheet; page 2 = the
+AI working-style block (step 2b); then one page per axis. The interview questions are
+written into the generator's per-candidate entry, keyed by attempt id and test question
+id, with two stars. A candidate with no entry still gets pages 1–2 and the axis pages,
+but no ask boxes: that is not ready for an interview — write the entry.
+
 ### 5. Print only when asked
 
 Printing is a separate, explicit request. Use the saved queue from {{values_file}},
@@ -186,6 +213,31 @@ A4, double-sided long edge, and confirm the job left the queue.
   "passing tests is not enough if I cannot explain the function", and that very
   answer arrived as one whole paste, like every other written answer. Always check the
   telemetry of the ship-AI-code answer itself before taking it as their practice.
+- **A short script instead of the brief** (2026-09-30) — asked for an "interview script"
+  an hour before the interview, a session wrote a fresh 2-page Spanish script, then
+  added a "one-hour script" step here. The owner: _"Nope, you are not following the
+  right script or recipe. Remember the one you used last time, the last version with
+  the NN focus, the rainbow colors and the CV summary."_ The script IS this brief (step
+  4b); the fix was a per-candidate entry in the generator, not a new document.
+- **An index read as a meaning** (2026-09-30) — the candidate summary turned skip answers into
+  labels by position, so a candidate who answered "not enough experience · Yes, interested" on four
+  core sections was shown as "never done · no interest", and a starred question was first written
+  on that basis. Caught only because the brief quotes the raw text beside it. Label from the stored
+  text, and when a question hangs on what the candidate "said", check the quote before writing it.
 - **A generator hard-wired to one candidate** — the first build fixed the attempt file,
   name and questions in code. Key them by attempt id (`generator <id>`) so the next
   candidate is a new entry, not an edit that destroys the previous brief.
+- **Grades labelled with the wrong engine** (2026-10-01) — the site stores every grade under a
+  field called `grok`, so Mateu Magem Ribas's printout said "Grok:" under notes Claude wrote. The
+  generator now reads the grader from `review.<section>.grok.model` (`claude-*` → Claude), the rule
+  the A3 builder already used, and names it on page 1, in the legend and on every note. Check the
+  label against the engine before handing a brief over.
+- **A pasted answer is not a generated answer** (2026-10-07) — one candidate declared
+  "no AI" and pasted 26 whole answers, but the pasted text was lowercase with typos ("i change
+  between AI tools", "when it break"): typed by hand in another editor, most likely. Read the
+  pasted text before framing the question; when it looks hand-written, ask where the answers were
+  written, never "which AI wrote this".
+- **Question numbers from the PDF, not from the section's place on the A3** (2026-10-07) — the
+  first draft of the candidate's brief cited Python "8.1 and 8.2" because Python sits eighth on the A3;
+  the test numbers it 5, and the second paste burst was 5.5. Write every N.M from `pdftotext`
+  of the built PDF (step 4), then rebuild.

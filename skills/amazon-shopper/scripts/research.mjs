@@ -13,7 +13,12 @@ import { analyzeProductImage } from "./image-spec.mjs";
 // spec_unknown, which is the honest answer.
 //
 // When they ARE enabled they run on a SEPARATE fetcher from the Amazon one, so
-// off-Amazon requests start from an empty cookie jar.
+// off-Amazon requests start from an empty cookie jar. That fetcher may reach
+// hosts other than amazon.es, but every request and every redirect hop still
+// goes through fetch.mjs's destination guard: HTTPS only, and the host must
+// resolve to public addresses (loopback, private, link-local and other
+// non-public ranges are refused, checked again at connect time). A search
+// result or a redirect cannot point it at this machine or its LAN.
 import { callLLM } from "./llm.mjs";
 import { parseSpecFromTitle, activeKg } from "./title-spec.mjs";
 
@@ -83,7 +88,8 @@ async function ddgSearch(query, fetcher) {
       const u = m[1].startsWith("//duckduckgo.com/l/?")
         ? decodeURIComponent((m[1].match(/uddg=([^&]+)/) || [])[1] || "")
         : m[1];
-      if (u && /^https?:/.test(u)) links.push(u);
+      // HTTPS only; fetch.mjs refuses anything else, and non-public hosts too.
+      if (u && /^https:\/\//i.test(u)) links.push(u);
     }
     return links;
   } catch {
@@ -200,7 +206,9 @@ export async function researchProduct({
   }
 
   // A fetcher of its own: off-Amazon requests never inherit the Amazon jar.
-  const web = webFetcher || createFetcher();
+  // allowAnyPublicHost lifts only the amazon.es host restriction; the public-
+  // address guard, the redirect re-validation and the size/time caps remain.
+  const web = webFetcher || createFetcher({ allowAnyPublicHost: true });
 
   const brand = product.brand_hint || detailSpec.brand || null;
   if (brand) {

@@ -1,22 +1,44 @@
 /**
  * FORK: Learned Intuition extension entry point -- AMYGDALA safety gate.
  *
- * Neural safety gate trained on real failures. 10 ONNX networks evaluate
- * every tool call through the before_tool_call hook. Falls back to rule-based
- * heuristics when ONNX models are unavailable. Generates personality nudges
- * on llm_output for Identity Persistence to read.
+ * Evaluates every tool call through the before_tool_call hook: deterministic
+ * AEGIS rules, a k-NN novelty channel and a prompt incongruity check. The
+ * legacy ONNX ensemble is off unless `legacyEnsemble` is set.
+ *
+ * Enforcement: `observeOnly` defaults to true, and while it is true NOTHING is
+ * blocked in-process — AEGIS hard-block matches included. They are logged and
+ * recorded as `enforced: false`. Set `observeOnly: false` to let AEGIS
+ * hard-blocks abort the tool call (neural soft-blocks additionally need
+ * phase >= 2). See `shouldEnforce` below.
  *
  * Hooks:
- *   - before_tool_call: evaluate action safety (ONNX gate or rule-based fallback)
- *   - llm_output: write personality nudge to shared cognitive file
+ *   - before_tool_call: evaluate action safety (observe-only unless observeOnly:false)
+ *   - llm_output: write personality nudge to shared cognitive file (opt-in: personalityNudge)
+ *
+ * Gateway events: `amygdala.hook` — one per bubble-worthy row the PreToolUse hook spools
+ * (deny / owner-intent / owner-pasted-secret / owner-allow), tailed live from
+ * `~/.openclaw/data/amygdala/hook-decisions.jsonl` (FORK 2026-10-15).
  *
  * Cross-extension discovery: writes `~/.openclaw/cognitive/learned-intuition.json`
  * and `~/.openclaw/cognitive/personality-nudge.json`.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 // FORK 2026-08-04 (FOUNDATION #9 — bounded, replicable) — the observability substrate is reached
 // through DECLARED plugin-SDK surfaces, never through a relative `../../src/infra/*` path. Two
 // independent reasons, either fatal on its own:
@@ -60,6 +82,250 @@ const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
 // ingests them so REAL enforced denials (the strongest feedback signal) appear
 // in the feed instead of being invisible.
 const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
+
+// FORK 2026-10-15 (the architect: "all performed actions from Jev … right where he does it, within its
+// context"): the hook spool used to be read on request only (amygdala.feed), so a REAL enforced
+// denial reached the chat late and nowhere near the tool call it judged. These helpers turn a
+// spool row into the live `amygdala.hook` event the UI pins to the tool row by `toolUseId`.
+// Pure and exported so the row → event mapping is tested without a gateway (hook-event.test.ts).
+
+/** Hook decisions the chat shows as a bubble: the hook DID something. `allow` (a sampled benign
+ * call) and `observe` (a rule matched, nothing done) are "the ones he skips". */
+export const HOOK_BUBBLE_DECISIONS: ReadonlySet<string> = new Set([
+  "deny",
+  "owner-intent",
+  "owner-pasted-secret",
+  "owner-allow",
+]);
+
+/** Payload of the `amygdala.hook` gateway event (CONTRACT.md "Live hook event"). */
+export interface AmygdalaHookEvent {
+  id: string;
+  ts: number;
+  tool: string;
+  target: string;
+  decision: string;
+  rule: string | null;
+  toolUseId: string | null;
+  sessionId: string | null;
+  enforced: boolean;
+}
+
+/** Spool `ts` is ISO (the hook writes `new Date().toISOString()`); the event carries ms. 0 when
+ * the row has no usable timestamp. */
+export function hookRowTs(ts: unknown): number {
+  if (typeof ts === "number" && Number.isFinite(ts)) return ts;
+  if (typeof ts === "string") {
+    const n = Date.parse(ts);
+    if (!Number.isNaN(n)) return n;
+  }
+  return 0;
+}
+
+/** `hook-` + sha1(ts+toolUseId+rule)[0:12] — the same id on the live event and on the feed row,
+ * so the UI dedupes a row it saw live when it later seeds from `amygdala.feed`. */
+export function hookRowId(ts: number, toolUseId: string | null, rule: string | null): string {
+  const h = createHash("sha1")
+    .update(`${ts}${toolUseId ?? ""}${rule ?? ""}`)
+    .digest("hex");
+  return `hook-${h.slice(0, 12)}`;
+}
+
+function optString(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/** A spool row → the live event, or null when the row is not bubble-worthy (or not a row). */
+export function hookEventFromRow(raw: unknown): AmygdalaHookEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const h = raw as Record<string, unknown>;
+  const decision = typeof h.decision === "string" ? h.decision : "";
+  if (!HOOK_BUBBLE_DECISIONS.has(decision)) return null;
+  const ts = hookRowTs(h.ts);
+  const rule = optString(h.rule);
+  const toolUseId = optString(h.toolUseId);
+  return {
+    id: hookRowId(ts, toolUseId, rule),
+    ts,
+    tool: String(h.tool ?? "?"),
+    target: String(h.target ?? "").slice(0, 200),
+    decision,
+    rule,
+    toolUseId,
+    sessionId: optString(h.sessionId),
+    enforced: Boolean(h.enforced),
+  };
+}
+
+export interface HookSpoolTail {
+  start(): void;
+  stop(): void;
+  /** Read whatever was appended since the last read (the watcher and the poll both call it). */
+  pump(): void;
+}
+
+/**
+ * Tail a JSONL spool from its CURRENT end: `fs.watch` on the parent directory (the file may not
+ * exist yet, and a rewrite would orphan a watch on the file itself) plus a slow poll, because
+ * inotify is best-effort. The offset resets when the inode changes (rotation) or the size drops
+ * below the offset (amygdala.feed truncates the file in place to its last 400 lines); the
+ * caller's dedupe decides what is new after a reset. Reads are synchronous, so two triggers can
+ * never interleave, and bounded per pump (MAX_PUMP_BYTES, the rest on the next tick) so a
+ * runaway spool cannot freeze the gateway.
+ */
+export function createHookSpoolTail(opts: {
+  file: string;
+  onRow: (row: Record<string, unknown>) => void;
+  /** Poll interval; the directory watch usually fires first. */
+  pollMs?: number;
+  /** Start at offset 0 and replay existing rows; default: start at the current end. */
+  replay?: boolean;
+  onError?: (message: string) => void;
+}): HookSpoolTail {
+  const { file, onRow } = opts;
+  const pollMs = opts.pollMs ?? 1500;
+  const CHUNK = 64 * 1024;
+  const MAX_PUMP_BYTES = 1024 * 1024;
+  let running = false;
+  let offset = 0;
+  let ino = 0;
+  let carry: Buffer = Buffer.alloc(0);
+  let watcher: FSWatcher | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  function statOf(): { size: number; ino: number } | null {
+    try {
+      const st = statSync(file);
+      return { size: st.size, ino: Number(st.ino) };
+    } catch {
+      return null;
+    }
+  }
+
+  function emitLines(chunk: Buffer): void {
+    const joined = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+    const nl = joined.lastIndexOf(0x0a);
+    if (nl < 0) {
+      carry = joined;
+      return;
+    }
+    carry = Buffer.from(joined.subarray(nl + 1));
+    for (const line of joined.subarray(0, nl).toString("utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let row: unknown;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue; // a torn line is not ours to fix
+      }
+      if (row && typeof row === "object") {
+        try {
+          onRow(row as Record<string, unknown>);
+        } catch (err) {
+          opts.onError?.(`row handler failed: ${(err as Error).message}`);
+        }
+      }
+    }
+  }
+
+  function ensureWatcher(): void {
+    if (watcher) return;
+    const name = basename(file);
+    try {
+      watcher = watch(dirname(file), (_event, changed) => {
+        if (!changed || String(changed) === name) pump();
+      });
+      watcher.on("error", () => undefined);
+    } catch {
+      watcher = null; // directory not there yet: the poll still pumps and retries the watch
+    }
+  }
+
+  function pump(): void {
+    if (!running) return;
+    const st = statOf();
+    if (st === null) {
+      offset = 0;
+      carry = Buffer.alloc(0);
+      return;
+    }
+    if (st.ino !== ino || st.size < offset) {
+      ino = st.ino;
+      offset = 0;
+      carry = Buffer.alloc(0);
+    }
+    if (st.size === offset) return;
+    const stopAt = Math.min(st.size, offset + MAX_PUMP_BYTES);
+    let fd: number;
+    try {
+      fd = openSync(file, "r");
+    } catch (err) {
+      opts.onError?.(`open failed: ${(err as Error).message}`);
+      return;
+    }
+    try {
+      const buf = Buffer.allocUnsafe(CHUNK);
+      while (offset < stopAt) {
+        const n = readSync(fd, buf, 0, Math.min(CHUNK, stopAt - offset), offset);
+        if (n <= 0) break;
+        offset += n;
+        emitLines(Buffer.from(buf.subarray(0, n)));
+      }
+    } catch (err) {
+      opts.onError?.(`read failed: ${(err as Error).message}`);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
+    if (stopAt < st.size) setImmediate(pump); // backlog: yield, then keep going
+  }
+
+  return {
+    start() {
+      if (running) return;
+      running = true;
+      const st = statOf();
+      ino = st?.ino ?? 0;
+      offset = opts.replay ? 0 : (st?.size ?? 0);
+      carry = Buffer.alloc(0);
+      ensureWatcher();
+      timer = setInterval(() => {
+        ensureWatcher();
+        pump();
+      }, pollMs);
+      timer.unref?.();
+      pump();
+    },
+    stop() {
+      running = false;
+      watcher?.close();
+      watcher = null;
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+    pump,
+  };
+}
+
+/**
+ * Resolve the amygdala data dir at CALL time rather than at module load.
+ *
+ * The policy snapshot is the one write here that can DELETE something
+ * (cc-hook-settings.json, when enforcement is off), so it must land under the
+ * HOME in effect when register() runs. With the module-level constant it did
+ * not: a test that redirects HOME still resolved the developer's real
+ * ~/.openclaw and disarmed their live enforcement hook. Same value in
+ * production, isolatable in tests.
+ */
+function amygdalaDataDir(): string {
+  // $HOME first, homedir() as the fallback: os.homedir() resolves the passwd
+  // entry and ignores a redirected HOME, which is precisely what makes it
+  // unisolatable in tests. Same value in production.
+  return join(process.env.HOME ?? homedir(), ".openclaw", "data", "amygdala");
+}
 // FORK 2026-06-07: register() runs ~5×/gateway boot; attach the tinker-bridge prudence
 // listener ONCE per process or every tool call gets evaluated (and recorded) N times.
 let tinkerBridgePrudenceListenerAttached = false;
@@ -129,6 +395,21 @@ function writePersonalityNudge(nudge: PersonalityNudge): void {
   );
 }
 
+/**
+ * The git cache counts recent commits per target; its filesystem watcher is OFF (FORK 2026-10-18,
+ * TINKER_UI_DESIGN_BIBLE/bug-log.md `freeze-stuck-freezing`). It used to watch every file under
+ * ~/src (342,100 entries that day, mostly ~/src/tinkerclaw-wt worktrees) in every process that loads
+ * this plugin, and its error handler swallowed the ENOSPC, so it took inotify watches until none
+ * were left: gateway 291,747 + one terminal `openclaw` 226,771 of 524,288. systemd could then not
+ * watch new units, and a restart froze a chat's worker that nothing thawed. All it bought was
+ * marking cached counts stale sooner than the TTL does.
+ */
+export const GIT_CACHE_DEFAULTS: AmygdalaConfig["git_cache"] = {
+  enabled: false,
+  watch_paths: [],
+  ttl_seconds: 300,
+};
+
 function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
   // Load config from amygdala.config.json if it exists alongside models
   const configPath = join(modelsDir, "..", "amygdala", "amygdala.config.json");
@@ -163,7 +444,7 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       // AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
       // FORK 2026-06-04: bumped personality 0.15 → 0.5 for the narration-canary
       // experiment — narration_discipline nudge is the visible tell that the
-      // whole personality pipeline is live (the user's instrument). Prudence stays
+      // whole personality pipeline is live (the architect's instrument). Prudence stays
       // 0.15 (observe-only safety gate).
       alpha_prudence: 0.15,
       alpha_personality: 0.5,
@@ -215,11 +496,7 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       calibration_window_days: 30,
       calibration_db_path: join(DATA_DIR, "amygdala", "calibration.sqlite"),
     },
-    git_cache: {
-      enabled: true,
-      watch_paths: [join(homedir(), "src")],
-      ttl_seconds: 300,
-    },
+    git_cache: { ...GIT_CACHE_DEFAULTS, watch_paths: [...GIT_CACHE_DEFAULTS.watch_paths] },
     training_log: {
       db_path: join(DATA_DIR, "amygdala", "training.sqlite"),
       max_entries: 100000,
@@ -232,14 +509,32 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
   };
 }
 
+/**
+ * Whether a gate result actually aborts the tool call.
+ *
+ * - `observeOnly: true` (the default) never blocks anything, AEGIS included.
+ * - `observeOnly: false`: a `hard_block` (AEGIS floor) blocks at any phase; a
+ *   neural `soft_block` blocks only from phase 2 upward.
+ */
+export function shouldEnforce(
+  result: { blocked: boolean; decision: string },
+  observeOnly: boolean,
+  phase: number,
+): boolean {
+  if (!result.blocked || observeOnly) {
+    return false;
+  }
+  return result.decision === "hard_block" || phase !== 1;
+}
+
 // -- Plugin definition --
 
 export default definePluginEntry({
   id: "tinkerclaw-learned-intuition",
   name: "Learned Intuition",
   description:
-    "AMYGDALA safety gate — ONNX neural networks evaluate tool calls, " +
-    "rule-based fallback when models unavailable, personality nudge generation.",
+    "AMYGDALA safety gate — deterministic AEGIS rules, k-NN novelty and incongruity checks " +
+    "on tool calls. Observe-only by default; blocking needs observeOnly:false.",
   register(api: OpenClawPluginApi) {
     const cfg = api.pluginConfig as {
       phase?: number;
@@ -248,28 +543,41 @@ export default definePluginEntry({
       observeOnly?: boolean;
       modelsDir?: string;
       legacyEnsemble?: boolean;
+      personalityNudge?: boolean;
       hookEnforcement?: boolean;
     };
     const log = api.logger;
 
-    // FORK 2026-05-30 ("Amygdala" task): default the nudge to its top phase so
-    // its LLM influence is at maximum. observeOnly stays true by default so the
-    // AEGIS tool-gate keeps only OBSERVING (no surprise tool aborts) — set
-    // observeOnly:false in plugin config to also enable active blocking.
-    const phase = cfg.phase ?? 4;
+    // Defaults are the CONSERVATIVE ones the manifest documents. They used to
+    // read `phase ?? 4` / `alphaPrudence ?? 0.15` — cranking the nudge to its
+    // top phase — while openclaw.plugin.json advertised 1 and 0.0, so the
+    // documented default was not the shipped one. Code and manifest now agree,
+    // and the strong setting is something an owner asks for.
+    // observeOnly stays true by default so the whole in-process gate, AEGIS
+    // hard-blocks included, only OBSERVES (no surprise tool aborts) — set
+    // observeOnly:false in plugin config to enable active blocking.
+    const phase = cfg.phase ?? 1;
     const observeOnly = cfg.observeOnly ?? true;
     const modelsDir = cfg.modelsDir ?? join(homedir(), "src", "tinkerclaw", "models", "amygdala");
     // v3.1: the 5-net ONNX ensemble is retired from the decision path (default
-    // off); the pre-execution AEGIS hook is on by default.
+    // off). Pre-execution enforcement is OPT-IN: writing cc-hook-settings.json
+    // registers a PreToolUse hook with matcher "*" that tinker-bridge passes to
+    // every spawn, where it can synchronously deny any tool call. A plugin
+    // should not install a deny-hook across a whole machine merely by being
+    // loaded — that is the owner's call, made explicitly.
     const legacyEnsemble = cfg.legacyEnsemble === true;
-    const hookEnforcement = cfg.hookEnforcement !== false;
+    const hookEnforcement = cfg.hookEnforcement === true;
+    // The nudge is text written to steer the model on later turns (Identity
+    // Persistence injects it), so it is a prompt mutation with an extra step.
+    const personalityNudge = cfg.personalityNudge === true;
 
     // Ensure data directory exists
-    ensureDir(AMYGDALA_DATA_DIR);
+    const dataDir = amygdalaDataDir();
+    ensureDir(dataDir);
 
     // Build full config
     const amygdalaConfig = loadAmygdalaConfig(modelsDir);
-    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.15; // FORK 2026-05-30: max by default
+    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.0; // manifest-documented default
     amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
     amygdalaConfig.legacyEnsemble = legacyEnsemble;
     amygdalaConfig.hookEnforcement = hookEnforcement;
@@ -286,7 +594,10 @@ export default definePluginEntry({
     // every tinker-bridge spawn. Done at register() so the artifacts exist before the
     // next worker spawns. Best-effort: a write failure must not break the gate.
     try {
-      const snap = writePolicySnapshot(AMYGDALA_DATA_DIR, { hookEnforcement });
+      // One amygdala (2026-10-15, the architect): the pre-execution hook now ships with tinkerclaw-amygdala
+      // (hooks/hard-rules.mjs, registered first in its hook settings). This plugin no longer installs one: two
+      // copies would run the hard rules twice. The snapshot still writes policy.json and drops the old settings.
+      const snap = writePolicySnapshot(dataDir, { hookEnforcement: false });
       log.info(
         `[learned-intuition] policy snapshot written (hookEnforcement=${hookEnforcement}, ` +
           `settings=${snap.settingsWritten}, hook=${snap.staged ?? "none"})`,
@@ -348,14 +659,16 @@ export default definePluginEntry({
             // stale — silence must stop being excused the moment the models do load.
             declareInstrument({
               ...NUDGE_WRITE_INSTRUMENT,
-              conditional: hook.useRuleBasedFallback
-                ? "ONNX personality models unavailable — the nudge writer returns before writing"
-                : undefined,
+              conditional: !personalityNudge
+                ? "personalityNudge is off (opt-in) — the nudge writer returns before writing"
+                : hook.useRuleBasedFallback
+                  ? "ONNX personality models unavailable — the nudge writer returns before writing"
+                  : undefined,
             });
             const nov = hook.noveltyStatus;
             log.info(
               `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}, ` +
-                `hookEnforcement=${hookEnforcement}, novelty=${nov.enabled ? `ref=${nov.size},thr=${nov.threshold?.toFixed(3)}` : "warming"}`,
+                `hookEnforcement=${hookEnforcement}, personalityNudge=${personalityNudge}, novelty=${nov.enabled ? `ref=${nov.size},thr=${nov.threshold?.toFixed(3)}` : "warming"}`,
             );
             if (hook.useRuleBasedFallback) {
               log.warn(
@@ -457,8 +770,7 @@ export default definePluginEntry({
           const evAny = result.evaluation as unknown as {
             prudence?: { combined?: { confidence?: number }; ensemble_disagreement?: number };
           } | null;
-          const enforced =
-            result.blocked && (result.decision === "hard_block" || !(observeOnly || phase === 1));
+          const enforced = shouldEnforce(result, observeOnly, phase);
           const record: AmygdalaDecisionRecord = {
             ts: new Date().toISOString(),
             tool: event.toolName,
@@ -492,13 +804,12 @@ export default definePluginEntry({
           }
 
           if (result.blocked) {
-            // FORK 2026-05-30: AEGIS is the ABSOLUTE deterministic veto. A
-            // `hard_block` (rule-based gate OR an AEGIS pre/post-check) ALWAYS
-            // aborts, independent of the AMYGDALA trust ramp — "AEGIS active, not
-            // observe-only". Only the neural `soft_block`s stay observe-only while
-            // the learned gate ramps (phase 1 / observeOnly).
+            // AEGIS `hard_block`s abort independent of the trust ramp, but only
+            // once the owner has turned observe-only off (observeOnly:false).
+            // Under the default observeOnly:true every block — AEGIS included —
+            // is logged as WOULD-block and the call proceeds, as documented.
             const isAegisHardBlock = result.decision === "hard_block";
-            if (isAegisHardBlock || !(observeOnly || phase === 1)) {
+            if (enforced) {
               log.warn(
                 `[learned-intuition] ${modeTag} ${isAegisHardBlock ? "AEGIS BLOCKED" : "BLOCKED"} ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
               );
@@ -512,7 +823,7 @@ export default definePluginEntry({
                 blockReason: result.response?.reason ?? "Action blocked by safety gate.",
               };
             }
-            // Neural soft-block during the trust ramp — observe-only.
+            // Observe-only (default) or a neural soft-block during the trust ramp.
             log.info(
               `[learned-intuition] ${modeTag} WOULD block ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"} (observe-only, not blocking)`,
             );
@@ -527,8 +838,11 @@ export default definePluginEntry({
       { priority: 10 }, // High priority -- safety should evaluate early
     );
 
-    // -- Hook: llm_output --
+    // -- Hook: llm_output (personality nudge writer; opt-in) --
     api.on("llm_output", async (_event: { text: string }) => {
+      if (!personalityNudge) {
+        return; // Opt-in: see cfg.personalityNudge
+      }
       await ensureInit();
       if (!hookReady || hook.useRuleBasedFallback) {
         return; // No personality nudge without ONNX models
@@ -747,6 +1061,57 @@ export default definePluginEntry({
       });
     }
 
+    // FORK 2026-10-15 (the architect: "all performed actions … right where he does it"): tail the hook
+    // spool and broadcast each bubble-worthy row as `amygdala.hook` the moment the hook writes
+    // it. Owned by a plugin service so the gateway's stop closes the watcher and the poll (no
+    // leaked fd/timer across reloads). Dedupe by id (an insertion-ordered Set, oldest evicted),
+    // plus an age floor at service start: after the feed trims the file the tail re-reads its
+    // tail end, and rows from before this service started are history the UI already seeds
+    // from `amygdala.feed`. Same data dir as the policy snapshot (HOME-aware), which is the
+    // dir the hook spools into.
+    const broadcast = (name: string, payload: unknown): void => {
+      try {
+        (api as unknown as { broadcast?: (e: string, p: unknown) => void }).broadcast?.(
+          name,
+          payload,
+        );
+      } catch {
+        /* broadcast is best-effort */
+      }
+    };
+    const hookSpoolFile = join(dataDir, "hook-decisions.jsonl");
+    const seenHookIds = new Set<string>();
+    const MAX_SEEN_HOOK_IDS = 2000;
+    let hookTailStartedAt = 0;
+    const hookTail = createHookSpoolTail({
+      file: hookSpoolFile,
+      onRow: (row) => {
+        const ev = hookEventFromRow(row);
+        if (!ev) return; // allow / observe: the ones he skips
+        // ts 0 = no usable timestamp: it cannot sit on the timeline, so it is skipped too.
+        if (ev.ts < hookTailStartedAt - 5_000) return;
+        if (seenHookIds.has(ev.id)) return;
+        seenHookIds.add(ev.id);
+        if (seenHookIds.size > MAX_SEEN_HOOK_IDS) {
+          const oldest = seenHookIds.keys().next().value;
+          if (oldest !== undefined) seenHookIds.delete(oldest);
+        }
+        broadcast("amygdala.hook", ev);
+      },
+      onError: (message) => log.debug(`[learned-intuition] hook tail: ${message}`),
+    });
+    api.registerService({
+      id: "tinkerclaw-learned-intuition-hook-tail",
+      start() {
+        hookTailStartedAt = Date.now();
+        hookTail.start();
+        log.info(`[learned-intuition] hook spool tail started (${hookSpoolFile})`);
+      },
+      stop() {
+        hookTail.stop();
+      },
+    });
+
     // FORK 2026-06-07 (Amygdala feedback loop / M−1.A): expose the live feed to the
     // Tinker UI — recent gate decisions (most recent first), the current personality
     // nudge, mode/alphas, and rollup counts.
@@ -818,11 +1183,22 @@ export default definePluginEntry({
                 const dcn = String(h.decision ?? "allow");
                 const mapped =
                   dcn === "deny" ? "hard_block" : dcn === "observe" ? "soft_block" : "allow";
+                // FORK 2026-10-15: carry the raw hook decision, the tool call it judged and the
+                // same id the live `amygdala.hook` event uses, so the chat can pin the row to
+                // its tool row and dedupe against what it already saw live. `decision` stays
+                // the mapped value the feed panel reads (hard_block / soft_block / allow).
+                const rule = optString(h.rule);
+                const toolUseId = optString(h.toolUseId);
                 return {
+                  id: hookRowId(hookRowTs(h.ts), toolUseId, rule),
                   ts: h.ts,
                   tool: h.tool,
                   target: h.target,
                   decision: mapped,
+                  hookDecision: dcn,
+                  rule,
+                  toolUseId,
+                  sessionId: optString(h.sessionId),
                   blocked: dcn !== "allow",
                   enforced: Boolean(h.enforced),
                   mode: "hook",

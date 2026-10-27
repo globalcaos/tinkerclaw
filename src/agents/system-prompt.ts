@@ -505,6 +505,9 @@ function formatFullAccessBlockedReason(reason?: EmbeddedFullAccessBlockedReason)
   }
   return "runtime constraints";
 }
+/** FORK: opening sentence when no agents.*.identityLine is configured. */
+export const DEFAULT_IDENTITY_LINE = "You are a personal assistant running inside TinkerClaw.";
+
 export function buildAgentSystemPrompt(params: {
   workspaceDir: string;
   defaultThinkLevel?: ThinkLevel;
@@ -527,6 +530,8 @@ export function buildAgentSystemPrompt(params: {
   sourcePath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
+  /** FORK: the agent's opening identity sentence (replaces the default opening line). */
+  identityLine?: string;
   /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
   personaBlock?: string;
   /** FORK: AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
@@ -768,13 +773,19 @@ export function buildAgentSystemPrompt(params: {
   });
   const workspaceNotes = (params.workspaceNotes ?? []).map((note) => note.trim()).filter(Boolean);
 
+  // FORK 2026-09-22 (maintainer decision): the opening sentence names the agent and the harness it
+  // actually runs in. Upstream's "…running inside OpenClaw." is false for TinkerClaw,
+  // which is becoming a Claude Code plugin; the agent's line (agents.*.identityLine,
+  // set at onboarding) replaces it, and the unset default names TinkerClaw.
+  const openingLines = [params.identityLine?.trim() || DEFAULT_IDENTITY_LINE];
+
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {
-    return "You are a personal assistant running inside OpenClaw.";
+    return openingLines.join(" ");
   }
 
   const lines = [
-    "You are a personal assistant running inside OpenClaw.",
+    ...openingLines,
     "",
     // FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached.
     ...(params.personaBlock ? [params.personaBlock, ""] : []),

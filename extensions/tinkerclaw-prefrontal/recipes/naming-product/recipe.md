@@ -62,6 +62,7 @@ likelihood-of-confusion flag. A name is not “available” because `.com` is fr
 - Domain + trademark clearance on a candidate or a family
 - “Closer to X”, “misspell the crowded word”, “house-brand like clawhub”
 - Second or later naming round on the same product (load the project folder first)
+- Internal codenames for a family (trained networks, agents, releases): no clearance gates, but Step 1's shape question applies
 
 ## When NOT to Use
 
@@ -79,6 +80,40 @@ round’s rank metric are written down.
 Load the project folder before generating. If a previous round already killed a
 stem, it stays dead unless the owner reopens it. Ask one question only if two
 readings of the brief are both plausible.
+
+**Family codenames: settle the SHAPE before generating.** One family label with
+version numbers ("X 3.2"), or one distinct name per member drawn from a shared
+universe? the architect wants the second: a character per member, members sharing traits,
+from a shared universe. Dragon Ball is reserved for agents (Goku). Offer universes
+first, then map members to characters.
+
+**Universes: open with the industry's schemes and their rationale, then spread
+across domains.** Before proposing any universe, say how the labs name and why:
+Anthropic = literary forms by length (Haiku < Sonnet < Opus, the name is the size),
+OpenAI = celestial bodies (Luna, Terra, Sol), Mistral = winds, NVIDIA = scientists by
+generation, Debian = Toy Story, Android = desserts A→Z. Then offer at least five
+universes from **different domains**, each one **known by anyone who went to school,
+anywhere**, never only by people from one region or in one language: school science
+(chemical elements, cell organelles, subatomic particles, the Mohs scale, clouds),
+nature (animals, birds of prey, dinosaurs), mythology, astronomy, music (tempos), art
+history, and at most one from fiction. Give names in their international form, not a
+local translation; a regional universe (castells, Catalan peaks, Gaudí) is at most one
+extra row, never the lead. Prefer
+a universe with a built-in order (size or generation) and one that does not age:
+children's TV and manga date fast ("my daughter just watched Peppa Pig"). Ask which
+ones he actually knows before ranking a fiction universe first.
+
+**Rank by five tests, theme last:** everyone relates to it; short names, ideally with a
+short code; a built-in order; enough names for decades; not already in use here. Fit to
+the product's theme (e.g. "eyes" for vision) only breaks ties. On 2026-10-11 the chemical
+elements won on all five ("everyone has a notion of them, their names are small, and
+even have a short code"); lead with that kind of universe, not with a guess at his
+childhood or a local or themed one (that cost five rounds).
+
+**Past rejections are not bans.** A universe turned down for one family is available
+for the next ("all options we haven't used yet become available again"). Exclude only
+universes already IN USE: Dragon Ball = agents, chemical elements = ORBIS's trained
+networks, brain regions = Jarvis's modules.
 
 ### 2. Operators, not vibes
 
@@ -178,7 +213,7 @@ Three checks on the head term itself:
    `tinker-*` looked free compound-by-compound while Autodesk held **TINKERCAD**
    (US 5498100, class 9, software), alongside TINKERKIT and TINKER3D.
 3. Do we **actually own an instance of it**? The head we own beats the head we
-   like. The user owned `thetinkerzone.com` but not `tinker`, `tinkerzone.com` or
+   like. the architect owned `thetinkerzone.com` but not `tinker`, `tinkerzone.com` or
    `tinkercoin.com` (held since 2013) — so the defensible family was
    **TheTinker\***, not bare **Tinker\***.
 
@@ -258,3 +293,28 @@ If the owner then asks **what a filing costs** (this is a later ask, not this re
 - **Persisted-but-not-painted (2026-08-26 class):** if the owner says he does
   not see the answer, say “reload the tab” first. Disk + session jsonl can hold
   a reply the `#messages` region never painted.
+- **One family label for a set of models (2026-10-11):** the data index named every
+  ORBIS network "Vigia N.x". the architect: "I don't like the name Vigia. I would like to give
+  each network a different name, within the same context/universe … but we already
+  started with Goku, and this universe is reserved for agents." Fix: Step 1 asks the
+  shape (family label vs one character per member) before any name is proposed.
+- **Two rounds of manga and childhood TV (2026-10-11):** Step 1 said "a universe
+  people of his age where he grew up all know", so round 1 led with Saint Seiya and
+  round 2 with Transformers. the architect: "I never watched this Saint Seiya", then "you are
+  narrowing yourself into manga. OpenAI just used stellar bodies … and I am sure there
+  is a rationale behind Anthropic's names too." Fix: Step 1 now opens with the labs'
+  schemes and rationale, needs five or more domains with at most one from fiction,
+  and asks which universes he knows before ranking fiction first.
+- **Catalan-only round (2026-10-11):** after the manga fix, round 3 led with birds of
+  prey in Catalan (Xoriguer, Esparver), rose winds, Catalan peaks, castells and Gaudí,
+  because Step 1's own examples were regional. the architect: "Do not narrow yourself into
+  things that only a catalan knows, or things that are only in catalan. Science is also
+  known here, and there are a lot of weird names in the parts of the cells we learn at
+  school." Fix: Step 1 asks for domains anyone who went to school knows, lists school
+  science first, international names, and caps regional universes at one extra row.
+- **2026-10-11, rejected universes stored as bans; five rounds to the answer.** The
+  network-naming run wrote each turned-down universe into the index as "rejected", and
+  reached chemical elements only after manga, regional and themed rounds. the architect:
+  "Remembering my rejects is futile ... all options we haven't used yet become available
+  again." Fix: Step 1 ranks by five tests (relatable, short + code, ordered, enough,
+  unused) with theme last, and excludes only universes IN USE, never past rejections.

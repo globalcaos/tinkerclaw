@@ -46,6 +46,11 @@ import {
   resolveBootstrapProfileScopesForRole,
   type DeviceBootstrapProfile,
 } from "../../../shared/device-bootstrap-profile.js";
+import {
+  parseCookieHeader,
+  sanitizeSeatId,
+  TINKER_SEAT_COOKIE,
+} from "../../../shared/hivemind-seats.js";
 import { roleScopesAllow } from "../../../shared/operator-scope-compat.js";
 import {
   isBrowserOperatorUiClient,
@@ -1297,6 +1302,17 @@ export function attachGatewayWsMessageHandler(params: {
           sharedGatewaySessionGeneration,
           presenceKey,
           clientIp: reportedClientIp,
+          seatId:
+            sanitizeSeatId(connectParams.seatId) ??
+            sanitizeSeatId(
+              parseCookieHeader(
+                typeof upgradeReq.headers.cookie === "string"
+                  ? upgradeReq.headers.cookie
+                  : undefined,
+                TINKER_SEAT_COOKIE,
+              ),
+            ) ??
+            undefined,
           canvasHostUrl,
           canvasCapability,
           canvasCapabilityExpiresAtMs,

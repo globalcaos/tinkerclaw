@@ -6,10 +6,12 @@
  * pluck one field. A small in-memory cache (60s TTL) keeps the three sibling
  * calls in a single tick from doing three identical fetches.
  *
- * Unauthenticated rate limit is 60 req/h per IP — plenty for the 6h cadence
- * across a handful of repos. If GITHUB_TOKEN is set in env, requests are
- * authenticated (5000/h).
+ * These endpoints are PUBLIC and are called anonymously by default. The token
+ * is OPTIONAL: set `plugins.tinkerclaw-pulse-panel.credentials.githubToken`
+ * to raise the rate limit from 60 req/h
+ * per IP to 5000/h. Nothing here reads a git or gh credential store.
  */
+import { githubToken } from "./credentials.js";
 import type { PollerFn } from "./index.js";
 
 type RepoFields = {
@@ -32,8 +34,9 @@ async function fetchRepo(owner: string, repo: string): Promise<RepoFields> {
     Accept: "application/vnd.github+json",
     "User-Agent": "tinkerclaw-pulse-panel",
   };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const token = githubToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
   const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
   if (!res.ok) {
@@ -92,7 +95,8 @@ export async function fetchStargazerTimeline(args: string): Promise<StargazerTim
     Accept: "application/vnd.github+json",
     "User-Agent": "tinkerclaw-pulse-panel",
   };
-  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const metaToken = githubToken();
+  if (metaToken) headers.Authorization = `Bearer ${metaToken}`;
   const metaRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
   if (!metaRes.ok) {
     throw new Error(`github repo ${owner}/${repo}: HTTP ${metaRes.status} ${metaRes.statusText}`);

@@ -115,6 +115,39 @@ Default: `"once"`.
 }
 ```
 
+### `agents.defaults.memoryIndexMaxChars`
+
+Soft budget for the root `MEMORY.md`, the memory index injected on every
+main-session turn. Default: `8000`. The index is meant to hold one short line
+per topic, with the detail in topic files under `memory/` that the agent opens
+with `memory_get` (see [The memory index](/concepts/memory#the-memory-index)). Over
+the budget, OpenClaw asks for detail to move into topic files. This setting
+never truncates the file; `bootstrapMaxChars` still does that.
+
+```json5
+{
+  agents: { defaults: { memoryIndexMaxChars: 8000 } },
+}
+```
+
+### `agents.defaults.memoryIndexWarning`
+
+What happens when `MEMORY.md` is over `memoryIndexMaxChars`. Default: `"watch"`.
+
+- `"off"`: no check, and no line in `/context` or `openclaw doctor`.
+- `"watch"`: a gateway log line once per size step (a tenth of the budget),
+  plus a line in `/context` and `openclaw doctor`. Nothing is added to the
+  prompt.
+- `"once"`: also adds a short `[Memory index over budget]` block to the turn
+  prompt, once per size step.
+- `"always"`: adds that block on every run while the index is over budget.
+
+```json5
+{
+  agents: { defaults: { memoryIndexWarning: "once" } }, // off | watch | once | always
+}
+```
+
 ### Context budget ownership map
 
 OpenClaw has multiple high-volume prompt/context budgets, and they are
@@ -124,6 +157,8 @@ knob.
 - `agents.defaults.bootstrapMaxChars` /
   `agents.defaults.bootstrapTotalMaxChars`:
   normal workspace bootstrap injection.
+- `agents.defaults.memoryIndexMaxChars`:
+  soft size budget for `MEMORY.md` as the memory index (warns, never truncates).
 - `agents.defaults.startupContext.*`:
   one-shot reset/startup model-run prelude, including recent daily
   `memory/*.md` files. Bare chat `/new` and `/reset` commands are

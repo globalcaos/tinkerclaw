@@ -1,9 +1,9 @@
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 /**
  * OwnTracks HTTP webhook receiver (Node.js, zero deps).
  * Stores location updates in JSON files.
  */
 import { createServer } from "http";
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -31,10 +31,13 @@ function saveHistory(h) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", c => chunks.push(c));
+    req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-      catch (e) { reject(e); }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString()));
+      } catch (e) {
+        reject(e);
+      }
     });
     req.on("error", reject);
   });

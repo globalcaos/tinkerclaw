@@ -8,12 +8,15 @@
  * - No new window/tab creation — only attaches to user-selected tabs
  * - Token-based auth to gateway relay on port 18792
  *
- * Protocol: connects to extension-relay.ts via WebSocket at ws://127.0.0.1:<port>/extension.
+ * Protocol: connects to extension-relay.ts via WebSocket at ws://<host>:<port>/extension.
+ * Host and port are configurable on the options page (default 127.0.0.1:18792) so the relay
+ * can live on another machine, reached over the LAN or an SSH tunnel.
  * Relay sends forwardCDPCommand requests; extension forwards them via chrome.debugger API.
  * Extension sends forwardCDPEvent messages for debugger events back to relay.
  */
 
 const DEFAULT_PORT = 18792;
+const DEFAULT_HOST = "127.0.0.1";
 
 const TAB_GROUP_NAME = "Tinker Shared";
 // FORK 2026-06-04 (Browser Relay upgrade): make the shared/focused tab STAND OUT.
@@ -31,6 +34,48 @@ const BADGE = {
 
 /** @type {WebSocket|null} */
 let relayWs = null;
+
+// FORK 2026-10-21 — extension log lines reach the gateway journal (the architect: "Fix the gap, make logs
+// proper"). Service-worker console output stays inside Chromium, so every log/warn/error is also kept
+// in a ring buffer (persisted, so a worker recycle or a relay outage loses nothing) and sent to the
+// relay as {method:"extLog"} whenever the socket is open. The gateway logs them as [relay-ext].
+const EXT_LOG_MAX = 300;
+let extLogBuf = [];
+let extLogLoaded = false;
+chrome.storage.local.get("tinkerExtLog").then(({ tinkerExtLog }) => {
+  if (Array.isArray(tinkerExtLog)) extLogBuf = tinkerExtLog.concat(extLogBuf).slice(-EXT_LOG_MAX);
+  extLogLoaded = true;
+  flushExtLog();
+});
+for (const level of ["log", "warn", "error"]) {
+  const orig = console[level].bind(console);
+  console[level] = (...args) => {
+    orig(...args);
+    const msg = args
+      .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+      .join(" ")
+      .slice(0, 500);
+    extLogBuf.push({ ts: Date.now(), level, msg });
+    if (extLogBuf.length > EXT_LOG_MAX) extLogBuf.splice(0, extLogBuf.length - EXT_LOG_MAX);
+    flushExtLog();
+  };
+}
+function flushExtLog() {
+  const ws = relayWs;
+  if (!ws || ws.readyState !== WebSocket.OPEN || !extLogLoaded) {
+    void chrome.storage.local.set({ tinkerExtLog: extLogBuf });
+    return;
+  }
+  if (extLogBuf.length === 0) return;
+  const lines = extLogBuf;
+  extLogBuf = [];
+  try {
+    ws.send(JSON.stringify({ method: "extLog", params: { lines } }));
+  } catch {
+    extLogBuf = lines.concat(extLogBuf).slice(-EXT_LOG_MAX);
+  }
+  void chrome.storage.local.set({ tinkerExtLog: extLogBuf });
+}
 /** @type {Promise<void>|null} */
 let relayConnectPromise = null;
 
@@ -58,6 +103,20 @@ const reattachTimers = new Map();
 // Relay port + auth token
 // ---------------------------------------------------------------------------
 
+function isLoopbackHostName(host) {
+  const h = String(host || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  return h === "localhost" || h === "::1" || h === "::ffff:127.0.0.1" || /^127\./.test(h);
+}
+
+async function getRelayHost() {
+  const stored = await chrome.storage.local.get(["relayHost"]);
+  const raw = String(stored.relayHost || "").trim();
+  return raw || DEFAULT_HOST;
+}
+
 async function getRelayPort() {
   const stored = await chrome.storage.local.get(["relayPort"]);
   const raw = stored.relayPort;
@@ -68,17 +127,24 @@ async function getRelayPort() {
   return n;
 }
 
-async function getRelayToken() {
+async function getRelayToken(host) {
   // Try stored token first
   const stored = await chrome.storage.local.get(["relayToken"]);
   if (stored.relayToken) {
     return stored.relayToken;
   }
 
+  // The relay only waives the token for a chrome-extension:// origin arriving over
+  // loopback (extension-relay.ts upgrade handler). A remote relay always demands one,
+  // so never pretend an empty token is fine there.
+  if (!isLoopbackHostName(host ?? DEFAULT_HOST)) {
+    return "";
+  }
+
   // Auto-discover: probe the relay status endpoint (no auth needed for status)
   const port = await getRelayPort();
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/extension/status`);
+    const resp = await fetch(`http://${host ?? DEFAULT_HOST}:${port}/extension/status`);
     if (resp.ok) {
       // Relay is up and doesn't require token for extension connections
       // (loopback + chrome-extension:// origin is sufficient)
@@ -172,7 +238,7 @@ async function restoreSharedTabs() {
     for (const tabId of tinkerSharedTabs) {
       try {
         const tab = await chrome.tabs.get(tabId);
-        if (tab) {
+        if (tab && !tabs.has(tabId)) {
           await attachTab(tabId, { skipAttachedEvent: true });
           await addTabToGroup(tabId);
         }
@@ -209,14 +275,14 @@ async function restoreSharedTabs() {
 // Relay port discovery
 // ---------------------------------------------------------------------------
 
-async function findRelayPort(basePort) {
+async function findRelayPort(host, basePort) {
   const candidates = [basePort, basePort + 1, basePort - 1];
   for (const port of candidates) {
     if (port <= 0 || port > 65535) {
       continue;
     }
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/extension/status`, {
+      const res = await fetch(`http://${host}:${port}/extension/status`, {
         signal: AbortSignal.timeout(800),
       });
       if (res.ok) {
@@ -242,13 +308,20 @@ async function ensureRelayConnection() {
   }
 
   relayConnectPromise = (async () => {
+    const host = await getRelayHost();
     const basePort = await getRelayPort();
-    const port = await findRelayPort(basePort);
-    const token = await getRelayToken();
-    const httpBase = `http://127.0.0.1:${port}`;
+    const port = await findRelayPort(host, basePort);
+    const token = await getRelayToken(host);
+    if (!token && !isLoopbackHostName(host)) {
+      throw new Error(
+        `Relay host ${host} is not loopback, so the relay requires a token. ` +
+          "Open the extension options and paste the gateway token.",
+      );
+    }
+    const httpBase = `http://${host}:${port}`;
     const wsUrl = token
-      ? `ws://127.0.0.1:${port}/extension?token=${encodeURIComponent(token)}`
-      : `ws://127.0.0.1:${port}/extension`;
+      ? `ws://${host}:${port}/extension?token=${encodeURIComponent(token)}`
+      : `ws://${host}:${port}/extension`;
 
     // Fast preflight: is the relay server up?
     try {
@@ -280,7 +353,13 @@ async function ensureRelayConnection() {
     });
 
     ws.addEventListener("message", (event) => void onRelayMessage(String(event.data || "")));
-    ws.addEventListener("close", () => onRelayClosed("closed"));
+    ws.addEventListener("close", (ev) => {
+      console.warn(
+        `[tinkerclaw-relay] relay socket closed code=${ev.code} reason=${ev.reason || "none"}`,
+      );
+      onRelayClosed("closed");
+    });
+    flushExtLog();
     ws.addEventListener("error", () => onRelayClosed("error"));
 
     if (!debuggerListenersInstalled) {
@@ -1058,16 +1137,56 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // Service worker startup — restore previously shared tabs
 // ---------------------------------------------------------------------------
 
-restoreSharedTabs().then(() => {
-  updateGlobalBadge();
-  void ensureKeepAlive();
-  // Try to reconnect to relay if we have shared tabs
-  if (tabs.size > 0) {
-    ensureRelayConnection().catch((err) => {
-      console.warn(
-        "[tinkerclaw-relay] relay reconnect on startup failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
+function restoreAndReconnect(source) {
+  return restoreSharedTabs().then(() => {
+    updateGlobalBadge();
+    void ensureKeepAlive();
+    console.log(`[tinkerclaw-relay] restore (${source}): ${tabs.size} shared tab(s)`);
+    // Try to reconnect to relay if we have shared tabs
+    if (tabs.size > 0) {
+      ensureRelayConnection().catch((err) => {
+        console.warn(
+          "[tinkerclaw-relay] relay reconnect on startup failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+    }
+  });
+}
+
+restoreAndReconnect("startup");
+
+// FORK 2026-10-21 — after a Chromium restart with session restore, the service worker can wake
+// before the restored "Tinker Shared" group exists, so the startup pass found nothing and the shares
+// were lost (the architect: restart Chromium "with its same tabs shared"). Retry when the group appears and a
+// few times after startup; attachTab skips tabs already attached.
+chrome.tabGroups.onCreated.addListener((g) => {
+  if (g.title === TAB_GROUP_NAME) void restoreAndReconnect("group-created");
+});
+chrome.tabGroups.onUpdated.addListener((g) => {
+  if (g.title === TAB_GROUP_NAME) void restoreAndReconnect("group-updated");
+});
+for (const ms of [3000, 10000, 30000]) {
+  setTimeout(() => void restoreAndReconnect(`retry-${ms / 1000}s`), ms);
+}
+
+// FORK 2026-10-15 — Tinker page → local helper (see tinker-bridge.js). Only messages from this
+// extension's own content script on a /tinker/ page reach the helper; only three actions pass.
+const LOCAL_HELPER = "com.tinkerclaw.local";
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || !message.tinkerLocal) return false;
+  if (sender.id !== chrome.runtime.id || !/\/tinker\//.test(sender.url || "")) {
+    sendResponse({ ok: false, error: "not from a Tinker page" });
+    return false;
   }
+  const msg = message.tinkerLocal;
+  if (!["ping", "open", "play"].includes(msg && msg.action)) {
+    sendResponse({ ok: false, error: "unknown action" });
+    return false;
+  }
+  chrome.runtime.sendNativeMessage(LOCAL_HELPER, msg, (res) => {
+    const err = chrome.runtime.lastError;
+    sendResponse(err ? { ok: false, error: err.message, noHelper: true } : res);
+  });
+  return true; // answer comes asynchronously
 });

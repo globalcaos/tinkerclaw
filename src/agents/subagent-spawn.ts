@@ -830,6 +830,8 @@ export async function spawnSubagentDirect(
     targetAgentConfig,
     modelOverride,
     thinkingOverrideRaw,
+    task,
+    ...(label ? { label } : {}),
   });
   if (plan.status === "error") {
     return {

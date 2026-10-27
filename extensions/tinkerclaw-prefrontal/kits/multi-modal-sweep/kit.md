@@ -22,7 +22,7 @@ parallelism:
     is a single fan-out of four lenses, not a loop.
 model:
   provider: "anthropic"
-  name: "claude-sonnet-4-6"
+  name: "claude-sonnet-5-5"
   hosting: "cloud API"
 ---
 

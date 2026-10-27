@@ -99,9 +99,15 @@ export function writeSessionStoreCache(params: {
   mtimeMs?: number;
   sizeBytes?: number;
   serialized?: string;
+  /**
+   * FORK 2026-09-24 — the caller HANDS `store` over: the cache keeps it by
+   * reference instead of a structuredClone (~30 ms on a 3.7 MB store). Only for
+   * an object nothing else can reach or write again. Default: clone.
+   */
+  adopt?: boolean;
 }): void {
   const entry: SessionStoreCacheEntry = {
-    store: structuredClone(params.store),
+    store: params.adopt === true ? params.store : structuredClone(params.store),
     mtimeMs: params.mtimeMs,
     sizeBytes: params.sizeBytes,
     serialized: params.serialized,

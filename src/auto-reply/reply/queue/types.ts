@@ -1,4 +1,5 @@
 import type { ExecToolDefaults } from "../../../agents/bash-tools.js";
+import type { ThinkSource } from "../../../agents/embedded-agent-runner/run/types.js";
 import type { SkillSnapshot } from "../../../agents/skills.js";
 import type { SilentReplyPromptMode } from "../../../agents/system-prompt.types.js";
 import type { SessionEntry } from "../../../config/sessions.js";
@@ -28,6 +29,17 @@ export type FollowupRun = {
   transcriptPrompt?: string;
   /** Provider message ID, when available (for deduplication). */
   messageId?: string;
+  /**
+   * FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 G3) — EVERY prompt key this
+   * run answers when it answers more than the one in `messageId`, in arrival order. PQ-1's one
+   * identity: for webchat each key is a client's chat.send idempotencyKey. Set by the producers that
+   * merge several prompts into one run: collect mode's batch (queue/drain.ts) and a lost steer
+   * delivery re-enqueued with every buffered caller's key (agent-runner.ts `onDeliveryLost`).
+   * Absent on an ordinary run, whose one key is `messageId`. Read it through
+   * resolveFollowupRunPromptKeys, never directly: that is the one place `messageId` is folded in.
+   * Not a dedupe key: enqueue.ts keeps deduplicating on `messageId`.
+   */
+  promptKeys?: string[];
   summaryLine?: string;
   enqueuedAt: number;
   images?: Array<{ type: "image"; data: string; mimeType: string }>;
@@ -85,6 +97,18 @@ export type FollowupRun = {
     authProfileId?: string;
     authProfileIdSource?: "auto" | "user";
     thinkLevel?: ThinkLevel;
+    /**
+     * FORK 2026-10-09 (effort slider) — who chose `thinkLevel` (ThinkSource). Carried on the run
+     * like `thalamusChain`, for the same reason: it is decided during reply resolution and read at
+     * execution time, by the attempt's `__openclawThinkSource` smuggle key. PERSISTED NOWHERE.
+     * Absent reads as "default".
+     */
+    thinkSource?: ThinkSource;
+    /**
+     * FORK 2026-10-09 — Thalamus called ultracode for this turn. Set only when `thinkSource` is
+     * "thalamus": a human pin overrules the router's whole effort decision, ultracode included.
+     */
+    ultracode?: boolean;
     verboseLevel?: VerboseLevel;
     reasoningLevel?: ReasoningLevel;
     elevatedLevel?: ElevatedLevel;
@@ -117,3 +141,25 @@ export type ResolveQueueSettingsParams = {
   inlineOptions?: Partial<QueueSettings>;
   pluginDebounceMs?: number;
 };
+
+/**
+ * FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 G3 and G5) — the prompt keys a
+ * FollowupRun answers: its `promptKeys` in order, then its `messageId` when not already listed; each
+ * trimmed, with empties and repeats dropped (the first occurrence wins). ONE definition for every
+ * producer and reader, so the client sees the same key set from each: queue/drain.ts (a batch's
+ * keys), agent-runner.ts (a lost steer's keys, a turn's reply operation), followup-runner.ts (the
+ * `followup` start event, the reply operation) and gateway/session-utils.ts (BEHIND). It lives beside
+ * the type because this module has no runtime imports, which keeps it cheap for the gateway to load.
+ */
+export function resolveFollowupRunPromptKeys(
+  run: Pick<FollowupRun, "messageId" | "promptKeys">,
+): string[] {
+  const keys: string[] = [];
+  for (const raw of [...(run.promptKeys ?? []), run.messageId]) {
+    const key = typeof raw === "string" ? raw.trim() : "";
+    if (key && !keys.includes(key)) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}

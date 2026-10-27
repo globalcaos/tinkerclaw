@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { clearOrcaBiasCache } from "../../infra/orca-bias-store.js";
+import { clearThalamusCoolingCache, recordSupplyLimit } from "../../infra/thalamus-cooling.js";
+import { clearThalamusTierDefaultsCache } from "../../infra/thalamus-tier-defaults.js";
 import { relCostLookup } from "../../shared/rel-cost-table.js";
 import {
   classifyTaskDomain,
   frontierRungsFor,
   thalamusRoute,
 } from "../../shared/thalamus-frontier.js";
+import { supplyOfKey } from "../../shared/thalamus-supply.js";
 import { createModelSelectionState, formatThalamusRouteNotice } from "./model-selection.js";
 
 const quotaMocks = vi.hoisted(() => ({
@@ -106,14 +109,25 @@ beforeEach(() => {
   quotaMocks.resolveQuotaAwareAutoModel.mockReset();
   quotaMocks.resolveQuotaAwareAutoModel.mockReturnValue(null);
   delete process.env.OPENCLAW_THALAMUS_ROUTING;
-  delete process.env.OPENCLAW_ORCA_BIAS_FILE;
+  // Never the operator's own files: without these the suite read ~/.openclaw/thalamus-tier-defaults.json
+  // (pinned from the model picker on 2026-09-23) and failed 4 tests on that machine only.
+  const none = mkdtempSync(join(tmpdir(), "thalamus-none-"));
+  process.env.OPENCLAW_ORCA_BIAS_FILE = join(none, "orca-bias.json");
+  process.env.OPENCLAW_THALAMUS_DEFAULTS_FILE = join(none, "thalamus-tier-defaults.json");
+  process.env.OPENCLAW_THALAMUS_COOLING_FILE = join(none, "thalamus-cooling.json");
   clearOrcaBiasCache();
+  clearThalamusTierDefaultsCache();
+  clearThalamusCoolingCache();
 });
 
 afterEach(() => {
   delete process.env.OPENCLAW_THALAMUS_ROUTING;
   delete process.env.OPENCLAW_ORCA_BIAS_FILE;
+  delete process.env.OPENCLAW_THALAMUS_DEFAULTS_FILE;
+  delete process.env.OPENCLAW_THALAMUS_COOLING_FILE;
   clearOrcaBiasCache();
+  clearThalamusTierDefaultsCache();
+  clearThalamusCoolingCache();
 });
 
 describe("createModelSelectionState THALAMUS routing", () => {
@@ -171,7 +185,7 @@ describe("createModelSelectionState THALAMUS routing", () => {
     expect((smart?.smart ?? 0) - (fast?.smart ?? 0)).toBeLessThanOrEqual(15);
   });
 
-  it("defaults to the balanced stop when the dial file does not exist", async () => {
+  it("defaults to the middle stop, default, when the dial file does not exist (2026-10-02; smart for one day)", async () => {
     process.env.OPENCLAW_ORCA_BIAS_FILE = join(
       mkdtempSync(join(tmpdir(), "thalamus-bias-")),
       "missing.json",
@@ -261,5 +275,161 @@ describe("createModelSelectionState THALAMUS routing", () => {
     expect(state.thalamusRoute).toBeUndefined();
     expect(state.provider).toBe(AUTO_PROVIDER);
     expect(state.model).toBe(AUTO_MODEL);
+  });
+});
+
+// the architect, 2026-10-02 (full deploy): his picks are suggestions, and a limit cools its supply.
+describe("createModelSelectionState THALAMUS suggestions and cooling", () => {
+  function writeSuggestions(content: unknown): void {
+    const file = process.env.OPENCLAW_THALAMUS_DEFAULTS_FILE!;
+    writeFileSync(file, JSON.stringify(content));
+    clearThalamusTierDefaultsCache();
+  }
+  const routedKey = (state: Awaited<ReturnType<typeof createState>>): string =>
+    `${state.thalamusRoute?.provider}/${state.thalamusRoute?.model}`;
+
+  it("runs the suggestion of the dial's stop on a general task, not the frontier's own pick", async () => {
+    writeBias(6);
+    const want = expectedRoute(6);
+    expect(want?.rung.key).not.toBe(GROK);
+    writeSuggestions({ smart: { model: GROK } });
+
+    const state = await createState({});
+
+    expect(routedKey(state)).toBe(GROK);
+    expect(state.thalamusRoute?.notice).toContain("suggestion");
+  });
+
+  it("still reads the old file: high / medium / low strings", async () => {
+    writeBias(6);
+    writeSuggestions({ high: GROK });
+
+    expect((await createState({})).thalamusRoute?.model).toBe("grok-4.6");
+  });
+
+  it("answers for the stop the dial is on: the middle stop for an unset dial", async () => {
+    process.env.OPENCLAW_ORCA_BIAS_FILE = join(
+      mkdtempSync(join(tmpdir(), "thalamus-bias-")),
+      "missing.json",
+    );
+    clearOrcaBiasCache();
+    writeSuggestions({ smart: { model: OPUS }, default: { model: GROK }, budget: { model: LUNA } });
+
+    const state = await createState({});
+
+    expect(state.thalamusRoute?.biasIdx).toBe(3);
+    expect(routedKey(state)).toBe(GROK);
+  });
+
+  it("treats a suggestion for a model the catalog does not have as an unset stop", async () => {
+    writeBias(6);
+    const want = expectedRoute(6);
+    writeSuggestions({ smart: { model: "nobody/ghost-9" } });
+
+    const state = await createState({});
+
+    expect(routedKey(state)).toBe(want?.rung.key);
+  });
+
+  it("moves off a suggestion whose supply just hit a limit, to the best supply still open, and keeps the chain off it", async () => {
+    writeBias(6);
+    writeSuggestions({ smart: { model: GROK } });
+    expect(routedKey(await createState({}))).toBe(GROK);
+
+    // A 429 with a reset time: the failover path writes this exact record.
+    const hit = recordSupplyLimit({
+      provider: "xai",
+      model: "grok-4.6",
+      reason: "rate_limit",
+      error: "Rate limit reached. Try again in ~90 min.",
+    });
+    expect(hit?.supply).toBe("xai");
+
+    const after = await createState({});
+
+    expect(supplyOfKey(routedKey(after))).not.toBe("xai");
+    expect(after.thalamusRoute?.chain.map(supplyOfKey)).not.toContain("xai");
+    expect(after.thalamusRoute?.notice).toContain("cooling");
+  });
+
+  it("with no suggestion, a cooling supply that the open board would have used is skipped on the next turn", async () => {
+    writeBias(0);
+    const open = expectedRoute(0)!.rung.key;
+    expect(routedKey(await createState({}))).toBe(open);
+
+    recordSupplyLimit({
+      provider: open.slice(0, open.indexOf("/")),
+      model: open.slice(open.indexOf("/") + 1),
+      reason: "rate_limit",
+      error: "usage limit. resets in 2 hours",
+    });
+
+    const after = await createState({});
+
+    expect(supplyOfKey(routedKey(after))).not.toBe(supplyOfKey(open));
+  });
+});
+
+// FORK 2026-10-09 — the TASK chooses the effort (src/shared/thalamus-effort.ts); the dial and the
+// domain still choose the model. The stop's effort is the ceiling.
+describe("createModelSelectionState THALAMUS task effort", () => {
+  const CODING = [
+    "Refactor the retry handling across src/infra/retry.ts and src/agents/runner.ts, then debug the",
+    "flaky unit test in src/infra/retry.test.ts and fix the typescript compile error.",
+    "```ts",
+    "export async function withRetry() {}",
+    "```",
+  ].join("\n");
+
+  afterEach(() => {
+    delete process.env.OPENCLAW_THALAMUS_TASK_EFFORT;
+  });
+
+  it("a hello on the smart stop runs at low, on the model the dial chose", async () => {
+    writeBias(6);
+    const want = expectedRoute(6, "hello");
+    expect(want?.rung.effort).toBe("max");
+
+    const route = (await createState({ promptText: "hello" })).thalamusRoute;
+
+    expect(`${route?.provider}/${route?.model}`).toBe(want?.rung.key);
+    expect(route?.effort).toBe("low");
+    expect(route?.ultracode).toBe(false);
+    expect(route?.effortWhy).toBe("low: greeting");
+    expect(route?.notice).toContain("@low");
+  });
+
+  it("a multi-file refactor and debug on the smart stop runs at max with the fan-out", async () => {
+    writeBias(6);
+    expect(expectedRoute(6, CODING)?.rung.effort).toBe("max");
+
+    const route = (await createState({ promptText: CODING })).thalamusRoute;
+
+    expect(route?.domain).toBe("code");
+    expect(route?.effort).toBe("max");
+    expect(route?.ultracode).toBe(true);
+    expect(route?.effortWhy.startsWith("max + ultracode: ")).toBe(true);
+  });
+
+  it("OPENCLAW_THALAMUS_TASK_EFFORT=off keeps the stop's effort and never asks for the fan-out", async () => {
+    writeBias(6);
+    process.env.OPENCLAW_THALAMUS_TASK_EFFORT = "off";
+    const want = expectedRoute(6, "hello");
+
+    const route = (await createState({ promptText: "hello" })).thalamusRoute;
+
+    expect(route?.effort).toBe(want?.rung.effort);
+    expect(route?.ultracode).toBe(false);
+    expect(route?.effortWhy).toBe("");
+  });
+
+  it("with no words to read, the stop's effort stands", async () => {
+    writeBias(6);
+    const want = expectedRoute(6);
+
+    const route = (await createState({})).thalamusRoute;
+
+    expect(route?.effort).toBe(want?.rung.effort);
+    expect(route?.effortWhy).toBe("");
   });
 });

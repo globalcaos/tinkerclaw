@@ -51,7 +51,7 @@ A Graph PATCH returning 200 proves only that bytes were stored. It does not prov
 **Tools:** exec, read
 **Done when:** The latest live thread is loaded and the exact message being answered is named.
 
-Run the Outlook incremental sync first. Retrieve the complete conversation, not `bodyPreview`. Order it oldest-to-newest and distinguish:
+Probe the token first: `timeout 30 node ~/.openclaw/workspace/skills/outlook-hack/scripts/outlook.mjs mail list --top 1`. On `AADSTS700084` (24 h SPA token) do NOT stop and ask: run `timeout 40 openclaw browser tabs`; a `teams.cloud.microsoft` tab listed means renew from it (skill outlook-hack § Renew the token, three calls) once his words say it is shared, and only ask him to share a tab when none is listed. Then run the Outlook incremental sync. Retrieve the complete conversation, not `bodyPreview`. Order it oldest-to-newest and distinguish:
 
 - inbound human messages;
 - the configured sender's prior replies;
@@ -108,6 +108,7 @@ Preferred paths, in order:
 
 - Open Reply/Reply All in Outlook so Outlook creates the draft and inserts the configured signature, then patch it.
 - Reuse an existing signature-bearing draft in the correct thread.
+- If the local Outlook CLI is installed, it adds the signature by default (since 2026-10-09) to `outlook.mjs mail reply-draft <id> --body-file <fragment.html>`, `mail draft --to … --subject … --body-file <fragment.html>` and `mail forward-draft`. It copies the sender's OWN `id="Signature"` block, taken from the newest sent mail where that block sits above the quoted thread, with every `cid:` image. `--no-signature` opts out. The same rule applies to a NEW outbound mail, not only to replies.
 - If only Graph is available, clone the complete `id="Signature"` block from a recent sent message **and copy every inline attachment referenced by its `cid:` URLs into the draft with matching `contentId`**. Do not paste signature HTML without its logo attachment.
 
 If none is possible, stop and report `signature formatting unverified`; do not silently ship a sign-off-only draft.
@@ -132,7 +133,7 @@ Never splice at the first `<hr>`. That destroys the current sender's signature w
 **Tools:** exec, browser
 **Done when:** Storage and appearance checks are both green, or appearance is explicitly marked unverified.
 
-Re-fetch the draft from Graph and verify:
+With the local CLI this is one call: `outlook.mjs mail check-draft <id> --html-out draft.html` (exit 1 when the sender's signature is missing, doubled or below the quote, or a `cid:` image has no inline attachment); then render `draft.html` and look. Without it, re-fetch the draft from Graph and verify:
 
 - `isDraft: true`;
 - subject, `To`, `Cc`, conversation/thread anchor;
@@ -146,6 +147,8 @@ Re-fetch the draft from Graph and verify:
 Then open the draft in Outlook and look at it. Verify paragraph spacing, the configured sign-off, sender name/title/logo/contact details, and the visible quoted-thread separator. A string match proves presence; only the Outlook render proves formatting.
 
 ## Constraints
+
+- Never propose meeting days or time slots that were not read from the sender's calendar this turn. With no calendar read, give his mobile (<owner-mobile>) and ask them to call when they can, or ask him for his free slots first.
 
 - Draft only. Never send.
 - Never replace the entire raw body when a signature-bearing draft exists.
@@ -161,7 +164,11 @@ Then open the draft in Outlook and look at it. Verify paragraph spacing, the con
 ## Failures Overcome
 
 - **2026-08-28 — anonymized compliance-thread case:** a Graph reply was patched at the first `<hr>`, preserving the quote but omitting the sender's Outlook signature. The HTML survived, yet the email was not correctly formatted. The sender repaired it before sending. The cure is a signature-bearing draft, semantic `id="Signature"` splice, CID attachment preservation and rendered Outlook verification.
+- **2026-10-09 — supplier RFQs and replies:** six new outbound mails and five replies were created through Graph with a typed sign-off block (name, title, company, address) in place of the sender's Outlook signature; the six RFQs were sent that way. This recipe was never opened, because the turn read only the Outlook skill. The owner: "my signature is not correct". Cure: the skill now points here, and `--signature` clones the real block with its logo in one call.
+- **2026-10-09 (second pass) — the cure was opt-in:** `--signature` had to be remembered on every call, and its lookup took the first `id="Signature"` anywhere in a sent mail, so a reply sent without the sender's own signature, quoting an Outlook user whose block is followed by their own `appendonsend`, would have signed the draft with that person's name. Cure: the CLI adds the signature by default, accepts only a block above the quote (tested), and `mail check-draft` verifies a draft in one call.
 - **2026-08-28 — shareability correction:** sender identity, signature expectations and sent-mail specimen were moved to `{{profile_file}}`; the recipe now carries only portable workflow logic.
 - Treating `PATCH 200` as visual proof.
 - Editing against `bodyPreview`, which truncates the conversation.
 - Selecting a private forward or the sender's own draft as the reply anchor.
+- **2026-10-15 — expired token, tab already shared:** drafting the mail to his father and brother, the Outlook token was dead (`AADSTS700084`) and the turn asked him for a go without listing the browser tabs; a Teams tab was shared the whole time. The owner: "teams compartit, o bé s'havia desconnectat o no s'ha connectat automàticament al reiniciar el browser". Same miss as 2026-10-05 ("You failed to detect that Teams was shared"), so step 1 now carries the tab check and the renewal path, and `outlook.mjs` prints the next step with the error. Also: `mail draft --help` is not supported and the usage line hid `--body-file`, `--attach-dir` and comma-separated `--to`; the line lists them now.
+- **2026-10-10 — slots invented:** the AITEX reply offered "13 to 16 October" with no calendar read; the owner had meetings on the Wednesday: "The email to Sam Ferre does not take into account my calendar." Cure: the constraint above.

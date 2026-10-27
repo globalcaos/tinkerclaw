@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# WordPress media upload wrapper
-# Usage: wp-upload.sh <file_path> [alt_text]
+# WordPress media upload wrapper. Needs WP_ALLOW_PUBLISH=1 (the file goes public).
+# Usage: WP_ALLOW_PUBLISH=1 wp-upload.sh <file_path> [alt_text]
 # Returns: JSON with media ID and URL
 set -euo pipefail
 
@@ -8,49 +8,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 
 # --- Config loading -----------------------------------------------------------
-# Same pinned rules as wp.sh: exactly two explicit locations, no walk up the parent
-# directories, and only WP_[A-Z0-9_]+ keys are imported from the file.
-ENV_FILE=""
-if [[ -n "${WP_ENV_FILE:-}" ]]; then
-  [[ "$WP_ENV_FILE" = /* ]] || { echo "❌ WP_ENV_FILE must be an ABSOLUTE path (got: $WP_ENV_FILE)" >&2; exit 1; }
-  [[ -f "$WP_ENV_FILE" ]] || { echo "❌ WP_ENV_FILE=$WP_ENV_FILE does not exist" >&2; exit 1; }
-  [[ -L "$WP_ENV_FILE" ]] && { echo "❌ WP_ENV_FILE must not be a symlink" >&2; exit 1; }
-  if [[ "$(stat -c '%u' "$WP_ENV_FILE" 2>/dev/null)" != "$(id -u)" ]]; then
-    echo "❌ WP_ENV_FILE must be owned by you — refusing to read credentials from it." >&2; exit 1
-  fi
-  ENV_PERM="$(stat -c '%a' "$WP_ENV_FILE" 2>/dev/null)"
-  if [[ "${ENV_PERM: -2}" != "00" ]]; then
-    echo "❌ WP_ENV_FILE is group/world readable or writable (mode $ENV_PERM). Run: chmod 600 $WP_ENV_FILE" >&2; exit 1
-  fi
-  ENV_FILE="$WP_ENV_FILE"
-elif [[ -f "$SKILL_DIR/.env" ]]; then
-  ENV_FILE="$SKILL_DIR/.env"
-fi
-if [[ -n "$ENV_FILE" ]]; then
-  while IFS='=' read -r key value; do
-    key=$(echo "${key:-}" | xargs)
-    [[ "$key" =~ ^WP_[A-Z0-9_]+$ ]] || continue
-    value="${value%$'\r'}"
-    value="${value%\"}"; value="${value#\"}"
-    value="${value%\'}"; value="${value#\'}"
-    export "$key"="$value"
-  done < "$ENV_FILE"
-fi
-
-: "${WP_URL:?Set WP_URL in .env}"
-: "${WP_USER:?Set WP_USER in .env}"
-: "${WP_APP_PASSWORD:?Set WP_APP_PASSWORD in .env}"
-
-case "$WP_URL" in
-  https://*) ;;
-  *) echo "❌ WP_URL must be https:// (got: $WP_URL). Refusing to send credentials." >&2; exit 1 ;;
-esac
-WP_HOST="${WP_URL#https://}"; WP_HOST="${WP_HOST%%/*}"; WP_HOST="${WP_HOST%%:*}"
-WP_ALLOWED_HOSTS="${WP_ALLOWED_HOSTS:-$WP_HOST}"
-if [[ ",${WP_ALLOWED_HOSTS// /}," != *",${WP_HOST},"* ]]; then
-  echo "❌ WP_URL host '$WP_HOST' is not in WP_ALLOWED_HOSTS. Refusing to send credentials." >&2
-  exit 1
-fi
+# Same ONE loader wp.sh uses. This script used to carry a second copy of it, and
+# that copy gave the implicit <skill>/.env no symlink/ownership/mode check at all.
+# shellcheck source=wp-credentials.sh
+. "$SCRIPT_DIR/wp-credentials.sh"
+wp_bootstrap "$SKILL_DIR"
 
 # OFF SWITCH: an upload is a write, so WP_READONLY=1 stops it before it starts.
 if [[ -n "${WP_READONLY:-}" && "${WP_READONLY}" != "0" ]]; then
@@ -61,12 +23,27 @@ fi
 FILE_PATH="${1:?Usage: wp-upload.sh <file_path> [alt_text]}"
 ALT_TEXT="${2:-}"
 
+# SAFETY: an uploaded file is served at a public wp-content/uploads URL the moment
+# the upload finishes, whether or not any post uses it. That is publishing, so it
+# needs the same per-call consent as wp.sh: WP_ALLOW_PUBLISH=1 in the environment.
+if [[ "${WP_ALLOW_PUBLISH:-0}" != "1" ]]; then
+  echo "❌ Media upload is gated: the file becomes publicly reachable at ${WP_URL}/wp-content/uploads/… immediately." >&2
+  echo "   Confirm with the site owner, then re-run with WP_ALLOW_PUBLISH=1." >&2
+  exit 1
+fi
+
 if [[ ! -f "$FILE_PATH" ]]; then
   echo "File not found: $FILE_PATH" >&2
   exit 1
 fi
 
 FILENAME=$(basename "$FILE_PATH")
+# The name goes into a Content-Disposition header (and a curl -F field), so only
+# plain filename characters are accepted.
+if [[ ! "$FILENAME" =~ ^[A-Za-z0-9._\ -]+$ ]]; then
+  echo "❌ File name '$FILENAME' has characters that cannot be sent safely in a header. Rename it (letters, digits, space . _ -)." >&2
+  exit 1
+fi
 MIME=$(file --mime-type -b "$FILE_PATH")
 
 # Transport. Two walls stack on this endpoint and each needs a different answer:
@@ -97,15 +74,21 @@ print(r.text)
 PY_UP
 )
 else
+  # SAFETY: the password goes in a 0600 netrc file, NEVER in `curl -u`. An argv
+  # element is world-readable in `ps` for the lifetime of the process, so
+  # `-u user:app_password` handed the credential to every other account on the box.
+  # wp_netrc_create installs an EXIT/HUP/INT/TERM trap, so the temp file cannot
+  # outlive a failed curl.
+  wp_netrc_create
   RESPONSE=$(curl -s \
-    -u "${WP_USER}:${WP_APP_PASSWORD}" \
+    --netrc-file "$WP_NETRC" \
     -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36" \
     -H "Accept: application/json" \
     -F "file=@${FILE_PATH};type=${MIME};filename=${FILENAME}" \
     "${WP_URL}/wp-json/wp/v2/media")
 fi
 
-MEDIA_ID=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id','ERROR'))" 2>/dev/null || echo "ERROR")
+MEDIA_ID=$(printf '%s' "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id','ERROR'))" 2>/dev/null || echo "ERROR")
 
 if [[ "$MEDIA_ID" == "ERROR" ]]; then
   echo "Upload failed:" >&2
@@ -127,15 +110,19 @@ requests.post(os.environ["WP_URL_FULL"], auth=auth, impersonate="chrome",
               json={"alt_text": os.environ["WP_ALT"]}, timeout=120)
 PY_ALT
   else
+    # Same rule on the second call — no -u here either.
+    [[ -n "${WP_NETRC:-}" ]] || wp_netrc_create
     curl -s -X PUT \
-      -u "${WP_USER}:${WP_APP_PASSWORD}" \
+      --netrc-file "$WP_NETRC" \
       -H "Content-Type: application/json" \
       -d "$(WP_ALT="$ALT_TEXT" python3 -c 'import json,os; print(json.dumps({"alt_text": os.environ["WP_ALT"]}))')" \
       "${WP_URL}/wp-json/wp/v2/media/${MEDIA_ID}" > /dev/null
   fi
 fi
 
-echo "$RESPONSE" | python3 -c "
+wp_netrc_cleanup
+
+printf '%s' "$RESPONSE" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 print(json.dumps({

@@ -1,4 +1,4 @@
-// FORK 2026-08-19 (the user: classify items so a skim tells you if you must
+// FORK 2026-08-19 (the architect: classify items so a skim tells you if you must
 // answer, act, just read, or skip). The colored circle was a machine kind
 // (FLAG/CHANGED). The tag is a human verb. Display maps both the new tokens
 // and the leftover FLAG/CHANGED kinds sitting on tonight's boards.
@@ -27,7 +27,7 @@ export function stripCronKindPrefix(text: string): string {
  * stable) — never tonight's report headline. Findings live in the items.
  *
  * 2026-08-22: an earlier cut inverted these slots (headline left, name
- * right). The user: "the name of the cron on the left … beginning of summary
+ * right). the architect: "the name of the cron on the left … beginning of summary
  * on the right … not a summary of the issues found, but a summary of what
  * the actual prompt of the cron is asking it to do."
  */

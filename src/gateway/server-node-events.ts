@@ -31,6 +31,7 @@ import {
   normalizeRpcAttachmentsToChatAttachments,
   parseMessageWithAttachments,
   registerApnsRegistration,
+  registerFcmRegistration,
   requestHeartbeatNow,
   resolveChatAttachmentMaxBytes,
   resolveGatewayModelSupportsImages,
@@ -753,6 +754,14 @@ export const handleNodeEvent = async (
           scopedHeartbeatWakeOptions(sessionKey, { reason: "exec-event", coalesceMs: 0 }),
         );
       }
+      return undefined;
+    }
+    // FORK 2026-10-22: an Android node hands over its FCM token so the gateway can wake it.
+    case "push.fcm.register": {
+      const obj = parsePayloadObject(evt.payloadJSON);
+      const token = typeof obj?.token === "string" ? obj.token : "";
+      const reg = token ? await registerFcmRegistration({ nodeId, token }) : null;
+      ctx.logGateway.info(`push fcm register node=${nodeId} ok=${reg !== null}`);
       return undefined;
     }
     case "push.apns.register": {

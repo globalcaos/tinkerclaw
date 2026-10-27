@@ -179,6 +179,29 @@ describe("rate-limit envelopes only promise a retry that exists", () => {
   });
 });
 
+// FORK 2026-10-05 — a usage limit that resets in hours or days blocks the conversation until the
+// owner acts: `fatal`, by this file's own definition. Non-fatal, the weekly limit re-armed the client
+// retry ladder and one prompt was re-sent 169 times on 2026-10-03.
+describe("a usage window no retry can outlast makes the envelope fatal", () => {
+  it("weekly, session and 5-hour limits are fatal; a per-minute burst is not", () => {
+    const weekly = buildErrorEnvelope({
+      raw: "You've hit your weekly limit · resets Oct 8, 6pm (Europe/Madrid)",
+    });
+    expect(weekly.category).toBe("rate_limit");
+    expect(weekly.fatal).toBe(true);
+    expect(buildErrorEnvelope({ raw: "You've hit your session limit · resets 3pm" }).fatal).toBe(
+      true,
+    );
+    expect(buildErrorEnvelope({ raw: "429 Too Many Requests" }).fatal).toBe(false);
+  });
+
+  it("a caller's explicit fatal still wins", () => {
+    expect(
+      buildErrorEnvelope({ raw: "You've hit your weekly limit · resets 6pm", fatal: false }).fatal,
+    ).toBe(false);
+  });
+});
+
 describe("envelope hygiene", () => {
   it("does not invent a details object for an unrelated error", () => {
     expect(buildErrorEnvelope({ raw: "401 authentication_error" }).details).toBeUndefined();
@@ -192,5 +215,24 @@ describe("envelope hygiene", () => {
     expect(env.details?.source).toBe("agent-runner");
     expect(env.details?.laneDepth).toBe(2);
     expect(env.details?.killCause).toBe("user-abort");
+  });
+});
+
+describe("provider safeguard refusal (2026-10-16)", () => {
+  // Real producer string, gateway journal 2026-10-16 10:39 and 10:41.
+  const raw =
+    "API Error: Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup). This sometimes happens with safe, normal conversations. Claude Code can't respond to this message with Opus 5.5.";
+
+  it("classifies as provider_safeguard, not provider_generic", () => {
+    expect(classifyRawErrorMessage(raw)).toBe("provider_safeguard");
+  });
+
+  it("builds a fatal shield card that names the provider and never claims a retry", () => {
+    const env = buildErrorEnvelope({ raw });
+    expect(env.category).toBe("safeguard");
+    expect(env.fatal).toBe(true);
+    expect(env.headline).toMatch(/Anthropic's safety filter/);
+    expect(env.explanation).toMatch(/not Amygdala/);
+    expect(env.explanation).not.toMatch(/I'm retrying/);
   });
 });

@@ -174,3 +174,44 @@ describe("agent({ schema })", () => {
     ).rejects.toThrow(/never satisfied its schema/i);
   });
 });
+
+// 2026-10-09: the gateway runs at most agents.defaults.subagents.maxConcurrent subagents and REFUSES a
+// spawn once a requester has maxChildrenPerAgent active children (5 by default, 10 here). pipeline() had
+// no cap at all and parallel() capped at min(16, cores-2) = 14 on a 16-core box, so a wide fan-out lost units.
+describe("maxInFlight (the gateway's subagent limits)", () => {
+  function tracker() {
+    let now = 0;
+    let peak = 0;
+    const spawn = async (p: string) => {
+      now++;
+      peak = Math.max(peak, now);
+      await new Promise((r) => setTimeout(r, 5));
+      now--;
+      return { finalText: p };
+    };
+    return { spawn, peak: () => peak };
+  }
+
+  it("pipeline() never has more than maxInFlight items in flight", async () => {
+    const t = tracker();
+    const rt = createOrchestrationRuntime({ spawn: t.spawn, maxInFlight: 2 });
+    const items = ["a", "b", "c", "d", "e", "f"];
+    const res = await rt.pipeline(
+      items,
+      (_prev, item) => rt.agent(item),
+      (prev) => rt.agent(`v:${String(prev)}`),
+    );
+    expect(res.map((r) => (r.ok ? r.value : null))).toEqual(items.map((x) => `v:${x}`));
+    expect(t.peak()).toBeLessThanOrEqual(2);
+  });
+
+  it("parallel() never runs more than maxInFlight thunks at once", async () => {
+    const t = tracker();
+    const rt = createOrchestrationRuntime({ spawn: t.spawn, maxInFlight: 3 });
+    const res = await rt.parallel(
+      ["a", "b", "c", "d", "e", "f", "g"].map((x) => () => rt.agent(x)),
+    );
+    expect(res.every((r) => r.ok)).toBe(true);
+    expect(t.peak()).toBeLessThanOrEqual(3);
+  });
+});

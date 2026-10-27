@@ -69,6 +69,9 @@ describe("engram.search respond arity", () => {
             kind: "user_message",
             content: "the engram search never responded",
             sessionKey: "main",
+            // FORK 2026-10-09 — totalTokens is summed over the hits returned, from each event's
+            // own `tokens`, no longer copied from recall's packed total.
+            tokens: 42,
           },
           score: 0.87654,
         },
@@ -135,8 +138,22 @@ describe("engram.search respond arity", () => {
     expect((calls[0].error as { message: string }).message).toContain("sqlite is on fire");
   });
 
-  it("clamps limit so a hostile value cannot blow the recall token budget", async () => {
-    recallMock.mockResolvedValue({ events: [], totalTokens: 0, queryCount: 1, truncated: false });
+  // FORK 2026-10-09 — `limit` no longer becomes a token budget (`limit * 400` emptied the answer
+  // whenever the top hit was long); recall is asked for everything it ranks and the answer is cut
+  // by COUNT, so the clamp now bounds the number of results, at the 20 recall can select.
+  it("clamps limit to the 20 results recall can return", async () => {
+    const events = Array.from({ length: 30 }, (_, i) => ({
+      event: {
+        id: `evt-${i}`,
+        timestamp: "2026-08-02T10:00:00.000Z",
+        kind: "user_message",
+        content: `hit ${i}`,
+        sessionKey: "agent:main:main",
+        tokens: 2,
+      },
+      score: 1 - i / 100,
+    }));
+    recallMock.mockResolvedValue({ events, totalTokens: 60, queryCount: 1, truncated: false });
 
     const handleEngramSearch = await loadHandler();
     const { respond, calls } = createRespondSpy();
@@ -148,6 +165,62 @@ describe("engram.search respond arity", () => {
 
     expect(calls[0].ok).toBe(true);
     const [opts] = recallMock.mock.calls[0] as [{ maxTokens: number }];
-    expect(opts.maxTokens).toBe(200 * 400);
+    expect(opts.maxTokens).toBe(Number.POSITIVE_INFINITY);
+    const payload = calls[0].payload as {
+      results: unknown[];
+      totalTokens: number;
+      truncated: boolean;
+    };
+    expect(payload.results).toHaveLength(20);
+    expect(payload.totalTokens).toBe(40);
+    expect(payload.truncated).toBe(true);
+  });
+
+  // FORK 2026-10-09 — with no token budget, the answer stays bounded per result: long content is
+  // cut at 4,000 chars and marked, short content passes untouched.
+  it("clips a long result's content and marks it, leaving short content alone", async () => {
+    const long = "x".repeat(10_000);
+    recallMock.mockResolvedValue({
+      events: [
+        {
+          event: {
+            id: "big",
+            timestamp: "t",
+            kind: "user_message",
+            content: long,
+            sessionKey: "k",
+            tokens: 2500,
+          },
+          score: 0.9,
+        },
+        {
+          event: {
+            id: "small",
+            timestamp: "t",
+            kind: "user_message",
+            content: "short",
+            sessionKey: "k",
+            tokens: 2,
+          },
+          score: 0.5,
+        },
+      ],
+      totalTokens: 2502,
+      queryCount: 1,
+      truncated: false,
+    });
+
+    const handleEngramSearch = await loadHandler();
+    const { respond, calls } = createRespondSpy();
+    await handleEngramSearch({ params: { query: "engram", limit: 5 }, respond: respond as never });
+
+    const payload = calls[0].payload as {
+      results: Array<{ id: string; content: string; clipped?: boolean }>;
+    };
+    expect(payload.results).toHaveLength(2);
+    expect(payload.results[0].content.length).toBe(4_001);
+    expect(payload.results[0].clipped).toBe(true);
+    expect(payload.results[1].content).toBe("short");
+    expect(payload.results[1].clipped).toBeUndefined();
   });
 });

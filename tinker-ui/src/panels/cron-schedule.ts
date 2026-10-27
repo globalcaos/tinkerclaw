@@ -1,4 +1,4 @@
-// FORK 2026-08-19 (the user: expanded cron cards should set timing, periodicity,
+// FORK 2026-08-19 (the architect: expanded cron cards should set timing, periodicity,
 // and enable/disable). The gateway already owns writes via `cron.update`.
 // This module is the VIEW of a schedule — parse the stored shape into fields
 // a 360px card can edit, and build a patch the existing RPC will accept.

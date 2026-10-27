@@ -136,6 +136,17 @@ class GatewayDiscovery(
     }
   }
 
+  // Battery (the architect 2026-10-20): the multicast scan kept the Wi-Fi chip listening forever. With a
+  // fixed gateway address (the Jarvis door over Tailscale) its results are never used, so it stops.
+  private var localScanOn = true
+
+  @Synchronized
+  fun setLocalScanEnabled(enabled: Boolean) {
+    if (enabled == localScanOn) return
+    localScanOn = enabled
+    if (enabled) startLocalDiscovery() else stopLocalDiscovery()
+  }
+
   private fun startLocalDiscovery() {
     try {
       nsd.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, discoveryListener)

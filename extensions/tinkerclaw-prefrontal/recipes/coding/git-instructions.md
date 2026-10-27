@@ -178,9 +178,10 @@ Before `git commit`, read `git diff --cached --stat` and the file list:
 - Do I want to ship all of this?
 - Are all staged files this hop?
 - Temporary files? Passwords? IPs, tokens, certificates?
+- **A model trailer?** `Co-Authored-By: Claude`, `Generated with Claude Code`, or any assistant signature. If the commit used the architect's key, the author is the architect. Strip the trailer and the hook that would add it (`git config --get commit.template`, `prepare-commit-msg`) before committing. the architect, 2026-09-29 22:21: _"In the git, no claude signature should ever show. I don't care it is the default. If you use my key, you push as me."_
 
 Unstage, split, or delete. Never `--no-verify`, `--amend` of published
-history, `git add -A`, or `--force`.
+history, `git add -A`, or `--force` from a cron. A history rewrite that strips trailers is the architect's, on his ask.
 
 Subject: `type(scope): <imperative>` ≤72 chars. Body, three answers:
 
@@ -217,7 +218,7 @@ TESTS. Every commit ships its tests, documented if not obvious. If this change c
 
 MESSAGE. Subject type(scope): imperative ≤72. Body: WHAT, WHY, IMPACT. If message and staged diff disagree, fix one before committing.
 
-HYGIENE. Stage only this unit's files. No temps, passwords, IPs, tokens, certs. No --no-verify / --amend / -A.
+HYGIENE. Stage only this unit's files. No temps, passwords, IPs, tokens, certs. No model trailer (Co-Authored-By: Claude, Generated with …). Author is the key owner. No --no-verify / --amend / -A.
 ```
 
 ## Constraints
@@ -251,3 +252,6 @@ HYGIENE. Stage only this unit's files. No temps, passwords, IPs, tokens, certs. 
 - **2026-09-10 — I/O order was read as the rule.** It is an instance. The
   rule is: trace any path, chop every seam, test every hop so a human can
   double- and triple-check.
+- **2026-09-29 — Claude signed 85 of 86 commits on a reviewed branch.** Default
+  trailer, the architect's key, Alex can see it. Hygiene now refuses the trailer. The
+  rewrite of history is not this recipe.

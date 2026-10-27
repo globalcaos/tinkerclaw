@@ -1,3 +1,4 @@
+import { stripInternalRuntimeContext } from "../agents/internal-runtime-context.js";
 import { stripInboundMetadata } from "../auto-reply/reply/strip-inbound-meta.js";
 import { normalizeOptionalString, readStringValue } from "../shared/string-coerce.js";
 
@@ -40,6 +41,26 @@ function memoised<T>(
   return value;
 }
 
+/**
+ * FORK 2026-09-23 (the architect: "in the work tab, I see an injection of the ethical rules as
+ * if it was my prompt") — the PREFIX twin of the `<!-- TINKERCLAW -->` suffix rule below.
+ *
+ * When the tinker-bridge resumes a claude-cli session that does not yet carry the moral code, it
+ * prefixes the pack to the next message it forwards (tinker-bridge worker.ts,
+ * `pendingMoralCodePrefix`). The claude-cli JSONL therefore stores
+ * `<moral_code source="tinkerclaw">…40k…</moral_code>` + the prompt, while the local transcript
+ * holds the prompt alone. The texts differed, the dedup below kept both, and the 65k import row
+ * rendered as a second, giant "user prompt" right under the real one. Measured on
+ * agent:main:tinker:mtshq738 rows 940 (local) / 941 (claude-cli import), 2026-09-23 08:56.
+ *
+ * Only a block that OPENS the message is stripped, and only for comparison — nothing is rewritten.
+ */
+const BRIDGE_CONTEXT_BLOCK_RE = /^\s*<(moral_code) source="tinkerclaw">[\s\S]*?<\/\1>\s*/;
+
+export function stripBridgeDeliveredContext(text: string): string {
+  return text.replace(BRIDGE_CONTEXT_BLOCK_RE, "");
+}
+
 function extractComparableText(message: unknown): string | undefined {
   return memoised(comparableTextCache, message, () => extractComparableTextUncached(message));
 }
@@ -75,7 +96,15 @@ function extractComparableTextUncached(message: unknown): string | undefined {
   if (!joined) {
     return undefined;
   }
-  let visible = role === "user" ? stripInboundMetadata(joined) : joined;
+  // FORK 2026-10-05 — the local reader strips the internal runtime-context envelope before the merge
+  // (session-utils.fs.ts), while the claude-cli import arrives raw, so an injected prompt (a
+  // subagent's completion announce, the enhancements advice) never matched its own local row and
+  // was served twice: 131 pairs since 2026-09-23, 17 rows in one day's live merges. Both sides
+  // normalise alike, which is this rule's stated intent.
+  let visible =
+    role === "user"
+      ? stripInboundMetadata(stripInternalRuntimeContext(stripBridgeDeliveredContext(joined)))
+      : joined;
   // FORK 2026-06-20: cc-bridge appends "<!-- TINKERCLAW … -->" narration-contract
   // blocks to every user message before forwarding to claude-cli. The JSONL therefore
   // stores a longer version of each user message than the OpenClaw local session file,
@@ -201,7 +230,66 @@ function resolveImportedExternalId(message: unknown): string | undefined {
 // returned the entire conversation twice.
 const LONG_TEXT_DEDUP_MIN_LEN = 50;
 
+// FORK 2026-10-05 — an injected prompt that NAMES its child (a subagent's completion announce, whose
+// runtime-context envelope carries `session_key:`) pairs with a local row by that child, never by
+// text. With the envelope stripped, two different children's bare announces reduce to the same short
+// remnant and would pair on the time window alone, hiding one of them.
+const envelopeChildCache = new WeakMap<object, string | undefined>();
+function resolveEnvelopeChildSessionKey(message: unknown): string | undefined {
+  return memoised(envelopeChildCache, message, () => {
+    if (!message || typeof message !== "object") {
+      return undefined;
+    }
+    if (readStringValue((message as { role?: unknown }).role) !== "user") {
+      return undefined;
+    }
+    const c = (message as { content?: unknown }).content;
+    const text =
+      typeof c === "string"
+        ? c
+        : Array.isArray(c)
+          ? c
+              .map((b) =>
+                b && typeof (b as { text?: unknown }).text === "string"
+                  ? (b as { text: string }).text
+                  : "",
+              )
+              .join("\n")
+          : "";
+    const begin = text.indexOf("<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>");
+    if (begin === -1) {
+      return undefined;
+    }
+    const end = text.indexOf("<<<END_OPENCLAW_INTERNAL_CONTEXT>>>", begin);
+    const region = text.slice(begin, end === -1 ? undefined : end);
+    return /^session_key: (\S+)$/m.exec(region)?.[1];
+  });
+}
+function resolveProvenanceChildSessionKey(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+  const p = (message as { provenance?: unknown }).provenance;
+  if (!p || typeof p !== "object") {
+    return undefined;
+  }
+  return normalizeOptionalString((p as { sourceSessionKey?: unknown }).sourceSessionKey);
+}
+
 function isEquivalentImportedMessage(existing: unknown, imported: unknown): boolean {
+  const importedChild = resolveEnvelopeChildSessionKey(imported);
+  if (importedChild !== undefined) {
+    const importedId = resolveImportedExternalId(imported);
+    if (importedId && resolveImportedExternalId(existing) === importedId) {
+      return true;
+    }
+    if (resolveProvenanceChildSessionKey(existing) !== importedChild) {
+      return false;
+    }
+    const a = resolveComparableTimestamp(existing);
+    const b = resolveComparableTimestamp(imported);
+    return a === undefined || b === undefined || Math.abs(a - b) <= DEDUPE_TIMESTAMP_WINDOW_MS;
+  }
   const importedExternalId = resolveImportedExternalId(imported);
   if (importedExternalId && resolveImportedExternalId(existing) === importedExternalId) {
     return true;
@@ -292,24 +380,94 @@ function compareHistoryMessages(a: HistoryMergeEntry, b: HistoryMergeEntry): num
 const IMPORT_PREHISTORY_GRACE_MS = 15 * 60 * 1000; // 15 min before first local msg
 const ASSISTANT_SLOT_COVER_MS = 5 * 60 * 1000; // 5 min around each local assistant
 
+/** The earliest timestamp layer 1 of the merge below measures its prehistory floor from. */
+export function resolveEarliestLocalTimestamp(
+  localMessages: readonly unknown[],
+): number | undefined {
+  let earliest: number | undefined;
+  for (const msg of localMessages) {
+    const ts = resolveComparableTimestamp(msg);
+    if (ts !== undefined && (earliest === undefined || ts < earliest)) {
+      earliest = ts;
+    }
+  }
+  return earliest;
+}
+
+/**
+ * FORK 2026-10-05 — the prompts a cursor slice must not serve. chat.history merges a seq slice
+ * against the slice's own local rows, so a prompt's claude-cli copy whose local row sat OUTSIDE the
+ * slice found no partner and was served: a delta anchored at the prompt, or a prompt sent during a
+ * turn that the CLI recorded only when it was delivered. The page drew the prompt twice until a
+ * refresh read the whole store (bug-log `cursor-slice-prompt-twin`). The rule is the merge's own
+ * pairing, given the local rows the whole-store read pairs against; only imported USER rows are
+ * judged, because assistant coverage depends on which local blobs the import merge dropped first.
+ */
+export function dropImportedPromptsPairedOutsideSlice(params: {
+  /** The slice's served rows: its merge, bounded to the window. */
+  served: unknown[];
+  /** Every local row of the transcript. */
+  allLocal: readonly unknown[];
+  /** The local rows the slice merged against (the same references). */
+  sliceLocal: readonly unknown[];
+}): unknown[] {
+  let outside: unknown[] | undefined;
+  const kept = params.served.filter((row) => {
+    if (resolveComparableRole(row) !== "user" || !isImportedRow(row)) {
+      return true;
+    }
+    if (outside === undefined) {
+      const inSlice = new Set(params.sliceLocal);
+      outside = params.allLocal.filter(
+        (local) => !inSlice.has(local) && resolveComparableRole(local) === "user",
+      );
+    }
+    return !outside.some((local) => isEquivalentImportedMessage(local, row));
+  });
+  return kept.length === params.served.length ? params.served : kept;
+}
+
+function isImportedRow(message: unknown): boolean {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  const meta = (message as { __openclaw?: unknown }).__openclaw;
+  return (
+    meta !== null &&
+    typeof meta === "object" &&
+    (meta as { importedFrom?: unknown }).importedFrom != null
+  );
+}
+
 export function mergeImportedChatHistoryMessages(params: {
   localMessages: unknown[];
   importedMessages: unknown[];
+  /**
+   * FORK 2026-09-23 (chat.history rehaul, plan task 5) — a local timestamp layer 1 counts as if
+   * its row were in `localMessages`. chat.history's seq cursors merge a SLICE of the local store
+   * and pass the whole store's earliest timestamp (resolveEarliestLocalTimestamp), so the floor
+   * sits where the whole-store merge puts it. Measured from the slice, the floor rises to the
+   * slice's first row and drops imports the whole-store window serves: every step of a tool loop
+   * longer than the grace, before an afterSeq delta's first row.
+   */
+  earliestLocalTs?: number;
 }): unknown[] {
   if (params.importedMessages.length === 0) {
     return params.localMessages;
   }
 
+  const wholeStoreEarliest =
+    typeof params.earliestLocalTs === "number" && Number.isFinite(params.earliestLocalTs)
+      ? params.earliestLocalTs
+      : undefined;
   let filteredImports = params.importedMessages;
-  if (params.localMessages.length > 0) {
+  if (params.localMessages.length > 0 || wholeStoreEarliest !== undefined) {
     // --- layer 1: timestamp floor ---
-    let localTsMin = Infinity;
-    for (const msg of params.localMessages) {
-      const ts = resolveComparableTimestamp(msg);
-      if (ts !== undefined && ts < localTsMin) {
-        localTsMin = ts;
-      }
-    }
+    const givenEarliest = resolveEarliestLocalTimestamp(params.localMessages);
+    const localTsMin = Math.min(
+      givenEarliest ?? Number.POSITIVE_INFINITY,
+      wholeStoreEarliest ?? Number.POSITIVE_INFINITY,
+    );
     const importFloor = Number.isFinite(localTsMin)
       ? localTsMin - IMPORT_PREHISTORY_GRACE_MS
       : -Infinity;

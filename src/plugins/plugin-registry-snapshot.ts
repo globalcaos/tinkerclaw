@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveCompatibilityHostVersion } from "../version.js";
 import { resolveBundledPluginsDir } from "./bundled-dir.js";
 import { normalizePluginsConfig } from "./config-state.js";
@@ -48,7 +49,14 @@ export type PluginRegistrySnapshotResult = {
   diagnostics: readonly PluginRegistrySnapshotDiagnostic[];
 };
 
-const DERIVED_SNAPSHOT_CACHE_MS = 1000;
+// FORK 2026-10-15 (bug-log `stale-plugin-registry-rebuild-storm`): was 1 s. With a stale persisted registry every
+// embedded run past that second rebuilt the index from every manifest on the gateway's one thread (39% of it). The
+// key already carries the config's policy hash, roots and load paths, so a plugin config change still misses.
+const DERIVED_SNAPSHOT_CACHE_MS = 60_000;
+// One line per fallback reason per process: the stale verdict used to be returned and never logged, so the registry
+// sat stale from 2026-09-23 to 2026-10-15 without a trace.
+const warnedFallbackCodes = new Set<string>();
+const log = createSubsystemLogger("plugins/registry");
 const derivedSnapshotCache = new Map<
   string,
   { expiresAt: number; result: PluginRegistrySnapshotResult }
@@ -127,9 +135,13 @@ function resolveDerivedSnapshotCacheKey(
   params: LoadPluginRegistryParams,
   env: NodeJS.ProcessEnv,
 ): string | null {
+  // FORK 2026-10-23 (JarvisPi): preferPersisted:false used to mean "never cached" too. Its callers include the
+  // provider env-var map behind every auth probe (secrets/provider-env-vars.ts), and a tool build probes dozens
+  // of providers, so each embedded run rebuilt the index again and again on the gateway's one thread
+  // (`wrap-openclaw-tools` took 7-9 s a run). The mode is part of the key below, so a fresh-mode caller never
+  // gets a persisted-mode result; `cache: false` still opts out.
   if (
     params.cache === false ||
-    params.preferPersisted === false ||
     params.pluginIndexFilePath ||
     params.installRecords ||
     params.candidates ||
@@ -146,6 +158,7 @@ function resolveDerivedSnapshotCacheKey(
     env,
   });
   return JSON.stringify({
+    preferPersisted: params.preferPersisted !== false,
     persistedStore: resolveInstalledPluginIndexStorePath(params),
     roots,
     loadPaths,
@@ -174,9 +187,7 @@ export function loadPluginRegistrySnapshotWithMetadata(
   const disabledByEnv = hasEnvFlag(env, DISABLE_PERSISTED_PLUGIN_REGISTRY_ENV);
   const persistedReadsEnabled = !disabledByCaller && !disabledByEnv;
   const persistedInstallRecordReadsEnabled = !disabledByEnv;
-  const derivedCacheKey = persistedReadsEnabled
-    ? resolveDerivedSnapshotCacheKey(params, env)
-    : null;
+  const derivedCacheKey = disabledByEnv ? null : resolveDerivedSnapshotCacheKey(params, env);
   if (derivedCacheKey) {
     const cached = derivedSnapshotCache.get(derivedCacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -235,6 +246,12 @@ export function loadPluginRegistrySnapshotWithMetadata(
     });
   }
 
+  for (const d of diagnostics) {
+    if (d.level === "warn" && !warnedFallbackCodes.has(d.code)) {
+      warnedFallbackCodes.add(d.code);
+      log.warn(d.message);
+    }
+  }
   const result: PluginRegistrySnapshotResult = {
     snapshot: loadInstalledPluginIndex({
       ...params,

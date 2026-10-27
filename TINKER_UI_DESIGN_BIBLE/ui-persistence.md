@@ -19,6 +19,8 @@ invariants:
   - in the tabs namespace ABSENT and EMPTY are different answers, and conflating them is a data-loss bug — an absent `tabs` section means "no opinion" (hydrate leaves the cached list alone, and a POST omitting it carries the on-disk list forward), while `[]` means "no tabs" and is applied. A store written before 2026-08-16 has no `tabs`, so reading absence as empty would blank the live list on the first reload after any deploy
   - the tab list is carried VERBATIM through both tiers and the endpoint — app.ts owns the Tab shape, ui-state.ts owns only its durability, so no layer between them may filter Tab fields or each new field is dropped on its first cold boot
 verify:
+  - name: plugin-served pages fall back to /tinker/api/ui-state when the root path answers 404, and the hive door maps the root path (2026-10-06)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'u=open("tinker-ui/src/panels/ui-state.ts").read(); d=open("scripts/hive-door/door.mjs").read(); assert "UI_STATE_PLUGIN_ENDPOINT = \"/tinker/api/ui-state\"" in u and "res.status === 404" in u, "ui-state.ts lost the 404 fallback: a plugin-served page writes no state file and tabs never reopen"; assert "/tinker/api/ui-state" in d and "\"/api/ui-state\"" in d, "the hive door no longer maps /api/ui-state: per-person tabs stop persisting"'
   - name: UI-chrome store keys are referenced only inside ui-state.ts (single-writer, any quote style or accessor shape)
     cmd: python3 -c 'import os,glob; root=os.path.expanduser("~/src/tinkerclaw/tinker-ui/src"); files=[f for f in glob.glob(root+"/**/*.ts",recursive=True) if os.path.basename(f) not in ("ui-state.ts","ui-state.test.ts")]; hits=[(os.path.relpath(f,root),k) for f in files for k in ("tinker.rpanelCollapsed","tinker.uiFlags","tinker.uiChoices","tinker-tabs") if k in open(f).read()]; assert not hits, "UI-chrome store keys referenced outside ui-state.ts (single-writer broken) -> " + str(hits)'
   - name: ui-state.ts exports the one-shot legacy migration (endstate gate for the 2026-08-02 unification)
@@ -71,13 +73,18 @@ Both tiers hold the SAME three maps. Only their durability and their access mode
 
 **Top-level await is a BUILD constraint, not a style choice.** `tinker-ui/vite.config.ts` must set `build.target` to `esnext` or `es2022`+. Vite's default is `ESBUILD_MODULES_TARGET` (`es2020`, `chrome87`, `edge88`, `firefox78`, `safari14`), under which **esbuild refuses to emit top-level await**. The failure is asymmetric and nasty: Vite's DEV transform targets esnext, so :18790 — the only surface the architect uses — works perfectly, and only `pnpm build` (the pre-push gate) explodes. The fourth verify gate asserts the target whenever `app.ts` actually top-level-awaits, so the two cannot drift apart.
 
-**Write path — a debounced, coalescing mirror.** Every setter writes the cache synchronously and then schedules a **~250 ms debounced, coalescing** `POST` of the **full snapshot**. Coalescing is what stops a slider drag or a burst of collapses from emitting one request per event. The mirror uses `keepalive`, so a POST **already in flight** survives the page closing.
+**Write path — a debounced, coalescing mirror.** Every setter writes the cache synchronously and then schedules a **~250 ms debounced, coalescing** `POST` of the **full snapshot**. Coalescing is what stops a slider drag or a burst of collapses from emitting one request per event. Routine mirrors are **ordinary requests whose response body is always read**. Only the `pagehide` flush uses `keepalive` (see below).
 
-**What `keepalive` does NOT buy — say it out loud so nobody assumes otherwise.** It rescues a request that has already been ISSUED. A change made inside the debounce window is a **pending timer**, not an in-flight request, and a pending timer dies with the document — the same moment the cache gets wiped. So a setting changed in the last ~250 ms before the window closes is lost from BOTH tiers. Closing that hole needs an explicit flush of the pending mirror on `pagehide` / `visibilitychange`; `keepalive` is what makes that flush survive, not a substitute for it.
+**Why routine mirrors must NOT be `keepalive` (2026-09-24).** Chrome charges every `keepalive` request's body against a **64 KB per-page budget** until its response has been read. From 2026-08-02 every mirror was `keepalive: true` and no code read the response, so the budget was never returned: with a ~6.7 KB snapshot the **10th mirror of every page was rejected inside the browser** (`TypeError: Failed to fetch`), and so was every mirror after it, for the rest of the page's life. The server never saw those requests. The UI kept working from localStorage, and the next reboot restored the stale file (bug-log, 2026-09-24). A failed or non-2xx mirror now `console.warn`s and retries on a backoff (2 s → 60 s), and the first write that gets through carries `X-Tinker-Mirror-Failures`, which `tinker-prod-ui.mjs` logs as `[ui-state] mirror landed after N failed POST(s)`.
+
+**The `pagehide` flush.** A change made inside the debounce window is a **pending timer**, and a pending timer dies with the document, the same moment the cache gets wiped. `pagehide` therefore flushes the pending mirror, and it also re-sends the snapshot when a routine POST is still unanswered or a failure streak is open. That flush is the one request that uses `keepalive`, because it must outlive the page.
+
+**The mirror shares six sockets with the gateway proxy.** Chrome opens at most six HTTP connections to the UI host. `/api/ui-state` shares them with every proxied `/tinker/api/*` call. A gateway that stops answering HTTP (a pinned event loop) used to hold all six on context-anatomy calls, and every mirror queued behind them for as long as the stall lasted. `proxyToGateway` now answers 504 if the gateway has not started a response within 30 s (`TINKER_PROXY_TIMEOUT_MS`), which frees the socket.
 
 ### Two limitations, stated plainly
 
 1. **Last-writer-wins across browser tabs.** The mirror POSTs a WHOLE snapshot and the server replaces the file with it. A field-level merge cannot work here, and the reason is THE INVARIANT itself: "the user set this back to its default" is expressed as a **deleted key**, and a merge cannot distinguish a deletion from a key the other tab simply never had. Two tabs changing different chrome concurrently means the last POST wins for all of it. Accepted — the alternative is a per-key tombstone protocol for chrome state, which is not worth it.
+   **Exception (2026-09-21): the tab list DOES get tombstones.** A close used to be only an absence from the list, so any stale writer (second window, failed-hydrate page, a mirror lost in its 250 ms debounce on Ctrl+Shift+R, the rehydrate merge re-adding "file-only" tabs) resurrected it. `closeTab` now records `tab id → closedAt`; the cache, the file and BOTH servers (`scripts/tinker-prod-ui.mjs`, the Vite handler) UNION the map and filter every tab list through it, and `pagehide` flushes a pending mirror. Safe as a union because tab ids are minted fresh per tab and never reused; `tab-main` is never tombstoned. Newest 500 kept.
 2. **Dev-server only.** The middleware is `apply: "serve"`, so it exists only under `vite dev` on **:18790**. If the UI is loaded from the gateway's built `/tinker` route instead, `/api/ui-state` is absent: `hydrateUiState()` resolves as a no-op and each mirror POST fails harmlessly, so the client degrades to **localStorage-only** — exactly the pre-2026-08-02 behaviour, no worse. Accepted because :18790 is the architect's actual serving path. Promoting the endpoint into the gateway plugin (beside `/tinker/api/save-file`) is the known next move if `/tinker` ever becomes the primary surface.
 
 ## The owning module
@@ -88,12 +95,13 @@ It is the ONLY writer of the three keys below. The first verify command enforces
 
 ## The four namespaces and their keys
 
-| Namespace | Key                      | Value                     | For                      |
-| --------- | ------------------------ | ------------------------- | ------------------------ |
-| collapsed | `tinker.rpanelCollapsed` | `Record<string, boolean>` | anything that folds      |
-| flag      | `tinker.uiFlags`         | `Record<string, boolean>` | on/off buttons           |
-| choice    | `tinker.uiChoices`       | `Record<string, string>`  | single-choice selections |
-| tabs      | `tinker-tabs`            | `Array<object>`           | the open tab LIST        |
+| Namespace | Key                      | Value                     | For                                                          |
+| --------- | ------------------------ | ------------------------- | ------------------------------------------------------------ |
+| collapsed | `tinker.rpanelCollapsed` | `Record<string, boolean>` | anything that folds                                          |
+| flag      | `tinker.uiFlags`         | `Record<string, boolean>` | on/off buttons                                               |
+| choice    | `tinker.uiChoices`       | `Record<string, string>`  | single-choice selections                                     |
+| tabs      | `tinker-tabs`            | `Array<object>`           | the open tab LIST                                            |
+| closed    | `tinker.closedTabs`      | `Record<tabId, epochMs>`  | closed-tab TOMBSTONES (2026-09-21) — unioned, never replaced |
 
 **Why four keys and not one:** the unification is the **module and the contract**, not the key count. `tinker.rpanelCollapsed` and `tinker-tabs` keep their pre-unification names because they hold live user data, and reshaping a live key in place buys nothing but risk.
 
@@ -111,25 +119,34 @@ It is the only **array**, the only one whose entries this module refuses to inte
 
 Ids are namespaced by prefix so one flat map per namespace cannot collide.
 
-| Namespace | Id                                                                                     | Default                     |
-| --------- | -------------------------------------------------------------------------------------- | --------------------------- |
-| collapsed | `sessions-panel`, `models-panel`, `budget-panel`, `prefrontal-panel`, `amygdala-panel` | expanded                    |
-| collapsed | `model:models`, `model:more-models`                                                    | **collapsed**               |
-| collapsed | `model:eeg` (seismograph), `model:cache`, `model:thinking` (sliders), `model:thalamus` | expanded                    |
-| collapsed | `exec:<axisId>`, `exec:__unsorted__`                                                   | expanded                    |
-| collapsed | `cron:card:<jobId>`                                                                    | expanded                    |
-| collapsed | `cron:dismissed:<jobId>`                                                               | **collapsed**               |
-| flag      | `topbar:exec`                                                                          | off                         |
-| flag      | `topbar:fractal`                                                                       | **on**                      |
-| flag      | `topbar:timeline`, `topbar:models`                                                     | **on**                      |
-| choice    | `tab:active`                                                                           | `""`                        |
-| choice    | `exec:tab`                                                                             | `today`                     |
-| choice    | `exec:filter`                                                                          | `unfinished`                |
-| choice    | `exec:focus-order` (JSON array of taskIds)                                             | `[]`                        |
-| choice    | `cron:cardOrder` (JSON array of jobIds)                                                | `[]`                        |
-| choice    | `cron:filter`                                                                          | `all`                       |
-| choice    | `cron:taxonomy` (JSON `{groups, membership}`)                                          | `{groups:[],membership:{}}` |
-| collapsed | `cron:group:<groupId>` (incl. `__unsorted__`)                                          | expanded                    |
+| Namespace | Id                                                                                           | Default                         |
+| --------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
+| collapsed | `sessions-panel`, `models-panel`, `budget-panel`, `prefrontal-panel`, `amygdala-panel`       | expanded                        |
+| collapsed | `model:models`, `model:more-models`                                                          | **collapsed**                   |
+| collapsed | `model:eeg` (seismograph), `model:cache`, `model:thinking` (sliders), `model:thalamus`       | expanded                        |
+| collapsed | `exec:<axisId>`, `exec:__unsorted__`                                                         | expanded                        |
+| collapsed | `cron:card:<jobId>`                                                                          | expanded                        |
+| collapsed | `cron:dismissed:<jobId>`                                                                     | **collapsed**                   |
+| flag      | `topbar:exec`                                                                                | off                             |
+| flag      | `topbar:fractal`                                                                             | **on**                          |
+| flag      | `topbar:timeline`, `topbar:models`                                                           | **on**                          |
+| choice    | `tab:active`                                                                                 | `""`                            |
+| choice    | `exec:tab`                                                                                   | `today`                         |
+| choice    | `exec:filter`                                                                                | `unfinished`                    |
+| choice    | `exec:focus-order` (JSON array of taskIds)                                                   | `[]`                            |
+| choice    | `cron:cardOrder` (JSON array of jobIds)                                                      | `[]`                            |
+| choice    | `cron:filter`                                                                                | `all`                           |
+| choice    | `cron:taxonomy` (JSON `{groups, membership}`)                                                | `{groups:[],membership:{}}`     |
+| collapsed | `cron:group:<groupId>` (incl. `__unsorted__`)                                                | expanded                        |
+| choice    | `chat:scroll:<tabId>` (JSON `{v:1, id, part, y}`: the transcript row a tab was left reading) | `""` = following the latest row |
+
+**2026-10-02 — `chat:scroll:<tabId>` is where each tab's chat was LEFT** (the architect: "let's also pay attention at the point we leave it when we switch tabs, and when we restart gateway or restart the computer"). The design and the in-memory half live in `tinker-ui.md` §5.20 and `tinker-ui/src/chat-viewport.ts`; this row is only the durable half. Three decisions:
+
+- **Following is the default, so it is absent.** A tab parked at its latest row writes `""`, which `setChoice` deletes: ten tabs at the bottom cost zero bytes, and only a tab left READING history holds a key. A closed tab, and a tab rotated by `/new`, writes `""` too.
+- **The pointer names a TRANSCRIPT row (`data-oc-id`), never the keyed-render unit.** The rule above — _a pointer and its target must share a durability tier_ — decides it: a unit key like `u:<_uid>` is minted per page load and points at nothing after a reload, while a transcript id is the server's and survives one. The in-session memory (`TabState.viewport`) keeps both names; only this one is written here.
+- **One key per tab, not one map.** A tab's memory changes on its own (he scrolls one tab at a time), so per-tab keys never make a write of one tab carry another's stale value.
+
+Written when a tab is left, when a scroll gesture settles (500 ms), and on `pagehide` (which also flushes the mirror, since ui-state's own pagehide flush runs before this one is written). Read once per page load, at the first `hello`.
 
 The bare (unprefixed) `.rpanel` ids in the first row are **deliberate v1 carry-overs**: they are the keys already stored in the live map, and re-prefixing them would discard the user's current rail state for no benefit.
 
@@ -253,15 +270,37 @@ keyed by session, carrying each row's TURN ANCHOR so it returns to its place rat
 idempotent on `_clientRowId`, capped at 400 rows × 24 sessions oldest-first, and quota-safe (sheds
 the oldest half and retries once — the lesson `writeOutbox` paid for).
 
+**The anchor is the PROMPT, not an ordinal (FORK 2026-09-08).** "Turn anchor" above was, until this
+date, one number: how many user messages preceded the row when it was written. `reinsertByTurnAnchor`
+counted that number against whatever list it was handed on restore. In a Claude Code bridge tab that
+list is not the list the row was born in: the bridge re-imports the CLI transcript on every ~20 s
+history reload, the import flood valve truncated it (opt-in since 2026-10-03), and task-notification / auto-resume rows count
+as user messages. So the ordinal drifted, and every ordinal past the served user count was flushed at
+the TAIL — under the newest prompt. The clawhub tab's DOM snapshot on 2026-09-08 held 25 timing
+blocks: seven complete ones stacked under one prompt, seven above the first prompt, none under
+prompts 3–31 — read by the architect as "the amount of parallelism initiated". The gateway had run
+one turn. Now a row is described by `describeTurnAnchor` — the prompt text (bounded prefix, gateway
+stamp stripped), the row's own time, and the ordinal — stamped ON the row (`_anchorAt` /
+`_anchorPrompt`, `stampTurnAnchorOn`) and stored beside it. `resolveTurnAnchor` trusts the prompt
+first (time breaks ties between twenty "keep going"s), the ordinal only when its prompt's time agrees
+(a steered prompt is persisted ~50 s after the tab sent it), the time alone when the prompt is gone,
+and the raw ordinal last. Because the anchor rides on the row, every caller that maps a stored row
+back with only `{ m, turn }` — the reconnect preserve loop, the reload restore, a reconcile module
+that inherits either — gets the right prompt without changing. Rows on disk from before this date
+carry no time; `missingClientRows` hands out their capture time, so they stop piling on the next
+reload too. Specs: `msg-order.anchor.test.ts`, `client-rows.anchor.test.ts`. Nothing is dropped: a
+row whose prompt vanished from the served list lands next to the prompt that was live when it was
+measured, never at the tail.
+
 **THE LIMIT, and it is this file's own finding.** `tinker-client-rows` is in `localStorage`, and
 the section above documents that this Chrome profile **discards localStorage on clean exit** by
 deliberate user preference. So the guarantee is exactly:
 
-| event | rows survive? |
-| --- | --- |
-| gateway restart / reconnect | yes — and did before this change (`CLIENT_ONLY_FLAGS`) |
-| page reload, F5, tab switch | **yes — this is what the change fixed** |
-| clean browser exit and restart | **NO** — the profile wipes localStorage |
+| event                          | rows survive?                                          |
+| ------------------------------ | ------------------------------------------------------ |
+| gateway restart / reconnect    | yes — and did before this change (`CLIENT_ONLY_FLAGS`) |
+| page reload, F5, tab switch    | **yes — this is what the change fixed**                |
+| clean browser exit and restart | **NO** — the profile wipes localStorage                |
 
 Do not read "the chat is immutable" as stronger than that row. Closing the browser cleanly still
 loses client-only rows, for the same reason the tab list used to disappear. The remedy is the one
@@ -269,3 +308,8 @@ this file already names: the store goes SERVER-SIDE, `session-naming.md` being t
 is a real decision and not a tidy-up — it puts CLIENT-measured numbers into the durable transcript,
 where they sit beside gateway-measured ones that mean a different thing (`turn-latency.md` §7 is the
 record of what happens when those two get conflated). It has not been taken.
+
+## Per-person state, and the page served by the gateway plugin (2026-10-06)
+
+- **The durable file is per seat.** The plugin's `/tinker/api/ui-state` writes `~/.openclaw/data/seats/<seat>/tinker-ui-state.json` for the seat named by `x-tinker-seat`. In multi-user mode the hive door sets that header from the person's token and strips any copy the browser sends, so each person's tabs and panel state come back on their reconnect, and nobody can load another's.
+- **The root path does not exist behind the plugin.** The page saves to `/api/ui-state` (dev server and prod-ui answer it). A page served by the gateway plugin got 404 there, and no state file was ever written: tabs survived only in the browser's own storage. Two fixes: `ui-state.ts` switches the page to `/tinker/api/ui-state` after the first 404 (a 200 never switches), and the hive door maps `/api/ui-state` to the plugin route. Bug log: `ui-state-root-path-404-behind-plugin`.

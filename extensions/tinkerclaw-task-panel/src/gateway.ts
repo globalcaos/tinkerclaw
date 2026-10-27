@@ -91,6 +91,8 @@ export function registerTaskPanelMethods(params: {
         briefing_pass_id: typeof p?.briefing_pass_id === "string" ? p.briefing_pass_id : undefined,
         since_ts: typeof p?.since_ts === "number" ? p.since_ts : undefined,
         limit: typeof p?.limit === "number" ? p.limit : undefined,
+        operatorId: typeof p?.operatorId === "string" ? p.operatorId : undefined,
+        includeShared: p?.includeShared === false ? false : true,
       };
       const rows = listTasks(cfg, filter);
       respond(true, { tasks: rows, count: rows.length });
@@ -120,6 +122,12 @@ export function registerTaskPanelMethods(params: {
         due_date: typeof p.due_date === "string" ? p.due_date : null,
         est_minutes: typeof p.est_minutes === "number" ? p.est_minutes : null,
         hands: p.hands as "user" | "assistant" | "either" | undefined,
+        operator_id:
+          typeof p.operatorId === "string"
+            ? p.operatorId
+            : typeof p.operator_id === "string"
+              ? p.operator_id
+              : null,
         inferred_signal: p.inferred_signal,
         metadata: p.metadata,
         recurrence_rule_text:
@@ -156,6 +164,12 @@ export function registerTaskPanelMethods(params: {
           p.due_date === null ? null : typeof p.due_date === "string" ? p.due_date : undefined,
         est_minutes: typeof p.est_minutes === "number" ? p.est_minutes : undefined,
         hands: p.hands as "user" | "assistant" | "either" | undefined,
+        operator_id:
+          typeof p.operatorId === "string"
+            ? p.operatorId
+            : typeof p.operator_id === "string"
+              ? p.operator_id
+              : undefined,
         inferred_signal: p.inferred_signal,
         metadata: p.metadata,
         note: typeof p.note === "string" ? p.note : undefined,

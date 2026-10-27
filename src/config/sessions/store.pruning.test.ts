@@ -129,7 +129,7 @@ describe("getActiveSessionMaintenanceWarning", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FORK 2026-08-11 (the user) — regression: entry maintenance is a plain LRU, so a
+// FORK 2026-08-11 (the architect) — regression: entry maintenance is a plain LRU, so a
 // background lane that mints sessions faster than the user talks will evict the
 // user's own conversations. On 2026-08-10 the fractal-reflection lane (~70/day)
 // pushed 16 real chats out of the 500-entry default cap and emptied the Tinker
@@ -173,15 +173,22 @@ describe("conversation sessions are never evicted by maintenance", () => {
 
     const evicted = capEntryCount(store, 5);
 
-    expect(evicted).toBe(20);
+    // Chats fill the whole cap, yet the newest min(maxEntries, 25) = 5 background
+    // entries survive (FORK 2026-10-03): evicting all 20 would also delete the
+    // entry a save has just written.
+    expect(evicted).toBe(15);
     for (const key of CHAT_KEYS) {
       expect(store[key], `${key} must survive the cap`).toBeDefined();
     }
+    for (let i = 0; i < 5; i++) {
+      expect(store[`agent:main:fractal-reflection:${i}`]).toBeDefined();
+    }
+    expect(store["agent:main:fractal-reflection:5"]).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// FORK 2026-08-11 (the user) — conversation keys are preserved by CLASS.
+// FORK 2026-08-11 (the architect) — conversation keys are preserved by CLASS.
 // Regression for the 2026-08-10 incident: the fractal-reflection lane minted
 // ~70 fresh sessions/day against the 500-entry default cap, and the LRU evicted
 // 16 of the architect's real (quiet) conversations, emptying the Tinker session
@@ -219,6 +226,41 @@ describe("conversation keys survive entry maintenance", () => {
     expect(Object.keys(store).filter((k) => k.includes("fractal-reflection")).length).toBe(
       8 - removed,
     );
+  });
+
+  // FORK 2026-10-03 — regression: once the protected conversation keys alone
+  // reached `maxEntries`, the evictable budget fell to ZERO and every save
+  // deleted every background entry, including the one that save had just
+  // written. Live: 239 protected keys against maxEntries=80, so a spawned
+  // subagent's entry (its model pin) vanished in the same save that created it
+  // and the run fell back to the default model, 51 of 51 runs in a week.
+  it("capEntryCount keeps a just-written subagent entry when conversations fill the cap", () => {
+    const now = Date.now();
+    const childKey = "agent:main:subagent:9696aa5a-fded-4b17-b457-5e568164236b";
+    const store = makeStore([
+      ...Array.from(
+        { length: 12 },
+        (_unused, i) =>
+          [`agent:main:tinker:tab${i}`, makeEntry(now - (i + 1) * DAY_MS)] as [
+            string,
+            SessionEntry,
+          ],
+      ),
+      [
+        childKey,
+        {
+          ...makeEntry(now),
+          modelOverride: "claude-haiku-4-5",
+          providerOverride: "claude-code",
+        },
+      ],
+    ]);
+
+    capEntryCount(store, 10, { log: false });
+
+    expect(store[childKey]?.modelOverride).toBe("claude-haiku-4-5");
+    expect(store[childKey]?.providerOverride).toBe("claude-code");
+    expect(Object.keys(store).filter((k) => k.includes(":tinker:")).length).toBe(12);
   });
 
   it("pruneStaleEntries never prunes a conversation, however old", () => {

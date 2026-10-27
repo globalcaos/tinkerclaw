@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * export-ai-analysis.mjs — turn the two LIVE Tinker panels into self-contained
- * interactive pages, so a public site can hold the ONLY copy of them.
+ * interactive pages, so thetinkerzone.com can hold the ONLY copy of them.
  *
- * FORK 2026-09-04 (the operator): "I want the graph in the website to be the last
+ * FORK 2026-09-04 (the architect): "I want the graph in the website to be the last
  * version ... only one copy, no duplicates, no maintenance hell." The panels are
  * the RENDERER (they need live config, quota and the thalamus module); the
  * website is the ARTIFACT's only home. This script is the bridge.
@@ -19,7 +19,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-const REPO = "$HOME/src/tinkerclaw";
+const REPO = path.join(os.homedir(), "src/tinkerclaw");
 const require = createRequire(REPO + "/package.json");
 const { chromium } = require("playwright-core");
 
@@ -39,7 +39,10 @@ const CHROME =
 
 fs.mkdirSync(OUT, { recursive: true });
 
-let URL = process.env.TINKER_UI_URL || "http://localhost:18790";
+// 2026-09-23: default is production Tinker (:18793, serves the BUILT dist). The old
+// :18790 default was the Vite dev server, retired 2026-09-10 — it answered nothing, and
+// every cron run had to remember to override it.
+let URL = process.env.TINKER_UI_URL || "http://localhost:18793";
 const token = JSON.parse(
   fs.readFileSync(path.join(os.homedir(), ".openclaw", "openclaw.json"), "utf8"),
 )?.gateway?.auth?.token;
@@ -58,6 +61,50 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1900, height: 1400 } });
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
+
+// This gateway (up since 2026-09-19 17:26) does not serve `config.models`
+// ("unknown method" every 5 min since 05:26). The live tab keeps a catalog from
+// localStorage; a headless export starts empty and the dossier paints only the
+// four reference rows. Seed the same snapshot the picker uses, from today's config.
+// addInitScript MUST run before goto or the first paint misses it.
+// 2026-09-23: the seed is BUILT from today's openclaw.json, never read from /tmp. The
+// /tmp file vanished and crashed the export (ENOENT); without any seed a headless page
+// depends on the gateway's config.models answering in time, and on 2026-09-23 10:45 the
+// gateway WS was saturated (even `health` timed out) so the dossier painted 4 rows.
+// Same projection as budget-panel's projectModelConfig(); same {at,data} envelope as
+// app.ts writePanelSnapshot(). The live RPC, when it answers, still reconciles behind it.
+function modelConfigSeed() {
+  const cfg = JSON.parse(
+    fs.readFileSync(path.join(os.homedir(), ".openclaw", "openclaw.json"), "utf8"),
+  );
+  const d = cfg?.agents?.defaults || {};
+  const m = d.model || {};
+  const authProfiles = {};
+  for (const [id, raw] of Object.entries(cfg?.auth?.profiles || {})) {
+    const o = {};
+    for (const k of ["provider", "mode", "label"]) if (typeof raw?.[k] === "string") o[k] = raw[k];
+    authProfiles[id] = o;
+  }
+  const data = {
+    primary: typeof m === "string" ? m : m.primary || "",
+    fallbacks: m.fallbacks || [],
+    models: d.models || {},
+    authProfiles,
+    authOrder: cfg?.auth?.order || {},
+  };
+  return JSON.stringify({ at: Date.now(), data });
+}
+await page.addInitScript((payload) => {
+  try {
+    localStorage.setItem("tinker-modelconfig-snapshot", payload);
+  } catch {
+    /* ignore */
+  }
+  // 2026-09-23: OPTIONAL. The seed was a workaround for the 09-20/21 config.models
+  // "unknown method" outage; a /tmp file does not survive a reboot, and a hard read
+  // crashed the export (ENOENT) once the picker RPC was healthy again. The UI treats
+  // this key as a first-paint hint only — the live RPC reconciles behind it.
+}, modelConfigSeed());
 
 await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
@@ -116,18 +163,13 @@ const cssVars = await page.evaluate(() => {
 if (!css.includes(".sc-card")) die("panel CSS not found in document.styleSheets");
 
 // The one asset the panels reference by relative path; inlined or it 404s.
-let copilotLogo = "";
-try {
-  const r = await page.request.get(
-    (process.env.TINKER_UI_URL || "http://localhost:18790") +
-      "/tinker/copilot-logo.svg" +
-      (token ? "?token=" + encodeURIComponent(token) : ""),
-  );
-  if (r.ok())
-    copilotLogo = "data:image/svg+xml;base64," + Buffer.from(await r.body()).toString("base64");
-} catch {
-  /* leave empty; the ref simply stays broken rather than blocking the run */
-}
+// 2026-09-23: read the ribbon from DISK. This fetched it from a second hardcoded :18790
+// (the Vite server retired 2026-09-10), failed silently, and shipped `/tinker/copilot-logo.svg`
+// to the website — a 404, so the M365 Copilot row the architect had just asked to re-icon showed a
+// broken-image glyph. Missing file = die: an unbranded row is a visible defect, not a nicety.
+const COPILOT_SVG = path.join(REPO, "tinker-ui/public/copilot-logo.svg");
+if (!fs.existsSync(COPILOT_SVG)) die(`copilot logo missing at ${COPILOT_SVG}`);
+const copilotLogo = "data:image/svg+xml;base64," + fs.readFileSync(COPILOT_SVG).toString("base64");
 
 /** open a panel via the export hook, falling back to its button while both exist */
 async function openPanel(hook, btnSel, cardSel) {
@@ -164,7 +206,7 @@ async function closePanel(cardSel) {
   await page.waitForTimeout(800);
 }
 
-const chartCostCard = await openPanel("__tzOpenSmartCost", ".sc-open-btn", ".sc-card");
+let chartCostCard = await openPanel("__tzOpenSmartCost", ".sc-open-btn", ".sc-card");
 if (!chartCostCard) die("smart x cost panel did not open");
 const figures = await page.evaluate(() => {
   const c = document.querySelector(".sc-card");
@@ -191,7 +233,7 @@ const figures = await page.evaluate(() => {
 });
 
 // ── the €/MTOK <-> €/TASK switch, captured rather than dropped ──────────────
-// FORK 2026-09-04 (the operator: "The toggle switch per-token/per-task is missing, put it
+// FORK 2026-09-04 (the architect: "The toggle switch per-token/per-task is missing, put it
 // again"). It was removed on 2026-09-04 because the -task DOT COORDINATES are
 // computed live and only the -cost drawing was exported, so the control moved a
 // switch and nothing else — worse than absent.
@@ -236,6 +278,104 @@ if (taskModeReady.dx < 20)
   die(`only ${taskModeReady.dx} dots carry --sc-dx — task mode would move nothing`);
 if (taskModeReady.rules < 5)
   die(`only ${taskModeReady.rules} .sc-taskmode rules found — the class would do nothing`);
+// ── the LOG <-> LINEAR switch, captured as a SECOND DRAWING ───────────────────
+// FORK 2026-09-14 (the architect: "The toggle switch for linear-log horizontal axis is missing,
+// put it next to the token/job switch"). Unlike €/TASK this one is NOT a CSS class: the
+// panel's handler calls paint(), which re-renders the whole SVG through
+// renderSmartCostChart(..., { xScale }), because linear positions are not a transform of
+// log ones. So there IS a second drawing — the old note saying there was nothing to
+// capture was wrong. Flip the real switch, let the labels de-collide, keep that SVG,
+// flip back, and ship both. The page's switch then only chooses which one is shown.
+//
+// Guard on the MECHANISM, as the €/TASK lesson taught: two captures that differ by a
+// class name pass a byte comparison while every dot sits still. So count dots whose
+// x actually moved between the two drawings, matched by model + effort.
+const linear = await page.evaluate(async () => {
+  const card = document.querySelector(".sc-card");
+  const input = card && card.querySelector(".sc-scale-input");
+  if (!input) return { err: "no .sc-scale-input in the panel" };
+  const xs = (svg) => {
+    const m = new Map();
+    svg.querySelectorAll(".sc-dotpos").forEach((d) => {
+      const t = (d.getAttribute("transform") || "").match(/translate\(\s*([\d.-]+)/);
+      if (t) m.set(d.dataset.model + "@" + (d.dataset.effort || ""), parseFloat(t[1]));
+    });
+    return m;
+  };
+  const logX = xs(card.querySelector(".sc-body .sc-svg"));
+  input.checked = true;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 6000)); // same settle as openPanel: labels de-collide
+  const lin = card.querySelector(".sc-body .sc-svg");
+  const linX = xs(lin);
+  let moved = 0;
+  for (const [k, x] of linX) if (logX.has(k) && Math.abs(logX.get(k) - x) > 0.5) moved++;
+  const out = {
+    html: lin.outerHTML,
+    dots: linX.size,
+    logDots: logX.size,
+    moved,
+    caption: /· linear/.test(lin.textContent || ""),
+  };
+  input.checked = false;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 6000));
+  // Seat the linear drawing beside the fresh log one and re-read the card, so both go
+  // through exactly the same prepare/dedupe/lightify path as one captured card.
+  const body = card.querySelector(".sc-body");
+  // Both drawings define the same paint servers (sc-bg, sc-glow, sc-axis). url(#id)
+  // resolves to the FIRST match in the document, which is inside the log drawing —
+  // and in linear mode that drawing is display:none, where gradients and filters stop
+  // resolving. So the linear copy gets its own names, references rewritten to match.
+  const ids = [...new Set([...out.html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]))];
+  let linHtml = out.html;
+  for (const id of ids) {
+    const q = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    linHtml = linHtml
+      .replace(new RegExp('(\\sid=")' + q + '"', "g"), "$1" + id + '-lin"')
+      .replace(new RegExp("url\\(#" + q + "\\)", "g"), "url(#" + id + "-lin)")
+      .replace(new RegExp('(href=")#' + q + '"', "g"), "$1#" + id + '-lin"');
+  }
+  out.renamedIds = ids.length;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = linHtml;
+  const linNode = tpl.content.firstElementChild;
+  linNode.classList.add("tzai-lin");
+  linNode.classList.remove("sc-taskmode");
+  body.appendChild(linNode);
+  out.card = card.outerHTML;
+  linNode.remove();
+  delete out.html;
+  return out;
+});
+if (linear.err) die(linear.err);
+if (!linear.caption)
+  die("the re-rendered drawing does not say '· linear' — the scale never switched");
+if (linear.dots !== linear.logDots)
+  die(`linear drawing has ${linear.dots} dots, log has ${linear.logDots} — refusing to pair them`);
+if (linear.moved < Math.min(20, linear.dots / 2))
+  die(
+    `only ${linear.moved}/${linear.dots} dots moved between log and linear — the switch would do nothing`,
+  );
+chartCostCard = linear.card;
+// 2026-09-23 (the architect: "useless bottom notes that should instead go in the main website as
+// normal text"). The THALAMUS caption at the foot of the drawing is already printed above
+// the map by the publisher's FIGURES block, so it leaves the SVG and the canvas is cropped
+// to the lowest thing still drawn. MEASURED here, on the live drawing, rather than typed as
+// a constant: a future axis caption must never be clipped silently.
+const cropH = await page.evaluate(() => {
+  const svg = document.querySelector(".sc-card .sc-body .sc-svg");
+  const ctm = svg ? svg.getScreenCTM() : null;
+  if (!ctm) return 0;
+  let bottom = 0;
+  for (const el of svg.children) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "defs" || tag === "rect" || el.classList.contains("sc-env-foot")) continue;
+    const r = el.getBoundingClientRect();
+    if (r.height > 0) bottom = Math.max(bottom, (r.bottom - ctm.f) / ctm.d);
+  }
+  return Math.ceil(bottom + 6);
+});
 await closePanel(".sc-card");
 
 const dossierCard = await openPanel("__tzOpenDossier", ".sd-open-btn", ".sd-card");
@@ -251,8 +391,8 @@ if (dossierMeta.rows < 5)
 if (figures.models < 20) die(`chart rendered only ${figures.models} models — refusing to publish`);
 
 // ── the site's own palette ──────────────────────────────────────────────────
-// FORK 2026-09-04 (the operator: "It does not need to have this dark aesthetics, it should
-// blend more with the website's style"). Read off the public site's served theme
+// FORK 2026-09-04 (the architect: "It does not need to have this dark aesthetics, it should
+// blend more with the website's style"). Read off thetinkerzone.com's served theme
 // (yith-wonder): base #FFFFFF, contrast #404040, primary #7A3921, secondary #B97040,
 // secondary-background #FDE5D0. The panels are drawn for a #120e0b paper, so this is
 // a TRANSLATION, not a theme switch — the chart itself has no light mode.
@@ -405,10 +545,18 @@ const esc = (s) =>
 
 function prepare(cardHtml) {
   let c = cardHtml.replace(/<button class="sc-close"[\s\S]*?<\/button>/g, "");
-  // The LOG <-> LINEAR switch stays dropped: unlike the cost/task pair it re-solves the
-  // x scale continuously, so there is no second drawing to capture. A dead control is
-  // worse than a missing one — the whole reason the cost/task switch was pulled.
-  c = c.replace(/<label class="sc-switch" data-hint="Bottom axis[\s\S]*?<\/label>/g, "");
+  // The LOG <-> LINEAR switch lives in the panel's bottom axis bar; on the page the architect
+  // wants it beside the €/MTOK <-> €/TASK switch (2026-09-14). Lift it out and seat it
+  // right after that one. Both drawings are captured, so it is a live control.
+  const scaleSw = (c.match(/<label class="sc-switch" data-hint="Bottom axis[\s\S]*?<\/label>/) ||
+    [])[0];
+  if (scaleSw) {
+    c = c.replace(scaleSw, "");
+    c = c.replace(
+      /(<label class="sc-switch" data-hint="Per-token[\s\S]*?<\/label>)/,
+      '<span class="tzai-switches">$1' + scaleSw + "</span>",
+    );
+  }
   if (copilotLogo) c = c.split("/tinker/copilot-logo.svg").join(copilotLogo);
   // Hoist <title> onto data-tip so our tooltip does not double with the native one.
   c = c.replace(/<g class="sc-(?:dot|api)pos"[\s\S]*?<\/g>\s*<\/g>/g, (g) => {
@@ -416,13 +564,21 @@ function prepare(cardHtml) {
     if (!m) return g;
     return g.replace(/<title>[\s\S]*?<\/title>/, "").replace(">", ` data-tip="${esc(m[1])}">`);
   });
+  // 2026-09-23: a literal "<" or ">" INSIDE an attribute value is legal HTML but not
+  // legal WordPress: wptexturize read `title="… openrouter/<model> …"` as a tag, turned the
+  // closing quote into &#8221;, and the attribute swallowed the header — the OpenRouter
+  // column vanished and every host name slid one column left of its prices. Escape both
+  // inside every quoted attribute, so no future tooltip can do it again.
+  c = c.replace(/(\s[\w:-]+=")([^"]*)"/g, (m, head, val) =>
+    /[<>]/.test(val) ? head + val.replace(/</g, "&lt;").replace(/>/g, "&gt;") + '"' : m,
+  );
   // wpautop turns a blank line inside post content into a stray <p>; inside an <svg>
   // that is not cosmetic, it is a parse error. Ship one line.
   return c.replace(/\n\s*\n/g, "\n").replace(/\n\s*/g, "");
 }
 
 // ── the shared fragment shell ───────────────────────────────────────────────
-// FORK 2026-09-04 (the operator: "I want both the graph and the chart completely native,
+// FORK 2026-09-04 (the architect: "I want both the graph and the chart completely native,
 // completely integrated, with no scrolling bars and using the full width of the
 // page"). Until today each panel shipped as a standalone HTML file that the post
 // embedded in a fixed-height <iframe> — which is exactly where the scrollbars came
@@ -455,6 +611,27 @@ const LAYOUT_CSS = `
 .tzai-chart .sc-body { height: min(64vw, 940px) !important; min-height: 460px !important;
   max-height: none !important; overflow: visible !important; flex: 0 0 auto !important; }
 .tzai-chart .sc-svg { width: 100% !important; height: 100% !important; }
+/* two drawings, one shown: the stage's tzai-linmode class picks linear */
+.tzai .sc-svg.tzai-lin { display: none !important; }
+.tzai .tzai-linmode .sc-svg:not(.tzai-lin) { display: none !important; }
+.tzai .tzai-linmode .sc-svg.tzai-lin { display: block !important; }
+.tzai .tzai-switches { display: inline-flex; gap: 22px; align-items: center; flex-wrap: nowrap;
+  flex: 0 0 auto; white-space: nowrap; }  /* side by side, never stacked (the head column squeezed it) */
+.tzai .sc-axisbar:empty { display: none; }
+/* THE MAP IS A BUTTON (the architect 2026-09-14: "The main graph should be a big button that, upon
+   pressing, should open a full screen popup"). Inline it is a preview you cannot fight
+   with — no wheel, no drag — and one click anywhere on it opens the popup. */
+.tzai-frame { position: relative; }
+.tzai-open { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0;
+  border: 0; border-radius: 10px; background: rgba(122, 57, 33, 0); cursor: zoom-in;
+  display: flex; align-items: center; justify-content: center; transition: background .18s; }
+.tzai-open:hover, .tzai-open:focus-visible { background: rgba(122, 57, 33, .06); outline: none; }
+.tzai-open-pill { display: inline-flex; align-items: center; gap: 10px; padding: 14px 26px;
+  border-radius: 999px; background: #7A3921; color: #FFFDFB; font: 600 15px/1 system-ui,-apple-system,"Segoe UI",sans-serif;
+  letter-spacing: .04em; box-shadow: 0 10px 30px rgba(60, 40, 25, .28); transition: transform .18s; }
+.tzai-open:hover .tzai-open-pill, .tzai-open:focus-visible .tzai-open-pill { transform: scale(1.05); }
+.tzai-open-pill span { font-weight: 400; opacity: .85; }
+.tzai-frame.tzai-isopen .tzai-open { display: none; }
 .tzai .sc-svg { cursor: grab; }
 .tzai .sc-svg.tzai-drag { cursor: grabbing; }
 /* no inner scrollbars anywhere: the page is the scroll container now */
@@ -469,6 +646,30 @@ const LAYOUT_CSS = `
 .tzai .sd-table thead, .tzai .sd-table thead tr, .tzai .sd-table thead th, .tzai .sd-table th {
   background: #FDE5D0 !important; color: #7A3921 !important; }
 .tzai .sd-table thead th { border-bottom: 1px solid #E5D3BE !important; }
+/* 2026-09-23 LIGHT PAPER, stated once. The panel's :root inks are dark-theme values
+   (--text #e8e0d4, --muted #9a8e7a); on the cream page every rule written against them
+   — and every hard-coded pale colour in the CN price table — washed out to near-invisible.
+   Re-map the variables on the fragment so future columns inherit readable ink, then pin
+   the hard-coded .sd-cn-* colours. */
+.tzai { --bg:#FFFDFB; --surface:#FBF3EA; --surface2:#F4E6D6; --border:#D9C3AA; --text:#3A2F26;
+  --fg:#3A2F26; --muted:#6E5644; --accent:#7A3921; --accent2:#B97040; --bg-elev:#FFFFFF;
+  --green:#3F6212; --red:#A63A32; --orange:#9A4F10; --yellow:#7A5B00; --blue:#2F5F9E;
+  --purple:#5E4386; --skill-highlight:#9A6B00; --skill-highlight-dim:rgba(154,107,0,.45); }
+.tzai .sd-card, .tzai .sd-body, .tzai .sd-table td, .tzai .sd-shared li, .tzai .sd-shared p,
+.tzai .sd-split, .tzai .sd-legend, .tzai .sd-note { color: #3A2F26 !important; }
+.tzai .sd-cn-matrix h3 { color: #7A3921 !important; }
+.tzai .sd-cn-table td { color: #3A2F26 !important; }
+.tzai .sd-cn-table td.sd-cn-na, .tzai .sd-cn-n, .tzai .sd-cn-payg { color: #7C6A5A !important; }
+.tzai .sd-cn-best, .tzai .sd-cn-cheapest, .tzai .sd-cn-summary-h, .tzai .sd-cn-sub,
+.tzai .sd-cn-win { color: #2F5A12 !important; }
+.tzai .sd-cn-best { background: rgba(63,98,18,.14) !important; font-weight: 700; }
+.tzai .sd-cn-win b { color: #1F4208 !important; }
+.tzai .sd-cn-or { color: #1F4E8C !important; background: rgba(47,95,158,.08) !important; }
+.tzai .sd-cn-answer { color: #3A2F26 !important; }
+.tzai .sd-cn-answer b { color: #1A140F !important; }
+.tzai .sd-cn-caveat, .tzai .sd-cn-sub-unconfirmed { color: #9A3F12 !important; }
+.tzai .sd-cn-caveat b { color: #7A2E08 !important; }
+.tzai .sd-cn-summary { background: rgba(63,98,18,.06) !important; }
 .tzai th[data-sort] { cursor: pointer; }
 .tzai th[data-sort]:hover { color: var(--accent); }
 .tzai th.tzai-sorted { color: var(--accent) !important; }
@@ -487,7 +688,7 @@ const LAYOUT_CSS = `
 .tzai-tip.on { opacity: 1; }
 @media (max-width: 900px) { .tzai-chart .tzai-stage { height: 74vh; } }
 /* ── FULL-PAGE POPUP ────────────────────────────────────────────────────────
-   the operator 2026-09-04: "The zoom does not work in the graph, because the mouse wheel
+   the architect 2026-09-04: "The zoom does not work in the graph, because the mouse wheel
    scrolls the page instead. Turn it into a full-page popup then, as we had it in
    the tinkerclaw."  Reproduced first: on a scrollable page a wheel over the plot
    BOTH zooms and scrolls. preventDefault() is present and correct — but this SVG
@@ -498,21 +699,38 @@ const LAYOUT_CSS = `
    The overlay carries the .tzai and .tzai-chart classes itself because the panel
    CSS is scoped to .tzai and the overlay is parented to <body>, outside the figure. */
 .tzai-fs { position: fixed !important; inset: 0 !important; width: auto !important;
-  margin: 0 !important; z-index: 2147483000; background: #FFFDFB; display: none;
-  flex-direction: column; }
-.tzai-fs.on { display: flex; }
-.tzai-fs-bar { flex: 0 0 auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-  padding: 8px 14px; background: #FDE5D0; color: #7A3921; border-bottom: 1px solid #E5D3BE;
-  font-family: "SF Mono", ui-monospace, monospace; font-size: 10px; letter-spacing: .08em; }
-.tzai-fs-bar .tzai-btn { background: #FFFDFB; color: #7A3921; border-color: #E5D3BE; }
-.tzai-fs-bar .tzai-btn:hover { border-color: #7A3921; }
-.tzai-fs-sp { flex: 1 1 auto; }
-.tzai-fs-body { flex: 1 1 auto; min-height: 0; padding: 8px 14px 14px; }
-.tzai-fs .tzai-stage, .tzai-fs .sc-overlay, .tzai-fs .sc-card {
-  height: 100% !important; max-height: none !important; }
-.tzai-fs .sc-card { display: flex !important; flex-direction: column !important; }
-.tzai-fs .sc-body { height: auto !important; min-height: 0 !important;
-  flex: 1 1 auto !important; }
+  margin: 0 !important; z-index: 2147483000; background: #FFFDFB; display: none; }
+.tzai-fs.on { display: block; }
+/* 2026-09-23 (the architect: "only 50% in height ... some crap also at the top that does not let
+   me use the 100% height. Reset view icon is not necessary ... a close button with the
+   'ESC' note ... could just sit on the top-right"). No toolbar row any more: the drawing
+   takes the whole viewport and the few controls FLOAT over it, the way a map's do. The
+   title and subtitle stay on the page; the footnotes moved to the page text. */
+.tzai-fs-body { position: absolute; inset: 0; }
+.tzai-fs-close { position: absolute; top: 8px; right: 10px; z-index: 3; padding: 6px 12px;
+  font: 10px/1.3 "SF Mono", ui-monospace, monospace; letter-spacing: .1em;
+  background: rgba(255, 253, 251, .92) !important; color: #7A3921 !important;
+  border-color: #E5D3BE !important; }
+.tzai-fs-close:hover { border-color: #7A3921 !important; }
+.tzai-fs .tzai-stage, .tzai-fs .sc-overlay { height: 100% !important; max-height: none !important; }
+.tzai.tzai-fs .sc-card { position: relative !important; height: 100% !important; max-height: none !important;
+  padding: 0 !important; border: 0 !important; border-radius: 0 !important; }
+.tzai.tzai-fs .sc-body { position: absolute !important; inset: 0 !important; height: auto !important;
+  min-height: 0 !important; flex: none !important; }
+.tzai-fs .sc-title, .tzai-fs .sc-sub { display: none !important; }
+.tzai.tzai-fs .sc-head { position: absolute; top: 8px; right: 150px; z-index: 2; margin: 0;
+  padding: 5px 12px; border-radius: 999px; border: 1px solid #E5D3BE;
+  background: rgba(255, 253, 251, .92); }
+.tzai.tzai-fs .sc-legend { position: absolute; top: 8px; left: 10px; right: 470px; z-index: 2;
+  margin: 0; max-height: none; overflow: visible; pointer-events: none; }
+.tzai.tzai-fs .sc-legend .sc-chip { pointer-events: auto; }
+.tzai.tzai-fs .sc-legend .sc-chip:not(.active) { background: color-mix(in srgb, var(--sc-chip) 7%, #FFFDFB); }
+/* narrow screens: the drawing is width-bound and centred with room above and below it,
+   so the switches drop to the bottom edge instead of colliding with the wrapped chips */
+@media (max-width: 900px) {
+  .tzai.tzai-fs .sc-head { top: auto; bottom: 10px; right: 10px; }
+  .tzai.tzai-fs .sc-legend { right: 130px; }
+}
 /* the figure leaves a hole while it is up on the overlay, so the article does not
    jump: the placeholder keeps the same box and says where the drawing went. */
 .tzai-hole { display: none; align-items: center; justify-content: center;
@@ -520,6 +738,11 @@ const LAYOUT_CSS = `
   height: min(64vw, 940px); min-height: 460px;
   font-family: "SF Mono", ui-monospace, monospace; font-size: 11px; letter-spacing: .08em; }
 .tzai-hole.on { display: flex; }
+/* The slide readout ("19% · €5.00") is drawn for the panel's near-black paper: cream fill
+   in a black halo, which on the site's white page read as a smudge (the architect 2026-09-17).
+   CSS fill beats the fill="" presentation attribute, and this sheet loads last. */
+.tzai .sc-util-pct { fill: var(--text); fill-opacity: 1; stroke: #FFFFFF; stroke-width: 3.5px;
+  stroke-opacity: .95; font-weight: 600; }
 `;
 
 const COMMON_JS = (id) => `
@@ -559,35 +782,66 @@ var fullOn = false;
 // back empty the moment it does (that killed RESET VIEW and the vendor chips).
 var stage = root.querySelector('.tzai-stage');
 function svgs(){ return [].slice.call(stage.querySelectorAll('.sc-svg')); }
-function visibleSvg(){
-  return svgs()[0];
-}
-function paint(vendor){
-  var v = locked || vendor;
+// The panel's applyFocus (tinker-ui app.ts HIGHLIGHT), ported 2026-09-24 after the architect found
+// the site still lit only on the vendor chips: hovering a model's circle or triangle
+// lights that whole model (path, bubbles, triangles, bridges) plus every other seller of
+// the same brain (data-twin). The brightness itself is the captured .sc-focus/.sc-hl CSS.
+var hoverVendor = '';
+var hoverTwin = '';
+var hoverModel = '';
+function paint(){
+  var v = locked || hoverVendor;
+  var focused = !!(v || hoverTwin || hoverModel);
   svgs().forEach(function(svg){
-    svg.classList.toggle('sc-focus', !!v);
-    svg.querySelectorAll('[data-vendor]').forEach(function(el){
-      el.classList.toggle('sc-hl', !!v && el.getAttribute('data-vendor') === v);
+    svg.classList.toggle('sc-focus', focused);
+    if (!focused) {
+      svg.querySelectorAll('.sc-hl').forEach(function(el){ el.classList.remove('sc-hl'); });
+      return;
+    }
+    svg.querySelectorAll('[data-vendor],[data-twin],[data-model]').forEach(function(el){
+      var ev = el.getAttribute('data-vendor') || '';
+      var et = el.getAttribute('data-twin') || '';
+      var em = el.getAttribute('data-model') || '';
+      el.classList.toggle('sc-hl', (v ? ev === v : false) || (hoverTwin ? et === hoverTwin : false) ||
+        (hoverModel ? em === hoverModel : false));
     });
   });
   stage.querySelectorAll('.sc-chip').forEach(function(c){
-    c.style.outline = (locked && c.dataset.vendor === locked) ? '1px solid var(--accent)' : '';
+    c.style.outline = (locked ? c.dataset.vendor === locked : false) ? '1px solid var(--accent)' : '';
   });
 }
 stage.querySelectorAll('.sc-chip').forEach(function(chip){
-  chip.addEventListener('mouseenter', function(){ paint(chip.dataset.vendor); });
-  chip.addEventListener('mouseleave', function(){ paint(null); });
+  chip.addEventListener('mouseenter', function(){ hoverVendor = chip.dataset.vendor || ''; paint(); });
+  chip.addEventListener('mouseleave', function(){ hoverVendor = ''; paint(); });
   chip.addEventListener('click', function(e){ e.preventDefault();
-    locked = (locked === chip.dataset.vendor) ? null : chip.dataset.vendor; paint(locked); });
+    locked = (locked === chip.dataset.vendor) ? null : chip.dataset.vendor; paint(); });
+});
+svgs().forEach(function(svg){
+  svg.addEventListener('mouseover', function(e){
+    var el = e.target;
+    var tw = el.closest ? el.closest('[data-twin]') : null;
+    var md = el.closest ? el.closest('[data-model]') : null;
+    var t = tw ? (tw.getAttribute('data-twin') || '') : '';
+    var m = md ? (md.getAttribute('data-model') || '') : '';
+    if (t !== hoverTwin || m !== hoverModel) { hoverTwin = t; hoverModel = m; paint(); }
+  });
+  svg.addEventListener('mouseleave', function(){
+    if (hoverTwin || hoverModel) { hoverTwin = ''; hoverModel = ''; paint(); }
+  });
 });
 
 // Pan/zoom is wired per drawing: the two cost modes are two separate <svg>s.
-var views = new Map();
 svgs().forEach(function(svg){
   var vb0 = (svg.getAttribute('viewBox') || '0 0 900 600').split(/[\\s,]+/).map(Number);
   var vb = vb0.slice();
-  views.set(svg, { vb0: vb0, get: function(){ return vb; }, reset: function(){ vb = vb0.slice(); apply(); } });
-  function apply(){ svg.setAttribute('viewBox', vb.join(' ')); }
+  function apply(){
+    svg.setAttribute('viewBox', vb.join(' '));
+    // The panel's applyView: --sc-k = inverse zoom, which the captured CSS uses to
+    // counter-scale rings, logos and labels so they keep their on-screen size while their
+    // positions spread (the architect 2026-09-17: "the size of the bubbles should remain constant").
+    svg.style.setProperty('--sc-k', String(vb[2] / vb0[2]));
+    svg.classList.toggle('sc-zoomed', vb0[2] - 0.5 > vb[2]);
+  }
   function toUser(e){
     var r = svg.getBoundingClientRect();
     return { x: vb[0] + (e.clientX - r.left) / r.width * vb[2],
@@ -604,6 +858,10 @@ svgs().forEach(function(svg){
   }, { passive: false });
   var drag = null;
   svg.addEventListener('pointerdown', function(e){
+    // A prepaid circle is a slider, not a grab handle for the map (the architect 2026-09-15:
+    // "I am unable to drag the circles right-left because the whole graph moves").
+    var onDot = e.target.closest ? e.target.closest('[data-util-drag]') : null;
+    if (onDot) return;
     drag = { x: e.clientX, y: e.clientY, vb: vb.slice() };
     svg.classList.add('tzai-drag');
     try { svg.setPointerCapture(e.pointerId); } catch(_){}
@@ -620,6 +878,105 @@ svgs().forEach(function(svg){
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
 });
+// Sliding a prepaid circle along plan price -> API list price, the panel's wireUtilDrag
+// (tinker-ui app.ts) ported. The panel reads the live scales; a static page has none,
+// so each circle's own two anchors (home x/cost, list x/cost) rebuild its axis: both
+// axes are affine, in cost (linear drawing) or in log10(cost) (log drawing). The home
+// utilisation is read back from the circle's own "75%" label, so SC_PLAN_UTIL is not
+// copied here. Snap-back, cursor and readout are the panel CSS already on the page.
+// 2026-09-24, the panel's plan WAYPOINTS ported (the architect 2026-09-23: "once I choose to start
+// dragging a circle, its row elements will also highlight"): grabbing a circle lights its
+// row (plan triangles, API triangle, dashed bridge = .sc-wp-active), each triangle is a
+// sticky stop within SNAP_PX screen pixels, and on a stop the readout names the plan and
+// its monthly price. Stop x and label ride on the captured marks (data-wp-x/-hud).
+var SNAP_PX = 12;
+svgs().forEach(function(svg){
+  var lin = svg.classList.contains('tzai-lin');
+  function f(c){ return lin ? c : Math.log(c) / Math.LN10; }
+  function finv(v){ return lin ? v : Math.pow(10, v); }
+  var slide = null;
+  function setHit(st){
+    if (!slide) return;
+    if (slide.hit === st) return;
+    if (slide.hit) slide.hit.el.classList.remove('sc-wp-hit');
+    if (st) st.el.classList.add('sc-wp-hit');
+    slide.g.classList.toggle('sc-util-on-wp', !!st);
+    slide.hit = st;
+  }
+  svg.addEventListener('pointerdown', function(e){
+    var g = e.target.closest ? e.target.closest('.sc-dotpos[data-util-drag]') : null;
+    if (!g) return;
+    var homeX = +g.dataset.homeX, listX = +g.dataset.listX;
+    var homeCost = +g.dataset.homeCost, listCost = +g.dataset.listCost;
+    var label = g.querySelector('.sc-util-pct');
+    var util0 = label ? parseFloat(label.textContent) / 100 : 0.75;
+    if (!(homeCost > 0) || !(listCost > 0) || f(listCost) === f(homeCost) || !(util0 > 0)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var k = (listX - homeX) / (f(listCost) - f(homeCost));
+    var xAt = function(c){ return homeX + (f(c) - f(homeCost)) * k; };
+    var q = '[data-model="' + CSS.escape(g.dataset.model || '') + '"][data-effort="' +
+      CSS.escape(g.dataset.effort || '') + '"]';
+    var row = [].slice.call(svg.querySelectorAll('.sc-apipos' + q + ', .sc-bridgelayer line' + q));
+    var stops = [];
+    row.forEach(function(el){
+      el.classList.add('sc-wp-active');
+      if (!el.classList.contains('sc-apipos')) return;
+      var plan = el.classList.contains('sc-wppos');
+      var x = plan ? +el.dataset.wpX : listX;
+      if (isFinite(x)) stops.push({ el: el, x: x, hud: plan ? (el.dataset.wpHud || '') : 'API · no monthly fee' });
+    });
+    // The range spans every mark on the row: a bigger plan can land LEFT of our own seat's
+    // 100% (OpenAI Pro 20x sits left of Plus), and a stop you cannot reach is not a stop.
+    var xs = [xAt(homeCost * util0), listX].concat(stops.map(function(st){ return st.x; }));
+    slide = { g: g, label: label, labelText: label ? label.textContent : '', homeX: homeX,
+      y: +g.dataset.homeY, homeCost: homeCost, util0: util0, k: k, row: row, stops: stops, hit: null,
+      lo: Math.min.apply(null, xs), hi: Math.max.apply(null, xs) };
+    g.classList.add('sc-util-sliding');
+    g.classList.remove('sc-util-snap');
+    svg.classList.add('sc-util-dragging');
+    try { g.setPointerCapture(e.pointerId); } catch(_){}
+  });
+  svg.addEventListener('pointermove', function(e){
+    if (!slide) return;
+    var ctm = svg.getScreenCTM(); if (!ctm) return;
+    var pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    var x = Math.max(slide.lo, Math.min(slide.hi, pt.matrixTransform(ctm.inverse()).x));
+    var reach = SNAP_PX / (Math.abs(ctm.a) || 1);
+    var best = null;
+    slide.stops.forEach(function(st){
+      var d = Math.abs(st.x - x);
+      if (d > reach) return;
+      if (best === null || d < Math.abs(best.x - x)) best = st;
+    });
+    if (best) x = best.x;
+    setHit(best);
+    slide.g.setAttribute('transform', 'translate(' + x + ', ' + slide.y + ')');
+    if (!slide.label) return;
+    if (best) { slide.label.textContent = best.hud; return; }
+    // UNCLAMPED on purpose, as in the panel: left of our own 100% the seat cannot deliver
+    // that price, and "150%" says so where a clamped "100%" would claim it can.
+    var cost = finv(f(slide.homeCost) + (x - slide.homeX) / slide.k);
+    var util = slide.homeCost * slide.util0 / cost;
+    slide.label.textContent = Math.round(util * 100) + '% · €' +
+      (cost >= 10 ? cost.toFixed(0) : cost >= 1 ? cost.toFixed(2) : cost.toFixed(3));
+  });
+  function endSlide(e){
+    if (!slide) return;
+    var g = slide.g;
+    setHit(null);
+    slide.row.forEach(function(el){ el.classList.remove('sc-wp-active'); });
+    g.setAttribute('transform', 'translate(' + slide.homeX + ', ' + slide.y + ')');
+    g.classList.remove('sc-util-sliding');
+    g.classList.add('sc-util-snap');
+    svg.classList.remove('sc-util-dragging');
+    if (slide.label) slide.label.textContent = slide.labelText;
+    try { g.releasePointerCapture(e.pointerId); } catch(_){}
+    slide = null;
+  }
+  svg.addEventListener('pointerup', endSlide);
+  svg.addEventListener('pointercancel', endSlide);
+});
 
 // The euro/Mtok <-> euro/task switch. Each captured card carries its own switch,
 // already in the state it was captured in, so flipping either one just decides which
@@ -632,11 +989,11 @@ function setMode(task){
 stage.querySelectorAll('.sc-switch-input:not(.sc-scale-input)').forEach(function(i){
   i.addEventListener('change', function(){ setMode(i.checked); });
 });
-function resetView(){
-  var v = views.get(visibleSvg()); if (v) v.reset();
-  locked = null; paint(null);
-}
-root.querySelectorAll('.tzai-reset').forEach(function(b){ b.addEventListener('click', resetView); });
+// LOG <-> LINEAR: both drawings were captured from the panel, so this only chooses
+// which one is on screen. Each keeps its own zoom, as the panel resets view on repaint.
+stage.querySelectorAll('.sc-scale-input').forEach(function(i){
+  i.addEventListener('change', function(){ stage.classList.toggle('tzai-linmode', i.checked); });
+});
 
 // ── the full-page popup ─────────────────────────────────────────────────────
 // ONE copy of the drawing, moved. Cloning a ~1 MB SVG would double the page and
@@ -654,26 +1011,21 @@ function el(tag, cls, txt){
   if (txt) n.textContent = txt;
   return n;
 }
+// No toolbar row (the architect 2026-09-23): the close button floats top-right over the drawing,
+// and RESET VIEW is gone — reloading the page resets the view.
 var fs = el('div', 'tzai tzai-chart tzai-fs');
-var fsBar = el('div', 'tzai-fs-bar');
-var fsReset = el('button', 'tzai-btn tzai-reset', 'RESET VIEW');
-fsReset.type = 'button';
+var fsBody = el('div', 'tzai-fs-body');
 var fsClose = el('button', 'tzai-btn tzai-fs-close', 'CLOSE \u2715 (ESC)');
 fsClose.type = 'button';
-fsBar.appendChild(fsReset);
-fsBar.appendChild(el('span', '', 'scroll or pinch = zoom \u00b7 drag = pan \u00b7 hover a dot = detail \u00b7 click a vendor chip = isolate it'));
-fsBar.appendChild(el('span', 'tzai-fs-sp'));
-fsBar.appendChild(fsClose);
-var fsBody = el('div', 'tzai-fs-body');
-fs.appendChild(fsBar);
 fs.appendChild(fsBody);
+fs.appendChild(fsClose);
 document.body.appendChild(fs);
-fsReset.addEventListener('click', resetView);
 
 var scrollLock = null;
 function openFull(){
   if (fullOn) return;
   fsBody.appendChild(stage);
+  if (frame) frame.classList.add('tzai-isopen');
   hole.classList.add('on');
   fs.classList.add('on');
   // No scrollable document = nothing for the compositor to steal the wheel for.
@@ -685,6 +1037,7 @@ function openFull(){
 function closeFull(){
   if (!fullOn) return;
   hole.parentNode.insertBefore(stage, hole);
+  if (frame) frame.classList.remove('tzai-isopen');
   hole.classList.remove('on');
   fs.classList.remove('on');
   if (scrollLock) { document.documentElement.style.overflow = scrollLock.h;
@@ -692,7 +1045,8 @@ function closeFull(){
   fullOn = false;
   tip.classList.remove('on');
 }
-root.querySelectorAll('.tzai-full').forEach(function(b){ b.addEventListener('click', openFull); });
+var frame = root.querySelector('.tzai-frame');
+root.querySelectorAll('.tzai-full, .tzai-open').forEach(function(b){ b.addEventListener('click', openFull); });
 fsClose.addEventListener('click', closeFull);
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeFull(); });
 })();`;
@@ -744,6 +1098,14 @@ const wpSafeJs = (js) => {
   if (/\n\s*\n/.test(out)) die("emitted JS still has a blank line — wpautop would split it");
   const bad = out.match(new RegExp("</?(" + WP_BLOCK_TAGS + ")(\\s|>|/)", "i"));
   if (bad) die("emitted JS carries a wpautop block-tag literal: " + bad[0]);
+  // 2026-09-15: WordPress served one new "a && b" as "a &#038;&#038; b" and killed the whole
+  // chart script, while an older "&&" in the same script came through intact. Rather than
+  // model which "&" it rewrites, none ships: use a ternary instead of &&.
+  if (out.includes("&"))
+    die(
+      'emitted JS carries an "&" — WordPress encodes it to &#038;: ' +
+        out.slice(Math.max(0, out.indexOf("&") - 40), out.indexOf("&") + 20),
+    );
   return out;
 };
 
@@ -764,6 +1126,37 @@ const hoistStyles = (html) =>
     innerStyles.push(body);
     return "";
   });
+// ── the card's footnotes become page text; the drawing loses its caption ─────
+// 2026-09-23 (the architect: "the available real-estate ... once it is maximized, is only 50% in
+// height. There are some useless bottom notes that should instead go in the main website
+// as normal text"). The .sc-foot strip under the plot is lifted out whole and published as
+// "The fine print" below the page's own "How to read it" (NOTES marker, see
+// publish_ai_analysis.py); the THALAMUS caption inside the SVG is dropped because FIGURES
+// already prints it; the canvas is cropped to the measured bottom of what is left.
+const footM = chartCostCard.match(/<div class="sc-foot">([\s\S]*?)<\/div>/);
+if (!footM) die("the chart card has no .sc-foot — nothing to move to the page");
+const notesItems = [...footM[1].matchAll(/<span>([\s\S]*?)<\/span>/g)]
+  .map((m) => m[1].trim())
+  .filter(Boolean);
+if (notesItems.length < 3) die(`only ${notesItems.length} footnotes found in .sc-foot`);
+chartCostCard = chartCostCard.replace(footM[0], "");
+chartCostCard = chartCostCard.replace(/<text class="sc-env-foot"[\s\S]*?<\/text>/g, "");
+if (cropH > 400 && cropH < 600) {
+  chartCostCard = chartCostCard
+    .split('viewBox="0 0 900 600"')
+    .join(`viewBox="0 0 900 ${cropH}"`)
+    .replace(/(<rect x="0" y="0" width="900" )height="600"/g, `$1height="${cropH}"`)
+    .replace(/(<rect x="0\.5" y="0\.5" width="899" )height="599"/g, `$1height="${cropH - 1}"`);
+  if (chartCostCard.includes('viewBox="0 0 900 600"')) die("crop left a 900x600 drawing behind");
+} else {
+  console.error(`  crop skipped: measured bottom ${cropH} is outside (400, 600)`);
+}
+const notesHtml =
+  `<h3 style="color:#7A3921;">The fine print</h3>` +
+  `<ul style="color:#404040;line-height:1.65;font-size:0.92em;">` +
+  notesItems.map((t) => `<li>${t}</li>`).join("") +
+  `</ul>`;
+
 const costCard = lightify(hoistStyles(dedupeLogos(prepare(chartCostCard), defs)));
 const dossierHtml = lightify(hoistStyles(dedupeLogos(prepare(dossierCard), defs)));
 const varsBlock = Object.entries({ ...cssVars, ...LIGHT_VARS })
@@ -783,12 +1176,12 @@ const chartFragment =
   `<div class="tzai tzai-chart" id="${CHART_ID}">` +
   styleBlock +
   defsSvg +
-  `<div class="tzai-bar"><button class="tzai-btn tzai-full" type="button">&#8599; FULL SCREEN</button>` +
-  `<button class="tzai-btn tzai-reset" type="button">RESET VIEW</button>` +
-  `<span>open FULL SCREEN to zoom &middot; drag = pan &middot; hover a dot = detail &middot; ` +
-  `click a vendor chip = isolate it &middot; the switch reads the same models per token or per task</span></div>` +
-  `<div class="tzai-stage">` +
+  `<div class="tzai-bar"><span>click the map to open it full screen &middot; zoom, pan, hover every model &middot; ` +
+  `switch per token / per task and log / linear</span></div>` +
+  `<div class="tzai-frame"><div class="tzai-stage">` +
   costCard +
+  `</div><button class="tzai-open" type="button" aria-label="Open the smartness by cost map full screen">` +
+  `<span class="tzai-open-pill">&#10530; Explore the map full screen <span>&middot; zoom &amp; pan</span></span></button>` +
   `</div><script>${wpSafeJs(CHART_JS(CHART_ID))}</` +
   `script></div>`;
 
@@ -803,6 +1196,7 @@ const dossierFragment =
 
 fs.writeFileSync(path.join(OUT, "chart.part.html"), chartFragment);
 fs.writeFileSync(path.join(OUT, "dossier.part.html"), dossierFragment);
+fs.writeFileSync(path.join(OUT, "notes.part.html"), notesHtml);
 
 // Standalone previews on the SITE's paper — not published, but the only way to look
 // at the thing before it goes near the post. Rule: render it and LOOK.
@@ -813,7 +1207,10 @@ const preview = (frag, title) =>
   `font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}` +
   `.wrap{max-width:1510px;margin:0 auto;padding:24px 16px;}</style></head>` +
   `<body><div class="wrap"><h2 style="color:#7A3921;font-weight:600;">${title}</h2>${frag}</div></body></html>`;
-fs.writeFileSync(path.join(OUT, "smart-cost.html"), preview(chartFragment, "SMARTNESS x COST"));
+fs.writeFileSync(
+  path.join(OUT, "smart-cost.html"),
+  preview(chartFragment + notesHtml, "SMARTNESS x COST"),
+);
 fs.writeFileSync(path.join(OUT, "dossier.html"), preview(dossierFragment, "SMART MODELS dossier"));
 
 const manifest = {
@@ -822,10 +1219,13 @@ const manifest = {
   dossier: dossierMeta,
   pageErrors,
   logoSymbols: defs.size,
+  cropH,
+  notes: notesItems.length,
   bytes: { chart: chartFragment.length, dossier: dossierFragment.length },
   files: {
     chart: path.join(OUT, "chart.part.html"),
     dossier: path.join(OUT, "dossier.part.html"),
+    notes: path.join(OUT, "notes.part.html"),
     chartPreview: path.join(OUT, "smart-cost.html"),
     dossierPreview: path.join(OUT, "dossier.html"),
   },

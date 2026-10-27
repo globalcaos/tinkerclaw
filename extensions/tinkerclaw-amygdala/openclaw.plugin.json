@@ -1,0 +1,176 @@
+{
+  "id": "tinkerclaw-amygdala",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "runtimeAssets": ["./questions", "./cases", "./hooks"],
+  "name": "Amygdala (Jev)",
+  "description": "Digital amygdala: a typed fast judge (Jev) answers questions about each agent step and code chooses the response (proceed, note, proof check, ask, hold, send back). Loads by default but stays dormant until a Jev token exists. Shadow mode by default: it decides and logs and enforces nothing through the judge. Replaces AMYGDALA v3.1 (tinkerclaw-learned-intuition) after cutover.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["shadow", "enforce"],
+        "default": "shadow",
+        "description": "shadow = decide and log, enforce nothing through the judge; enforce = the judge's responses reach the agent through the hooks."
+      },
+      "families": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "safety": {
+            "type": "boolean",
+            "default": true
+          },
+          "secondOpinion": {
+            "type": "boolean",
+            "default": true
+          },
+          "doubleCheck": {
+            "type": "boolean",
+            "default": true
+          },
+          "efficiency": {
+            "type": "boolean",
+            "default": false
+          },
+          "personality": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "enforceFamilies": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["safety", "secondOpinion", "doubleCheck", "efficiency", "personality"]
+        },
+        "default": [],
+        "description": "Families whose notes act while mode is shadow. A note only adds a line to the agent's context; nothing is held or blocked."
+      },
+      "jev": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "default": "https://api.typesafe.ai"
+          },
+          "model": {
+            "type": "string",
+            "default": "jev-latest"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "default": 1000
+          },
+          "sendRealSituations": {
+            "type": "boolean",
+            "default": false,
+            "description": "When false, real situations never leave the machine: only synthetic cases reach Jev. The token is read from the TYPESAFE_API_KEY environment variable (needs a restart) or the key file <state dir>/jev/token (picked up without a restart). It is never held in config."
+          },
+          "tokenHelpUrl": {
+            "type": "string",
+            "description": "Where to get a Jev token. Shown in the start line and the status; no default."
+          }
+        }
+      },
+      "dataDir": {
+        "type": "string",
+        "description": "Defaults to ~/.openclaw/data/amygdala-jev"
+      },
+      "failClosedOnLevel3": {
+        "type": "boolean",
+        "default": false,
+        "description": "When the judge is unreachable, hold danger-level-3 steps instead of letting them proceed. Hard rules always fail closed regardless."
+      },
+      "cost": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "eurPerUsd": {
+            "type": "number",
+            "default": 0.92
+          }
+        }
+      },
+      "learn": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "autoLoosen": {
+            "type": "boolean",
+            "default": false,
+            "description": "A clean loosening (a question that would hold less) applies itself under the caps and shows up with Undo. Off (the default since 2026-10-25): every loosening waits as a card for the owner, because only the owner loosens a rule. A tightening always applies at once."
+          },
+          "capsPerWeek": {
+            "type": "number",
+            "default": 2
+          },
+          "capsPerDay": {
+            "type": "number",
+            "default": 6
+          }
+        }
+      },
+      "hooks": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "explain": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The WOULD HAVE explainer: a second model words each Jev flag for the owner and suggests a vote.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "ladder": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "provider/model rungs, tried in order"
+          },
+          "timeoutMs": { "type": "number", "default": 180000 },
+          "concurrency": { "type": "number", "default": 2 }
+        }
+      },
+      "review": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "After each turn, a second model judges whether each Jev flag of that turn would have helped, from what the agent did next.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "dailyCap": { "type": "number", "default": 150 },
+          "passDailyCap": { "type": "number", "default": 150 },
+          "ladder": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["claude-code/claude-sonnet-5-5", "claude-code/claude-haiku-4-5"],
+            "description": "Models that judge the flags, first that answers wins. Earned activation counts only the `earned.judge` model's reviews."
+          }
+        }
+      },
+      "earned": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Progressive activation: a note or send-back rule acts on its own once the judge's reviews over the last `days` show at least `minReviews`, a `minUseful` share useful and at most a `maxHarmful` share harmful. Holds and questions never activate this way.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "days": { "type": "number", "default": 14 },
+          "minReviews": { "type": "number", "default": 20 },
+          "minUseful": { "type": "number", "default": 0.5 },
+          "maxHarmful": { "type": "number", "default": 0.1 },
+          "judge": { "type": "string", "default": "claude-code/claude-sonnet" }
+        }
+      }
+    }
+  }
+}

@@ -95,6 +95,23 @@ describe("buildManifest", () => {
     expect(new Set(manifest.topicHints).size).toBe(manifest.topicHints.length);
   });
 
+  it("quotes the user's exact first and last words in the range (FORK 2026-10-25)", () => {
+    const events = [
+      makeEvent({
+        id: "e1",
+        kind: "user_message",
+        content: "Move the weekly call to Thursday\nthanks",
+      }),
+      makeEvent({ id: "e2", kind: "agent_message", content: "Done." }),
+      makeEvent({ id: "e3", kind: "user_message", content: "and book room B" }),
+    ];
+    expect(buildManifest(events).quotes).toEqual([
+      '"Move the weekly call to Thursday"',
+      '"and book room B"',
+    ]);
+    expect(buildManifest([makeEvent({ kind: "tool_result" })]).quotes).toBeUndefined();
+  });
+
   it("returns an empty manifest for an empty event list", () => {
     const manifest = buildManifest([]);
     expect(manifest.eventIdRange).toEqual(["", ""]);
@@ -142,6 +159,22 @@ describe("renderManifest", () => {
 
     expect(rendered).toContain("art-01");
     expect(rendered).toContain("art-02");
+  });
+
+  it("renders the quotes and the exact address: transcript path and first kept entry", () => {
+    const rendered = renderManifest({
+      eventIdRange: ["evt-a", "evt-z"],
+      artifactRefs: [],
+      topicHints: [],
+      eventCount: 9,
+      tokenCount: 900,
+      quotes: ['"Move the weekly call to Thursday"', '"and book room B"'],
+      transcriptPath: "/state/agents/main/sessions/abc.jsonl",
+      firstKeptEntryId: "e0f1a2b3",
+    });
+    expect(rendered).toContain('from "Move the weekly call to Thursday" to "and book room B"');
+    expect(rendered).toContain("/state/agents/main/sessions/abc.jsonl, before entry e0f1a2b3");
+    expect(rendered).toContain("recall(query)");
   });
 
   it("returns a no-op message for an empty manifest", () => {

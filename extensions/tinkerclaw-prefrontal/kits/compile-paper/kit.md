@@ -34,7 +34,7 @@ parallelism:
     Verify (6) reads only; never aborts the build.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

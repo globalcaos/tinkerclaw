@@ -38,7 +38,9 @@ describe("renderFractalDock — collapsed verdict dock", () => {
     expect(err.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · ⚠ error ⓘ");
     const skipped = renderFractalDock(row({ status: "skipped", reason: "quota" }));
     expect(skipped.classList.contains("fractal-status-skipped")).toBe(true);
-    expect(skipped.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · skipped:quota ⓘ");
+    expect(skipped.querySelector("summary")?.textContent).toBe(
+      "🔍 Fractal Reasoning · skipped:quota ⓘ",
+    );
   });
 
   it("summary appends a findings count only when findings exist", () => {
@@ -53,7 +55,9 @@ describe("renderFractalDock — collapsed verdict dock", () => {
         ],
       }),
     );
-    expect(two.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · flagged · 2 findings ⓘ");
+    expect(two.querySelector("summary")?.textContent).toBe(
+      "🔍 Fractal Reasoning · flagged · 2 findings ⓘ",
+    );
   });
 
   it("expanded body renders headline, findings (kind chip + claim + path), reasoning as text", () => {
@@ -183,7 +187,7 @@ describe("findDockAnchor — docks after the resolved answer, orphan fallback ot
   });
 });
 
-// FORK 2026-08-11 (the user) — LEVEL 3: the reflection's own transcript, nested in the
+// FORK 2026-08-11 (the architect) — LEVEL 3: the reflection's own transcript, nested in the
 // dock so its run no longer needs a separate tab.
 describe("renderFractalDock — nested full-reasoning transcript", () => {
   it("renders no transcript section when no loader is supplied (back-compat)", () => {

@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mail</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%23f3efe6%22%2F%3E%3Cg%20transform%3D%22translate%285.6%204%29%20scale%282.2%29%22%20fill%3D%22none%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cg%20stroke%3D%22%238a6a46%22%3E%3Crect%20x%3D%224%22%20y%3D%2214.5%22%20width%3D%2216%22%20height%3D%227%22%20rx%3D%221.3%22%2F%3E%3Cpath%20d%3D%22m4.6%2015.2%207.4%204%207.4-4%22%2F%3E%3C%2Fg%3E%3Cg%20stroke%3D%22%2324211c%22%3E%3Cpath%20d%3D%22M12%2014.5c0-1.3-1.4-1.7-1-3.1.3-1.1%201.7-1.4%201.5-2.8%22%2F%3E%3Cpath%20d%3D%22M11.3%2011.6%208%2011.2M11.9%209.6l3.4-.6%22%2F%3E%3Cpath%20d%3D%22M4%2011.2h6.2a3.1%202.2%200%200%200-6.2%200z%22%2F%3E%3Cpath%20d%3D%22M14%209h6.2a3.1%202.2%200%200%200-6.2%200z%22%2F%3E%3Cpath%20d%3D%22M9.4%206.3h6.2a3.1%202.4%200%200%200-6.2%200z%22%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+<style>
+@font-face{font-family:"Inter var";font-weight:100 900;font-display:swap;src:url(fonts/inter.woff2) format("woff2")}
+@font-face{font-family:"Source Serif 4";font-weight:200 900;font-display:swap;src:url(fonts/serif.woff2) format("woff2")}
+:root{
+  --sans:"Inter var",-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;
+  --serif:"Source Serif 4","New York","Iowan Old Style",Georgia,serif;
+  --paper:#faf8f3;--rail:#f3f0e9;--pane:#fdfcf9;--ink:#24211c;--muted:#6f685d;--faint:#a39b8e;--hair:#e8e2d6;
+  --stone:#efe9de;--stone2:#d9d1c2;--accent:#8a6a46;--accent-ink:#fffdf8;--moss:#7f8c6c;--work:#4f78a6;--home:#7f8c6c;--me:#f1ece2;--alert:#a8692e;--changed:#f3ead8;
+  --now:#f6efe3;--soon:#f8f5ef;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#1b1916;--rail:#1f1d19;--pane:#211e1a;--ink:#e9e4da;--muted:#a0988a;--faint:#6d665b;--hair:#2e2a24;
+  --stone:#2a2620;--stone2:#3a352d;--accent:#b8936a;--accent-ink:#1a1814;--moss:#8f9c7b;--work:#7fa3cc;--home:#8f9c7b;--me:#2a2620;--alert:#d39a5a;--changed:#332b20;
+  --now:#262119;--soon:#211f1b;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.4;-webkit-font-smoothing:antialiased}
+button,textarea{font-family:inherit}
+.app{display:grid;grid-template-columns:clamp(170px,13vw,250px) clamp(300px,30vw,520px) minmax(0,1fr);height:100vh;width:100%}
+.col{overflow:auto;min-height:0}
+.rail{background:var(--rail);border-right:1px solid var(--hair);display:flex;flex-direction:column;padding:16px 12px 12px}
+.mark{padding:2px 10px 14px;display:flex}
+.seg{display:flex;background:var(--stone);border-radius:999px;padding:3px;gap:2px;margin:0 6px 16px}
+.seg button{flex:1;border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:5px 8px;border-radius:999px;cursor:pointer}
+.seg button.on{background:var(--paper);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.1)}
+.nav{display:flex;flex-direction:column;gap:1px}
+.nav button{display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:none;color:var(--ink);font-size:13.5px;padding:6px 10px;border-radius:9px;cursor:pointer;text-align:left}
+.nav button:hover{background:var(--stone)}
+.nav button.on{background:var(--stone);font-weight:560}
+.nav .c{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums}
+.nav-h{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);padding:16px 10px 6px;font-weight:600}
+.rail-foot{margin-top:auto;font-size:11.5px;color:var(--faint);padding:10px 10px 0}
+.rail-foot button{border:0;background:none;color:var(--accent);font-size:11.5px;padding:0;cursor:pointer}
+.list{border-right:1px solid var(--hair);padding:10px 0 18px}
+.row{display:flex;gap:10px;padding:12px 20px 12px 18px;cursor:pointer;border-left:2px solid transparent;outline:none;border-bottom:1px solid color-mix(in srgb,var(--hair) 60%,transparent)}
+.row.now{background:var(--now)}
+.row.soon{background:var(--soon)}
+.row:hover{filter:brightness(.985)}
+.row.on{background:var(--stone)}
+.row.a-work{border-left:4px solid var(--work)}.row.a-personal{border-left:4px solid var(--home)}
+.legend{display:flex;gap:14px;margin:0 8px 16px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--faint)}
+.legend .a-work i{background:var(--work)}.legend .a-personal i{background:var(--home)}
+/* Pin (2026-10-19): the bonsai in the card's top-right corner. Hidden until hover; a pinned card keeps it in view. */
+.row{position:relative;padding-right:38px}
+.pinb{position:absolute;top:6px;right:8px;border:0;background:none;padding:3px;line-height:0;cursor:pointer;opacity:0;transition:opacity .15s;border-radius:6px}
+.row:hover .pinb,.row:focus-within .pinb{opacity:.4}
+.row .pinb:hover,.row .pinb:focus-visible{opacity:1;background:color-mix(in srgb,var(--hair) 45%,transparent)}
+.row .pinb.on{opacity:1}
+.t{display:block;font-size:14.5px;font-weight:430;line-height:1.35}
+.row.unread .t{font-weight:680}
+.row.unread .s{color:var(--ink)}
+/* A timid Jarvis card (2026-10-16, level 1 of a new stream): faint and last, easy to ignore. */
+.row.timid .t{font-weight:400;font-style:italic;color:var(--muted)}.row.timid .s{color:var(--faint)}
+.jv-body{white-space:pre-wrap;font-size:13.5px;line-height:1.55;color:var(--ink);background:var(--me);border-radius:10px;padding:12px 14px}
+.timid-note{font-size:12px;color:var(--faint);margin:6px 2px 0}
+/* Attachments (2026-10-16): quiet cards, an ink line icon, the name, then kind and size. Brown only on hover. */
+.atts{display:flex;flex-wrap:wrap;gap:8px}
+.att{display:flex;align-items:center;gap:11px;max-width:330px;min-width:0;padding:8px 14px 8px 10px;border:1px solid var(--hair);border-radius:12px;background:var(--pane);color:var(--ink);cursor:pointer;text-align:left;font:inherit;transition:border-color .2s}
+.att:hover{border-color:var(--accent)}.att:hover .att-ic{color:var(--accent)}.att[disabled]{opacity:.55;cursor:wait}
+.att-ic{flex:none;color:var(--muted);display:flex}.att-tx{display:flex;flex-direction:column;min-width:0}
+.b-brief{font-weight:640;color:var(--ink)}
+.b-links{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.b-link{border:1px solid var(--hair);background:var(--pane);color:var(--ink);border-radius:999px;padding:4px 12px;font:inherit;font-size:12.5px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b-link:hover{border-color:var(--accent)}
+.b-cmd{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 8px}
+.b-cmd-l{font-size:12px;color:var(--muted);flex-basis:100%}
+.b-cmd code{flex:1;min-width:0;overflow-x:auto;white-space:pre;font-size:12.5px;background:var(--pane);border:1px solid var(--hair);border-radius:8px;padding:6px 10px}
+.b-copy{border:1px solid var(--accent);background:none;color:var(--accent);border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
+.butler{background:var(--me);border-radius:12px;padding:14px 16px;margin:4px 0 6px}.butler p{margin:0 0 8px;font-size:14px;line-height:1.55;white-space:pre-wrap}.butler ul{margin:6px 0 10px 18px;padding:0;font-size:13.5px;color:var(--muted)}.butler li{margin:3px 0}.butler li b{color:var(--ink);font-weight:600}
+.att-n{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.att-k{font-size:11.5px;color:var(--faint)}
+.s{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.list-h{padding:8px 20px 10px;font-size:18px;font-weight:600}
+.hint{font-size:12.5px;color:var(--faint);margin:8px 20px}
+.alert{margin:6px 14px 10px;background:color-mix(in srgb,var(--alert) 11%,transparent);border:1px solid color-mix(in srgb,var(--alert) 30%,transparent);border-radius:12px;padding:9px 12px;font-size:12.5px;line-height:1.45}
+.btn{border:0;font-size:13px;border-radius:999px;padding:6px 13px;cursor:pointer;background:transparent;color:var(--muted)}
+.btn:hover{color:var(--ink)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);font-weight:600;padding:7px 18px}
+.btn.line{border:1px solid var(--hair)}
+.btn:disabled{opacity:.5;cursor:default}
+.pane{background:var(--pane);position:relative}
+.pane-in{padding:28px clamp(20px,3.5vw,64px) 60px}
+.p-title{font-family:var(--serif);font-size:25px;font-weight:560;line-height:1.25;margin:0 0 6px}
+.p-sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+.facts{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}
+.chip{font-size:12px;background:var(--stone);color:var(--muted);border-radius:999px;padding:3px 10px}
+.lbl{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:24px 0 9px;display:flex;align-items:center;gap:10px}
+.lbl::after{content:"";flex:1;height:1px;background:var(--hair)}
+.sum{font-size:15.5px;line-height:1.62;margin:0;white-space:pre-wrap}
+.opts{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px}
+.opt{border:1px solid var(--hair);background:transparent;color:var(--ink);border-radius:999px;padding:6px 13px;font-size:13px;cursor:pointer}
+.opt.on{border-color:var(--accent);color:var(--accent)}
+.draft{font-family:var(--serif);font-size:15.5px;line-height:1.62;background:var(--paper);border:1px solid var(--hair);border-radius:14px;padding:15px 18px;white-space:pre-wrap;outline:none;transition:background .9s}
+.draft:focus{border-color:var(--accent)}
+.draft.changed{background:var(--changed)}
+.draft-meta{font-size:11.5px;color:var(--faint);margin:6px 2px 12px}
+.acts{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.chat{display:flex;flex-direction:column;gap:10px}
+.rem{display:flex;flex-direction:column;gap:6px;align-self:stretch;border:1px dashed var(--accent);border-radius:10px;padding:10px 12px;background:var(--pane)}
+.rem.done{border-style:solid;border-color:var(--hair);opacity:.75}
+.rem-q{font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
+.rem-t{font-size:13.5px;line-height:1.5;color:var(--ink)}
+.rem-a{display:flex;gap:8px}
+.rem-b{border:1px solid var(--accent);background:var(--accent);color:var(--pane);border-radius:8px;padding:4px 12px;font:inherit;font-size:12.5px;cursor:pointer}
+.rem-b.no{background:none;color:var(--muted);border-color:var(--hair)}
+.rem-st{font-size:12px;color:var(--muted)}
+.msg{max-width:88%;font-size:14px;line-height:1.55;padding:9px 13px;border-radius:14px;white-space:pre-wrap}
+.msg.me{align-self:flex-end;background:var(--me);border-bottom-right-radius:4px}
+.msg.jv{align-self:flex-start;border:1px solid var(--hair);border-bottom-left-radius:4px}
+.msg .dc{display:block;font-size:11.5px;color:var(--accent);margin-top:5px}
+.composer{display:flex;gap:8px;align-items:flex-end;margin-top:12px;border:1px solid var(--hair);border-radius:14px;padding:6px 6px 6px 12px;background:var(--paper)}
+.composer textarea{flex:1;border:0;background:transparent;color:var(--ink);font-size:14px;resize:none;height:40px;outline:none;padding:10px 0}
+.mail{padding:2px 0 14px;margin-bottom:14px;border-bottom:1px solid var(--hair)}
+.mail:last-child{border-bottom:0}
+.mail .h{font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between;gap:10px}
+.mail .b{font-size:14.5px;line-height:1.6;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.mail a{color:var(--faint);font-size:12px;text-decoration:none}
+.garden{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--muted);font-size:13.5px;text-align:center}
+.garden h4{font-family:var(--serif);font-weight:560;font-size:24px;color:var(--ink);margin:0}
+.garden p{margin:0}
+.sender{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:11px 20px;border-bottom:1px solid var(--hair)}
+.sender .who{font-size:14px;font-weight:560;overflow-wrap:anywhere}
+.sender .why{font-size:12px;color:var(--muted);grid-column:1}
+.sacts{grid-row:1/span 2;grid-column:2;display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:220px}
+.sbtn{border:1px solid var(--hair);background:none;color:var(--muted);font-size:12px;border-radius:999px;padding:3px 9px;cursor:pointer}
+.sbtn:hover{color:var(--ink)}
+.ok{color:var(--accent);font-size:12px}
+.faint{color:var(--faint);font-size:12px}
+.wform{display:grid;gap:8px;margin:0 20px 12px;padding:12px;background:var(--stone);border-radius:10px}
+.wform input:not([type]){border:1px solid var(--hair);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;background:transparent;color:var(--ink)}
+.wkind{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted)}
+.sender.watch{cursor:pointer}.sender.watch.on{background:var(--stone)}
+.sender.watch code{font-size:11.5px;color:var(--faint)}
+.confirm{grid-column:1/-1;font-size:12.5px;color:var(--muted);background:var(--stone);border-radius:12px;padding:10px 12px;margin-top:8px;line-height:1.5}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--paper);font-size:12.5px;padding:8px 15px;border-radius:999px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;z-index:9}
+.toast.on{opacity:.93}
+.leaving{animation:leave .34s ease forwards}
+@keyframes leave{to{opacity:0;transform:translateX(14px)}}
+.fade{animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.back{display:none;border:0;background:none;color:var(--accent);font-size:14px;padding:14px 20px 0;cursor:pointer}
+.topbar{display:none}
+@media (max-width:820px){
+  .app{display:block;height:auto}
+  .rail{display:none}
+  .topbar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--hair);position:sticky;top:0;background:var(--paper);z-index:3}
+  .topbar .seg,.topbar .legend{margin:0;flex:1}
+  .topbar .topmark{display:flex;flex:none}
+  .topbar select{background:var(--stone);color:var(--ink);border:0;border-radius:999px;padding:6px 10px;font:inherit;font-size:13px}
+  .list{border:0}
+  .app.open .list,.app.open .topbar{display:none}
+  .app:not(.open) .pane{display:none}
+  .back{display:block}
+  .pane-in{padding:12px 20px 40px}
+  .garden{position:static;padding:60px 0}
+}
+@media (prefers-reduced-motion:reduce){.leaving,.fade{animation:none}.draft{transition:none}}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const VIEWS=["today","waiting","aside","watch"];
+const S={watches:null,wrm:null,wbusy:false,acct:localStorage.getItem("zm-acct")||"work",view:"today",sel:null,fsel:null,data:null,topic:null,folder:null,busy:false,unsub:null};
+
+function bonsai(size){return `<svg viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true">
+<path d="M50 77 C48 69 55 63 51 56 C47 50 41 48 45 39" fill="none" stroke="var(--ink)" stroke-width="5" stroke-linecap="round"/>
+<path d="M51 58 C59 56 65 53 69 46" fill="none" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/>
+<path d="M47 50 C41 51 36 51 32 49" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/>
+<ellipse cx="44" cy="33" rx="17" ry="8.5" fill="var(--moss)"/><ellipse cx="69" cy="42" rx="13" ry="6.5" fill="var(--moss)"/><ellipse cx="30" cy="46" rx="10" ry="5.5" fill="var(--moss)"/>
+<rect x="25" y="76" width="50" height="5" rx="2" fill="var(--accent)"/><path d="M29 81 H71 L66 91 H34 Z" fill="var(--accent)"/></svg>`;}
+// The Zen Mail icon (toolbox button, favicon, the linked chat's tab): an envelope with a bonsai on top. 2026-10-25
+// (the architect): on the phone it opens the top bar in place of any "Zen Mail" text, followed by the colour legend.
+function zenIcon(size){return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" role="img" aria-label="Zen Mail" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+<g stroke="var(--accent)"><rect x="4" y="14.5" width="16" height="7" rx="1.3"/><path d="m4.6 15.2 7.4 4 7.4-4"/></g>
+<g stroke="var(--ink)"><path d="M12 14.5c0-1.3-1.4-1.7-1-3.1.3-1.1 1.7-1.4 1.5-2.8"/><path d="M11.3 11.6 8 11.2M11.9 9.6l3.4-.6"/><path d="M4 11.2h6.2a3.1 2.2 0 0 0-6.2 0z"/><path d="M14 9h6.2a3.1 2.2 0 0 0-6.2 0z"/><path d="M9.4 6.3h6.2a3.1 2.4 0 0 0-6.2 0z"/></g></svg>`;}
+let gid=0;
+function gravel(w,h,stones){
+  const id="g"+(++gid);let lines="";
+  for(let y=10;y<h;y+=11){let d=`M0 ${y}`;for(let x=0;x<=w;x+=20)d+=` Q${x+10} ${y+(x/20%2?1.6:-1.6)} ${x+20} ${y}`;lines+=`<path d="${d}"/>`;}
+  let rings="",holes="",st="";
+  for(const s of stones){
+    holes+=`<ellipse cx="${s.x}" cy="${s.y}" rx="${s.r*2.9}" ry="${s.r*1.75}" fill="#000"/>`;
+    for(let k=0;k<5;k++)rings+=`<ellipse cx="${s.x}" cy="${s.y}" rx="${s.r*1.25+k*s.r*.42}" ry="${s.r*.72+k*s.r*.26}"/>`;
+    st+=`<path d="M${s.x-s.r} ${s.y+2} C${s.x-s.r} ${s.y-s.r*.75} ${s.x-s.r*.2} ${s.y-s.r*.95} ${s.x+s.r*.35} ${s.y-s.r*.7} C${s.x+s.r} ${s.y-s.r*.45} ${s.x+s.r*1.05} ${s.y+s.r*.3} ${s.x+s.r*.6} ${s.y+s.r*.5} C${s.x} ${s.y+s.r*.65} ${s.x-s.r*.8} ${s.y+s.r*.55} ${s.x-s.r} ${s.y+2}Z" fill="var(--stone2)"/>`;
+  }
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="max-width:90%;height:auto" aria-hidden="true"><defs><mask id="${id}"><rect width="${w}" height="${h}" fill="#fff"/>${holes}</mask></defs><g fill="none" stroke="var(--stone2)" mask="url(#${id})">${lines}</g><g fill="none" stroke="var(--stone2)">${rings}</g>${st}</svg>`;
+}
+// "Remember this?" (2026-10-19): a fact from the owner's words, kept in Jarvis's memory only on his click.
+function remCard(c){
+  const st=c.changed===1?`<span class="rem-st">Remembered</span>`:c.changed===2?`<span class="rem-st">Not kept</span>`:
+    `<button class="rem-b" data-act="remember" data-v="${c.id}:1">Remember</button><button class="rem-b no" data-act="remember" data-v="${c.id}:0">No</button>`;
+  return `<div class="rem${c.changed?" done":""}"><span class="rem-q">Remember this?</span><span class="rem-t">${esc(c.text)}</span><span class="rem-a">${st}</span></div>`;
+}
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("on"),2600);}
+// Served at / directly and at /zen/ behind Tinker (the phone app, 2026-10-21): every call goes to the page's own base.
+const BASE=location.pathname.replace(/\/(index\.html)?$/,"");
+async function api(path,body){
+  const r=await fetch(BASE+path,body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{cache:"no-store"});
+  const j=await r.json().catch(()=>({ok:false,error:"HTTP "+r.status}));
+  if(!r.ok||j.ok===false){const e=new Error(j.error||("HTTP "+r.status));throw e;}
+  return j;
+}
+const hhmm=iso=>{if(!iso)return"";const d=new Date(iso);return isNaN(d)?"":d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});};
+const when=iso=>{const d=new Date(iso);if(isNaN(d))return iso||"";const today=new Date().toDateString()===d.toDateString();return today?hhmm(iso):d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})+", "+hhmm(iso);};
+
+async function loadState(){
+  try{S.data=await api("/api/state?acct=all");}
+  catch(err){console.error("[mail] state failed",err);toast("Could not load: "+err.message);return;}
+  if(!S.watches||S.view==="watch")loadWatches();
+  if(S.view==="today"&&S.sel&&!S.data.topics.some(t=>t.id===S.sel)&&!(S.topic&&S.topic.id===S.sel))S.sel=null;
+  render();
+}
+async function loadTopic(id){
+  try{S.topic=await api("/api/topic?id="+encodeURIComponent(id));}
+  catch(err){console.error("[mail] topic failed",err);toast("Could not open it: "+err.message);S.topic=null;}
+  renderPane();
+  if(S.topic)loadAtts(S.topic);
+}
+async function loadFolder(name){
+  S.folder={name,items:null};render();
+  try{const j=await api(`/api/folder?acct=${S.acct}&name=${encodeURIComponent(name)}`);if(S.view===name)S.folder={name,items:j.items};}
+  catch(err){console.error("[mail] folder failed",err);S.folder={name,items:[],error:err.message};}
+  render();
+}
+
+function render(){
+  const d=S.data;if(!d)return;
+  $("#app").className="app"+(S.sel||S.fsel!=null?" open":"");
+  $("#app").innerHTML=railHtml()+`<section class="list col">${topbarHtml()}${listHtml()}</section><section class="pane col" id="pane"></section>`;
+  renderPane();
+}
+// 2026-10-25 (the architect): no Work/Personal switch. Both live in one list, each card striped in its account's colour.
+function segHtml(){return `<div class="legend">${S.data.accounts.map(a=>`<span class="a-${esc(a.id)}"><i></i>${esc(a.label)}</span>`).join("")}</div>`;}
+function railHtml(){
+  const d=S.data,st=d.status||{};
+  const nb=(v,l,c)=>`<button data-act="view" data-v="${esc(v)}" class="${S.view===v?"on":""}"><span>${esc(l)}</span><span class="c">${c||""}</span></button>`;
+  let h=`<aside class="rail col"><div class="mark">${bonsai(24)}</div>${segHtml()}<nav class="nav">`;
+  // 2026-10-25 (the architect): an email client needs all those buckets, this does not. Two for now: the daily tasks and the
+  // subjects to watch. Waiting, Set aside and the folders still work underneath; the menu no longer shows them.
+  h+=nb("today","Daily tasks",d.topics.length)+nb("watch","Subjects to watch",S.watches?S.watches.length:"");
+  const when=d.syncing?"Checking now…":`Checked ${hhmm(st.at||d.last_sync)}`;
+  return h+`</nav><div class="rail-foot">${when}${d.syncing?"":` · <button data-act="sync">Check now</button>`}</div></aside>`;
+}
+function topbarHtml(){
+  const views=[["today","Daily tasks"],["watch","Subjects to watch"]];
+  return `<div class="topbar"><span class="topmark">${zenIcon(26)}</span>${segHtml()}<select data-act="viewsel">${views.map(([v,l])=>`<option value="${esc(v)}"${S.view===v?" selected":""}>${esc(l)}</option>`).join("")}</select></div>`;
+}
+// How long ago, in words a person reads at a glance ("3 h ago", "2 days ago").
+function ago(iso){const t=Date.parse(iso||"");if(isNaN(t))return "";const m=Math.round((Date.now()-t)/60000);
+  return m<2?"just now":m<60?`${m} min ago`:m<48*60?`${Math.round(m/60)} h ago`:`${Math.round(m/1440)} days ago`;}
+// 2026-10-21 (the architect): the list must say how old it is when it is not fresh: the last refresh that worked and the
+// newest mail held here, or that this machine never had this mailbox. Shown on any failure, or after 3 h of silence.
+function alertHtml(){
+  const d=S.data;
+  return d.accounts.map(a=>{
+    const st=(d.status||{})[a.id]||{},label=esc(a.label),newestAt=(d.newest_mail||{})[a.id];
+    const ok=st.last_ok||(st.ok?st.at:null),stale=!ok||Date.now()-Date.parse(ok)>3*3600e3;
+    if(st.ok!==false&&!stale)return "";
+    const age=ok?`${label}: last good update ${ago(ok)} (${when(ok)}).`:`This machine has never had a good update of ${label} mail.`;
+    const newest=newestAt?` Newest mail here: ${ago(newestAt)}.`:` No ${label} mail is stored here yet.`;
+    const why=st.ok!==false?"":st.auth?` Paused since ${when(st.since||st.at)}: the Outlook sign-in expired, and renewing it from the shared Teams tab did not work. Teams in the Pi's browser needs a fresh sign-in.`
+      :` The last check failed ${ago(st.at)}: ${esc(st.error||"unknown error")}`;
+    return `<div class="alert a-${esc(a.id)}">${age}${newest}${why}</div>`;
+  }).join("");
+}
+function listHtml(){
+  const d=S.data;let h=alertHtml();
+  if(S.view==="today"){
+    if(!d.topics.length)h+=`<p class="hint">Nothing needs you.</p>`;
+    for(const t of d.topics)h+=`<div class="row a-${esc(t.acct)} ${t.band}${t.unread?" unread":""}${t.timid?" timid":""}${S.sel===t.id?" on":""}" data-tid="${t.id}" data-act="sel" data-v="${t.id}" role="button" tabindex="0"><span><span class="t">${esc(t.title)}</span><span class="s">${esc((SRC[t.src]?SRC[t.src]+" · ":"")+t.sub)}</span></span><button class="pinb${t.pin!=null?" on":""}" data-act="pin" data-v="${t.id}" title="${t.pin!=null?"Unpin":"Pin to the top"}" aria-label="${t.pin!=null?"Unpin":"Pin to the top"}">${bonsai(18)}</button></div>`;
+  }else if(S.view==="watch"){
+    h+=`<div class="list-h">Subjects to watch</div>`+watchFormHtml();
+    if(!S.watches)h+=`<p class="hint">Loading…</p>`;
+    else if(!S.watches.length)h+=`<p class="hint">Nothing watched.</p>`;
+    else h+=S.watches.map(watchHtml).join("");
+    h+=`<p class="hint">Each hour Zen Mail runs these searches on your personal Gmail. Everything already there counts as known.</p>`;
+  }else if(S.view==="waiting"){
+    h+=`<div class="list-h">Waiting on others</div>`;
+    if(!d.waiting.length)h+=`<p class="hint">Nobody owes you an answer.</p>`;
+    for(const w of d.waiting)h+=`<div class="row a-${esc(w.acct)}${S.sel===w.id?" on":""}" data-act="sel" data-v="${w.id}" role="button" tabindex="0"><span><span class="t">${esc(w.title)}</span><span class="s">${esc(w.who)}${w.who?" · ":""}since ${esc(w.since)}</span></span></div>`;
+    h+=`<p class="hint">With no answer in 4 working days, the topic comes back to Today with a nudge written.</p>`;
+  }else if(S.view==="aside"){
+    h+=`<div class="list-h">Set aside</div>`+d.aside.map(senderHtml).join("");
+    if(!d.aside.length)h+=`<p class="hint">Nothing set aside.</p>`;
+  }else{
+    h+=`<div class="list-h">${esc(S.view)}</div>`;
+    const f=S.folder;
+    if(!f||f.name!==S.view||!f.items)h+=`<p class="hint">${f&&f.error?esc(f.error):"Loading…"}</p>`;
+    else{if(!f.items.length)h+=`<p class="hint">Empty.</p>`;f.items.forEach((m,i)=>{h+=`<div class="row${S.fsel===i?" on":""}" data-act="fsel" data-v="${i}" role="button" tabindex="0"><span><span class="t">${esc(m.who||"")}</span><span class="s">${esc(m.subject||"")} · ${esc(when(m.date))}</span></span></div>`;});}
+  }
+  return h;
+}
+function watchFormHtml(){
+  const dis=S.wbusy?" disabled":"";
+  return `<div class="wform"><input id="w-name" placeholder="Name, e.g. Eli's school" autocomplete="off"${dis}>`+
+    `<input id="w-query" placeholder="Gmail search, e.g. from:school.cat or &quot;invoice 2026&quot;" autocomplete="off"${dis}>`+
+    `<div class="wkind"><label><input type="radio" name="w-kind" value="standing" checked${dis}> Tell me when something important arrives</label>`+
+    `<label><input type="radio" name="w-kind" value="once"${dis}> Tell me when the answer arrives (once)</label></div>`+
+    `<div><button class="btn primary" data-act="wadd"${dis}>${S.wbusy?"Adding…":"Watch it"}</button></div></div>`;
+}
+function watchHtml(w){
+  const kind=w.standing?"Every important mail":w.answered?"Answer arrived":"Waiting for one answer";
+  const last=w.last?` · last: ${esc((w.last.subject||"").slice(0,70))}`:"";
+  const conf=S.wrm===w.id?`<div class="confirm">Stop watching ${esc(w.name)}? Its card leaves Zen Mail. <div style="margin-top:8px"><button class="btn primary" data-act="wrm!" data-v="${esc(w.id)}">Stop watching</button><button class="btn" data-act="wrm" data-v="">Cancel</button></div></div>`:"";
+  return `<div class="sender watch${S.sel===w.id?" on":""}" data-act="sel" data-v="${esc(w.id)}" role="button" tabindex="0"><div class="who">${esc(w.name)}</div>`+
+    `<div class="why">${kind}${last}<br><code>${esc(w.gmail||"")}</code></div>`+
+    `<div class="sacts"><button class="sbtn" data-act="wrm" data-v="${esc(w.id)}">Remove</button></div>${conf}</div>`;
+}
+async function loadWatches(){
+  try{S.watches=(await api("/api/watches")).watches;}
+  catch(err){console.error("[mail] watches failed",err);toast("Could not load the watches: "+err.message);S.watches=S.watches||[];}
+  render();
+}
+function senderHtml(x){
+  let a="";
+  const st=x.state;
+  if(st==="unsubscribed")a=`<span class="ok">✓ Unsubscribed</span>`;
+  else if(st==="muted")a=`<span class="ok">Muted</span><button class="sbtn" data-act="snd" data-k="unmute" data-v="${esc(x.addr)}">Undo</button>`;
+  else if(st==="kept")a=`<span class="ok">Kept</span>`;
+  else if(st==="asked")a=`<span class="ok">✓ Request in your drafts</span>`;
+  else if(x.always)a=`<span class="faint">Always set aside</span>`;
+  else a=`<button class="sbtn" data-act="snd" data-k="unsub?" data-v="${esc(x.addr)}">Unsubscribe</button><button class="sbtn" data-act="snd" data-k="ask" data-v="${esc(x.addr)}">Ask them to stop</button><button class="sbtn" data-act="snd" data-k="mute" data-v="${esc(x.addr)}">Mute</button><button class="sbtn" data-act="snd" data-k="keep" data-v="${esc(x.addr)}">Keep</button>`;
+  const conf=S.unsub===x.addr?`<div class="confirm">Unsubscribe from ${esc(x.name)}? If they support one-click unsubscribe, the request goes out now and bulk senders must stop within two days; otherwise a request lands in your drafts. <div style="margin-top:8px"><button class="btn primary" data-act="snd" data-k="unsub" data-v="${esc(x.addr)}">Unsubscribe</button><button class="btn" data-act="snd" data-k="cancel" data-v="${esc(x.addr)}">Cancel</button></div></div>`:"";
+  return `<div class="sender"><div class="who">${esc(x.name)}</div><div class="why">${esc(x.addr)} · ${x.n} in ${21} days · opened ${x.opened}</div><div class="sacts">${a}</div>${conf}</div>`;
+}
+function gardenHtml(msg){
+  if(msg)return `<div class="garden">${gravel(460,220,[{x:330,y:120,r:30},{x:150,y:150,r:15}])}<p>${esc(msg)}</p></div>`;
+  return `<div class="garden">${bonsai(110)}${gravel(480,170,[{x:340,y:85,r:26},{x:140,y:105,r:13}])}<h4>Nothing needs you.</h4><p>Next check within the hour.</p></div>`;
+}
+// Jira, Teams and WhatsApp items sit in the same list (2026-10-15); mail stays unlabelled, the default.
+const SRC={jira:"Jira",teams:"Teams",whatsapp:"WhatsApp",slack:"Slack",jarvis:"Jarvis"};
+function renderPane(){
+  const p=$("#pane");if(!p)return;
+  const back=`<button class="back" data-act="back">‹ Back</button>`;
+  if(!VIEWS.includes(S.view)){
+    const m=S.folder&&S.folder.items&&S.folder.items[S.fsel];
+    if(!m){p.innerHTML=gardenHtml("Choose an email on the left.");return;}
+    p.innerHTML=back+`<div class="pane-in fade"><h2 class="p-title">${esc(m.subject||"(no subject)")}</h2><p class="p-sub">${esc(m.who||"")} · ${esc(when(m.date))}</p><div class="mail"><div class="b">${esc(m.preview||"")}</div>${m.link?`<a href="${esc(m.link)}" target="_blank" rel="noopener">Open in Gmail ↗</a>`:""}</div>${m.topic?`<button class="btn line" data-act="goto" data-v="${esc(m.topic)}">Open its topic ›</button>`:""}</div>`;
+    return;
+  }
+  const t=S.topic;
+  if(!S.sel||!t||t.id!==S.sel){p.innerHTML=S.sel?back+`<div class="pane-in"><p class="hint">Opening…</p></div>`:gardenHtml(S.view==="today"&&!S.data.topics.length?null:"Choose a topic on the left.");return;}
+  if(t.src==="jarvis"){p.innerHTML=back+jarvisPaneHtml(t);return;}
+  const box=((S.data.accounts.find(a=>a.id===t.acct)||{}).kind)==="gmail"?"Gmail":"Outlook";
+  let h=back+`<div class="pane-in fade"><h2 class="p-title">${esc(t.title)}</h2><p class="p-sub">${esc(t.sub)}</p>`;
+  if(t.facts&&t.facts.length)h+=`<div class="facts">${t.facts.map(f=>`<span class="chip">${esc(f)}</span>`).join("")}</div>`;
+  if(t.butler)h+=butlerHtml(t.butler);
+  h+=`<div class="lbl">Summary</div><p class="sum">${esc(t.summary||"")}</p>`;
+  h+=`<div id="atts">${attsHtml(t)}</div>`;
+  if(t.options)h+=`<div class="opts">${t.options.map(o=>`<button class="opt${t.choice===o.label?" on":""}" data-act="opt" data-v="${esc(o.label)}">${esc(o.label)}</button>`).join("")}</div>`;
+  const busy=S.busy?" disabled":"";
+  if(t.draft){
+    h+=`<div class="lbl">Reply</div><div class="draft${t.flash?" changed":""}" contenteditable="true" spellcheck="false" id="draft">${esc(t.draft)}</div><p class="draft-meta">${esc(t.draft_lang||"")}${t.draft_lang?" · ":""}edit it here or ask me below · ${SRC[t.src]?`Approve copies it and opens ${SRC[t.src]} for you to paste`:`Approve puts it in ${box}, in the thread${t.butler&&t.butler.files&&t.butler.files.length?", with the "+t.butler.files.length+" files above attached":""}, for you to send`}</p>`;
+    h+=`<div class="acts"><button class="btn primary" data-act="approve"${busy}>Approve</button><button class="btn" data-act="done"${busy}>Done</button><button class="btn" data-act="later"${busy}>Not now</button></div>`;
+  }else{
+    h+=`<div class="acts" style="margin-top:16px"><button class="btn primary" data-act="done"${busy}>${t.need==="read"?"Got it":"Done"}</button><button class="btn" data-act="later"${busy}>Not now</button></div>`;
+  }
+  if(!t.private){
+    h+=`<div class="lbl">Talk it over</div><div class="chat">${t.chat.map(c=>c.who==="remember"?remCard(c):c.who==="me"?`<div class="msg me">${esc(c.text)}</div>`:`<div class="msg jv">${esc(c.text)}${c.changed?`<span class="dc">Reply updated above</span>`:""}</div>`).join("")}${S.thinking?`<div class="msg jv">…</div>`:""}</div>`;
+    h+=`<div class="composer"><textarea id="ask" placeholder="Ask about this, or tell me how to change the reply"></textarea><button class="btn primary" data-act="send"${S.thinking?" disabled":""}>Send</button></div>`;
+  }
+  const n=t.mails.length,unit=t.src==="jira"?["The task","The task and its "+(n-1)+" comments"]:SRC[t.src]?["The message","The last "+n+" messages"]:["The email","The "+n+" emails"];
+  h+=`<div class="lbl">${n===1?unit[0]:unit[1]}</div>${t.mails.map(m=>`<div class="mail"><div class="h"><span>${esc(m.me?"You":m.from)}</span><span>${esc(when(m.date))}</span></div><div class="b">${esc(m.body||(t.private?"Not shown here: open it in the mailbox.":""))}</div>${m.link?`<a href="${esc(m.link)}" target="_blank" rel="noopener">${SRC[t.src]?"Open in "+SRC[t.src]:"Open the original"} ↗</a>`:""}</div>`).join("")}`;
+  p.innerHTML=h+`</div>`;
+}
+
+// A Jarvis card (2026-10-16): what Jarvis brings besides mail, with its own buttons. The first button leads.
+function jarvisPaneHtml(t){
+  const busy=S.busy?" disabled":"";
+  let h=`<div class="pane-in fade"><h2 class="p-title">${esc(t.title)}</h2><p class="p-sub">${esc(t.sub)}</p>`;
+  if(t.facts&&t.facts.length)h+=`<div class="facts">${t.facts.map(f=>`<span class="chip">${esc(f)}</span>`).join("")}</div>`;
+  if(t.summary)h+=`<div class="lbl">Summary</div><p class="sum">${esc(t.summary)}</p>`;
+  const acts=t.actions||[];
+  h+=`<div class="acts" style="margin-top:16px">${acts.map((a,i)=>`<button class="btn${i===0?" primary":""}" data-act="jact" data-v="${esc(a.k)}"${busy}>${esc(a.label)}</button>`).join("")}</div>`;
+  if(t.timid)h+=`<p class="timid-note">A new kind of card. I bring more of it only if it helps.</p>`;
+  const m=t.mails&&t.mails[0];
+  if(m&&m.body)h+=`<div class="lbl">From Jarvis</div><div class="jv-body">${esc(m.body)}</div>`;
+  h+=`<div class="lbl">Talk it over</div><div class="chat">${t.chat.map(c=>c.who==="remember"?remCard(c):c.who==="me"?`<div class="msg me">${esc(c.text)}</div>`:`<div class="msg jv">${esc(c.text)}</div>`).join("")}${S.thinking?`<div class="msg jv">…</div>`:""}</div>`;
+  h+=`<div class="composer"><textarea id="ask" placeholder="Ask about this"></textarea><button class="btn primary" data-act="send"${S.thinking?" disabled":""}>Send</button></div>`;
+  return h+`</div>`;
+}
+async function jact(k){
+  const t=S.topic;if(!t)return;S.busy=true;renderPane();
+  try{
+    const r=await api("/api/act",{id:t.id,act:k});
+    if(r.link)window.open(r.link,"_blank","noopener");
+    if(r.toast)toast(r.toast);else if(k==="later")toast("Back tomorrow at 8:00.");else if(k==="never")toast("Understood. No more of this kind.");else if(k==="less")toast("Noted. Less of this.");
+    S.busy=false;
+    if(k==="open"){renderPane();return;}
+    const id=t.id,list=S.data.topics,idx=list.findIndex(x=>x.id===id);
+    leaveThen(id,async()=>{const next=list[idx+1]||list[idx-1];S.sel=next&&next.id!==id?next.id:null;S.topic=null;await loadState();if(S.sel)loadTopic(S.sel);});
+  }catch(err){console.error("[mail] card action failed",err);S.busy=false;renderPane();toast("That did not work: "+err.message);}
+}
+// Attachments (2026-10-16): listed once per topic, opened with the computer's own app (server: attachments.py).
+const ATT_KIND=[
+  [/\.pdf$/i,"PDF","doc"],[/\.(docx?|odt|rtf)$/i,"Word document","doc"],[/\.(txt|md|csv)$/i,"Text","doc"],
+  [/\.(xlsx?|xlsm|ods)$/i,"Spreadsheet","sheet"],[/\.(pptx?|odp|key)$/i,"Presentation","slides"],
+  [/\.(png|jpe?g|gif|webp|heic|bmp|tiff?|svg)$/i,"Image","image"],[/\.(zip|rar|7z|tar|gz|tgz)$/i,"Archive","archive"],
+  [/\.(mp3|wav|m4a|ogg|flac)$/i,"Audio","audio"],[/\.(mp4|mov|avi|mkv|webm)$/i,"Video","video"],
+  [/\.(eml|msg)$/i,"Email","mail"],[/\.(dwg|dxf|step|stp|iges?|stl)$/i,"Drawing","drawing"],
+];
+function attKind(name){for(const [re,label,icon] of ATT_KIND)if(re.test(name||""))return{label,icon};const m=/\.([a-z0-9]{1,6})$/i.exec(name||"");return{label:m?m[1].toUpperCase()+" file":"File",icon:"other"};}
+function attIcon(kind){
+  // One sheet with a folded corner; the mark inside tells the kind. Ink lines, like the garden.
+  const mark={doc:`<path d="M9 12.5h7M9 15.5h7M9 18.5h4.5"/>`,sheet:`<path d="M8.5 12h8v7h-8zM8.5 15.5h8M12.5 12v7"/>`,
+    slides:`<rect x="8.5" y="12" width="8" height="5.5" rx=".8"/><path d="M12.5 17.5v2"/>`,
+    image:`<path d="M8.5 19l3-3.6 2 2.2 1.4-1.4 1.6 2.8z"/><circle cx="15" cy="12.6" r="1.1"/>`,
+    archive:`<path d="M12.5 10v1.4M12.5 12.8v1.4M12.5 15.6v1.4"/><rect x="11.2" y="17.2" width="2.6" height="2.4" rx=".6"/>`,
+    audio:`<path d="M8.5 15.5h1.3l1.2-2.8 1.6 6 1.5-4.4 1 1.2h1.4"/>`,video:`<path d="M10.5 12.5l5 3.2-5 3.2z"/>`,
+    mail:`<path d="M8.5 12.5h8v6h-8zM8.5 12.5l4 3.2 4-3.2"/>`,drawing:`<path d="M8.5 19l3.5-7 3.5 7M10 16h4"/>`,
+    other:`<ellipse cx="12.5" cy="16" rx="2.6" ry="1.6"/>`}[kind]||"";
+  return `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5h8l4 4v13h-12z"/><path d="M14.5 3.5v4h4"/>${mark}</svg>`;
+}
+function attSize(n){if(!n)return"";if(n<1024)return n+" B";if(n<1048576)return Math.round(n/1024)+" KB";return(n/1048576).toFixed(n<10485760?1:0)+" MB";}
+function attsHtml(t){
+  const a=S.atts&&S.atts.tid===t.id?S.atts.list:null;if(!a)return"";
+  const from=Object.fromEntries((t.mails||[]).map(m=>[m.id,m]));
+  const items=[];for(const m of t.mails||[])for(const x of a[m.id]||[])items.push({m,x});
+  if(!items.length)return"";
+  return `<div class="lbl">Attachments</div><div class="atts">${items.map(({m,x})=>{const k=attKind(x.name),busy=S.attBusy===x.id?" disabled":"";
+    return `<button class="att" data-act="att" data-m="${esc(m.id)}" data-v="${esc(x.id)}" title="${esc(x.name)} · from ${esc(m.me?"you":m.from)}, ${esc(when(m.date))}"${busy}><span class="att-ic">${attIcon(k.icon)}</span><span class="att-tx"><span class="att-n">${esc(x.name)}</span><span class="att-k">${esc(k.label)}${x.size?" · "+attSize(x.size):""}</span></span></button>`;}).join("")}</div>`;
+}
+// The butler (2026-10-16): what Jarvis already did on this topic, what is missing, and the files ready to go.
+function butlerHtml(b){
+  let h=`<div class="lbl">From your butler</div><div class="butler">`;
+  // 2026-10-22 (the architect: "it saves me time if I have the pdf links available and the SV2 start command clearly visible").
+  if(b.brief)h+=`<p class="b-brief">${esc(b.brief)}</p>`;
+  if(b.links&&b.links.length)h+=`<div class="b-links">${b.links.map((l,i)=>`<button class="b-link" data-act="blink" data-v="${i}" title="${esc(l.target)}">${/\.pdf$/i.test(l.target||"")?"📄 ":/^https?:/i.test(l.target||"")?"🔗 ":"📁 "}${esc(l.label||l.target)}</button>`).join("")}</div>`;
+  if(b.commands&&b.commands.length)h+=b.commands.map((c,i)=>`<div class="b-cmd"><span class="b-cmd-l">${esc(c.label||"")}</span><code>${esc(c.cmd)}</code><button class="b-copy" data-act="bcopy" data-v="${i}">Copy</button></div>`).join("");
+  h+=`<p>${esc(b.note||"")}</p>`;
+  if(b.needs&&b.needs.length)h+=`<ul>${b.needs.map(n=>`<li><b>${esc(n.what||"")}</b> ${esc(n.how||"")}</li>`).join("")}</ul>`;
+  if(b.files&&b.files.length)h+=`<div class="atts">${b.files.map(f=>{const k=attKind(f.name);return `<button class="att" data-act="bfile" data-v="${esc(f.name)}" title="${esc(f.name)}"><span class="att-ic">${attIcon(k.icon)}</span><span class="att-tx"><span class="att-n">${esc(f.name)}</span><span class="att-k">${esc(k.label)}${f.size?" · "+attSize(f.size):""}</span></span></button>`;}).join("")}</div>`;
+  return h+`</div>`;
+}
+async function loadAtts(t){
+  if(t.src!=="email"||t.private||!(t.mails||[]).some(m=>m.att))return;
+  try{const r=await api("/api/attachments?id="+encodeURIComponent(t.id));S.atts={tid:t.id,list:r.atts||{}};}
+  catch(err){console.error("[mail] attachments failed",err);return;}
+  const box=$("#atts");if(box&&S.topic&&S.topic.id===t.id)box.innerHTML=attsHtml(S.topic);
+}
+async function openAtt(msg,att,name){
+  S.attBusy=att;const box=$("#atts");if(box&&S.topic)box.innerHTML=attsHtml(S.topic);
+  toast("Opening "+(name||"the file")+"…");
+  try{const r=await api("/api/open-attachment",{msg,att});
+    if(r.folder_only)toast("This kind of file can run a program, so I opened its folder instead.");}
+  catch(err){console.error("[mail] open attachment failed",err);toast("Could not open it: "+err.message);}
+  S.attBusy=null;const b2=$("#atts");if(b2&&S.topic)b2.innerHTML=attsHtml(S.topic);
+}
+function leaveThen(id,fn){const r=document.querySelector(`.row[data-tid="${id}"]`);if(!r||RM){fn();return;}r.classList.add("leaving");setTimeout(fn,330);}
+function draftText(){const d=$("#draft");return d?d.innerText:null;}
+async function act(a,extra){
+  const t=S.topic;if(!t)return;S.busy=true;renderPane();
+  try{
+    const r=await api("/api/act",Object.assign({id:t.id,act:a,draft:draftText()},extra||{}));
+    if(a==="approve"&&r&&r.copy!==undefined){
+      // Nothing is sent from here: the reply goes to the clipboard and the chat or task opens for him to paste.
+      await navigator.clipboard.writeText(r.copy).catch(err=>console.error("[mail] clipboard failed",err));
+      if(r.link)window.open(r.link,"_blank","noopener");
+      toast(`Reply copied. Paste it in ${SRC[r.source]||"the chat"}.`);
+    }else if(a==="approve")toast(`The reply is in ${S.data.kind==="gmail"?"Gmail":"Outlook"}, in the thread. Send it from there.`);
+    if(a==="later")toast("Back tomorrow at 8:00.");
+    S.busy=false;
+    if(a==="opt"){await loadTopic(t.id);return;}
+    const id=t.id,list=S.data.topics,idx=list.findIndex(x=>x.id===id);
+    leaveThen(id,async()=>{const next=list[idx+1]||list[idx-1];S.sel=next&&next.id!==id?next.id:null;S.topic=null;await loadState();if(S.sel)loadTopic(S.sel);});
+  }catch(err){console.error("[mail] action failed",err);S.busy=false;renderPane();toast("That did not work: "+err.message);}
+}
+async function send(){
+  const box=$("#ask"),text=(box&&box.value||"").trim();if(!text||!S.topic||S.thinking)return;
+  const t=S.topic,before=t.draft;
+  if(draftText()!==null&&draftText()!==before)await api("/api/act",{id:t.id,act:"save",draft:draftText()}).catch(()=>{});
+  t.chat.push({who:"me",text});S.thinking=true;renderPane();
+  try{await api("/api/chat",{id:t.id,text});}catch(err){console.error("[mail] chat failed",err);toast(err.message);}
+  S.thinking=false;await loadTopic(t.id);
+  if(S.topic&&S.topic.draft!==before){S.topic.flash=true;renderPane();setTimeout(()=>{const d=$("#draft");if(d)d.classList.remove("changed");},1500);}
+  const p=$("#pane");if(p)p.scrollTop=p.scrollHeight;
+}
+document.addEventListener("click",async e=>{
+  const el=e.target.closest("[data-act]");if(!el)return;
+  const a=el.dataset.act,v=el.dataset.v;
+  switch(a){
+    case "acct":S.acct=v;localStorage.setItem("zm-acct",v);S.sel=null;S.topic=null;S.fsel=null;if(!VIEWS.includes(S.view))S.view="today";await loadState();break;
+    case "view":S.view=v;S.sel=null;S.fsel=null;S.topic=null;S.wrm=null;if(!VIEWS.includes(v))loadFolder(v);else{render();if(v==="watch")loadWatches();}break;
+    case "sel":{S.sel=v;S.topic=null;const tt=S.data.topics.find(x=>x.id===v);
+      if(tt&&tt.unread){tt.unread=false;api("/api/act",{id:v,act:"seen"}).catch(err=>console.error("[mail] mark read failed",err));}
+      render();loadTopic(v);break;}
+    case "fsel":S.fsel=+v;render();break;
+    case "goto":S.view="today";S.fsel=null;S.sel=v;S.topic=null;render();loadTopic(v);break;
+    case "back":S.sel=null;S.fsel=null;S.topic=null;render();break;
+    case "opt":act("opt",{choice:v});break;
+    case "approve":case "done":case "later":act(a);break;
+    case "blink":{const l=((S.topic&&S.topic.butler&&S.topic.butler.links)||[])[+v];if(!l)break;
+      const tg=l.target||"";
+      if(/^https?:/i.test(tg)){window.open(tg,"_blank","noopener");break;}
+      if(/\.pdf$/i.test(tg)&&BASE){ // under Tinker (desktop or the phone app): the Tinker PDF reader opens it
+        try{const r=await fetch("/pdf/api/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:tg})});
+          const j=await r.json();if(!r.ok||!j.path)throw new Error(j.error||("HTTP "+r.status));
+          const f="/pdf"+j.path.split("/").map(encodeURIComponent).join("/");
+          window.open("/pdf/viewer/web/viewer.html?file="+encodeURIComponent(f),"_blank");}
+        catch(err){console.error("[mail] pdf open failed",err);toast("Could not open it: "+err.message);}
+        break;}
+      try{await navigator.clipboard.writeText(tg);toast("Path copied: "+tg);}catch(err){console.error("[mail] copy failed",err);toast(tg);}
+      break;}
+    case "bcopy":{const c=((S.topic&&S.topic.butler&&S.topic.butler.commands)||[])[+v];if(!c)break;
+      try{await navigator.clipboard.writeText(c.cmd);toast("Command copied.");}catch(err){console.error("[mail] copy failed",err);toast(c.cmd);}
+      break;}
+    case "remember":{const [cid,keep]=v.split(":");
+      try{const r=await api("/api/remember",{chat_id:+cid,keep:keep==="1"});if(r.toast)toast(r.toast);}
+      catch(err){console.error("[mail] remember failed",err);toast("Could not save it: "+err.message);}
+      if(S.topic)await loadTopic(S.topic.id);break;}
+    case "pin":{const tt=S.data.topics.find(x=>x.id===v),on=tt&&tt.pin!=null;
+      try{await api("/api/act",{id:v,act:on?"unpin":"pin"});toast(on?"Unpinned.":"Pinned to the top.");}
+      catch(err){console.error("[mail] pin failed",err);toast("Could not pin: "+err.message);}
+      await loadState();break;}
+    case "jact":jact(v);break;
+    case "bfile":{toast("Opening "+v+"…");try{const r=await api("/api/open-butler-file",{id:S.topic.id,name:v});if(r.folder_only)toast("This kind of file can run a program, so I opened its folder instead.");}catch(err){console.error("[mail] open butler file failed",err);toast("Could not open it: "+err.message);}break;}
+    case "att":openAtt(el.dataset.m,v,(el.querySelector(".att-n")||{}).textContent);break;
+    case "wrm":e.stopPropagation();S.wrm=v||null;render();break;
+    case "wrm!":{e.stopPropagation();
+      try{await api("/api/watch",{op:"remove",id:v});toast("No longer watched.");}
+      catch(err){console.error("[mail] remove watch failed",err);toast("Could not remove it: "+err.message);}
+      S.wrm=null;if(S.sel===v){S.sel=null;S.topic=null;}await loadWatches();break;}
+    case "wadd":{const title=$("#w-name").value.trim(),query=$("#w-query").value.trim();
+      const standing=(document.querySelector("input[name=w-kind]:checked")||{}).value!=="once";
+      if(!title||!query){toast("Give it a name and a Gmail search.");break;}
+      S.wbusy=true;render();
+      try{const r=await api("/api/watch",{op:"add",title,query,standing});toast(`Watching. ${r.already_seen} mail already there count as known.`);}
+      catch(err){console.error("[mail] add watch failed",err);toast("Could not add it: "+err.message);}
+      S.wbusy=false;await loadWatches();await loadState();break;}
+    case "send":send();break;
+    case "sync":try{await api("/api/sync",{});toast("Checking your mail now.");}catch(err){toast(err.message);}loadState();break;
+    case "snd":{
+      const k=el.dataset.k;
+      if(k==="unsub?"){S.unsub=v;render();break;}
+      if(k==="cancel"){S.unsub=null;render();break;}
+      try{await api("/api/sender",{acct:S.acct,addr:v,act:k});S.unsub=null;
+        toast({mute:"Muted. Their mail stays out of Today.",keep:"Kept.",ask:"A short request is in your drafts.",unsub:"Done.",unmute:"Unmuted."}[k]||"Done.");}
+      catch(err){console.error("[mail] sender action failed",err);toast(err.message);}
+      await loadState();break;}
+  }
+});
+document.addEventListener("change",e=>{if(e.target.matches("[data-act=viewsel]")){const v=e.target.value;S.view=v;S.sel=null;S.fsel=null;S.topic=null;if(!VIEWS.includes(v))loadFolder(v);else{render();if(v==="watch")loadWatches();}}});
+document.addEventListener("keydown",e=>{
+  if(e.target.id==="ask"&&e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();return;}
+  const r=e.target.closest&&e.target.closest(".row");if(r&&!e.target.closest(".pinb")&&(e.key==="Enter"||e.key===" ")){e.preventDefault();r.click();}
+});
+loadState();
+setInterval(()=>{if(!S.busy&&!S.thinking&&document.visibilityState==="visible"&&!S.wbusy&&!document.activeElement.matches("#draft,#ask,#w-name,#w-query"))loadState();},60000);
+</script>
+</body>
+</html>

@@ -33,12 +33,12 @@ node "$S" globalcaos/tinkerclaw --source github --write-state --target-key tinke
 
 ## Choosing a source
 
-| Target | Source | Auth | Notes |
-|---|---|---|---|
-| GitHub repo | `github` | none (gh) | referrers/traffic proxy, repo-scoped |
-| Anything | `urls` | none | classify a list of links you found (e.g. via web search); works now, best at small scale |
-| Owned domain, one-shot | `backlinks` | `BACKLINKS_SH_API_KEY` (3 free) | Common-Crawl backlink list |
-| Owned domain, authoritative | `gsc-csv` | a CSV export (no OAuth) | Google's own link report |
+| Target                      | Source      | Auth                            | Notes                                                                                    |
+| --------------------------- | ----------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
+| GitHub repo                 | `github`    | none (gh)                       | referrers/traffic proxy, repo-scoped                                                     |
+| Anything                    | `urls`      | none                            | classify a list of links you found (e.g. via web search); works now, best at small scale |
+| Owned domain, one-shot      | `backlinks` | `BACKLINKS_SH_API_KEY` (3 free) | Common-Crawl backlink list                                                               |
+| Owned domain, authoritative | `gsc-csv`   | a CSV export (no OAuth)         | Google's own link report                                                                 |
 
 Read `references/sources.md` before picking — it has the auth setup, the backlinks.sh signup/limits, how to export the GSC CSV, and the per-source caveats.
 
@@ -53,6 +53,7 @@ Edit `assets/ours-allowlist.json`. A link is **ours** if its source host (+ opti
 ## Count strategy (how many backlinks do we have?)
 
 At our scale, crawl indexes (backlinks.sh/Common Crawl) return ~0 for new sites, so the **search strategy** is the workhorse. To count inbound links to a target:
+
 1. Web-search the target term several ways: `"github.com/globalcaos/tinkerclaw"`, `tinkerclaw`, `"thetinkerzone.com"`, plus `site:` excluded variants to find third-party mentions.
 2. Collect the distinct referring URLs (one page = one backlink; dedupe).
 3. `node scripts/backlink-audit.mjs <target> --source urls --urls "u1,u2,…"` → ours/organic/ambiguous counts.
@@ -60,7 +61,8 @@ At our scale, crawl indexes (backlinks.sh/Common Crawl) return ~0 for new sites,
 
 ## Historical dataset (when did each backlink go live?)
 
-`scripts/build-history.mjs` writes **dated cumulative `ours` observations** so the graph shows real growth, not just today. Its dataset is *derived* (not invented) from:
+`scripts/build-history.mjs` writes **dated cumulative `ours` observations** so the graph shows real growth, not just today. Its dataset is _derived_ (not invented) from:
+
 - **Authored GitHub comments**: `gh api repos/<r>/issues/<n>/comments`, filter `user.login=globalcaos`, body contains our URL → dated by each thread's first backlink-bearing comment (one thread = one linking page).
 - **`git log -S "<domain>"`** in the linking repo → when an outbound link to our site (e.g. README→thetinkerzone.com) first went live.
 
@@ -68,6 +70,6 @@ Re-derive by re-running those two mines, update `EVENTS` in the script, re-run. 
 
 ## Honest limits
 
-- No SEO tool isolates a *path* on github.com → repos only get referrer data, not raw backlinks.
+- No SEO tool isolates a _path_ on github.com → repos only get referrer data, not raw backlinks.
 - Free backlink web UIs (OpenLinkProfiler, Semrush, Majestic) are JS-rendered with no free API; not scriptable here.
 - New/small sites have thin coverage in any crawl index — expect sparse results until they accrue links.

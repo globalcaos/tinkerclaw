@@ -1,5 +1,12 @@
-// rank.mjs — pick a normalization metric (via LLM) and rank products.
-import { callLLM } from "./llm.mjs";
+// rank.mjs — pick a normalization metric and rank products.
+//
+// NO DYNAMIC EVALUATION. Until 1.2.1 a metric carried a `formula_js` STRING that
+// was compiled with `new Function(...)` and run over each product row. The three
+// formulas it ever compiled were the three constants below — the LLM metric
+// chooser that could have supplied a fourth had already been replaced by the
+// deterministic ladder in `rankProducts` — so the evaluator was an unreachable
+// arbitrary-code-execution primitive sitting in the ranking path, kept alive by a
+// prompt nothing called. Metrics are now plain functions, chosen by id.
 
 // Amazon refund-protection tier — every Amazon purchase is A-to-z covered for
 // "not as described" (which warranties the concentration spec ranking trusts),
@@ -13,38 +20,6 @@ export function refundTier(p) {
   if (p.seller_is_amazon === 1) return 2;
   if (p.seller_name) return 1;
   return 0;
-}
-
-const CHOOSE_METRIC_SYSTEM = `\
-You pick the right per-unit normalization metric for a product category.
-
-Examples:
-- Pool chemicals → "eur_per_kg_active" (price normalized by kg of active ingredient)
-- Cleaning products → "eur_per_kg" or "eur_per_litre"
-- Food → "eur_per_kg" or "eur_per_100g"
-- Batteries → "eur_per_mah"
-- Durables → "feature_weighted" (no volume math, just feature ranking)
-
-Return ONLY this JSON:
-{
-  "metric_id": "<short snake_case id>",
-  "formula_human": "<one-sentence description>",
-  "formula_js": "<a JS expression that computes the metric from variable p (a product row); lower is better>"
-}
-
-The formula_js will be sandboxed: it has access to ONLY 'p' (the product row).
-Use Math.* if needed. Return null-safe expression.`;
-
-function buildMetricUserPrompt(category_filter, sample) {
-  const cat = JSON.stringify(category_filter ?? {});
-  const sampleStr = sample
-    .slice(0, 5)
-    .map(
-      (p) =>
-        `- ${p.title} (asin=${p.asin}, price=€${p.current_price_eur}, size=${p.package_size_kg}kg, conc=${p.concentration_pct}%)`,
-    )
-    .join("\n");
-  return `Category filter: ${cat}\n\nSample products:\n${sampleStr}\n\nPick the right normalization metric.`;
 }
 
 function matchesCategory(product, category_filter) {
@@ -103,18 +78,23 @@ function matchesCategory(product, category_filter) {
   return true;
 }
 
-function safeApplyFormula(formulaJs, p) {
-  try {
-    const fn = new Function(
-      "p",
-      "Math",
-      `"use strict"; try { return (${formulaJs}); } catch { return Number.POSITIVE_INFINITY; }`,
-    );
-    const v = fn(p, Math);
-    return typeof v === "number" && Number.isFinite(v) ? v : Number.POSITIVE_INFINITY;
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
+// metric_id → (product) => number. Lower is better. A row the metric cannot be
+// computed for scores +Infinity, so it sorts last instead of sorting first.
+const METRIC_FNS = Object.freeze({
+  eur_per_kg_active: (p) =>
+    p.active_kg ? p.current_price_eur / p.active_kg : Number.POSITIVE_INFINITY,
+  eur_per_unit: (p) => {
+    const size = p.package_size_l || p.package_size_kg;
+    return size ? p.current_price_eur / size : Number.POSITIVE_INFINITY;
+  },
+  price_eur: (p) => p.current_price_eur,
+});
+
+export function applyMetric(metricId, p) {
+  const fn = METRIC_FNS[metricId];
+  if (!fn) return Number.POSITIVE_INFINITY;
+  const v = fn(p);
+  return typeof v === "number" && Number.isFinite(v) ? v : Number.POSITIVE_INFINITY;
 }
 
 export async function rankProducts({ products, category_filter, volume_bracket }) {
@@ -160,21 +140,14 @@ export async function rankProducts({ products, category_filter, volume_bracket }
     metric = {
       metric_id: "eur_per_kg_active",
       formula_human: "price ÷ kg of active compound (concentration-adjusted)",
-      formula_js: "p.active_kg ? p.current_price_eur / p.active_kg : Number.POSITIVE_INFINITY",
     };
   } else if (withSize >= half) {
     metric = {
       metric_id: "eur_per_unit",
       formula_human: "price ÷ package size (L for liquids, kg for solids)",
-      formula_js:
-        "(p.package_size_l || p.package_size_kg) ? p.current_price_eur / (p.package_size_l || p.package_size_kg) : Number.POSITIVE_INFINITY",
     };
   } else {
-    metric = {
-      metric_id: "price_eur",
-      formula_human: "raw price (insufficient spec data)",
-      formula_js: "p.current_price_eur",
-    };
+    metric = { metric_id: "price_eur", formula_human: "raw price (insufficient spec data)" };
   }
 
   // Refund-protection tier (module-level `refundTier`, exported above so
@@ -186,7 +159,7 @@ export async function rankProducts({ products, category_filter, volume_bracket }
   const scored = eligible
     .map((p) => ({
       ...p,
-      normalized_metric: safeApplyFormula(metric.formula_js, p),
+      normalized_metric: applyMetric(metric.metric_id, p),
       refund_tier: refundTier(p),
     }))
     .sort((a, b) => {

@@ -40,7 +40,7 @@ parallelism:
     4=Fresh Additions, 5=Final Pass.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

@@ -8,7 +8,7 @@
 // Env vars (all required; module is a no-op without them):
 //   AMAZON_SHOPPER_CREATORS_ACCESS_KEY     — Creators API access key
 //   AMAZON_SHOPPER_CREATORS_SECRET_KEY     — Creators API secret key
-//   AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG  — Associate tag (e.g. <your-associate-tag>)
+//   AMAZON_SHOPPER_CREATORS_ASSOCIATE_TAG  — Associate tag (e.g. globalcaos-21)
 //   AMAZON_SHOPPER_CREATORS_REGION         — Marketplace (default: es)
 //
 // Activation: when all three of ACCESS_KEY / SECRET_KEY / ASSOCIATE_TAG are

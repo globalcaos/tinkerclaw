@@ -1,7 +1,7 @@
 {
-  "name": "@tinkerclaw/whatsapp",
-  "version": "2026.4.25",
-  "description": "OpenClaw WhatsApp channel plugin",
+  "name": "@globalcaos/tinker-whatsapp",
+  "version": "2026.4.26",
+  "description": "WhatsApp channel plugin for OpenClaw (TinkerClaw fork): QR-linked WhatsApp Web session, inbound/outbound messages under your dmPolicy/groupPolicy allowlists. With the optional whatsmeow backend it also keeps a local SQLite message history (~/.openclaw/data/whatsapp-history.db) and requests history backfill after downtime.",
   "type": "module",
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc.9",
@@ -52,8 +52,6 @@
       ]
     },
     "install": {
-      "npmSpec": "@openclaw/whatsapp",
-      "defaultChoice": "npm",
       "minHostVersion": ">=2026.4.25"
     },
     "compat": {
@@ -67,7 +65,7 @@
     },
     "release": {
       "publishToClawHub": true,
-      "publishToNpm": true
+      "publishToNpm": false
     }
   }
 }

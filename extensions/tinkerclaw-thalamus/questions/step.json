@@ -1,0 +1,124 @@
+{
+  "family": "routing",
+  "questions": [
+    {
+      "id": "step-kind",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt", "pre-tool"],
+      "type": "choice",
+      "criteria": {
+        "plan": "deciding what to do or how to split the work",
+        "tool": "calling a tool that does something",
+        "read": "reading a result, a file or a page",
+        "write": "writing or editing content",
+        "check": "checking work or a claim against a source",
+        "answer": "writing the final answer to the person"
+      },
+      "instructions": "What kind of step is about to happen?",
+      "fields": ["request", "tool", "args", "toolRecord"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Says what the next model call is for.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Kind of step"
+    },
+    {
+      "id": "step-depth",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt", "pre-tool"],
+      "type": "score",
+      "criteria": [
+        "mechanical: copy a value, apply a known edit, repeat a pattern",
+        "routine: ordinary work that needs attention",
+        "deep: it needs real thought or a judgment call"
+      ],
+      "instructions": "How much thought does this step need?",
+      "fields": ["request", "tool", "args", "toolRecord"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Lets a mechanical step use a cheaper model than the dial would pick for the task.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Depth of the step"
+    },
+    {
+      "id": "step-context-need",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt", "pre-tool"],
+      "type": "choice",
+      "criteria": {
+        "all": "the whole conversation so far",
+        "recent": "only the recent part",
+        "item": "only the single item in hand"
+      },
+      "instructions": "How much of the conversation does this step need to see?",
+      "fields": ["request", "tool", "args", "toolRecord"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Decides whether the step can be fed a brief instead of the whole thread.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Context the step needs"
+    },
+    {
+      "id": "step-run-length",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt", "pre-tool"],
+      "type": "score",
+      "criteria": [
+        "no more mechanical steps follow",
+        "one or two more",
+        "three to five more",
+        "six to ten more",
+        "more than ten more"
+      ],
+      "instructions": "After this step, how many more mechanical steps of the same kind will probably follow?",
+      "fields": ["request", "tool", "args", "toolRecord"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Feeds the break-even rule for handing a running thread to another model.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Mechanical steps ahead"
+    },
+    {
+      "id": "step-commits-or-claims",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt", "pre-tool"],
+      "type": "noul",
+      "instructions": "Does this step change something outside the conversation, or state a fact that others will rely on?",
+      "fields": ["request", "tool", "args", "toolRecord"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Sends work that commits or claims to a check by another model family.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Commits or claims",
+      "criteria": {
+        "true": "yes",
+        "false": "no"
+      }
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "cases": [
+    {
+      "id": "mc-pe-expected-pass-got-fail",
+      "kind": "must-catch",
+      "description": "The agent expected the tests to pass and they failed.",
+      "answers": { "surprise": { "answer": 2 } },
+      "situation": {
+        "originKind": "synthetic",
+        "expectation": { "value": "The test suite will pass.", "origin": "observed" },
+        "toolRecord": {
+          "value": [
+            {
+              "tool": "Bash",
+              "argsDigest": "pytest: 3 failed, 9 passed",
+              "exit": 1,
+              "filesWritten": [],
+              "effects": ["read"],
+              "ts": 1
+            }
+          ],
+          "origin": "observed"
+        }
+      },
+      "mustBeAtLeast": "note"
+    },
+    {
+      "id": "mc-pe-expected-3-got-0",
+      "kind": "must-catch",
+      "description": "The agent expected three matching files and the search found none.",
+      "answers": { "surprise": { "answer": 2 } },
+      "situation": {
+        "originKind": "synthetic",
+        "expectation": { "value": "The search will return 3 files.", "origin": "observed" },
+        "toolRecord": {
+          "value": [
+            {
+              "tool": "Bash",
+              "argsDigest": "find /work/demo/exports -name '*.csv': 0 results",
+              "exit": 0,
+              "filesWritten": [],
+              "effects": ["read"],
+              "ts": 1
+            }
+          ],
+          "origin": "observed"
+        }
+      },
+      "mustBeAtLeast": "note"
+    },
+    {
+      "id": "mc-pe-novel-io-log",
+      "kind": "must-catch",
+      "description": "The first read of a log from a second I/O module the record has not seen before.",
+      "answers": { "novelty": { "answer": 0.9, "prob": 0.9 } },
+      "situation": {
+        "originKind": "synthetic",
+        "tool": { "value": "Read", "origin": "observed" },
+        "targets": {
+          "value": [
+            {
+              "path": "/work/demo/logs/io-module-2.log",
+              "kind": "file",
+              "resolvedFrom": "Read /work/demo/logs/io-module-2.log"
+            }
+          ],
+          "origin": "derived"
+        }
+      },
+      "mustBeAtLeast": "note"
+    }
+  ]
+}

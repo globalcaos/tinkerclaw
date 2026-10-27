@@ -9,6 +9,12 @@ export function composeSystemPromptWithHookContext(params: {
   baseSystemPrompt?: string;
   prependSystemContext?: string;
   appendSystemContext?: string;
+  /**
+   * FORK 2026-09-22: the agent's identity sentence (agents.*.identityLine). The base
+   * prompt already opens with it; when a hook prepends context (e.g. a persona block)
+   * the line is lifted above that context so it stays the very first line.
+   */
+  leadingLine?: string;
 }): string | undefined {
   const prependSystem =
     typeof params.prependSystemContext === "string"
@@ -21,7 +27,15 @@ export function composeSystemPromptWithHookContext(params: {
   if (!prependSystem && !appendSystem) {
     return undefined;
   }
-  return joinPresentTextSegments([prependSystem, params.baseSystemPrompt, appendSystem], {
+  const leadingLine = params.leadingLine?.trim();
+  const base = params.baseSystemPrompt;
+  if (prependSystem && leadingLine && base?.startsWith(`${leadingLine}\n`)) {
+    return joinPresentTextSegments(
+      [leadingLine, prependSystem, base.slice(leadingLine.length + 1), appendSystem],
+      { trim: true },
+    );
+  }
+  return joinPresentTextSegments([prependSystem, base, appendSystem], {
     trim: true,
   });
 }

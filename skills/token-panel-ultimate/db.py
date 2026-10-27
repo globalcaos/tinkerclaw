@@ -12,7 +12,8 @@ no task titles are written here — see _migrate() for the erasure of the one co
 used to hold prompt fragments.
 
 The database file and its directory are created owner-only (0700 / 0600) rather than
-inheriting whatever umask the shell or systemd unit happened to have.
+inheriting whatever umask the shell or systemd unit happened to have, and a symlink at
+either path is refused rather than written through — see secure_db_path().
 """
 
 import os
@@ -25,18 +26,53 @@ import json
 DEFAULT_DB_PATH = Path.home() / ".openclaw" / "data" / "budget.db"
 
 
-def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
-    """Get a database connection, creating tables if needed."""
-    path = db_path or DEFAULT_DB_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
+def secure_db_path(path: Path) -> Path:
+    """Make `path` safe to open as the budget database, or refuse.
+
+    A symlink here is not a convenience, it is a redirect: the old code called
+    `path.exists()`, which FOLLOWS symlinks, so a *dangling* symlink at budget.db
+    reported "missing" and the subsequent O_CREAT wrote straight through it to
+    whatever it pointed at. And when the link resolved, the symlink branch only
+    skipped the chmod — sqlite still opened and wrote through the link.
+
+    So: refuse a symlinked database or parent outright, create with
+    O_CREAT|O_EXCL|O_NOFOLLOW (which cannot follow a link even if one is planted
+    between the check and the open), and fchmod an existing file through its own
+    descriptor rather than by name.
+    """
+    parent = path.parent
+    if parent.is_symlink():
+        raise RuntimeError(
+            f"refusing to use {parent}: it is a symlink. The budget database "
+            f"directory must be a real directory you own."
+        )
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not parent.is_symlink():
+        os.chmod(parent, 0o700)
+
+    if path.is_symlink():
+        raise RuntimeError(
+            f"refusing to open {path}: it is a symlink. Delete it, or point "
+            f"BUDGET_DB_PATH at a real file — writing through a link would let "
+            f"anything that can create it choose what this process overwrites."
+        )
 
     # Create the file ourselves so it cannot be born group/world readable; sqlite3
     # would otherwise apply the ambient umask. This file reports what you spend.
-    if not path.exists():
-        os.close(os.open(str(path), os.O_CREAT | os.O_WRONLY, 0o600))
-    elif not path.is_symlink():
-        os.chmod(path, 0o600)
+    try:
+        os.close(os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600))
+    except FileExistsError:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+    return path
+
+
+def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
+    """Get a database connection, creating tables if needed."""
+    path = secure_db_path(db_path or DEFAULT_DB_PATH)
 
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row

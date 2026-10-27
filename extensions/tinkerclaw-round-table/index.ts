@@ -28,6 +28,7 @@ import {
   type ProviderProfile,
 } from "./src/cognitive-diversity.js";
 import {
+  emitSynapseDebate,
   getOrchestrator,
   raacOrchestrator,
   setExternalOrchestratorLoader,
@@ -51,6 +52,7 @@ import {
   modelForRole,
   type Phase,
   type RoleModels,
+  thalamusRoleModel,
 } from "./src/real-participant.js";
 import {
   assignRolesViaHook,
@@ -332,6 +334,8 @@ export default definePluginEntry({
             // confirmed against src/cli/gateway-rpc.ts:22-30; NOT positional
             // (method, params). No awaitResult / res.result anywhere (do not exist).
             const RUN_TIMEOUT_S = 120;
+            // Thalamus picks a Claude role's model per call when it owns the round-table site; the role's model stays the fallback.
+            const used = thalamusRoleModel({ role, model, prompt, overrides: roleModels });
             try {
               const spawn = (await callGatewayFromCli(
                 "fork.subagents.spawn",
@@ -339,7 +343,7 @@ export default definePluginEntry({
                 { timeout: String((RUN_TIMEOUT_S + 10) * 1000) },
                 {
                   task: prompt,
-                  model,
+                  model: used,
                   label: `debate:${role}`,
                   parentSessionKey: "agent:main:main",
                   runTimeoutSeconds: RUN_TIMEOUT_S,
@@ -509,6 +513,7 @@ export default definePluginEntry({
 
           // Run the debate via the resolved orchestrator (7E dropout recovery + 7F
           // multi-turn context threaded through).
+          const debateStartedAtMs = Date.now();
           const result = await orchestrator.runDebate(
             topic,
             participants,
@@ -516,6 +521,16 @@ export default definePluginEntry({
             recovery,
             contextMixin,
           );
+          // J6 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.synapse.debate`: the one call site
+          // every debate passes through, whichever choreography ran. Emitted here rather than
+          // inside the orchestrator because raacOrchestrator.runDebate IS the bare runDebate
+          // reference and the suite guards that identity (see emitSynapseDebate).
+          emitSynapseDebate({
+            result,
+            durMs: Date.now() - debateStartedAtMs,
+            participantCount: participants.length,
+            refs: debateRefs,
+          });
           // 7G: stamp which choreography produced the conclusion so the persistence
           // layer (and the paper's analytics) can attribute each result.
           const resultWithOrch: DebateResult & { orchestratorId: string } = {

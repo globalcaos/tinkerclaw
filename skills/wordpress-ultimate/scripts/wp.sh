@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # WordPress REST API wrapper with draft-by-default safety and explicit consent gates.
 # Usage: wp.sh <METHOD> <endpoint> [json_body]
+#        wp.sh --login | --logout      (move the app password into/out of your OS keychain)
 # Config: WP_URL, WP_USER, WP_APP_PASSWORD  (see "Permissions, Data Flow & Consent" in SKILL.md)
 set -euo pipefail
 
@@ -8,79 +9,153 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(dirname "$SCRIPT_DIR")"
 
 # --- Config loading -----------------------------------------------------------
-# Exactly TWO locations, both explicit. There is deliberately NO walk up the
-# parent directories: whichever .env was found first used to become authoritative
-# for WP_URL/WP_USER/WP_APP_PASSWORD, so anything that could drop a file in a
-# parent directory could redirect your credentials to a host it controls.
-#   1. $WP_ENV_FILE  — an explicit path (also how you switch between sites)
-#   2. <skill>/.env  — the skill's own directory
-# Only keys matching WP_[A-Z0-9_]+ are imported; every other line is ignored, so
-# an env file cannot inject PATH, LD_PRELOAD or anything else into this process.
-ENV_FILE=""
-if [[ -n "${WP_ENV_FILE:-}" ]]; then
-  # WP_ENV_FILE names the file holding your WordPress password, so it is TRUSTED
-  # INPUT and is validated as such. A relative path would resolve against whatever
-  # directory the caller happened to be in, and a world-writable or other-owned
-  # file could be swapped to redirect WP_URL to an attacker's host and harvest the
-  # credentials we are about to send.
-  [[ "$WP_ENV_FILE" = /* ]] || { echo "❌ WP_ENV_FILE must be an ABSOLUTE path (got: $WP_ENV_FILE)" >&2; exit 1; }
-  [[ -f "$WP_ENV_FILE" ]] || { echo "❌ WP_ENV_FILE=$WP_ENV_FILE does not exist" >&2; exit 1; }
-  [[ -L "$WP_ENV_FILE" ]] && { echo "❌ WP_ENV_FILE must not be a symlink" >&2; exit 1; }
-  if [[ "$(stat -c '%u' "$WP_ENV_FILE" 2>/dev/null)" != "$(id -u)" ]]; then
-    echo "❌ WP_ENV_FILE must be owned by you — refusing to read credentials from it." >&2; exit 1
-  fi
-  ENV_PERM="$(stat -c '%a' "$WP_ENV_FILE" 2>/dev/null)"
-  if [[ "${ENV_PERM: -2}" != "00" ]]; then
-    echo "❌ WP_ENV_FILE is group/world readable or writable (mode $ENV_PERM). Run: chmod 600 $WP_ENV_FILE" >&2; exit 1
-  fi
-  ENV_FILE="$WP_ENV_FILE"
-elif [[ -f "$SKILL_DIR/.env" ]]; then
-  ENV_FILE="$SKILL_DIR/.env"
-fi
-if [[ -n "$ENV_FILE" ]]; then
-  while IFS='=' read -r key value; do
-    key=$(echo "${key:-}" | xargs)
-    [[ "$key" =~ ^WP_[A-Z0-9_]+$ ]] || continue
-    value="${value%$'\r'}"
-    value="${value%\"}"; value="${value#\"}"
-    value="${value%\'}"; value="${value#\'}"
-    export "$key"="$value"
-  done < "$ENV_FILE"
-fi
+# ONE loader, shared with wp-upload.sh. This script used to carry its own copy;
+# the copies drifted and the drift WAS the bug — the explicit WP_ENV_FILE path was
+# validated while the implicit <skill>/.env path got no symlink, ownership or mode
+# check at all. Sourcing the shared loader means a fix cannot miss a caller.
+# shellcheck source=wp-credentials.sh
+. "$SCRIPT_DIR/wp-credentials.sh"
 
-# Validate required vars
-: "${WP_URL:?Set WP_URL in .env}"
-: "${WP_USER:?Set WP_USER in .env}"
-: "${WP_APP_PASSWORD:?Set WP_APP_PASSWORD in .env}"
+wp_load_env_file "$SKILL_DIR"
+wp_require_https
+wp_check_allowlist
 
-# HTTPS is mandatory. Credentials never leave over plaintext HTTP.
-case "$WP_URL" in
-  https://*) ;;
-  *) echo "❌ WP_URL must be https:// (got: $WP_URL). Refusing to send credentials." >&2; exit 1 ;;
+# --- Keychain management ------------------------------------------------------
+# wp-credentials.sh points users at these two commands when it refuses a plain
+# file; they have to actually exist or that advice is a dead end.
+case "${1:-}" in
+  --login)
+    : "${WP_USER:?Set WP_USER (env or env file) before --login}"
+    echo "Paste the WordPress application password for ${WP_USER} @ ${WP_HOST}, then Ctrl-D:" >&2
+    if wp_keychain_set; then
+      echo "🔐 Stored in your OS keychain. You can now delete WP_APP_PASSWORD from your env file." >&2
+      exit 0
+    fi
+    echo "❌ No usable OS keychain (install libsecret's secret-tool on Linux)." >&2
+    echo "   Keep the password in a 0600 env file instead — it will warn on every use." >&2
+    exit 1
+    ;;
+  --logout)
+    : "${WP_USER:?Set WP_USER (env or env file) before --logout}"
+    wp_keychain_clear
+    echo "🔓 Keychain entry for ${WP_USER} @ ${WP_HOST} cleared (if one existed)." >&2
+    echo "   This does NOT revoke the password. Revoke it in WordPress → Users → Profile →" >&2
+    echo "   Application Passwords, and remove any WP_APP_PASSWORD line from your env file." >&2
+    exit 0
+    ;;
 esac
 
-# Host allowlist is always on. Default = the host of WP_URL itself, so a swapped
-# URL cannot silently retarget the password. Extra hosts via WP_ALLOWED_HOSTS.
-WP_HOST="${WP_URL#https://}"; WP_HOST="${WP_HOST%%/*}"; WP_HOST="${WP_HOST%%:*}"
-WP_ALLOWED_HOSTS="${WP_ALLOWED_HOSTS:-$WP_HOST}"
-if [[ ",${WP_ALLOWED_HOSTS// /}," != *",${WP_HOST},"* ]]; then
-  echo "❌ WP_URL host '$WP_HOST' is not in WP_ALLOWED_HOSTS. Refusing to send credentials." >&2
-  exit 1
-fi
+wp_resolve_password
 
 METHOD="${1:?Usage: wp.sh <GET|POST|PUT|PATCH|DELETE> <endpoint> [json_body]}"
 ENDPOINT="${2:?Missing endpoint}"
 BODY="${3:-}"
+# An extra or flag-like argument is refused, never ignored: a "--dry" on a POST was dropped
+# silently and the write went LIVE (2026-10-25, post 1009 titled "x" for 25 s). There is no dry run.
+if [[ $# -gt 3 || "$BODY" == --* ]]; then
+  echo "wp.sh: unexpected argument(s) after the body: ${*:3} (wp.sh has no flags such as --dry; nothing was sent)" >&2
+  exit 2
+fi
 
-# Normalize
-METHOD=$(echo "$METHOD" | tr '[:lower:]' '[:upper:]')
-# Canonicalize before any gate: strip leading slashes, collapse //, lowercase.
-ENDPOINT="${ENDPOINT#/}"
-ENDPOINT="$(printf '%s' "$ENDPOINT" | tr -s '/' )"
-ROUTE="${ENDPOINT%%\?*}"
+METHOD=$(printf '%s' "$METHOD" | tr '[:lower:]' '[:upper:]')
+case "$METHOD" in
+  GET|POST|PUT|PATCH|DELETE) ;;
+  *) echo "❌ Unsupported method '$METHOD'. Use GET, POST, PUT, PATCH or DELETE." >&2; exit 1 ;;
+esac
+
+# --- Route canonicalisation ---------------------------------------------------
+# SAFETY: the consent gates below match on the route, so the route they match MUST
+# be the route the server will actually resolve. It used to not be: only ONE leading
+# slash was stripped, so `//plugins` reached the gates as `/plugins`, matched no
+# case arm, and sailed past WP_ALLOW_ADMIN while the server still routed it to
+# /plugins. Percent-encoding (`%70lugins`) and traversal (`posts/../plugins`) had
+# the same effect. Three rules close it:
+#   1. Split path from query FIRST, so query values are never mangled.
+#   2. Normalise the path (all leading slashes, repeated slashes, trailing slash)
+#      and send THAT — request and gate see one string.
+#   3. Gate on the percent-DECODED path, i.e. on what the server will resolve, and
+#      refuse `.` / `..` segments outright rather than trying to resolve them.
+REQ_PATH="${ENDPOINT%%\?*}"
+if [[ "$ENDPOINT" == *\?* ]]; then QUERY="?${ENDPOINT#*\?}"; else QUERY=""; fi
+
+wp_normalize_path() {
+  local p="$1"
+  while [[ "$p" == /* ]]; do p="${p#/}"; done
+  p="$(printf '%s' "$p" | tr -s '/')"
+  while [[ "$p" == */ ]]; do p="${p%/}"; done
+  printf '%s' "$p"
+}
+
+REQ_PATH="$(wp_normalize_path "$REQ_PATH")"
+[[ -n "$REQ_PATH" ]] || { echo "❌ Empty endpoint after normalisation." >&2; exit 1; }
+
+# What the server sees after it percent-decodes. This is the string the gates read.
+# A decoded control character (NUL, CR, LF, ...) in the path would be dropped or
+# split by the shell here but kept by the server, so gate and server would disagree.
+if ! WP_P="$REQ_PATH" python3 -c 'import os,re,sys,urllib.parse; sys.exit(1 if re.search(r"[\x00-\x1f\x7f]", urllib.parse.unquote(os.environ["WP_P"])) else 0)'; then
+  echo "❌ Endpoint path contains an encoded control character (e.g. %00): $ENDPOINT" >&2
+  exit 1
+fi
+ROUTE="$(printf '%s' "$REQ_PATH" \
+  | python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))' 2>/dev/null \
+  || printf '%s' "$REQ_PATH")"
+ROUTE="$(wp_normalize_path "$ROUTE")"
 ROUTE="$(printf '%s' "$ROUTE" | tr '[:upper:]' '[:lower:]')"
-QUERY="${ENDPOINT#"${ENDPOINT%%\?*}"}"
-URL="${WP_URL}/wp-json/wp/v2/${ENDPOINT}"
+
+case "/$ROUTE/" in
+  */../*|*/./*)
+    echo "❌ Endpoint contains a relative path segment ('.' or '..'): $ENDPOINT" >&2
+    echo "   Refusing — the server would resolve it to a different route than the safety gates see." >&2
+    exit 1 ;;
+esac
+
+URL="${WP_URL}/wp-json/wp/v2/${REQ_PATH}${QUERY}"
+
+# --- SAFETY: the method and route the gates see are the ones WordPress uses ------
+# WordPress lets a query string override both: `?_method=DELETE` turns a GET into a
+# DELETE, and `?rest_route=/wp/v2/plugins` re-routes any /wp-json/ URL. Either one
+# made the server act on a different method or route than every gate below had
+# checked, so `GET "posts/42?_method=DELETE&force=true"` slipped past WP_READONLY and
+# the permanent-delete block. The method is already an explicit argument and the
+# route is the path, so both parameters are refused outright. Keys are compared the
+# way PHP builds $_GET: percent/plus-decoded, leading spaces dropped, '.' and ' '
+# turned into '_', and anything from '[' on stripped. PHP also takes the key with
+# strlen(), so it ends at the first NUL: `_method%00=DELETE` is $_GET['_method'].
+# Rather than chase every C-string quirk, any key or value holding a decoded control
+# character (NUL, CR, LF, ...) is refused outright, and the key is cut at NUL too.
+# The same parse extracts every `status` and `force` value for the gates below.
+QUERY_INFO="$(WP_QUERY="${QUERY#\?}" python3 - <<'PY_Q'
+import os, re, sys, urllib.parse
+q = os.environ["WP_QUERY"]
+CTRL = re.compile(r"[\x00-\x1f\x7f]")
+def php_key(k):
+    if "\0" in k:
+        k = k[:k.index("\0")]
+    k = k.lstrip(" ")
+    if "[" in k:
+        k = k[:k.index("[")]
+    return re.sub(r"[ .]", "_", k).lower()
+status, force = [], []
+for k, v in urllib.parse.parse_qsl(q, keep_blank_values=True):
+    if CTRL.search(k) or CTRL.search(v):
+        sys.stderr.write("❌ Query parameter %r is refused: it contains a control character (e.g. %%00). PHP cuts a key at NUL, so the server could read a different parameter than the safety gates checked.\n" % k)
+        sys.exit(2)
+    key = php_key(k)
+    if key in ("_method", "rest_route"):
+        sys.stderr.write("❌ Query parameter '%s' is refused: it makes WordPress use a different %s than the safety gates checked. Pass the method as the first argument and the route as the endpoint.\n" % (k, "method" if key == "_method" else "route"))
+        sys.exit(2)
+    if key == "status":
+        status.extend(s.strip().lower() for s in v.split(","))
+    if key == "force":
+        force.append(v.strip().lower())
+print(",".join(status))
+print(",".join(force))
+print("end")  # command substitution strips trailing newlines; keep line 2 intact
+PY_Q
+)" || exit 1
+{ IFS= read -r QS_LINE; IFS= read -r QF_LINE; } <<<"$QUERY_INFO"
+IFS=',' read -r -a QUERY_STATUS <<<"$QS_LINE"
+IFS=',' read -r -a QUERY_FORCE <<<"$QF_LINE"
 
 # --- OFF SWITCH ---------------------------------------------------------------
 # WP_READONLY=1 (env, or in your .env file) makes this script incapable of
@@ -90,78 +165,96 @@ if [[ -n "${WP_READONLY:-}" && "${WP_READONLY}" != "0" && "$METHOD" != "GET" ]];
   exit 1
 fi
 
-# --- SAFETY: draft by default, publishing needs explicit consent ---------------
-# New posts/pages are forced to draft. Going live — on create OR on update — needs
-# WP_ALLOW_PUBLISH=1. This is the code behind the "draft-only safety" claim.
-BODY_STATUS=""
-if [[ -n "$BODY" ]]; then
-  BODY_STATUS=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+# Body fields the gates read. A body that is not a JSON object is refused on writes,
+# because the gates could not tell what it asks for.
+BODY_STATUS=""; BODY_FORCE=""
+if [[ -n "$BODY" && "$METHOD" != "GET" ]]; then
+  BODY_INFO="$(printf '%s' "$BODY" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+if not isinstance(d, dict): sys.exit(1)
+f = d.get("force", "")
+print(str(d.get("status", "")).strip().lower())
+print(("true" if f is True else "false" if f is False else str(f)).strip().lower())
+print("end")
+' 2>/dev/null)" || { echo "❌ The JSON body must be a single JSON object." >&2; exit 1; }
+  { IFS= read -r BODY_STATUS; IFS= read -r BODY_FORCE; } <<<"$BODY_INFO"
 fi
 
-if [[ "$METHOD" == "POST" && ("$ROUTE" == "posts" || "$ROUTE" == "pages") ]]; then
-  if [[ -z "$BODY" ]]; then
-    BODY='{"status":"draft"}'
-  elif [[ "$BODY_STATUS" != "publish" ]]; then
-    BODY=$(echo "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); d['status']='draft'; print(json.dumps(d))")
-  fi
+# WordPress reads a boolean as false only for "", "0" and "false"; anything else is true.
+wp_truthy() { local v; for v in "$@"; do [[ -z "$v" || "$v" == "0" || "$v" == "false" ]] || return 0; done; return 1; }
+
+# --- SAFETY: block permanent delete -------------------------------------------
+# WordPress DELETE without force moves a post/page/comment to Trash (recoverable).
+# force=true is the permanent, unrecoverable delete and stays blocked for every
+# method and every truthy spelling, in the query string AND the JSON body.
+if [[ "$METHOD" != "GET" ]] && wp_truthy "$BODY_FORCE" "${QUERY_FORCE[@]}"; then
+  echo "❌ Permanent DELETE (force) blocked by safety policy. Drop force= to trash instead (recoverable)." >&2
+  exit 1
 fi
 
-if [[ "$BODY_STATUS" == "publish" && "$METHOD" != "GET" ]]; then
-  if [[ "${WP_ALLOW_PUBLISH:-0}" != "1" ]]; then
-    echo "❌ Publishing is gated. This would put content live at ${WP_URL} immediately." >&2
-    echo "   Confirm with the site owner, then re-run with WP_ALLOW_PUBLISH=1." >&2
-    exit 1
-  fi
-  echo "⚠️  WP_ALLOW_PUBLISH=1 — status=publish. Content goes live immediately." >&2
-fi
-
-# Editing an already-live post/page without sending status=publish still changes
-# public content. PUT/PATCH on posts|pages therefore needs the same opt-in.
-if [[ "$METHOD" == "PUT" || "$METHOD" == "PATCH" ]]; then
-  case "$ROUTE" in
-    posts|posts/*|pages|pages/*)
-      if [[ "${WP_ALLOW_PUBLISH:-0}" != "1" ]]; then
-        echo "❌ Editing live posts/pages is gated (a PUT/PATCH without status still changes public content)." >&2
-        echo "   Re-run with WP_ALLOW_PUBLISH=1 once the site owner has agreed." >&2
-        exit 1
-      fi
-      ;;
+# --- SAFETY: route policy for every write -------------------------------------
+# GET is always free. For every other method the route decides which consent the
+# call needs. Routes the script does not know are treated as site administration,
+# so a new or custom endpoint fails closed instead of open.
+#   free                 POST posts | POST pages (forced to draft below)
+#                        POST categories | POST tags (a new, empty term)
+#   WP_ALLOW_PUBLISH=1   anything else on posts, pages, comments, media, categories,
+#                        tags: editing, trashing, uploading, moderating
+#   WP_ALLOW_ADMIN=1     plugins, themes, users, settings, and every other route
+NEED=""
+if [[ "$METHOD" != "GET" ]]; then
+  case "$METHOD $ROUTE" in
+    "POST posts"|"POST pages"|"POST categories"|"POST tags") NEED="" ;;
+    *" plugins"|*" plugins/"*|*" themes"|*" themes/"*|*" users"|*" users/"*|*" settings"|*" settings/"*) NEED="admin" ;;
+    *" posts/"*|*" pages/"*|*" comments"|*" comments/"*|*" media"|*" media/"*|*" categories/"*|*" tags/"*) NEED="publish" ;;
+    *) NEED="admin" ;;
   esac
 fi
 
-# --- SAFETY: site administration needs explicit consent ------------------------
-# Installing/activating a plugin or theme is arbitrary code execution on the site;
-# users/settings changes are privilege and configuration changes. Reading them is
-# free, writing them needs WP_ALLOW_ADMIN=1.
-case "$ROUTE" in
-  plugins|plugins/*|themes|themes/*|users|users/*|settings|settings/*)
-    if [[ "$METHOD" != "GET" && "${WP_ALLOW_ADMIN:-0}" != "1" ]]; then
-      echo "❌ $METHOD $ROUTE is a site-administration write and is gated." >&2
-      echo "   Installing a plugin or theme runs code on the site; users/settings writes" >&2
-      echo "   change who can do what. Re-run with WP_ALLOW_ADMIN=1 once the site owner" >&2
-      echo "   has agreed to this specific change." >&2
-      exit 1
-    fi
-    ;;
-esac
+# Going live on ANY route — status publish or future (scheduled), in the body OR the
+# query string, since WordPress reads either — needs WP_ALLOW_PUBLISH=1 too.
+GOES_LIVE=0
+if [[ "$METHOD" != "GET" ]]; then
+  for st in "$BODY_STATUS" "${QUERY_STATUS[@]}"; do
+    [[ "$st" == "publish" || "$st" == "future" ]] && GOES_LIVE=1
+  done
+fi
 
-# --- SAFETY: block permanent delete -------------------------------------------
-# WordPress DELETE without force moves a post/page/comment to Trash (recoverable),
-# and is the only way to trash on installs whose REST status enum omits "trash"
-# (some WooCommerce/SureCart sites reject PUT {"status":"trash"} as
-# rest_invalid_param). force=true is the permanent, unrecoverable delete and stays
-# blocked — in the query string AND in the JSON body, since WP reads either.
-if [[ "$METHOD" == "DELETE" ]]; then
-  BODY_FORCE=""
-  if [[ -n "$BODY" ]]; then
-    BODY_FORCE=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('force',''))" 2>/dev/null || echo "")
+if [[ "$NEED" == "admin" && "${WP_ALLOW_ADMIN:-0}" != "1" ]]; then
+  echo "❌ $METHOD $ROUTE is a site-administration write and is gated." >&2
+  echo "   Installing a plugin or theme runs code on the site; users/settings writes" >&2
+  echo "   change who can do what; routes this script does not know are treated the same." >&2
+  echo "   Re-run with WP_ALLOW_ADMIN=1 once the site owner has agreed to this specific change." >&2
+  exit 1
+fi
+if [[ ( "$NEED" == "publish" || $GOES_LIVE -eq 1 ) && "${WP_ALLOW_PUBLISH:-0}" != "1" ]]; then
+  if [[ $GOES_LIVE -eq 1 ]]; then
+    echo "❌ Publishing is gated. This would put content live at ${WP_URL}." >&2
+  else
+    echo "❌ $METHOD $ROUTE changes what visitors can see (editing live posts/pages, media, comments or terms) and is gated." >&2
   fi
-  QUERY_LC="$(printf '%s' "$QUERY" | python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read()).lower())' 2>/dev/null || echo "$QUERY")"
-  if [[ "$QUERY_LC" == *"force=true"* || "$QUERY_LC" == *"force=1"* \
-     || "$BODY_FORCE" == "True" || "$BODY_FORCE" == "true" || "$BODY_FORCE" == "1" || "$BODY_FORCE" == "yes" ]]; then
-    echo "❌ Permanent DELETE (force) blocked by safety policy. Drop force= to trash instead (recoverable)." >&2
-    exit 1
+  echo "   Confirm with the site owner, then re-run with WP_ALLOW_PUBLISH=1." >&2
+  exit 1
+fi
+[[ $GOES_LIVE -eq 1 ]] && echo "⚠️  WP_ALLOW_PUBLISH=1 — status=publish/future. Content goes live." >&2
+
+# --- SAFETY: draft by default --------------------------------------------------
+# New posts/pages are written with status=draft unless the call carries publish or
+# future AND passed the WP_ALLOW_PUBLISH gate above.
+if [[ "$METHOD" == "POST" && ("$ROUTE" == "posts" || "$ROUTE" == "pages") && $GOES_LIVE -eq 0 ]]; then
+  if [[ -z "$BODY" ]]; then
+    BODY='{"status":"draft"}'
+  else
+    BODY=$(printf '%s' "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); d['status']='draft'; print(json.dumps(d))")
   fi
+fi
+
+# Dry run: print the gate decision and the exact URL without sending anything.
+if [[ -n "${WP_DRY_RUN:-}" && "${WP_DRY_RUN}" != "0" ]]; then
+  echo "DRY RUN: $METHOD $URL"
+  echo "ROUTE: $ROUTE"
+  exit 0
 fi
 
 # Execute. Some sites sit behind Cloudflare, which challenges plain curl's TLS/JA3
@@ -180,14 +273,15 @@ print(requests.request(m, url, **kw).text)
 PY
 )
 else
-  # Password stays in a 0600 netrc file, never on argv.
-  NETRC=$(mktemp); chmod 600 "$NETRC"
-  printf 'machine %s\nlogin %s\npassword %s\n' "$WP_HOST" "$WP_USER" "${WP_APP_PASSWORD// /}" > "$NETRC"
-  CURL_ARGS=(-s -X "$METHOD" --netrc-file "$NETRC" -H "Content-Type: application/json")
+  # Password stays in a 0600 netrc file, never on argv. wp_netrc_create installs an
+  # EXIT/HUP/INT/TERM trap, so a curl failure under `set -e` cannot leave the
+  # credential file behind — which is exactly what the previous version did.
+  wp_netrc_create
+  CURL_ARGS=(-s -X "$METHOD" --netrc-file "$WP_NETRC" -H "Content-Type: application/json")
   [[ -n "$BODY" && "$METHOD" != "GET" ]] && CURL_ARGS+=(-d "$BODY")
   RESPONSE=$(curl "${CURL_ARGS[@]}" "$URL")
-  rm -f "$NETRC"
+  wp_netrc_cleanup
 fi
 
 # Pretty print if python3 available
-echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
+printf '%s\n' "$RESPONSE" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$RESPONSE"

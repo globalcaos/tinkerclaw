@@ -292,6 +292,61 @@ sequenceDiagram
 
 ---
 
+## F8. `chat.history` incremental window (seq cursors)
+
+**Trigger:** Tinker UI opens/reconnects a chat tab, a turn on it ends, or the tab's chat page is scrolled to the top.
+**Entry:** `tinker-ui/src/app.ts` (`loadChat`, `hydrateTab`, `loadOlderPage`) → `src/gateway/server-methods/chat.ts:chatHandlers["chat.history"]`
+**Exit:** `ChatHistoryResult` carrying a `cursor` (`epoch`, `firstSeq`, `lastSeq`, `hasMoreBefore`, `reset`); the tab folds it into its per-tab `HistoryWindow` (`tinker-ui/src/history-window.ts`).
+
+```mermaid
+sequenceDiagram
+  participant TUI as Tinker UI (app.ts, history-paging.ts)
+  participant HW as HistoryWindow (per tab, history-window.ts)
+  participant GW as chat.history handler (chat.ts)
+  participant PL as chat-history-cursor.ts (planner)
+  participant TI as TranscriptIndex (transcript-index.ts, see failures.md M20)
+
+  Note over TUI,HW: first open of an EMPTY page
+  TUI->>GW: chat.history {sessionKey, limit:100} (legacy shape)
+  GW->>TI: readSessionMessagesWithCursor
+  TI-->>GW: {epoch, messages}
+  GW->>PL: planChatHistoryWindow(no cursor) → tail
+  GW-->>TUI: {messages, cursor:{epoch, firstSeq, lastSeq, hasMoreBefore, reset:false}}
+  TUI->>HW: applyCursor (window seeded from the reply)
+
+  Note over TUI,HW: turn end / reconnect / background final — page already holds server rows
+  TUI->>GW: chat.history {sessionKey, afterSeq:HW.lastSeq, epoch:HW.epoch, limit:1000} (R25)
+  GW->>PL: planChatHistoryWindow(afterSeq, epoch)
+  alt epoch matches HW.epoch
+    PL-->>GW: rows with seq > afterSeq, plus stranded (seq-less) local rows
+    GW-->>TUI: {messages: delta, cursor:{epoch, firstSeq:afterSeq+1, lastSeq, hasMoreBefore:true, reset:false}}
+    TUI->>HW: applyCursor (delta — window advances; page rows gap-filled by identity, never replaced)
+  else epoch missing, mismatched, or server has no epoch (flat/legacy transcript)
+    PL-->>GW: reset:true, a full tail window
+    GW-->>TUI: {messages: tail, cursor:{epoch, firstSeq, lastSeq, hasMoreBefore, reset:true}}
+    TUI->>HW: applyCursor (reset — window re-seeded wholesale; page ROWS still merged by identity, never cleared)
+  end
+
+  Note over TUI,HW: scroll to top — older page
+  TUI->>GW: chat.history {sessionKey, beforeSeq:HW.firstSeq, epoch:HW.epoch}
+  GW->>PL: planChatHistoryWindow(beforeSeq, epoch)
+  PL-->>GW: positional page of `limit` seq rows before beforeSeq, imports bounded to that page's time range
+  GW-->>TUI: {messages: older page, cursor:{epoch, firstSeq, lastSeq, hasMoreBefore, reset:false}}
+  TUI->>HW: planOlderPage/applyOlderPage — rows written ABOVE the page, anchored on identity (tinker-ui.md §5.8W)
+```
+
+**Invariants:**
+
+- **Backward compatible.** A `chat.history` call with no `afterSeq`/`beforeSeq`/`epoch` returns exactly the legacy tail window (ruling R9) — the TUI's non-cursor callers, iOS/Android/macOS apps, and the prefrontal/round-table extensions all keep working unmodified. Cursors are additive protocol fields (`additionalProperties:false` unchanged).
+- **The UI window per tab (`history-window.ts`).** The first open of an EMPTY page asks `{limit:100}` (`WINDOW_PAGE`); every later read of a page that already holds server rows asks `limit:1000` (ruling R25, both cursor and legacy shape) — the gateway's 200-row default would answer a longer delta `reset`, and a 100-row legacy read can leave a mid-page hole that `beforeSeq` paging cannot reach. `epoch: null` (a flat/legacy-loaded transcript, or a pre-restart gateway that never returns a `cursor`) keeps the tab's window cursor-less: requests stay legacy-shaped, older paging is unavailable, and nothing is trimmed (ruling R7).
+- **Cursor math.** `afterSeq` selects rows with `seq > afterSeq` plus every stranded (seq-less) local row, so a concurrently appended prompt is never left only in the outbox. An epoch mismatch or an overflowing delta (`lastSeq − afterSeq > limit`) answers `reset:true` rather than silently dropping the middle (ruling R10). `beforeSeq` returns a positional page ending just before that seq, with imports bounded to the page's own time range (ruling R23 widened this so a limited tail's cut import range is still reachable by paging back).
+- **Reset semantics.** `reset:true` fires on a missing/mismatched epoch or a server epoch of `null` (ruling R22). A reset is served as a full tail window and merged into the page by IDENTITY like any other reply — **the page's rows are never cleared**; only the client's cursor state (`HistoryWindow`) is re-seeded wholesale from the reply, never merged with the stale window it replaces.
+- **Outbox proof by cursor.** The outbox records `sentAfterSeq`/`sentEpoch` on the page held when a prompt was typed; `flushOutbox` asks `{afterSeq: min(sentAfterSeq)−1, epoch, limit:1000}` (ruling R24) when every pending entry's seq was recorded under the epoch the tab holds now, and falls back to `{limit:200}` (text proof, tail-only) otherwise, or on a `reset` reply, or a rejected cursor read. See tinker-ui.md §5.8W.
+
+**See also:** tinker-ui.md §5.8W (the client-side window/older-page/trim rules in full, including the known limits); failures.md M20 (the fault class this closes on the session's OWN transcript, as distinct from the claude-cli import path M20 originally fixed); lifecycles.md (outbox ack ≠ delivery).
+
+**Last verified:** 2026-09-23 (`feat/chat-history-incremental` branch, plan tasks 2–9; `src/gateway/server-methods/chat.ts`, `src/gateway/chat-history-cursor.ts`, `tinker-ui/src/history-window.ts`, `tinker-ui/src/history-paging.ts`).
+
 ---
 
 ## F-PLAN-RESUME. Gateway restart → plan-aware [System] continue
@@ -559,6 +614,52 @@ sequenceDiagram
 **State machines:** see lifecycles.md L-REASONING (none→tree→lats tri-state + the per-turn apply/restore states) — the single owner of the reasoning-mode state facts; this diagram owns only the call sequence.
 
 **See also:** config-shape.md (`fork.cognitive.reasoning` key + the `fork.reasoning.search` RPC that runs a model — do NOT add it to a verify block); memory-layout.md (`reasoning_tree_state` EventKind + importance ranking); failures.md (deliberation failure → pass-through).
+
+---
+
+## F-TURN-MODEL. Send → TURN TIMING → Thalamus picks → the pill and the rail name the model together (2026-10-05)
+
+**Trigger:** the owner sends a prompt on Auto. **Entry:** `tinker-ui/src/app.ts send()`. **Exit:** the turn's model is drawn once, by the pill and the answer rail in the same repaint, and the TURN TIMING block stays where it was written. Written for the owner's report of 2026-10-05: the rail first took the previous turn's model and switched when Thalamus' pick arrived, and the block vanished into the hidden Reasoning group when the answer appeared.
+
+```mermaid
+sequenceDiagram
+  participant UI as Tinker UI (app.ts)
+  participant CU as chat-units.ts / chat-rail.ts
+  participant GW as Gateway (chat.ts → auto-reply)
+  participant TH as Thalamus (model selection)
+  participant RUN as Embedded runner (lifecycle)
+
+  UI->>UI: send(): resetPhaseGroup(), prompt bubble, pending pill ("sending")
+  UI->>GW: chat.send {idempotencyKey = runId, model? only when pinned}
+  Note over UI: pinned → provisional activeRuns[runId] with the pin: the model is named now
+  GW-->>UI: chat.send ack → recordPhaseTiming("sending", finished) → the TURN TIMING block (client row); "preparing context" starts counting
+  UI->>CU: updateChat → last run = [TURN TIMING] only
+  CU-->>UI: no rail, no room (the block is not the model's, 2026-10-06); pill: "preparing context"
+  GW-->>UI: stream:"turn-phase" stages (runId) → block entries, block._phaseRunId
+  GW->>TH: pick for this turn (Auto)
+  TH-->>UI: stream:"thalamus" decision (runId thalamus:<sessionKey>) → THALAMUS card only
+  GW->>RUN: run on the picked model
+  RUN-->>UI: lifecycle phase:"start" {model, modelProvider}
+  UI->>UI: closePreModelWindow(runId): "preparing context" closed, block._phaseRunId stamped if empty
+  UI->>UI: activeRuns[runId] = {model} (the turn has NAMED its model)
+  UI->>CU: updateChat() → inFlightTurnModel() = that model
+  CU-->>UI: pill names the model; still no rail (the run holds only TURN TIMING)
+  RUN-->>UI: first thinking, tool or text bubble (carries _runId)
+  UI->>CU: updateChat → the rail opens BELOW the block, at that bubble, already in the named model's colour
+  RUN-->>UI: more deltas, tools, thinking (each unit gets its stretch of line)
+  RUN-->>UI: chat final → run settles
+  UI->>CU: updateChat → settled run: rows name the model (railModelByRun, _phaseRunId) → same rail
+  CU-->>UI: Reasoning group folds tools and narration; TURN TIMING stays its own unit above it
+```
+
+**Invariants:**
+
+- The pill and the rail read the same in-flight model (`inFlightTurnModel`), and nothing paints the turn's model before lifecycle `phase:start` (or an effort event, or the pinned send) names it. Since 2026-10-06 the rail appears only with the model's first unit, so it is born in the named colour and never changes colour on screen; the pill can name the model a few seconds earlier, while the run still holds only TURN TIMING.
+- No line is ever drawn beside a TURN TIMING block: it is the browser's and the gateway's measurement of the turn, not the model's work (2026-10-06).
+- The Thalamus decision feeds the THALAMUS card only. It is keyed `thalamus:<sessionKey>`, not the run, and a failover can still change the model before `phase:start`.
+- The TURN TIMING block is never inside the Reasoning group, and it never moves into a 🌿 section unless it was written after the turn's answer (then it is the reflection's).
+
+**State machine:** lifecycles.md L-RAIL. **Visual language:** tinker-ui.md §5.8M (the block), §5.8X2 (the rail). **Gate:** tinker-ui.md frontmatter `§5.8M/§5.8X2`, lifecycles.md frontmatter `L-RAIL`.
 
 ---
 

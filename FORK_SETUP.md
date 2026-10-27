@@ -71,19 +71,13 @@ ls node_modules/better-sqlite3/build/Release/better_sqlite3.node
 
 If missing: `pnpm rebuild better-sqlite3 opusscript`
 
-Install the `openclaw` CLI globally (dev-linked = this clone is the CLI):
+Install the `openclaw` CLI globally:
 
 ```bash
-export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-mkdir -p "$PNPM_HOME"
-export PATH="$PNPM_HOME:$PATH"
-pnpm config set global-bin-dir "$PNPM_HOME"
 pnpm link --global
 ```
 
-Verify: `readlink -f $(which openclaw)` should resolve inside this repo
-(`…/src/tinkerclaw/openclaw.mjs`). If `pnpm link --global` errors with
-`ERR_PNPM_NO_GLOBAL_BIN_DIR`, the three lines above are the fix — do not skip them.
+Verify: `which openclaw` should point to your repo's `openclaw.mjs`.
 
 Install Tinker UI dependencies:
 
@@ -252,42 +246,29 @@ This is the step most people never find, because until 2026-09-08 there was noth
 the nightly jobs that make this fork maintain itself lived only in one machine's private cron
 store. They now ship with the repo, in `extensions/tinkerclaw-tinker-bridge/crons/`.
 
-Six jobs: nightly memory consolidation, an AI-field scan, a read-only security sweep, an
-agent-OSS survey, workspace hygiene, and a model-rank refresh. Full descriptions and the
+Seven jobs: a nightly reflection on your day, memory consolidation, an AI-field scan, a
+read-only security sweep, an agent-OSS survey, workspace hygiene, and a model-rank refresh. Full descriptions and the
 safety rules every routine follows are in that directory's `README.md`.
 
 ```bash
-pnpm tinker:crons -- --list      # what ships, and what you already have
-pnpm tinker:crons                # install the missing ones, ENABLED
-pnpm tinker:crons:disable        # same, but switched OFF (opt-out)
+pnpm tinker:crons -- --list       # what ships, and what you already have
+pnpm tinker:crons                 # install the missing ones, switched ON
+pnpm tinker:crons -- --disabled   # install them, switched off
 ```
 
-`scripts/setup.sh` asks once — **Enable the full product pack?** — and defaults to **Y**.
-That one answer enables every bundled plugin except WhatsApp and seeds the six nightly
-jobs ON. `n` skips. `off` enables the plugins but installs the crons disabled (they burn
-tokens every night). WhatsApp stays off until you link a phone.
+`scripts/setup.sh` asks once during a fresh install and defaults to **on**, so a fresh clone
+behaves like a mature one. The cost is stated in the question rather than hidden behind a safe
+default: each job wakes an agent on a schedule and spends model tokens on your account, roughly
+one euro a night for the whole cycle. Switch any of them off with `openclaw cron disable <id>`
+(`openclaw cron list --all` to find the id — note `--all`, since plain `list` hides disabled
+jobs).
 
-The seeder writes the cron store directly — no running gateway required — and is idempotent
-across `git pull`. Existing jobs matched by id or name are never overwritten.
+The seeder is idempotent and safe to re-run after every `git pull`; that is how you pick up
+jobs added upstream later. It needs a running gateway, and says so plainly if one is missing.
 
 To customise a routine without fighting `git pull`, copy it to
 `~/.openclaw/workspace/crons/<id>/routine.md` and edit it there — the same workspace-overrides-
 repo contract as `SOUL.md`, resolved in that order at run time.
-
-## Step 5.6: Fork plugins — the UI a cloner actually sees
-
-The plugin _files_ already travel with `git clone`. Loading them does not. A fresh gateway
-leaves `tinkerclaw-*` disabled until someone runs `openclaw plugins enable`, which is tribal
-knowledge — the same hole the cron seeder used to be. `scripts/setup.sh` now seeds every bundled `tinkerclaw-*` plugin except WhatsApp ON by default (same product-pack question as the crons):
-
-```bash
-pnpm tinker:plugins -- --list    # what this installer enables
-pnpm tinker:plugins              # write plugins.entries.<id>.enabled = true
-```
-
-It writes **only** `plugins.entries`. It never writes `plugins.allow`. A short allow-list
-hides the rest of the tree (measured: a 4-name list took a live gateway from 10 plugins to 0).
-Existing entries are never overwritten, so an operator who switched a panel off keeps it off.
 
 ## Step 6: Voice / TTS (optional)
 

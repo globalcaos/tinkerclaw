@@ -15,6 +15,7 @@ import {
   coerceImageAssistantText,
   hasImageReasoningOnlyResponse,
 } from "../agents/tools/image-tool.helpers.js";
+import { withLedgerCompletion } from "../forensic/llm-ledger.js";
 import { prepareProviderDynamicModel } from "../plugins/provider-runtime.js";
 import type {
   ImageDescriptionRequest,
@@ -369,12 +370,17 @@ async function describeImagesWithModelInternal(
   const maxTokens = resolveImageToolMaxTokens(model.maxTokens, params.maxTokens ?? 512);
   const completeImage = async (onPayload?: ProviderStreamOptions["onPayload"]) => {
     const payloadHandler = composeImageDescriptionPayloadHandlers(onPayload, options.onPayload);
-    return await complete(model, context, {
-      apiKey,
-      maxTokens,
-      signal: controller.signal,
-      ...(payloadHandler ? { onPayload: payloadHandler } : {}),
-    });
+    return await withLedgerCompletion(
+      { source: "completion:image", provider: model.provider, model: model.id, api: model.api },
+      context,
+      () =>
+        complete(model, context, {
+          apiKey,
+          maxTokens,
+          signal: controller.signal,
+          ...(payloadHandler ? { onPayload: payloadHandler } : {}),
+        }),
+    );
   };
 
   try {

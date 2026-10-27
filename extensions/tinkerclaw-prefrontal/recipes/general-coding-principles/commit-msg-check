@@ -11,7 +11,7 @@
 # Tunables (environment):
 #   COMMIT_SUBJECT_MAX   max subject length              (default 72)
 #   COMMIT_TYPES         allowed conventional types, |-separated
-#                        (default feat|fix|docs|refactor|perf|test|chore|build|ci|style|revert)
+#                        (default feat|fix|docs|refactor|perf|test|chore|build|ci|style|revert|merge)
 #   COMMIT_JOIN_WORDS    words that mean "two hops in one", |-separated, matched as whole
 #                        words, case-insensitive (default "and"; add your team's languages,
 #                        e.g. "and|y|et|und")
@@ -19,7 +19,7 @@
 msgfile="$1"
 [ -n "$msgfile" ] && [ -r "$msgfile" ] || { echo "usage: commit-msg-check <msgfile>" >&2; exit 2; }
 max="${COMMIT_SUBJECT_MAX:-72}"
-types="${COMMIT_TYPES:-feat|fix|docs|refactor|perf|test|chore|build|ci|style|revert}"
+types="${COMMIT_TYPES:-feat|fix|docs|refactor|perf|test|chore|build|ci|style|revert|merge}"
 joins="${COMMIT_JOIN_WORDS:-and}"
 gate="${COMMIT_GATE_NAME:-house rules}"
 

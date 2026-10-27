@@ -36,7 +36,7 @@ import type {
   PluginHookAfterToolCallEvent,
   PluginHookToolContext,
 } from "./hook-types.js";
-// FORK 2026-07-25 (the user): `prefrontal.status` reports the REAL fan-out cap to the Models
+// FORK 2026-07-25 (the architect): `prefrontal.status` reports the REAL fan-out cap to the Models
 // panel's routing card — import it rather than re-deriving min(16, cores-2) here.
 import { concurrencyCap } from "./orchestration-runtime.js";
 
@@ -61,7 +61,9 @@ function getSessionStoreLoader(): ((cfg: any) => any) | null {
   }
   return _sessionStoreLoader;
 }
+import { isSlashCommandPrompt } from "openclaw/plugin-sdk/fork-prompt-envelope";
 import { makeFitnessLookup } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { taskText } from "openclaw/plugin-sdk/fork-thalamus";
 import { callGateway } from "openclaw/plugin-sdk/testing";
 import {
   loadAntiGoldplatingPrompt,
@@ -92,7 +94,7 @@ import {
   type MarketplaceFetch,
   type MarketplaceMeta,
 } from "./recipe-marketplace.js";
-import { seedPlanFromPrompt } from "./recipe-matcher.js";
+import { loadRecipeIndex, recipeIndexExtraDirs, seedPlanFromPrompt } from "./recipe-matcher.js";
 import { createRecipeRpcs } from "./recipe-rpcs.js";
 import { resolveOwnRecipesDir } from "./recipe-runner.js";
 import { RecipeStore } from "./recipe-store.js";
@@ -102,10 +104,10 @@ import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "tinkerclaw-prefrontal";
 
-// FORK 2026-07-25 (the user): the ORCA routing policy. Resolved from THIS module's location so
+// FORK 2026-07-25 (the architect): the ORCA routing policy. Resolved from THIS module's location so
 // the UI never hardcodes a host path; the panel's footer link opens it in the system viewer.
 //
-// FIX 2026-07-27 (the user: "the final link does not open the foundation md"): the link was dead
+// FIX 2026-07-27 (the architect: "the final link does not open the foundation md"): the link was dead
 // from the day it shipped. `import.meta.url` points into the BUILT plugin
 // (dist/extensions/tinkerclaw-prefrontal/) and the build copies openclaw.plugin.json but NOT
 // .md assets, so this named a file that has never existed. config.openExternalFile does not
@@ -145,9 +147,23 @@ const sharedSubagentRuns = new Map<string, SubagentRunInfo>();
 const sharedLastEventTimestamps = new Map<string, number>();
 let sharedPrefrontalSessionKey: string | null = null;
 
+// FORK 2026-10-06 (Broca retrieval v2, phase E): the matcher hook's ranking helpers load on first use. A failure to load the SDK
+// module (or the thalamus half of it) leaves the hook as it was: the old gate and no advice.
+type AdviceModule = typeof import("./recipe-advice.js");
+let adviceModule: Promise<AdviceModule | undefined> | undefined;
+const loadAdvice = (): Promise<AdviceModule | undefined> =>
+  (adviceModule ??= import("./recipe-advice.js").catch(() => undefined));
+
 export default function register(api: OpenClawPluginApi) {
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const config = api.config as Record<string, any>;
+  // The gateway runs at most subagents.maxConcurrent subagents at once and REFUSES a spawn once a
+  // requester has maxChildrenPerAgent active children; defaults mirror src/config/agent-limits.ts
+  // (8 and 5). Orchestration never asks for more than this at once. (2026-10-09)
+  const orchestrationMaxInFlight = Math.min(
+    Number(config?.agents?.defaults?.subagents?.maxConcurrent) || 8,
+    Number(config?.agents?.defaults?.subagents?.maxChildrenPerAgent) || 5,
+  );
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const pluginConfig = (config.plugins as any)?.entries?.[PLUGIN_ID]?.config ?? {};
 
@@ -192,8 +208,16 @@ export default function register(api: OpenClawPluginApi) {
   const forcingQuestionsEnabled = pluginConfig.forcingQuestions?.enabled !== false;
 
   // ─── P3: Permission Hooks + Denial Tracking ───
+  // Permission hooks execute operator-supplied scripts on every tool call.
+  // That is opt-in: defining a hook is not consent to run it, so the operator
+  // must also set hooks.enabled. See permission-hooks.ts for the full model.
   const hookDefs = pluginConfig.hooks?.before_tool ?? [];
-  const permissionHooks = createPermissionHooks(hookDefs);
+  const hooksEnabled = pluginConfig.hooks?.enabled === true;
+  const permissionHooks = createPermissionHooks(hookDefs, {
+    enabled: hooksEnabled,
+    allowedRoots: pluginConfig.hooks?.allowedRoots,
+    logger: api.logger ?? { warn: console.warn },
+  });
   const denialTracker = createDenialTracker({ limit: pluginConfig.hooks?.denialLimit ?? 3 });
 
   // Initialize shared monitor singleton on first registration
@@ -356,7 +380,7 @@ export default function register(api: OpenClawPluginApi) {
     }
     const sessionKey = ctx.sessionKey || "agent:main:main";
 
-    // FORK 2026-08-04 (the user): REOPEN a run that `agent_end` closed (see that hook).
+    // FORK 2026-08-04 (the architect): REOPEN a run that `agent_end` closed (see that hook).
     // A steered or restarted child starts a new turn on the SAME session key without a
     // fresh `subagent_spawned`, and the registry suppresses `subagent_ended` for exactly
     // that case, so without this the child would sit at "completed" while it is
@@ -472,7 +496,7 @@ export default function register(api: OpenClawPluginApi) {
       }
 
       // P3: Permission hooks — user-defined shell scripts gate tool calls
-      if (isEnabled(featureFlags, "permissionHooks") && hookDefs.length > 0) {
+      if (isEnabled(featureFlags, "permissionHooks") && hooksEnabled && hookDefs.length > 0) {
         const hookResult = await permissionHooks.check(event.toolName, {
           args: event.params,
           sessionKey: ctx.sessionKey,
@@ -561,7 +585,7 @@ export default function register(api: OpenClawPluginApi) {
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.endSession(sessionKey, event.success, event.durationMs);
 
-    // FORK 2026-08-04 (the user): close the run HERE, not in `subagent_ended`.
+    // FORK 2026-08-04 (the architect): close the run HERE, not in `subagent_ended`.
     //
     // `subagent_ended` is deliberately deferred behind the completion ANNOUNCE
     // (src/agents/subagent-registry-lifecycle.ts, `shouldDeferEndedHook`), so it means
@@ -773,7 +797,7 @@ export default function register(api: OpenClawPluginApi) {
 
   function rebuildAndBroadcastTree() {
     try {
-      // FORK 2026-08-04 (the user): evict terminal runs past their retention window BEFORE
+      // FORK 2026-08-04 (the architect): evict terminal runs past their retention window BEFORE
       // building, so no tree the UI ever receives can contain a run the plugin has
       // already finished with. `subagentRuns` had no delete anywhere in the plugin, so
       // every subagent since boot stayed a tree child (observed 1 -> 21, never
@@ -840,111 +864,177 @@ export default function register(api: OpenClawPluginApi) {
   }
 
   // ─── Gateway Methods ───
-  api.registerGatewayMethod("prefrontal.topology", async ({ respond }) => {
-    enrichTopology(); // Freshen data before responding
-    const snap = topology.snapshot();
-    log.info?.(
-      `[prefrontal] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
-    );
-    respond(true, snap);
-  });
+  // Every gateway method this plugin registers is pinned to operator.admin explicitly
+  // (topology/tree/metrics expose session keys and tool names, orcaBias writes a file,
+  // config returns the merged prefrontal config), rather than relying on the gateway's
+  // unclassified-method fallback. The README's method table lists each one.
+  const ADMIN_METHOD = { scope: "operator.admin" } as const;
+  api.registerGatewayMethod(
+    "prefrontal.topology",
+    async ({ respond }) => {
+      enrichTopology(); // Freshen data before responding
+      const snap = topology.snapshot();
+      log.info?.(
+        `[prefrontal] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
+      );
+      respond(true, snap);
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.status", async ({ respond }) => {
-    // FORK 2026-07-25 (the user): report the fan-out cap the orchestration runtime actually
-    // enforces (min(16, cores-2), ≥1 — see orchestration-runtime.ts concurrencyCap) so the
-    // Models panel's routing card can justify the parallelism count instead of guessing it.
-    respond(true, {
-      nodeCount: topology.size,
-      changesSinceLastPoll: topology.changes,
-      persistPath,
-      pollIntervalMs,
-      stalenessThresholdMs,
-      cores: os.cpus?.().length ?? 0,
-      concurrencyCap: concurrencyCap(),
-      // FORK 2026-07-25 (the user): the ORCA card's footer link OPENS this file in the system
-      // viewer, so the panel points at the real policy rather than restating it. Path only —
-      // serving the text would ship a few KB on every budget refresh for nothing.
-      // orca-policy-drift.test.ts pins the file's constants against effort-allocator.ts,
-      // orchestration-runtime.ts and the Conductor, so it can never describe rules we do not run.
-      policyPath: POLICY_PATH,
-    });
-  });
+  api.registerGatewayMethod(
+    "prefrontal.status",
+    async ({ respond }) => {
+      // FORK 2026-07-25 (the architect): report the fan-out cap the orchestration runtime actually
+      // enforces (min(16, cores-2), ≥1 — see orchestration-runtime.ts concurrencyCap) so the
+      // Models panel's routing card can justify the parallelism count instead of guessing it.
+      respond(true, {
+        nodeCount: topology.size,
+        changesSinceLastPoll: topology.changes,
+        persistPath,
+        pollIntervalMs,
+        stalenessThresholdMs,
+        cores: os.cpus?.().length ?? 0,
+        // Since 2026-10-09 the cap also respects the gateway's subagent limits (see orchestrationMaxInFlight).
+        concurrencyCap: Math.min(concurrencyCap(), orchestrationMaxInFlight),
+        // FORK 2026-07-25 (the architect): the ORCA card's footer link OPENS this file in the system
+        // viewer, so the panel points at the real policy rather than restating it. Path only —
+        // serving the text would ship a few KB on every budget refresh for nothing.
+        // orca-policy-drift.test.ts pins the file's constants against effort-allocator.ts,
+        // orchestration-runtime.ts and the Conductor, so it can never describe rules we do not run.
+        policyPath: POLICY_PATH,
+      });
+    },
+    ADMIN_METHOD,
+  );
 
-  // FORK 2026-07-25 (the user): the ORCA panel's FAN-OUT section narrates the routing calls
+  // FORK 2026-07-25 (the architect): the ORCA panel's FAN-OUT section narrates the routing calls
   // made during a turn. The Conductor (jarvis-icu docs/superpowers/orca-conductor.mjs) appends
   // one row per routed unit to ~/.openclaw/orca-routes.jsonl; we return the MOST RECENT RUN's
   // rows, which is the honest reading of "this turn". Cross-repo, so the 10-line reader is
   // duplicated here rather than imported — fail-to-empty, a missing feed just hides the list.
-  api.registerGatewayMethod("prefrontal.routes", async ({ respond }) => {
-    const file = join(os.homedir(), ".openclaw", "orca-routes.jsonl");
-    let rows: Array<Record<string, unknown>> = [];
-    try {
-      for (const line of readFileSync(file, "utf-8").split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          rows.push(JSON.parse(line));
-        } catch {
-          /* skip a torn line */
+  api.registerGatewayMethod(
+    "prefrontal.routes",
+    async ({ respond }) => {
+      const file = join(os.homedir(), ".openclaw", "orca-routes.jsonl");
+      let rows: Array<Record<string, unknown>> = [];
+      try {
+        for (const line of readFileSync(file, "utf-8").split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            rows.push(JSON.parse(line));
+          } catch {
+            /* skip a torn line */
+          }
         }
+      } catch {
+        respond(true, { routes: [] });
+        return;
       }
-    } catch {
-      respond(true, { routes: [] });
-      return;
-    }
-    rows = rows.slice(-64);
-    // Prefer the latest run id; fall back to the trailing slice when the Conductor was
-    // invoked without --run (a manual `plan` call has no run to group by).
-    const lastRun = [...rows].reverse().find((r) => r.run)?.run;
-    const routes = lastRun ? rows.filter((r) => r.run === lastRun) : rows.slice(-8);
-    respond(true, { routes });
-  });
+      rows = rows.slice(-64);
+      // Prefer the latest run id; fall back to the trailing slice when the Conductor was
+      // invoked without --run (a manual `plan` call has no run to group by).
+      const lastRun = [...rows].reverse().find((r) => r.run)?.run;
+      const routes = lastRun ? rows.filter((r) => r.run === lastRun) : rows.slice(-8);
+      respond(true, { routes });
+    },
+    ADMIN_METHOD,
+  );
 
-  // FORK 2026-07-26 (the user): the ORCA panel's fast↔smart dial. The UI owns the position; the
+  // FORK 2026-07-26 (the architect): the ORCA panel's fast↔smart dial. The UI owns the position; the
   // gateway persists it so the Conductor can read it on the NEXT routed run and pick its tier
   // from it. Written as a tiny JSON file rather than held in memory so it survives a gateway
   // restart and is readable by the out-of-process conductor CLI.
-  api.registerGatewayMethod("prefrontal.orcaBias", async ({ respond, params }) => {
-    const file = join(os.homedir(), ".openclaw", "orca-bias.json");
-    const raw = (params as { biasIdx?: unknown } | undefined)?.biasIdx;
-    if (raw === undefined) {
-      // read
-      try {
-        respond(true, JSON.parse(readFileSync(file, "utf-8")));
-      } catch {
-        respond(true, { biasIdx: null });
+  api.registerGatewayMethod(
+    "prefrontal.orcaBias",
+    async ({ respond, params }) => {
+      const file = join(os.homedir(), ".openclaw", "orca-bias.json");
+      const raw = (params as { biasIdx?: unknown } | undefined)?.biasIdx;
+      if (raw === undefined) {
+        // read
+        try {
+          respond(true, JSON.parse(readFileSync(file, "utf-8")));
+        } catch {
+          respond(true, { biasIdx: null });
+        }
+        return;
       }
-      return;
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n)) {
-      respond(false, { error: "biasIdx must be a number" });
-      return;
-    }
-    const biasIdx = Math.max(0, Math.min(6, Math.round(n)));
-    try {
-      writeFileSync(file, JSON.stringify({ biasIdx, ts: Date.now() }) + "\n");
-      respond(true, { biasIdx });
-    } catch (e) {
-      respond(false, { error: String(e) });
-    }
-  });
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        respond(false, { error: "biasIdx must be a number" });
+        return;
+      }
+      const biasIdx = Math.max(0, Math.min(6, Math.round(n)));
+      try {
+        writeFileSync(file, JSON.stringify({ biasIdx, ts: Date.now() }) + "\n");
+        respond(true, { biasIdx });
+      } catch (e) {
+        respond(false, { error: String(e) });
+      }
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.tree", async ({ respond }) => {
-    const tree = monitor.getTreeState();
-    respond(true, tree);
-  });
+  // FORK 2026-09-23 (the architect): Thalamus tier defaults, set from the model picker's right-click menu; FORK 2026-10-02
+  // (the architect, full deploy): they are SUGGESTIONS, one model AND effort per dial stop (smart / default / budget), and the
+  // router moves off one only for a reason. The parser, the writer and the old high / medium / low spelling live in
+  // core (`applyThalamusDefaultsRequest`, src/infra/thalamus-tier-defaults.ts) so the reply path and this method
+  // cannot disagree. No `tier` → read; `{tier, model}` assigns (a new model gets effort low); `{tier, effort}` sets the
+  // effort of the stop's model; `model: null` clears. `defaults` is the old model-per-tier view, `suggestions` the new shape.
+  api.registerGatewayMethod(
+    "prefrontal.thalamusDefaults",
+    async ({ respond, params }) => {
+      try {
+        const { applyThalamusDefaultsRequest } =
+          await import("openclaw/plugin-sdk/fork-thalamus-runtime");
+        const out = applyThalamusDefaultsRequest(
+          (params ?? {}) as { tier?: unknown; model?: unknown; effort?: unknown },
+        );
+        if (out.ok) {
+          respond(true, { defaults: out.defaults, suggestions: out.suggestions });
+        } else {
+          respond(false, { error: out.error });
+        }
+      } catch (e) {
+        console.error("[prefrontal] thalamusDefaults failed", e);
+        respond(false, { error: String(e) });
+      }
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.config", async ({ respond }) => {
-    respond(true, prefrontalConfig);
-  });
+  api.registerGatewayMethod(
+    "prefrontal.tree",
+    async ({ respond }) => {
+      const tree = monitor.getTreeState();
+      respond(true, tree);
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.metrics", async ({ respond }) => {
-    respond(true, faarTracker.getMetrics());
-  });
+  api.registerGatewayMethod(
+    "prefrontal.config",
+    async ({ respond }) => {
+      respond(true, prefrontalConfig);
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.flags", async ({ respond }) => {
-    respond(true, featureFlags);
-  });
+  api.registerGatewayMethod(
+    "prefrontal.metrics",
+    async ({ respond }) => {
+      respond(true, faarTracker.getMetrics());
+    },
+    ADMIN_METHOD,
+  );
+
+  api.registerGatewayMethod(
+    "prefrontal.flags",
+    async ({ respond }) => {
+      respond(true, featureFlags);
+    },
+    ADMIN_METHOD,
+  );
 
   // ── Kit dir constants (used by both plan-rpcs and recipe-rpcs) ──
   const recipeInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
@@ -979,15 +1069,19 @@ export default function register(api: OpenClawPluginApi) {
   });
   const planRpcs = createPlanRpcs({ store: planStore, ownRecipesDir, recipeInstallSandbox });
   for (const [name, handler] of Object.entries(planRpcs)) {
-    api.registerGatewayMethod(name, async ({ respond, params }) => {
-      try {
-        const result = await handler(params);
-        respond(true, result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        respond(false, undefined, { code: "INVALID_REQUEST", message });
-      }
-    });
+    api.registerGatewayMethod(
+      name,
+      async ({ respond, params }) => {
+        try {
+          const result = await handler(params);
+          respond(true, result);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          respond(false, undefined, { code: "INVALID_REQUEST", message });
+        }
+      },
+      ADMIN_METHOD,
+    );
   }
   log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
 
@@ -1008,20 +1102,24 @@ export default function register(api: OpenClawPluginApi) {
       try {
         const sessionKey: string = ctx?.sessionKey ?? "";
         const trigger: string = ctx?.trigger ?? "";
-        // Only the user's primary chat turn. Skip subagents, heartbeats,
-        // cron, and any non-main session — those must not seed the main
-        // plan (and recipe-runner's own subagents would recurse).
+        // Only an interactive user turn: the main chat or a Tinker tab. Skip subagents, heartbeats,
+        // cron and every other session — those must not seed a plan (and recipe-runner's own
+        // subagents would recurse). FORK 2026-10-06 (Broca retrieval v2, phase E): this was
+        // `endsWith(":main")`, which left every Tinker tab without a matcher. The ranking module
+        // is loaded lazily; if it cannot be, the gate is the old one.
+        const advice = await loadAdvice();
+        const isMainSession = sessionKey.endsWith(":main");
         if (
           !sessionKey ||
           sessionKey.includes(":subagent:") ||
-          !sessionKey.endsWith(":main") ||
+          !(advice ? advice.isInteractiveSession(sessionKey) : isMainSession) ||
           trigger === "heartbeat" ||
           trigger === "cron"
         ) {
           return {};
         }
         const prompt: string = typeof event?.prompt === "string" ? event.prompt : "";
-        if (!prompt.trim()) return {};
+        if (!prompt.trim() || isSlashCommandPrompt(prompt)) return {};
 
         // Provenance trail emitter → the RECIPES panel sees searched/matched/
         // merged/composed/authored as the recipe lifecycle unfolds. Same shape
@@ -1056,8 +1154,29 @@ export default function register(api: OpenClawPluginApi) {
         };
 
         // 1) Dynamic effort adaptation — scale reasoning/orchestration to the task.
-        const effortGuidance = buildEffortGuidance(prompt);
+        // Main chat only, as before: a Tinker tab now reaches this hook for the recipe match and the advice, not for this.
+        const effortGuidance = isMainSession ? buildEffortGuidance(prompt) : null;
         if (effortGuidance) parts.push(effortGuidance);
+
+        // FORK 2026-10-06 (Broca retrieval v2, phase E): a prompt the gateway or an agent put in the chat is owed no
+        // recipe match, no plan and no advice. The ranking the short-list seam reads is fetched here, once per run.
+        const turn = advice
+          ? await advice.rankForTurn({
+              runId: ctx?.runId,
+              sessionKey,
+              prompt,
+              trigger,
+              provenanceKind: ctx?.inputProvenanceKind,
+              messages: event?.messages,
+            })
+          : { owed: true as const };
+        if (!turn.owed) {
+          log.info?.(
+            `[recipe-matcher] sessionKey=${sessionKey} no recommendation owed (${turn.why})`,
+          );
+          return parts.length > 0 ? { prependContext: parts.join("\n\n") } : {};
+        }
+        const ranking = turn.ranking;
 
         // 2) Recipe matching + provenance.
         // J13 semantic recipe-match lane, gated default-OFF. Only when
@@ -1095,13 +1214,15 @@ export default function register(api: OpenClawPluginApi) {
         const fitnessLookup = makeFitnessLookup(engramBaseDir);
         const ratingLookup = makeRatingLookup(marketplace);
         const outcome = await seedPlanFromPrompt({
-          prompt,
+          // The request as the person wrote it: every Tinker turn ends with ~30,000 characters of reflection instructions, and
+          // the word matcher scored them (2026-10-06: the same three recipes at "high" on unrelated prompts, one plan seeded).
+          prompt: taskText(prompt) || prompt,
           sessionKey,
           runId: ctx?.runId ?? "",
           ownRecipesDir,
           // FORK 2026-06-01 (U11): include bridged CC-skill imports in the turn-
           // start match catalog so imported recipes seed plans like curated ones.
-          extraKitDirs: [bridgedSkillsDir],
+          extraKitDirs: recipeIndexExtraDirs(bridgedSkillsDir),
           planStore,
           log,
           embed: embedFn,
@@ -1109,6 +1230,10 @@ export default function register(api: OpenClawPluginApi) {
           feedback: fitnessLookup,
           // FORK 2026-06-01 (U12): clamped marketplace-popularity tie-breaker.
           rating: ratingLookup,
+          // FORK 2026-10-06: a plan is seeded only from a high-confidence USE in the one ranked result.
+          ...(advice && advice.allowSeedFrom(ranking)
+            ? { allowSeed: advice.allowSeedFrom(ranking) }
+            : {}),
         });
 
         if (outcome.catalogSize > 0) {
@@ -1128,60 +1253,12 @@ export default function register(api: OpenClawPluginApi) {
             },
           );
         }
-        // FORK 2026-06-07: BEEFED-UP Overseer trigger — engage the supervisory loop not
-        // only on an explicit overseer keyword match, but whenever the work is a JOB IN
-        // MULTIPLE STEPS or is suspicious to not finish in one turn. Cheapest signals
-        // first (keyword → seeded multi-step plan → structural heuristic on an unmatched
-        // prompt); NEVER on the Overseer's OWN injected nudge (it must not reset the task).
-        const isOverseerNudge = prompt.startsWith("⟦OVERSEER⟧");
-        const looksMultiStep = (p: string): boolean => {
-          const s = p.toLowerCase();
-          if (/\b(step[-\s]?by[-\s]?step|multi[-\s]?step|in stages|one by one|step \d)\b/.test(s))
-            return true;
-          // >=2 numbered/bulleted list items = a plan written out as a list
-          if ((p.match(/^\s*(?:\d+[.)]|[-*•])\s+\S/gm) || []).length >= 2) return true;
-          // a sequencing connective chaining distinct actions in a non-trivial request
-          if (
-            /\b(?:then|after that|afterwards|next,|followed by|once .{1,40}? (?:is )?done)\b/.test(
-              s,
-            ) &&
-            s.split(/\s+/).length >= 12
-          )
-            return true;
-          return false;
-        };
-        const overseerKitMatched =
-          outcome.seeded &&
-          outcome.confidence === "high" &&
-          (outcome.kitRefs ?? []).some((k) => k === "overseer" || k.endsWith("/overseer"));
-        const overseerReason = isOverseerNudge
-          ? null
-          : overseerKitMatched
-            ? "high-confidence overseer match"
-            : outcome.seeded && (outcome.stepCount ?? 0) >= 2
-              ? `multi-step plan (${outcome.stepCount} steps)`
-              : !outcome.seeded && looksMultiStep(prompt)
-                ? "multi-step request"
-                : null;
-        if (overseerReason) {
-          // Fire-and-forget: activation can NEVER block or break the turn. The Overseer's
-          // own (now full-context) completion check decides per turn whether to nudge or go
-          // silent — so engaging on a task that DID finish in one turn just self-terminates.
-          void (async () => {
-            try {
-              const { callGatewayFromCli } = await import("openclaw/plugin-sdk/gateway-runtime");
-              await callGatewayFromCli(
-                "fork.overseer.activate",
-                { timeout: "8000" },
-                { sessionKey, task: prompt },
-                { progress: false },
-              );
-              emitTrail("note", `Overseer engaged (${overseerReason})`, "overseer");
-            } catch (err) {
-              log.warn?.(`[overseer] auto-activate failed: ${String(err)}`);
-            }
-          })();
-        }
+        // FORK 2026-10-05: the Overseer is MANUAL ONLY. Auto-arming on multi-step prompts
+        // (added 2026-06-07) was removed at the architect's request: 250 deliveries Aug–Oct produced
+        // no useful directive (error envelopes, empty runs, "it's done" injected as a nudge),
+        // and each check cost a full-transcript subagent plus a main-chat wake-up. Fractal
+        // rule 15 does the completeness check inside the turn. Explicit use stays:
+        // `fork.overseer.activate` RPC + the `overseer` recipe.
 
         if (outcome.seeded) {
           const kits = outcome.kitRefs ?? [];
@@ -1271,10 +1348,27 @@ export default function register(api: OpenClawPluginApi) {
             );
           }
         }
+
+        // FORK 2026-10-06 (Broca retrieval v2, phase E): the one line the owner sees under the prompt, from the same ranked
+        // result the short-list seam used. Live it travels as a trail event (the chat stamps it on the prompt that opened this
+        // run); after a reload the tag in the stored turn carries it. No chat.send, no new row. It is advice for the agent too.
+        const adviceOut = advice?.adviceOf(ranking);
+        if (advice && adviceOut) {
+          emitTrail("advice", adviceOut.line, "advice", {
+            adviceLine: adviceOut.line,
+            adviceSource: adviceOut.source,
+            use: adviceOut.use,
+            inspire: adviceOut.inspire,
+          });
+          parts.push(advice.adviceTag(adviceOut));
+        }
       } catch (err) {
         log.warn?.(`[recipe-matcher] before_prompt_build failed: ${String(err)}`);
       }
-      if (parts.length > 0) return { prependSystemContext: parts.join("\n\n") };
+      // FORK 2026-10-10 (J-series Phase 1.5): effort guidance, the matched recipe, the gap note and the advice tag are
+      // computed from THIS prompt, so they ride the turn (prependContext). As system context a warm Claude Code worker
+      // saw them only at spawn, and each new match moved the whole cached prefix.
+      if (parts.length > 0) return { prependContext: parts.join("\n\n") };
       return {};
     },
     { priority: 20 },
@@ -1340,6 +1434,12 @@ export default function register(api: OpenClawPluginApi) {
     // recipe.search local fallback rank proven recipes higher (same lookup the
     // turn-start seed uses above).
     engramBaseDir,
+    // Opt-in gates (all default OFF): arbitrary orchestration scripts, publishing
+    // to JourneyKits, and downloading recipes from JourneyKits.
+    allowOrchestrationScripts: pluginConfig.orchestration?.allowScripts === true,
+    orchestrationMaxInFlight,
+    allowRecipePublish: pluginConfig.marketplace?.allowPublish === true,
+    allowRemoteRecipeInstall: pluginConfig.marketplace?.allowRemoteInstall === true,
   });
   for (const [name, handler] of Object.entries(kitRpcs)) {
     const wrapped = async ({
@@ -1362,17 +1462,31 @@ export default function register(api: OpenClawPluginApi) {
     // back-compat alias so any in-flight client/CLI keeps working through the
     // rename. (The kit/1.0 wire format itself stays — it's the external Journey
     // standard.)
+    // Recipe RPCs install, author, run and orchestrate work, so they are pinned to
+    // operator.admin explicitly (the gateway's default for an unscoped plugin
+    // method is also admin-only; this states it rather than relying on it).
     // oxlint-disable-next-line typescript-eslint/no-explicit-any
-    api.registerGatewayMethod(name, wrapped as any);
+    api.registerGatewayMethod(name, wrapped as any, { scope: "operator.admin" });
     const alias = name.replace(".recipe.", ".kit.");
     if (alias !== name) {
       // oxlint-disable-next-line typescript-eslint/no-explicit-any
-      api.registerGatewayMethod(alias, wrapped as any);
+      api.registerGatewayMethod(alias, wrapped as any, { scope: "operator.admin" });
     }
   }
   log.info?.(
     `[prefrontal] kit RPCs registered (baseUrl=${typeof journeyCfg.baseUrl === "string" ? journeyCfg.baseUrl : "default"}, apiKey=${journeyCfg.apiKey ? "set" : "absent"})`,
   );
+
+  // FORK 2026-10-09: warm the matcher once at start so `<stateDir>/prefrontal/
+  // recipe-index.json` (recipe-index-publish.ts) exists for Claude Code sessions as
+  // soon as the gateway is up, not after the first matched turn. Same dirs the turn
+  // hook scans (ownRecipesDir + recipeIndexExtraDirs). Fire-and-forget: a scan failure
+  // logs one line and never delays or fails registration.
+  void loadRecipeIndex(ownRecipesDir, recipeIndexExtraDirs(bridgedSkillsDir), log).catch((err) => {
+    log.warn?.(
+      `[prefrontal] recipe-index warm-up failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
   // ── Restart resume: single source of truth (FORK 2026-05-30) ──
   // The plan-based `restart-continue` auto-fire was REMOVED. It resumed any

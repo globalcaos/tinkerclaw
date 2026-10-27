@@ -66,7 +66,7 @@ export async function materializeBundleMcpToolsForRun(params: {
   reservedToolNames?: Iterable<string>;
   disposeRuntime?: () => Promise<void>;
   /**
-   * FORK 2026-08-24 (the user: "If a task is in average more than 1 second it should be decomposed
+   * FORK 2026-08-24 (the architect: "If a task is in average more than 1 second it should be decomposed
    * further") — report the two halves separately.
    *
    * `mcp-tools` averaged 1,311ms over 321 turns (gateway journal, 14 days), p50 878ms, max 12.5s —

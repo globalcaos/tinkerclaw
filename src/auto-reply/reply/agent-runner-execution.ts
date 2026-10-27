@@ -89,8 +89,10 @@ import {
 import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import type { FollowupRun } from "./queue.js";
+import { resolveFollowupRunPromptKeys } from "./queue/types.js";
 import {
   dispatchRateLimitRetryThroughGateway,
+  parseRateLimitEnvelopeReset,
   parseRateLimitReset,
   scheduleRateLimitRetry,
 } from "./rate-limit-retry.js";
@@ -1416,6 +1418,10 @@ export async function runAgentTurnWithFallback(params: {
                 sandboxSessionKey: params.runtimePolicySessionKey,
                 prompt: params.commandBody,
                 transcriptPrompt: params.transcriptCommandBody,
+                // FORK 2026-10-01 (`[chat-divergence]` cause 1): the keys this turn answers (for
+                // webchat, the chat.send idempotencyKey), so the attempt can key the user row it
+                // persists where chat.send could not write the marker: a brand-new session.
+                promptKeys: resolveFollowupRunPromptKeys(params.followupRun),
                 extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
                 sourceReplyDeliveryMode: params.followupRun.run.sourceReplyDeliveryMode,
                 silentReplyPromptMode: params.followupRun.run.silentReplyPromptMode,
@@ -1842,7 +1848,7 @@ export async function runAgentTurnWithFallback(params: {
         };
       }
 
-      // FORK 2026-09-03 (the user pressed Stop; the chat answered "⚠️ Agent failed
+      // FORK 2026-09-03 (the architect pressed Stop; the chat answered "⚠️ Agent failed
       // before reply: LLM request timed out.", transcript 12a0e0c4). The runner
       // stamps USER_ABORT_FAILOVER_CODE on an externally-aborted run. A Stop is
       // NOT a failure, so it must not take the funnel below:
@@ -1962,7 +1968,7 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
-      // FORK 2026-07-30 (the user: "Grok is firing without stop. I stop its thinking
+      // FORK 2026-07-30 (the architect: "Grok is firing without stop. I stop its thinking
       // indicator and it starts again") — THE run ended with no reply, and every
       // retry/fallback above has already been exhausted (transient-HTTP retries
       // `continue` before reaching here). If we leave without a terminal status on
@@ -2176,6 +2182,26 @@ export async function runAgentTurnWithFallback(params: {
       commandBody: params.commandBody,
       isHeartbeat: params.isHeartbeat,
       payloads: runResult.payloads,
+    });
+  }
+
+  // FORK 2026-10-09 — a usage limit can also arrive as a FINISHED turn: the Tinker
+  // bridge emits it as an `__ERR_ENV__` envelope with stopReason "stop", so the catch
+  // block above never sees it and its retry was never armed. Same guards as there.
+  const envelopeResetAt = parseRateLimitEnvelopeReset(runResult?.payloads);
+  if (
+    envelopeResetAt !== undefined &&
+    params.sessionKey &&
+    shouldSurfaceToControlUi &&
+    !params.isHeartbeat &&
+    !isSubagentSessionKey(params.sessionKey)
+  ) {
+    scheduleRateLimitRetry({
+      sessionKey: params.sessionKey,
+      runId,
+      prompt: params.commandBody,
+      resetAt: envelopeResetAt,
+      dispatch: dispatchRateLimitRetryThroughGateway,
     });
   }
 

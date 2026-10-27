@@ -489,6 +489,7 @@ export function runAgentAttempt(params: {
     toolsAllow: params.opts.toolsAllow,
     maxTokens: params.opts.maxTokens,
     maxToolCalls: params.opts.maxToolCalls,
+    continueFromTranscript: params.opts.continueFromTranscript,
     inputProvenance: params.opts.inputProvenance,
     streamParams: params.opts.streamParams,
     agentDir: params.agentDir,

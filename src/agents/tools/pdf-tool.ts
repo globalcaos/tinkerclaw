@@ -1,6 +1,7 @@
 import { type Context, complete } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { withLedgerCompletion } from "../../forensic/llm-ledger.js";
 import {
   classifyMediaReferenceSource,
   normalizeMediaReferenceSource,
@@ -206,19 +207,26 @@ async function runPdfPrompt(params: {
           images: [],
         }));
         const context = buildPdfExtractionContext(params.prompt, textOnlyExtractions);
-        const message = await complete(model, context, {
-          apiKey,
-          maxTokens: resolvePdfToolMaxTokens(model.maxTokens),
-        });
+        const message = await withLedgerCompletion(
+          { source: "completion:pdf", provider: model.provider, model: model.id, api: model.api },
+          context,
+          () =>
+            complete(model, context, {
+              apiKey,
+              maxTokens: resolvePdfToolMaxTokens(model.maxTokens),
+            }),
+        );
         const text = coercePdfAssistantText({ message, provider, model: modelId });
         return { text, provider, model: modelId, native: false };
       }
 
       const context = buildPdfExtractionContext(params.prompt, extractions);
-      const message = await complete(model, context, {
-        apiKey,
-        maxTokens: resolvePdfToolMaxTokens(model.maxTokens),
-      });
+      const message = await withLedgerCompletion(
+        { source: "completion:pdf", provider: model.provider, model: model.id, api: model.api },
+        context,
+        () =>
+          complete(model, context, { apiKey, maxTokens: resolvePdfToolMaxTokens(model.maxTokens) }),
+      );
       const text = coercePdfAssistantText({ message, provider, model: modelId });
       return { text, provider, model: modelId, native: false };
     },

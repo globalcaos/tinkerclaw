@@ -217,7 +217,12 @@ describe("applySupersede (closes the prior interval, non-lossy)", () => {
 
     const before = (db.prepare("SELECT COUNT(*) AS c FROM chunks").get() as { c: number }).c;
     const decision = decideSupersede(db, candidate("B", { hash: "h-new", validityStart: 5000 }));
-    const applied = applySupersede(db, decision, { id: "B", validityStart: 5000 });
+    const applied = applySupersede(
+      db,
+      decision,
+      { id: "B", validityStart: 5000 },
+      { judge: () => true },
+    );
 
     expect(applied.closed).toEqual(["A"]);
     const row = db
@@ -255,7 +260,12 @@ describe("applySupersede (closes the prior interval, non-lossy)", () => {
       supersedes: ["A"],
       reason: "manual",
     };
-    const applied = applySupersede(db, decision, { id: "B", validityStart: 5000 });
+    const applied = applySupersede(
+      db,
+      decision,
+      { id: "B", validityStart: 5000 },
+      { judge: () => true },
+    );
     expect(applied.closed).toEqual([]);
     expect(applied.skipped).toEqual(["A"]);
     const row = db.prepare("SELECT validity_end AS ve FROM chunks WHERE id = ?").get("A") as {
@@ -271,9 +281,11 @@ describe("supersedeContradictions (one-shot writer) + read-path retention", () =
     insertChunk(db, "A", { hash: "h-old", updatedAt: 1000, validityStart: 1000 });
     insertChunk(db, "B", { hash: "h-new", updatedAt: 5000, validityStart: 5000 });
 
-    const { decision, applied } = supersedeContradictions(db, {
-      ...candidate("B", { hash: "h-new", validityStart: 5000 }),
-    });
+    const { decision, applied } = supersedeContradictions(
+      db,
+      { ...candidate("B", { hash: "h-new", validityStart: 5000 }) },
+      { judge: () => true },
+    );
     expect(decision.action).toBe("supersede");
     expect(applied.closed).toEqual(["A"]);
 
@@ -333,5 +345,53 @@ describe("supersedeContradictions (one-shot writer) + read-path retention", () =
       ve: number | null;
     };
     expect(aRow.ve).toBeNull(); // still open
+  });
+});
+
+describe("closures need a judgement step (2026-10-09: 22,340 false sibling closures)", () => {
+  it("holds the closure when no judge is supplied, so the prior fact stays current", () => {
+    insertChunk(db, "A", { hash: "h-old", updatedAt: 1000, validityStart: 1000 });
+    insertChunk(db, "B", { hash: "h-new", updatedAt: 5000, validityStart: 5000 });
+    const { decision, applied } = supersedeContradictions(db, {
+      ...candidate("B", { hash: "h-new", validityStart: 5000 }),
+    });
+    expect(decision.action).toBe("supersede");
+    expect(applied.closed).toEqual([]);
+    expect(applied.held).toEqual(["A"]);
+    const row = db.prepare("SELECT validity_end AS ve FROM chunks WHERE id = ?").get("A") as {
+      ve: number | null;
+    };
+    expect(row.ve).toBeNull();
+  });
+
+  it("holds the closure when the judge says no", () => {
+    insertChunk(db, "A", { hash: "h-old", updatedAt: 1000, validityStart: 1000 });
+    insertChunk(db, "B", { hash: "h-new", updatedAt: 5000, validityStart: 5000 });
+    const { applied } = supersedeContradictions(
+      db,
+      { ...candidate("B", { hash: "h-new", validityStart: 5000 }) },
+      { judge: () => false },
+    );
+    expect(applied.closed).toEqual([]);
+    expect(applied.held).toEqual(["A"]);
+  });
+
+  it("never closes a sibling from the same file with the same validity_start, even if a judge approves", () => {
+    // The 08-04 → 09-03 shape: two fragments of one split chunk, same span, same pass.
+    insertChunk(db, "A", { startLine: 281, endLine: 281, hash: "h-1", validityStart: 5000 });
+    insertChunk(db, "B", { startLine: 281, endLine: 281, hash: "h-2", validityStart: 5000 });
+    const decision: WriteDecision = { action: "supersede", supersedes: ["A"], reason: "manual" };
+    const applied = applySupersede(
+      db,
+      decision,
+      { id: "B", validityStart: 5000 },
+      { judge: () => true },
+    );
+    expect(applied.closed).toEqual([]);
+    expect(applied.held).toEqual(["A"]);
+    const row = db.prepare("SELECT validity_end AS ve FROM chunks WHERE id = ?").get("A") as {
+      ve: number | null;
+    };
+    expect(row.ve).toBeNull();
   });
 });

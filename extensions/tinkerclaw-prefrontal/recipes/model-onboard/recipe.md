@@ -63,7 +63,7 @@ axes, both mark types), the dossier — with no invented number anywhere.
 ## The one rule that matters most
 
 **The aggregator's display name is not a provider id, and the price you find first
-is not the price we pay.** Both of the user's 2026-09-02 corrections trace to this
+is not the price we pay.** Both of the architect's 2026-09-02 corrections trace to this
 single mistake, so Step 1 is the whole recipe and everything after it is bookkeeping.
 
 ## Steps
@@ -97,11 +97,28 @@ Check the SUBSCRIPTION routes first, because they are the ones that look absent:
   A real id answers; an unknown id returns `unrecognized_model`. If the control
   does NOT fail, your probe is not discriminating and its success means nothing.
 
+- **OpenAI Codex / ChatGPT seat: probe the backend OpenClaw actually calls, never
+  the Codex CLI.** Added 2026-09-09 after GPT-6 Astra sat off the picker for six
+  days. The 05:45 cron asked `codex exec -m gpt-6-astra` on CLI 0.150.1 and got
+  400 "requires a newer version of Codex". That is a _client-version_ gate. OpenClaw
+  talks to `https://chatgpt.com/backend-api/codex/responses` with the
+  `openai-codex:default` OAuth profile. Same morning that path streamed
+  `model=gpt-6-astra` `text=OK`; control `gpt-6-astra-9-9` 400s "not supported
+  with a ChatGPT account". A CLI 400 is not a seat 400. npm latest was 0.153.4 —
+  upgrading the CLI is optional and does not decide the picker.
+
 - Note the CLI **version** in whatever you write down, and treat any recorded
   "not served yet" as **expired on read** — vendors ship ids between our runs, and
   a stale negative is what kept Fable 5.1 on the wrong route.
 
-Only if no subscription route serves it, use the metered one (OpenRouter et al),
+Next, a **direct API key we already hold** (Google via `GEMINI_API_KEY`, xAI, DeepInfra):
+list that provider's own models endpoint and look for the id there before going metered.
+
+The route sets the BILLING LABEL only, never whether the model is onboarded (the architect,
+2026-10-13: "no model should be left out"). A model no catalog sells yet still gets its
+score and a dossier row marked "no public price yet"; see `model-catalog-refresh` Step 1.
+
+Only if no subscription or direct route serves it, use the metered one (OpenRouter et al),
 with id, price AND context window taken from the live catalog:
 
 ```bash
@@ -127,8 +144,12 @@ the file still parses.
 
 ### 3. The cost row — and key it on the ROUTE, not on the spelling
 
-**Done when:** `{{ui_src}}/panels/eeg-trace.ts` → `EEG_COST_TABLE` prices this model
-on the right basis, and a hypothetical next version of it would still be right.
+**Done when:** `src/shared/rel-cost-table.ts` → `REL_COST_TABLE` prices this model on the
+right basis (since 2026-09-23 `EEG_COST_TABLE` in eeg-trace.ts is only a re-export of it), a
+hypothetical next version of it would still be right, AND — for a subscription route —
+`{{ui_src}}/panels/smart-cost-chart.ts` → `SC_API_PRICE` carries its official list $/Mtok out.
+That second table is what draws the API triangle; with no row the model gets no triangle,
+no circle↔triangle bridge and none of the plan-tier marks that hang on the bridge.
 
 - **Metered** row → the vendor's published **$/Mtok OUTPUT**, verbatim from the live
   catalog.
@@ -185,14 +206,14 @@ fee, and that is an arithmetic you must actually do:
 3. Split by the public sticker ladder to get sonnet-equivalents (haiku 0.5 / sonnet 1 /
    opus 2.5 / fable 5), giving burn in eq-Mtok.
 4. ceiling = burn / utilisation. Consumed = ceiling x the stated average utilisation
-   (the user uses 75%). unit = weekly fee / consumed. Each model row = unit x its ratio.
+   (the architect uses 75%). unit = weekly fee / consumed. Each model row = unit x its ratio.
 5. **Cross-check against a second window.** One window is a sample; two agreeing
    windows are a measurement.
 
 **NEVER shortcut this as `sticker / N`.** The N is an OUTPUT of the arithmetic above and
 it moves: it was 112 on 2026-08-13 and 340 on 2026-09-02 — not because prices changed
 but because Anthropic raised the Max 20x weekly allowance ~10x, which only re-measuring
-can see. The user's words: _"do not just divide the $50 sticker by 112, find the proper
+can see. the architect's words: _"do not just divide the $50 sticker by 112, find the proper
 model cost."_
 
 **Two traps that made the old number wrong, both worth checking explicitly:**
@@ -252,7 +273,7 @@ looked at the chart to confirm one dot.
 after you delete it from `openclaw.json`. That is exactly how a removed OpenRouter twin
 went on rendering at its $50 sticker while the config was already clean.
 
-When the user asks to drop a redundant route: delete the panel entry, delete the provider-block
+When the architect asks to drop a redundant route: delete the panel entry, delete the provider-block
 entry, delete the `AA_INTELLIGENCE_INDEX` key, then **re-compact the ranks** (they are
 ordinals; a hole is a bug). Keep the EEG cost row as a guard for any future route on that
 vendor. And run the census before deleting anything — normalise ids to their last segment
@@ -273,39 +294,69 @@ functions and prints, for the new id:
   exactly where AA published
 - `scApiPointsFor(m)` — the triangles: **at the official list price**, one per rung, each
   at the SAME Y as its circle. Empty is the correct answer for a metered route, whose
-  circle already IS sticker.
+  circle already IS sticker. **Empty for a SUBSCRIPTION route is a defect**: the
+  `SC_API_PRICE` row is missing (step 3), and `scWaypointsFor(m)` will draw nothing.
 
 Then delete the scratch file and add the surviving assertions as REAL regression tests
 next to the existing ones. Run `pnpm test:tinker-ui` from the repo root — the canonical
 harness; `--root tinker-ui` lacks jsdom and reports false reds.
 
+### 6b. Census the picker against Smart + More
+
+**Done when:** every configured, usable model occurs once in the picker and once in the
+union of `SMART MODELS` + `MORE MODELS`; print the before/after counts and name any set
+difference.
+
+A model present in config or the chart is not thereby selectable. On 2026-09-22 Opus 4.8
+was correctly configured and visible in Smart, but the picker still rejected it through a
+stale `/opus-4-[678]/` exclusion. The picker also admitted only Smart's top-N, making the
+whole More group unreachable. Both surfaces now consume
+`modelCatalogIdsForPickerAndPanel()`; Smart/More decides only WHERE a model is presented,
+not WHETHER it can be selected.
+
+Drive the rendered UI after the build, not just the helper: count `.model-btn` stops (minus
+Auto), count the configured ids after the shared route exclusions, expand/collapse the
+THINKING state that reveals the picker, and look at the screenshot. For every newly added
+model, assert its picker button `title` begins with the full provider/model id and its
+`.model-row` exists in Smart or More. A matching total with a set difference is still red.
+
 ### 7. Confirm it is SERVED, not merely saved
 
-**Done when:** the new symbol is in what the browser is handed.
+**Done when:** the new symbol is in what the browser is handed and the relevant UI state
+has been driven and looked at.
 
-The Tinker UI runs a Vite dev server on **:18790** under the `/tinker/` base, so a source
-edit is live after a hard refresh — no gateway restart, no rebuild of a bundle the live
-session is reading from.
+The daily-driver Tinker UI is the production build served at **:18793/tinker/**. Vite on
+`:18790` was retired 2026-09-10. Source changes are therefore **not live** until the UI is
+rebuilt; no gateway restart is needed:
 
 ```bash
-curl -s http://127.0.0.1:18790/tinker/src/panels/eeg-trace.ts | grep -c "<a NEW symbol>"
+cd ~/src/tinkerclaw/tinker-ui && npx vite build
+asset=$(curl -fsS http://127.0.0.1:18793/tinker/ | grep -o '/tinker/assets/index-[^" ]*\.js' | head -1)
+curl -fsS "http://127.0.0.1:18793$asset" | grep -c "<a NEW symbol>"
 ```
 
 Grep for a symbol you just ADDED **plus a control symbol that should still be there** — a
-zero-match on both means you fetched the wrong URL, not that the edit failed. Source ≠
-served: if the UI is being served from `tinker-ui/dist` instead, say **written, not
-running** and name the build + restart as the user's step.
+zero-match on both means you fetched the wrong URL, not that the edit failed. Then drive
+the control into the state the owner named (open the picker, expand More, etc.) and inspect a
+screenshot. Source ≠ built ≠ served ≠ rendered.
 
 ## Constraints
 
 - **No invented numbers, anywhere.** Every score comes from AA, every price from the
   vendor's live catalog. Absent is a valid, reportable state; approximated is not.
 - **Never remove an existing model** to resolve a duplicate. Rename or re-rank it, and
-  say what you did, so the user can reverse it in one line.
+  say what you did, so the architect can reverse it in one line.
 - Adding a model is not spending money — nothing bills until something routes to it. Add
   it, price it, and report the COST prominently rather than asking permission.
 
 ## Failures Overcome
+
+- **2026-09-30 — three GPT models on the picker with no triangle.** GPT-6 Sol and Luna
+  (onboarded 09-23) and GPT-6.1 Sol (09-30) got config, cost row and scores, but no
+  `SC_API_PRICE` row, so the chart drew no API triangle and no OpenAI plan marks for any of
+  them. the architect asked for the OpenAI plans "same as with claude models, with triangles and the
+  whole thing". Step 3 now names `SC_API_PRICE`; step 6 calls an empty triangle list on a
+  subscription route a defect. Census that day: 18 seat-route models, 3 missing → 0.
 
 - **2026-09-02 — the display name became the id.** Fable 5.1 was probed as
   `claude-fable-5.1` (AA's dotted spelling) against a convention that hyphenates every
@@ -325,13 +376,18 @@ running** and name the build + restart as the user's step.
   on the reasoning "same sticker, so same plan price". The sticker part was right (both
   $10/$50, verified live) but the ROW ITSELF was stale: it came from a 2026-08-13
   measurement that weighted cache reads at 10x their price and predated a ~10x rise in the
-  plan's weekly allowance. The user: _"do not just divide the $50 sticker by 112 you moron."_
+  plan's weekly allowance. the architect: _"do not just divide the $50 sticker by 112 you moron."_
   → Step 4b.
 - **2026-09-02 — one logo fixed, three call sites broken.** The chart resolver was corrected
   and reported as done; the models panel, the dossier and the legend each had their own
   copy of the lossy precedence and still drew grey. → Step 5.
 - **2026-09-02 — deleted from the config, still on the chart.** `AA_INTELLIGENCE_INDEX`
   independently sources dots, so removing the model from `openclaw.json` left it plotted at
-  the sticker price — read by the user, correctly, as "you did not fix it". → Step 5b.
+  the sticker price — read by the architect, correctly, as "you did not fix it". → Step 5b.
 - **2026-07-21 — auto-added ids that resolved nowhere** killed every non-Anthropic pin on
   the model slider. Verify the id at the provider before adding it. → Step 1.
+- **2026-09-22 — configured and paneled, but excluded from the picker.** Opus 4.8 existed
+  in live config and SMART MODELS while a stale `/opus-4-[678]/` picker regex hid it; the
+  picker also dropped every More-tier model through the Smart floor. A model-surface census
+  found 44 configured/visible models but only 22 selectable. One shared catalog boundary
+  now feeds picker and Smart/More; the rendered picker has 44 model stops plus Auto. → Step 6b.

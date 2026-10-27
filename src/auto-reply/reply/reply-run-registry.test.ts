@@ -50,6 +50,28 @@ describe("reply run registry", () => {
     }
   });
 
+  // FORK 2026-10-02 — bug-log [reset-refused-after-a-turn]. An operation that a newer one replaced
+  // (the stale force-clear) must not clear the newer one when it finally ends. CONTROL: before the
+  // owner check, `old.complete()` deleted the new operation's entry and woke its waiters.
+  it("lets an operation that was replaced end without clearing the one that replaced it", async () => {
+    const old = createReplyOperation({
+      sessionKey: "agent:main:main",
+      sessionId: "session-a",
+      resetTriggered: false,
+    });
+    old.setPhase("running");
+    const replacement = createReplyOperation({
+      sessionKey: "agent:main:main",
+      sessionId: "session-b",
+      resetTriggered: false,
+    });
+    old.complete();
+    expect(replyRunRegistry.get("agent:main:main")).toBe(replacement);
+    await expect(replyRunRegistry.waitForIdle("agent:main:main", 100)).resolves.toBe(false);
+    replacement.complete();
+    expect(replyRunRegistry.isActive("agent:main:main")).toBe(false);
+  });
+
   it("clears queued operations immediately on user abort", () => {
     const operation = createReplyOperation({
       sessionKey: "agent:main:main",

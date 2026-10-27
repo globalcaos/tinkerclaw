@@ -14,8 +14,9 @@ hidden state.
 
 Your agent has three memory-related files:
 
-- **`MEMORY.md`** — long-term memory. Durable facts, preferences, and
-  decisions. Loaded at the start of every DM session.
+- **`MEMORY.md`** — the index of long-term memory: one short line per topic,
+  pointing to a topic file under `memory/` that holds the detail. Loaded at the
+  start of every DM session.
 - **`memory/YYYY-MM-DD.md`** — daily notes. Running context and observations.
   Today and yesterday's notes are loaded automatically.
 - **`DREAMS.md`** (optional) — Dream Diary and dreaming sweep
@@ -27,6 +28,36 @@ These files live in the agent workspace (default `~/.openclaw/workspace`).
 If you want your agent to remember something, just ask it: "Remember that I
 prefer TypeScript." It will write it to the appropriate file.
 </Tip>
+
+## The memory index
+
+`MEMORY.md` works like the index of a memory palace. Every main-session turn
+loads it, so it lists topics and nothing more. Each topic lives in its own
+file, such as `memory/people.md` or `memory/house.md`, with `##` sections
+inside. The agent reads the index, picks a topic, and opens only that file, or
+the section it needs, with `memory_get`. When the index names no topic for the
+task, `memory_search` still finds the note by meaning.
+
+```markdown
+# MEMORY.md
+
+- [People](memory/people.md) — who is who, birthdays, allergies
+- [House](memory/house.md) — repairs, the plumber, invoices
+- [Taxes](memory/taxes.md) — deductible items, filing dates
+```
+
+Each extra level costs the agent a round, and every round resends the whole
+context. So keep the index small enough to load on every turn, and keep the
+topic files few and large: add a section to an existing file before you start a
+new one.
+
+`MEMORY.md` has a soft budget, `agents.defaults.memoryIndexMaxChars` (default
+`8000` chars). Over it, `/context` and `openclaw doctor` report the size. The
+gateway also logs it. With `agents.defaults.memoryIndexWarning: "once"` the
+agent itself is asked to move detail into topic files. `openclaw doctor` also
+flags index lines over 200 characters and pointers to topic files that no
+longer exist. Nothing is ever truncated by this budget. See
+[Agent defaults](/gateway/config-agents).
 
 ## Memory tools
 

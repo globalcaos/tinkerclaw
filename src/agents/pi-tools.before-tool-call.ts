@@ -12,6 +12,7 @@ import {
   freezeDiagnosticTraceContext,
   type DiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";
+import { recordToolBlocked, recordToolDone } from "../infra/events/turn-events.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
@@ -129,6 +130,17 @@ function unwrapErrorCause(err: unknown): unknown {
     return err;
   }
   return err;
+}
+
+/**
+ * The hook runner's fail-closed rethrow names the plugin in its own message ("[hooks]
+ * before_tool_call handler from <plugin> failed: …") and keeps the original error as the cause.
+ * Logging only the cause dropped the plugin: a handler that timed out would read "timed out after
+ * 600000ms" with no word on which one never answered.
+ */
+function describeHookFailure(err: unknown): string {
+  const cause = unwrapErrorCause(err);
+  return err instanceof Error && cause !== err ? err.message : String(cause);
 }
 
 async function requestPluginToolApproval(params: {
@@ -557,8 +569,9 @@ export async function runBeforeToolCallHook(args: {
     return { blocked: false, params: policyAdjustedParams };
   } catch (err) {
     const toolCallId = args.toolCallId ? ` toolCallId=${args.toolCallId}` : "";
-    const cause = unwrapErrorCause(err);
-    log.error(`before_tool_call hook failed: tool=${toolName}${toolCallId} error=${String(cause)}`);
+    log.error(
+      `before_tool_call hook failed: tool=${toolName}${toolCallId} error=${describeHookFailure(err)}`,
+    );
     return {
       blocked: true,
       kind: "failure",
@@ -581,6 +594,9 @@ export function wrapToolWithBeforeToolCallHook(
   const wrappedTool: AnyAgentTool = {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate) => {
+      // logging.md §4.6 `tool.done`: a blocked call's duration is the decision it waited on
+      // (hooks, trusted policies, a human approval); the tool itself never ran.
+      const hookStartedAt = Date.now();
       const outcome = await runBeforeToolCallHook({
         toolName,
         params,
@@ -590,6 +606,7 @@ export function wrapToolWithBeforeToolCallHook(
       });
       if (outcome.blocked) {
         if (outcome.kind !== "veto") {
+          recordToolBlocked(ctx, normalizeToolName(toolName || "tool"), outcome, hookStartedAt);
           throw new Error(outcome.reason);
         }
         const normalizedToolName = normalizeToolName(toolName || "tool");
@@ -611,6 +628,7 @@ export function wrapToolWithBeforeToolCallHook(
           reason: outcome.reason,
           deniedReason: outcome.deniedReason ?? "plugin-before-tool-call",
         });
+        recordToolBlocked(ctx, normalizedToolName, outcome, hookStartedAt);
         const blockedResult = buildBlockedToolResult({
           reason: outcome.reason,
           deniedReason: outcome.deniedReason ?? "plugin-before-tool-call",
@@ -667,6 +685,7 @@ export function wrapToolWithBeforeToolCallHook(
           ...eventBase,
           durationMs,
         });
+        recordToolDone(ctx, normalizedToolName, "ok", durationMs);
         return result;
       } catch (err) {
         const cause = unwrapErrorCause(err);
@@ -678,6 +697,7 @@ export function wrapToolWithBeforeToolCallHook(
           errorCategory: diagnosticErrorCategory(cause),
           ...(errorCode ? { errorCode } : {}),
         });
+        recordToolDone(ctx, normalizedToolName, "error", Date.now() - startedAt, cause);
         await recordLoopOutcome({
           ctx,
           toolName: normalizedToolName,
@@ -713,6 +733,7 @@ export function consumeAdjustedParamsForToolCall(toolCallId: string, runId?: str
 export const __testing = {
   BEFORE_TOOL_CALL_WRAPPED,
   buildAdjustedParamsKey,
+  describeHookFailure,
   adjustedParamsByToolCallId,
   runBeforeToolCallHook,
   mergeParamsWithApprovalOverrides,

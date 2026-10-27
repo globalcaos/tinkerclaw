@@ -5,6 +5,7 @@ import { handleWhatsAppAction, whatsAppActionRuntime } from "./action-runtime.js
 
 const originalWhatsAppActionRuntime = { ...whatsAppActionRuntime };
 const sendReactionWhatsApp = vi.fn(async () => undefined);
+const revokeMessageWhatsApp = vi.fn(async () => undefined);
 
 const enabledConfig = {
   channels: { whatsapp: { actions: { reactions: true } } },
@@ -21,7 +22,21 @@ describe("handleWhatsAppAction", () => {
     vi.clearAllMocks();
     Object.assign(whatsAppActionRuntime, originalWhatsAppActionRuntime, {
       sendReactionWhatsApp,
+      revokeMessageWhatsApp,
     });
+  });
+
+  it("unsends our own message", async () => {
+    const result = await handleWhatsAppAction(
+      { action: "unsend", chatJid: "123@s.whatsapp.net", messageId: "msg1", fromMe: true },
+      enabledConfig,
+    );
+    expect(revokeMessageWhatsApp).toHaveBeenLastCalledWith(
+      "+123",
+      "msg1",
+      expect.objectContaining({ fromMe: true, accountId: DEFAULT_ACCOUNT_ID }),
+    );
+    expect(result.details).toEqual({ ok: true, deleted: "msg1" });
   });
 
   it("adds reactions", async () => {

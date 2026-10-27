@@ -1,6 +1,7 @@
 import { listAgentEntries } from "../../agents/agent-scope.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { chooseAutoEffort } from "../../agents/effort-allocator.js";
+import type { ThinkSource } from "../../agents/embedded-agent-runner/run/types.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
 import { type ModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
@@ -14,7 +15,13 @@ import {
 } from "../../shared/string-coerce.js";
 import { shouldHandleTextCommands } from "../commands-text-routing.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
-import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "../thinking.js";
+import {
+  type ElevatedLevel,
+  normalizeThinkLevel,
+  type ReasoningLevel,
+  type ThinkLevel,
+  type VerboseLevel,
+} from "../thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { resolveBlockStreamingChunking } from "./block-streaming.js";
 import { buildCommandContext } from "./commands-context.js";
@@ -29,6 +36,7 @@ import { type ReplyExecOverrides, resolveReplyExecOverrides } from "./get-reply-
 import { shouldUseReplyFastTestRuntime } from "./get-reply-fast-path.js";
 import { defaultGroupActivation, resolveGroupRequireMention } from "./groups.js";
 import { CURRENT_MESSAGE_MARKER, stripMentions, stripStructuralPrefixes } from "./mentions.js";
+import { isAutoModelDirective } from "./model-directive-auto.js";
 import {
   createFastTestModelSelectionState,
   createModelSelectionState,
@@ -53,18 +61,35 @@ type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
  * router that could silently turn thinking off is not a router the architect asked
  * for.
  */
-const THALAMUS_THINK_LEVELS = new Set<string>([
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
+const THALAMUS_THINK_LEVELS = new Set<string>(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
 function asThalamusThinkLevel(effort: string | undefined): ThinkLevel | undefined {
   return effort && THALAMUS_THINK_LEVELS.has(effort) ? (effort as ThinkLevel) : undefined;
 }
+
+/**
+ * The sessions the true-Auto effort allocator may decide for: the PRIMARY interactive keys,
+ * agent:<id>:main and agent:<id>:tinker:<tabId>. Subagent, cron and heartbeat keys keep their
+ * configured or default level.
+ */
+const AUTO_EFFORT_SESSION_KEY = /^agent:[^:]+:(?:main|tinker)(?::|$)/;
+
+/**
+ * FORK 2026-10-09 (effort slider) — a thinking level a client pinned for THIS TURN ONLY.
+ *
+ * chat.send's `thinking` param used to ride the command body as a leading `/think <lvl>`, and
+ * every path that applies an inline `/think` (persistInlineDirectives, the directive fast lane)
+ * stores it in `sessionEntry.thinkingLevel` for good. The Tinker slider re-sends its pin on every
+ * send while pinned, so nothing needed the stored copy; once the slider went back to Auto that
+ * copy kept winning as a pin and Thalamus never set the effort again (bug-log.md, the EFFORT
+ * axis). Carried here, the level reaches no persistence path: it pins the turn that carries it
+ * and no other. chat.send is the only producer (gateway/server-methods/chat.ts).
+ *
+ * It lives beside its reader rather than on MsgContext; moving it there is a pure refactor.
+ */
+export type TurnThinkLevelContext = {
+  TurnThinkLevel?: string;
+};
 
 let commandsRegistryPromise: Promise<typeof import("../commands-registry.runtime.js")> | null =
   null;
@@ -135,6 +160,13 @@ export type ReplyDirectiveContinuation = {
   elevatedFailures: Array<{ gate: string; key: string }>;
   defaultActivation: ReturnType<typeof defaultGroupActivation>;
   resolvedThinkLevel: ThinkLevel | undefined;
+  /** FORK 2026-10-09 (effort slider): who chose resolvedThinkLevel (see ThinkSource). */
+  thinkSource: ThinkSource;
+  /**
+   * FORK 2026-10-09: Thalamus's ultracode call for this turn. True only when thinkSource is
+   * "thalamus": a human pin overrules the router's whole effort decision, ultracode included.
+   */
+  ultracode: boolean;
   resolvedFastMode: boolean;
   resolvedVerboseLevel: VerboseLevel | undefined;
   resolvedReasoningLevel: ReasoningLevel;
@@ -167,7 +199,7 @@ export type ReplyDirectiveResult =
   | { kind: "continue"; result: ReplyDirectiveContinuation };
 
 export async function resolveReplyDirectives(params: {
-  ctx: MsgContext;
+  ctx: MsgContext & TurnThinkLevelContext;
   cfg: OpenClawConfig;
   agentId: string;
   agentDir: string;
@@ -330,11 +362,12 @@ export async function resolveReplyDirectives(params: {
     const stripped = stripStructuralPrefixes(parsedDirectives.cleaned);
     const noMentions = isGroup ? stripMentions(stripped, ctx, cfg, agentId) : stripped;
     // FORK 2026-06-18 (bible §5.84): only treat trailing message text as a reason to DROP
-    // inline directives when the directive was NOT at the leading edge. The model/effort
-    // sliders inject "/model <id> /think <lvl> <prompt>" at the very START of the command
-    // body (and a user may legitimately type "/think high <prompt>"); those must be
-    // honored, otherwise persistInlineDirectives never records the per-turn model/effort
-    // and the run silently falls back to the default brain + default thinking budget. The
+    // inline directives when the directive was NOT at the leading edge. The model slider
+    // injects "/model <id> <prompt>" at the very START of the command body (and a user may
+    // legitimately type "/think high <prompt>"); those must be honored, otherwise
+    // persistInlineDirectives never records the per-turn model/effort and the run silently
+    // falls back to the default brain + default thinking budget. (Since 2026-10-09 the effort
+    // slider's level no longer rides the body: it arrives as ctx.TurnThinkLevel.) The
     // #3705 timestamp-injection guard only needs to strip directive-looking tokens that
     // appear AFTER real prose (mid-text), so gate the clear on the directive not leading.
     const directiveIsLeading = stripStructuralPrefixes(commandText).trimStart().startsWith("/");
@@ -447,19 +480,18 @@ export async function resolveReplyDirectives(params: {
     groupResolution,
   });
   const defaultActivation = defaultGroupActivation(requireMention);
-  const resolvedThinkLevel =
-    directives.thinkLevel ??
-    (targetSessionEntry?.thinkingLevel as ThinkLevel | undefined) ??
-    // FORK 2026-06-18 (bible §5.84 Drop 3): true-Auto effort allocator for chat.send /
-    // webchat turns. chooseAutoEffort was only wired into the CLI `agent` path
-    // (agent-command.ts:609), so interactive Tinker turns — which resolve effort HERE —
-    // never reached it and parked at the default budget. Fire it for PRIMARY interactive
-    // keys (agent:<id>:main and agent:<id>:tinker:<tabId>) ONLY when the user hasn't
-    // pinned (directives.thinkLevel) or persisted (sessionEntry.thinkingLevel) a level.
-    // The (main|tinker) allowlist excludes subagent/cron/heartbeat keys.
-    (/^agent:[^:]+:(?:main|tinker)(?::|$)/.test(sessionKey)
-      ? chooseAutoEffort({ prompt: commandText, sessionKey })
-      : undefined);
+  // FORK 2026-10-09 (effort slider) — the levels a HUMAN chose, in precedence order: a `/think`
+  // typed this turn, the level the client pinned for this turn (chat.send `thinking`, carried as
+  // ctx.TurnThinkLevel, never persisted, and gated on the same authorization as a typed
+  // `/think`), then a level stored on the session. Any of them hard-stops both Thalamus's effort
+  // and the allocator, which are decided after the model selection below.
+  const turnThinkLevel = command.isAuthorizedSender
+    ? normalizeThinkLevel(ctx.TurnThinkLevel)
+    : undefined;
+  const storedThinkLevel = targetSessionEntry?.thinkingLevel
+    ? (targetSessionEntry.thinkingLevel as ThinkLevel)
+    : undefined;
+  const pinnedThinkLevel = directives.thinkLevel ?? turnThinkLevel ?? storedThinkLevel;
   const resolvedFastMode =
     directives.fastMode ??
     resolveFastModeState({
@@ -505,6 +537,13 @@ export async function resolveReplyDirectives(params: {
     isFastTestEnv: process.env.OPENCLAW_TEST_FAST === "1",
   });
 
+  // FORK 2026-09-08 — `/model auto` is NOT a model: it is the picker's Auto riding the send (see
+  // model-directive-auto.ts). It never resolves against the catalog, never persists as a pin, and
+  // makes THIS state clear whatever pin the session stored — so the turn routes as Auto in the same
+  // breath, instead of racing a fire-and-forget sessions.patch that took 82-147 s on 2026-09-08.
+  const autoModelReset =
+    directives.hasModelDirective && isAutoModelDirective(directives.rawModelDirective);
+
   const useFastModelSelection =
     useFastReplyRuntime &&
     !hasResolvedHeartbeatModelOverride &&
@@ -512,6 +551,7 @@ export async function resolveReplyDirectives(params: {
     !normalizeOptionalString(targetSessionEntry?.modelOverride) &&
     !normalizeOptionalString(targetSessionEntry?.providerOverride) &&
     (!directives.hasModelDirective ||
+      autoModelReset ||
       canUseFastExplicitModelDirective({
         directives,
         defaultProvider,
@@ -538,11 +578,12 @@ export async function resolveReplyDirectives(params: {
         defaultModel,
         provider,
         model,
-        hasModelDirective: directives.hasModelDirective,
+        hasModelDirective: directives.hasModelDirective && !autoModelReset,
+        resetStoredModelOverride: autoModelReset,
         hasResolvedHeartbeatModelOverride,
         // THALAMUS classifies the task domain from the SAME text `chooseAutoEffort`
-        // reads a few lines above, so "what task is this?" cannot be answered two
-        // different ways inside one turn.
+        // reads below (when it runs at all), so "what task is this?" cannot be
+        // answered two different ways inside one turn.
         promptText: commandText,
       });
   provider = modelState.provider;
@@ -554,17 +595,40 @@ export async function resolveReplyDirectives(params: {
   // a different, unpriced decision, and the disclosure the user sees would then name
   // a rung the turn did not run. So the rung's effort outranks `chooseAutoEffort` —
   // a prompt-shape heuristic that knows nothing about which model won — but NEVER a
-  // human pin: an inline `!think` or a persisted session level hard-stops it, the
-  // same way an inline `!model` hard-stops the routing itself.
-  const thinkLevelPinned =
-    directives.thinkLevel !== undefined ||
-    (targetSessionEntry?.thinkingLevel !== undefined && targetSessionEntry?.thinkingLevel !== null);
-  const thalamusThinkLevel = thinkLevelPinned
-    ? undefined
-    : asThalamusThinkLevel(modelState.thalamusRoute?.effort);
+  // human pin: an inline `!think`, a this-turn client pin or a persisted session level
+  // hard-stops it, the same way an inline `!model` hard-stops the routing itself.
+  const thalamusThinkLevel =
+    pinnedThinkLevel === undefined
+      ? asThalamusThinkLevel(modelState.thalamusRoute?.effort)
+      : undefined;
+  // FORK 2026-06-18 (bible §5.84 Drop 3): the true-Auto effort allocator for chat.send / webchat
+  // turns; chooseAutoEffort was only wired into the CLI `agent` path (agent-command.ts), so
+  // interactive Tinker turns parked at the default budget. FORK 2026-10-09: it runs only when no
+  // human pinned a level AND Thalamus named no effort (routing off, skipped, no route, or an effort
+  // no ThinkLevel carries). chooseAutoEffort RECORDS every level it returns in the effort ledger;
+  // called eagerly, as it was until 2026-10-09, it logged a level for every turn that then ran
+  // Thalamus's effort instead.
+  const allocatorThinkLevel =
+    pinnedThinkLevel === undefined &&
+    thalamusThinkLevel === undefined &&
+    AUTO_EFFORT_SESSION_KEY.test(sessionKey)
+      ? chooseAutoEffort({ prompt: commandText, sessionKey })
+      : undefined;
+  const thinkSource: ThinkSource =
+    pinnedThinkLevel !== undefined
+      ? "pin"
+      : thalamusThinkLevel !== undefined
+        ? "thalamus"
+        : allocatorThinkLevel !== undefined
+          ? "allocator"
+          : "default";
+  // Ultracode is part of the router's effort call, so it stands or falls with it: a human pin or
+  // a fall-through to the allocator turns it off.
+  const ultracode = thinkSource === "thalamus" && modelState.thalamusRoute?.ultracode === true;
   const resolvedThinkLevelWithDefault =
+    pinnedThinkLevel ??
     thalamusThinkLevel ??
-    resolvedThinkLevel ??
+    allocatorThinkLevel ??
     (await modelState.resolveDefaultThinkingLevel()) ??
     (agentCfg?.thinkingDefault as ThinkLevel | undefined);
 
@@ -613,7 +677,10 @@ export async function resolveReplyDirectives(params: {
     ["status", "list"].includes(
       normalizeLowercaseStringOrEmpty(normalizeOptionalString(directives.rawModelDirective)),
     );
-  const effectiveModelDirective = isModelListAlias ? undefined : directives.rawModelDirective;
+  // `/model auto` is consumed by createModelSelectionState above (resetStoredModelOverride) and
+  // must not reach the resolver as a model id — there is no model called "auto" to switch to.
+  const effectiveModelDirective =
+    isModelListAlias || autoModelReset ? undefined : directives.rawModelDirective;
 
   const inlineStatusRequested = hasInlineStatus && allowTextCommands && command.isAuthorizedSender;
 
@@ -680,6 +747,8 @@ export async function resolveReplyDirectives(params: {
       elevatedFailures,
       defaultActivation,
       resolvedThinkLevel: resolvedThinkLevelWithDefault,
+      thinkSource,
+      ultracode,
       resolvedFastMode,
       resolvedVerboseLevel,
       resolvedReasoningLevel,

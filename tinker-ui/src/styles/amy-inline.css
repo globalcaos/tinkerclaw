@@ -1,0 +1,36 @@
+/* Amygdala inline bubbles (FORK 2026-10-15, the architect: "a separate pink comment ... right where he does it, within its
+   context ... pink-ish and with a brain as leading icon"). One bubble per performed action, under the tool row it
+   judged. The old Amygdala pink (#FF69B4, git a9ca9fb114e^) comes back; the TypeSafe look of amy-jev.css does not
+   cross into these: an inner Jev row inherits the chat theme. Works on the cream and the dark theme via --text/--muted. */
+:root{--amy-pink:#FF69B4}
+.amy-inline{display:flex;align-items:flex-start;gap:8px;margin:4px 0 6px 0;padding:6px 10px 7px 8px;border-left:3px solid var(--amy-pink);
+  background:rgba(255,105,180,.07);border-radius:0 8px 8px 0;color:var(--text);font-size:12.5px;line-height:1.4;max-width:720px;scroll-margin:80px}
+.amy-inline-icon{flex:none;font-size:15px;line-height:1.2;filter:drop-shadow(0 0 2px rgba(255,105,180,.35))}
+.amy-inline-body{min-width:0;flex:1 1 auto}
+.amy-inline-head{color:var(--amy-pink);font-size:11.5px;letter-spacing:.04em}
+.amy-inline-head strong{letter-spacing:.09em;font-weight:700}
+.amy-inline-head em{font-style:italic;color:var(--amy-pink);letter-spacing:0}
+.amy-inline-line{margin-top:2px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;overflow-wrap:anywhere;color:var(--text)}
+.amy-inline-time{margin-left:8px;font-family:inherit;color:var(--muted);font-size:10.5px;white-space:nowrap}
+/* Focus from a timeline brain: an outline plus a soft pink glow, until the next click anywhere. */
+.amy-inline.amy-focus{outline:2px solid var(--amy-pink);outline-offset:1px;box-shadow:0 0 0 4px rgba(255,105,180,.18),0 0 14px rgba(255,105,180,.35)}
+/* A Jev action row inside a bubble drops the window's black mono TypeSafe colours and takes the chat theme. */
+.amy-inline .amy-jact{background:transparent;border-top:0;padding:2px 0 0;color:inherit;font-family:inherit;font-size:12.5px}
+.amy-inline .amy-jc-head{font-size:12.5px}
+.amy-inline .amy-ja,.amy-inline .amy-jc-why b,.amy-inline .amy-jx-doing{color:var(--text)}
+.amy-inline .amy-ja-time,.amy-inline .amy-mt,.amy-inline .amy-jc-step .amy-mt,.amy-inline .amy-jc-why .amy-mt,.amy-inline .amy-jx-jev,
+.amy-inline .amy-jx-jev .amy-mt,.amy-inline .amy-jx-more,.amy-inline .amy-jx-wait{color:var(--muted)}
+.amy-inline .amy-jx-more:hover{color:var(--text)}
+.amy-inline .amy-jo{border-color:var(--amy-pink);color:var(--text);background:transparent}
+.amy-inline .amy-jo.held,.amy-inline .amy-jo.refusal{background:rgba(255,105,180,.25)}
+.amy-inline .amy-jo.note{background:rgba(255,105,180,.12)}
+.amy-inline .amy-jo.back{background:var(--amy-pink);color:#fff}
+.amy-inline .amy-jo.ok{border-color:var(--muted);color:var(--muted)}
+.amy-inline .amy-jvote{background:transparent;color:var(--text);border:1.5px solid var(--amy-pink);border-radius:6px}
+.amy-inline .amy-jvote:hover{background:rgba(255,105,180,.15)}
+.amy-inline .amy-jvote.amy-voted{background:var(--amy-pink);color:#fff;border-color:var(--amy-pink)}
+.amy-inline .amy-jvote.amy-jreply.amy-jrec{border-style:dashed}
+.amy-inline .amy-jvote.amy-jreply.amy-voted{border-style:solid}
+.amy-inline .amy-lab{background:transparent;color:var(--text);border-color:var(--amy-pink);border-radius:6px}
+.amy-inline .amy-lab.amy-on{background:var(--amy-pink);color:#fff}
+.amy-inline .amy-ja-extra .amy-card{color:var(--text)}

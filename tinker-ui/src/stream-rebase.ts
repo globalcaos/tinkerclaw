@@ -2,7 +2,7 @@
 // of stream-reslice.ts, so the law below is unit-testable in isolation and app.ts only APPLIES the
 // result.
 //
-// THE BUG THIS EXISTS TO KILL. The user: "Jarvis just handed me a duplicated answer again. If I
+// THE BUG THIS EXISTS TO KILL. the architect: "Jarvis just handed me a duplicated answer again. If I
 // refresh it goes away." That last sentence is the whole diagnosis — chat.history holds ONE copy,
 // so the second copy exists only in the live DOM.
 //

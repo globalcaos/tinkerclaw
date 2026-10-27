@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   projectChatDisplayMessages,
+  projectRecentChatDisplayMessages,
   sanitizeChatHistoryMessages,
 } from "./chat-display-projection.js";
 
@@ -80,5 +81,71 @@ describe("chat-display-projection visible-text cap", () => {
     ]) as Array<{ content: Array<{ type: string; thinking: string }> }>;
     const thinking = out.content.find((b) => b.type === "thinking")?.thinking ?? "";
     expect(thinking).toContain("...(truncated)...");
+  });
+});
+
+// FORK 2026-09-23 (M20, chat.history rehaul task 2, Step 4) — `readSessionMessages` now caches
+// its parsed transcript and hands the SAME message objects out on every cache hit (only the
+// containing array is a fresh copy each call — see session-utils.fs.ts). `chat.history`
+// (server-methods/chat.ts) runs `projectRecentChatDisplayMessages(rawMessages, {...})` immediately
+// after `augmentChatHistoryWithCliSessionImports` — that IS the projection under test here. If any
+// step along that path mutated a message object in place instead of copying it, the second
+// (cached) serve of the same session would silently hand out corrupted history. Deep-freezing the
+// input stands in for the cache's shared objects: a real mutation throws (strict mode) instead of
+// quietly poisoning the next cache hit.
+describe("chat-display-projection does not mutate its input (cache safety)", () => {
+  function deepFreeze<T>(value: T): T {
+    if (value && typeof value === "object" && !Object.isFrozen(value)) {
+      Object.freeze(value);
+      for (const key of Object.getOwnPropertyNames(value)) {
+        deepFreeze((value as Record<string, unknown>)[key]);
+      }
+    }
+    return value;
+  }
+
+  test("projectRecentChatDisplayMessages does not throw on a deep-frozen realistic message array", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "plain string user message" },
+      { role: "user", content: [{ type: "text", text: "array-content user message" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "t".repeat(50), thinkingSignature: "sig" },
+          { type: "tool_use", id: "t1", name: "grep", input: { pattern: "x" } },
+          { type: "text", text: "the answer" },
+        ],
+        usage: { input: 10, output: 20 },
+        cost: { total: 0.01 },
+        details: { raw: true },
+      },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      {
+        role: "assistant",
+        openclawAbort: { aborted: true },
+        content: [{ type: "text", text: "partial echo before interrupt" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "partial echo before interrupt, resumed" }],
+      },
+      { role: "user", content: [{ type: "image", data: "base64data", mimeType: "image/png" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "imported turn" }],
+        __openclaw: { seq: 8, importedFrom: "claude-cli" },
+      },
+    ];
+    const frozen = deepFreeze(messages);
+
+    expect(() =>
+      projectRecentChatDisplayMessages(frozen, { maxChars: 8_000, maxMessages: 3 }),
+    ).not.toThrow();
+
+    // Sanity: the frozen input is genuinely untouched (not just "didn't throw synchronously").
+    expect(Object.isFrozen(messages[2])).toBe(true);
+    expect(
+      ((messages[2] as { content: Array<{ text?: string }> }).content[2] as { text: string }).text,
+    ).toBe("the answer");
   });
 });

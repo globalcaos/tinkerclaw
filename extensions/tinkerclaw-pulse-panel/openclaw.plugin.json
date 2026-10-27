@@ -1,7 +1,7 @@
 {
   "id": "tinkerclaw-pulse-panel",
   "name": "Pulse Panel",
-  "description": "Exec-mode Pulse tab: KPI pollers + metric graphs (sparklines) served over pulsepanel.* RPCs. Split from tinkerclaw-control-panel 2026-07-24.",
+  "description": "Exec-mode Pulse tab: KPI pollers + metric graphs (sparklines) served over pulsepanel.* RPCs. Split from tinkerclaw-control-panel 2026-07-24. RECURRING NETWORK ACTIVITY: while the gateway runs, a background timer ticks every `polling.tickSeconds` (default 60s) and re-fetches every configured metric whose own cadence is due. It ships with NO metrics configured, so a fresh install makes no third-party request until you add one via `seedMetrics` or the pulsepanel.add-metric RPC; the hosts contacted then follow from the sources you choose (api.github.com, api.npmjs.org, oauth2.googleapis.com and analyticsdata.googleapis.com for GA4, www.googleapis.com, www.moltbook.com). Set `polling.enabled: false` to serve the RPCs with the timer stopped. CREDENTIALS: every credential is supplied by you under `credentials` in plugin config; the plugin reads no environment variables and no credential store on its own initiative, runs no external programs, and a poller with nothing configured is skipped. LOCAL FILES: the `localstate` source reads a numeric value from a `.json` file inside ~/.openclaw/workspace/memory/online-presence/ only; absolute paths, `..` segments and symlinks that resolve outside that directory are rejected. STORAGE: it creates and writes only its own metric tables (metric_definition, observation, alert_state, panel_pin) in the shared SQLite store; the task/briefing/calendar tables belong to tinkerclaw-task-panel and are left untouched unless you set `manageTaskSchema`. RPCs: pulsepanel.{ping,list,add-metric,record,query,metrics.poll} plus their legacy control-panel.* aliases.",
   "activation": {
     "onStartup": true
   },
@@ -13,10 +13,100 @@
       "dataDir": {
         "type": "string",
         "description": "Directory holding the shared control-panel SQLite store. Defaults to ~/.openclaw/data/control-panel/"
+      },
+      "manageTaskSchema": {
+        "type": "boolean",
+        "default": false,
+        "description": "Let this plugin create and migrate the task/briefing/calendar tables in the shared store. Those tables are owned by tinkerclaw-task-panel, which bootstraps them itself — enabling this makes the Pulse panel rewrite the task table and seed taxonomy rows. Only turn it on when running Pulse WITHOUT the task panel."
+      },
+      "polling": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Recurring background polling of the configured metric sources.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Run the background poll timer. False keeps every RPC working (including on-demand pulsepanel.metrics.poll) but makes no scheduled outbound request."
+          },
+          "tickSeconds": {
+            "type": "number",
+            "default": 60,
+            "minimum": 10,
+            "description": "Seconds between poll ticks. Each tick only fetches metrics whose own cadence_seconds is due."
+          }
+        }
+      },
+      "credentials": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Credentials you supply for the optional pollers. Nothing here has a default path: a poller with no credential configured is skipped rather than reading another application's credential store.",
+        "properties": {
+          "githubToken": {
+            "type": "string",
+            "description": "OPTIONAL GitHub token. The github.stargazers/forks/open_issues pollers call public endpoints anonymously without it (60 req/h per IP); a token raises that to 5000/h. REQUIRED for github.traffic.daily, whose views/clones endpoints need push access on the repository. Also REQUIRED for github.activity (GraphQL)."
+          },
+          "moltbookApiKeyFile": {
+            "type": "string",
+            "description": "Path to a JSON file containing {\"api_key\": \"...\"} used by the moltbook.* pollers."
+          },
+          "youtubeApiKeyFile": {
+            "type": "string",
+            "description": "Path to a file containing a YouTube Data API v3 key, used by youtube.channelStats."
+          },
+          "ga4ServiceAccountFile": {
+            "type": "string",
+            "description": "Path to a Google service-account JSON key granted Viewer on the GA4 property, used by ga4.sessions."
+          }
+        }
+      },
+      "seedMetrics": {
+        "type": "array",
+        "default": [],
+        "description": "Metrics to create on boot if they do not already exist. Empty by default — the plugin polls nothing until you list something here or call pulsepanel.add-metric.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "source"],
+          "properties": {
+            "id": { "type": "string", "description": "Metric id, e.g. graph.stars.myrepo" },
+            "source": {
+              "type": "string",
+              "description": "\"<pollerKey>:<args>\". Keys: github.stargazers, github.forks, github.open_issues, github.traffic.daily, github.activity, npm.downloads.weekly, npm.downloads.monthly, ga4.sessions, moltbook.{karma,posts,comments,followers}, youtube.channelStats, localstate (\"<file>.json#dot.path\", file confined to ~/.openclaw/workspace/memory/online-presence/), demo.website.visits. Example: github.activity:commits:owner/repo"
+            },
+            "cadenceSeconds": {
+              "type": "number",
+              "default": 21600,
+              "description": "How often this metric is re-fetched."
+            },
+            "template": {
+              "type": "string",
+              "enum": ["sparkline", "single-stat"],
+              "default": "sparkline",
+              "description": "sparkline → Graphs section; single-stat → KPIs section."
+            }
+          }
+        }
       }
     }
   },
   "uiHints": {
-    "dataDir": { "label": "Data dir", "help": "Where the shared SQLite store lives." }
+    "dataDir": { "label": "Data dir", "help": "Where the shared SQLite store lives." },
+    "manageTaskSchema": {
+      "label": "Manage task tables",
+      "help": "Off by default. Only for running Pulse without tinkerclaw-task-panel."
+    },
+    "polling": {
+      "label": "Polling",
+      "help": "Recurring background fetches of your configured metrics."
+    },
+    "credentials": {
+      "label": "Credentials",
+      "help": "Optional, per-poller. Unset means that poller is skipped."
+    },
+    "seedMetrics": {
+      "label": "Metrics",
+      "help": "Which sources to graph. Empty means nothing is polled."
+    }
   }
 }

@@ -31,7 +31,7 @@ This recipe is the **orchestrator** the single-paper recipes deliberately punt t
 - Any time the same revise→compile pipeline must run over a directory of papers.
 - A post-review sweep where several papers each got reviewer notes.
 
-Not for: a single paper (use `revise-paper` then `compile-paper` directly). Group A `.latex` / Group C Google-Docs sources are out of scope — markdown (Group B) only.
+Not for: a single paper (use `adversarial-review-loop`, the default single-paper procedure, which builds through `compile-paper`). Group A `.latex` / Group C Google-Docs sources are out of scope — markdown (Group B) only.
 
 ## Execution model
 

@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { recordAlgorithmOutcome } from "../infra/algorithm-metrics.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
+import { recordSupplyLimit } from "../infra/thalamus-cooling.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
@@ -351,6 +352,15 @@ function recordFailedCandidateAttempt(params: {
   fallbackConfigured: boolean;
 }) {
   const described = describeFailoverError(params.error);
+  // THALAMUS (2026-10-02): a limit cools its supply until the provider's reset time (30 minutes when it states
+  // none), so the NEXT turn's plan skips it. Never throws; a failover must not be broken by remembering it.
+  recordSupplyLimit({
+    provider: params.candidate.provider,
+    model: params.candidate.model,
+    reason: described.reason,
+    error: described.rawError ?? described.message,
+    status: described.status,
+  });
   params.attempts.push({
     provider: params.candidate.provider,
     model: params.candidate.model,

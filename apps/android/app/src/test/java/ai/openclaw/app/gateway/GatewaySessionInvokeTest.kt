@@ -633,11 +633,46 @@ class GatewaySessionInvokeTest {
       }
     }
 
+  // FORK 2026-10-19 (the architect: phone app) — the phone door needs the device token on the upgrade.
+  @Test
+  fun connect_sendsExtraHeadersOnTheWebSocketUpgrade() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val lastDisconnect = AtomicReference("")
+      val deviceHeader = AtomicReference<String?>(null)
+      val server =
+        startGatewayServer(
+          json = json,
+          onHandshake = { request -> deviceHeader.compareAndSet(null, request.getHeader("X-Jarvis-Device")) },
+        ) { webSocket, id, method, _ ->
+          if (method == "connect") {
+            webSocket.send(connectResponseFrame(id))
+            webSocket.close(1000, "done")
+          }
+        }
+      val harness =
+        createNodeHarness(
+          connected = connected,
+          lastDisconnect = lastDisconnect,
+          requestHeaders = { mapOf("X-Jarvis-Device" to "device-token") },
+        ) { GatewaySession.InvokeResult.ok("""{"handled":true}""") }
+
+      try {
+        connectNodeSession(harness.session, server.port)
+        awaitConnectedOrThrow(connected, lastDisconnect, server)
+        assertEquals("device-token", deviceHeader.get())
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
   private fun testJson(): Json = Json { ignoreUnknownKeys = true }
 
   private fun createNodeHarness(
     connected: CompletableDeferred<Unit>,
     lastDisconnect: AtomicReference<String>,
+    requestHeaders: (GatewayEndpoint) -> Map<String, String> = { emptyMap() },
     onInvoke: (GatewaySession.InvokeRequest) -> GatewaySession.InvokeResult,
   ): NodeHarness {
     val app = RuntimeEnvironment.getApplication()
@@ -656,6 +691,7 @@ class GatewaySessionInvokeTest {
         },
         onEvent = { _, _ -> },
         onInvoke = onInvoke,
+        requestHeaders = requestHeaders,
       )
 
     return NodeHarness(session = session, sessionJob = sessionJob, deviceAuthStore = deviceAuthStore)

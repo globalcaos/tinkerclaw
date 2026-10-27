@@ -1,0 +1,26 @@
+{
+  "name": "@globalcaos/harness-id",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness ID: designed to be used with an Anthropic API key only. Rename the harness name your fork presents to the model (fork branding) or strip it (privacy). Do NOT use together with cc-bridge: combining them may breach the terms of an Anthropic subscription.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": false
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "build": {
+      "openclawVersion": "2026.4.25"
+    }
+  }
+}

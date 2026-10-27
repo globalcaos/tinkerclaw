@@ -1,6 +1,6 @@
 ---
 name: youtube-ultimate
-version: 4.3.0
+version: 4.3.1
 description: "Free transcripts, 4K downloads, and video exploration — zero API quotas burned. Built for the TinkerClaw fork — github.com/globalcaos/tinkerclaw. Search and your own account data run on YOUR Google OAuth client, read-only and opt-in, with a one-command logout — see Permissions, Data Flow & Consent."
 metadata:
   openclaw:
@@ -14,7 +14,7 @@ metadata:
       - offline
     license: MIT
     notes:
-      security: "Two halves, and they have different permission profiles. (1) TRANSCRIPTS AND DOWNLOADS: no account, no API key, no quota — youtube-transcript-api prints to stdout and writes nothing; downloads shell out to your installed yt-dlp (argv list, never shell=true) and write media to the folder you name, or the current directory if you name none. (2) SEARCH, VIDEO/CHANNEL/COMMENT DETAILS AND YOUR OWN SUBSCRIPTIONS, PLAYLISTS AND LIKED VIDEOS: these call YouTube Data API v3 and DO require Google OAuth, using an OAuth client YOU create. Since 4.3.0 the only scope requested is youtube.readonly — the skill cannot post, rate, subscribe or modify anything. The resulting token is stored as JSON at ~/.config/youtube-skill/token.json, mode 0600 (pre-4.3.0 pickle tokens are migrated and deleted), only after an explicit y/N consent prompt naming the path and the scope. It also reads an existing OAuth client from ~/.config/gogcli/credentials.json if present. Nothing is sent anywhere except youtube.com and googleapis.com. Off-switches: YOUTUBE_SKILL_NO_ACCOUNT=1 disables every sign-in path, YOUTUBE_SKILL_NO_DOWNLOAD=1 disables downloads, and `logout` deletes the stored token. See the Permissions, Data Flow & Consent section."
+      security: "Two halves, and they have different permission profiles. (1) TRANSCRIPTS AND DOWNLOADS: no account, no API key, no quota — youtube-transcript-api prints to stdout and writes nothing; downloads shell out to your installed yt-dlp (argv list, never shell=true) and write media to the folder you name, or the current directory if you name none. (2) SEARCH, VIDEO/CHANNEL/COMMENT DETAILS AND YOUR OWN SUBSCRIPTIONS, PLAYLISTS AND LIKED VIDEOS: these call YouTube Data API v3 and DO require Google OAuth, using an OAuth client YOU create. Since 4.3.0 the only scope requested is youtube.readonly — the skill cannot post, rate, subscribe or modify anything. The resulting token is stored as JSON at ~/.config/youtube-skill/token.json, mode 0600 (a pre-4.3.0 token.pickle is never read; sign in again, and `logout` deletes it), only after an explicit y/N consent prompt naming the path and the scope. It also reads an existing OAuth client from ~/.config/gogcli/credentials.json if present. Nothing is sent anywhere except youtube.com and googleapis.com. Off-switches: YOUTUBE_SKILL_NO_ACCOUNT=1 disables every sign-in path, YOUTUBE_SKILL_NO_DOWNLOAD=1 disables downloads, and `logout` deletes the stored token. See the Permissions, Data Flow & Consent section."
 ---
 
 # YouTube Ultimate
@@ -33,7 +33,7 @@ metadata:
 
 YouTube's API gives you 10,000 quota units per day. A single search costs 100. A transcript request? Not even supported. YouTube Ultimate sidesteps all of that. Your agent gets full access to video content while your quota counter stays at zero.
 
-*Clone it. Fork it. Break it. Make it yours.*
+_Clone it. Fork it. Break it. Make it yours._
 
 👉 Explore the full project: [github.com/globalcaos/clawdbot-moltbot-openclaw](https://github.com/globalcaos/clawdbot-moltbot-openclaw)
 
@@ -42,12 +42,12 @@ YouTube's API gives you 10,000 quota units per day. A single search costs 100. A
 Marketing is a summary, and summaries round off corners. Here is the unrounded shape, because
 the difference decides whether you need a Google account at all:
 
-| Half | Needs an account? | Quota | What it uses |
-| --- | --- | --- | --- |
-| Transcripts (`transcript`, `transcript-list`) | **No** | **0** | `youtube-transcript-api` against YouTube's public frontend |
-| Downloads (`download`, `download-audio`) | **No** | **0** | your installed `yt-dlp` binary |
-| Search, video/channel details, comments | **Yes** | 100 per search, 1–3 per lookup | YouTube Data API v3 |
-| Your subscriptions, playlists, liked videos | **Yes** | 1–5 per call | YouTube Data API v3 |
+| Half                                          | Needs an account? | Quota                          | What it uses                                               |
+| --------------------------------------------- | ----------------- | ------------------------------ | ---------------------------------------------------------- |
+| Transcripts (`transcript`, `transcript-list`) | **No**            | **0**                          | `youtube-transcript-api` against YouTube's public frontend |
+| Downloads (`download`, `download-audio`)      | **No**            | **0**                          | your installed `yt-dlp` binary                             |
+| Search, video/channel details, comments       | **Yes**           | 100 per search, 1–3 per lookup | YouTube Data API v3                                        |
+| Your subscriptions, playlists, liked videos   | **Yes**           | 1–5 per call                   | YouTube Data API v3                                        |
 
 So "zero quota" is exactly true for the two headline features and exactly false for search. Both
 halves ship in one CLI; you can use the free half forever and never authenticate — and if you
@@ -70,11 +70,11 @@ asking YouTube a question means.
 
 **What is written to disk.**
 
-| Path | When | Contents | Mode |
-| --- | --- | --- | --- |
-| `~/.config/youtube-skill/token.json` | only after you consent at the OAuth prompt | your OAuth access + refresh token | `0600`, in a `0700` dir |
-| the folder you pass to `-o` | only on `download` / `download-audio` | the media file, and subtitle files if you pass `-s` | yt-dlp default |
-| the **current directory** | if you run a download **without** `-o` | same as above | yt-dlp default |
+| Path                                 | When                                       | Contents                                            | Mode                    |
+| ------------------------------------ | ------------------------------------------ | --------------------------------------------------- | ----------------------- |
+| `~/.config/youtube-skill/token.json` | only after you consent at the OAuth prompt | your OAuth access + refresh token                   | `0600`, in a `0700` dir |
+| the folder you pass to `-o`          | only on `download` / `download-audio`      | the media file, and subtitle files if you pass `-s` | yt-dlp default          |
+| the **current directory**            | if you run a download **without** `-o`     | same as above                                       | yt-dlp default          |
 
 Transcripts, search results, comments and account listings are printed to **stdout and never
 written to a file** by this skill. If your agent saves them, that is your agent's decision, not
@@ -82,15 +82,15 @@ ours.
 
 **What it needs, and why.**
 
-| Capability | Why | Scope |
-| --- | --- | --- |
-| Network | Fetch transcripts, call the Data API, download media | `youtube.com` and `googleapis.com` only |
-| Google OAuth | Search, comments, video/channel details, and your own subscriptions/playlists/liked videos have no unauthenticated equivalent | **`youtube.readonly` only** — cannot post comments, rate, subscribe, or modify playlists |
-| Credential read | Finds the OAuth **client** you created | `~/.config/youtube-skill/credentials.json`, falling back to `~/.config/gogcli/credentials.json` if you already set up the sibling Google skill |
-| Credential write | Stores the resulting token so you sign in once | one JSON file, `0600`, path named in the prompt before it is written |
-| Subprocess exec | Downloads are delegated to `yt-dlp` | one binary found via `PATH`, invoked as an **argv list — never `shell=True`**, arguments limited to a YouTube URL, a format string from a fixed table, and your `-o` directory |
-| File write | Media and subtitles from downloads | the directory you choose, or the current directory |
-| Account data read | `subscriptions`, `playlists`, `liked`, `channel` are the point of those commands | read-only, on demand, never fetched by the other commands |
+| Capability        | Why                                                                                                                           | Scope                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Network           | Fetch transcripts, call the Data API, download media                                                                          | `youtube.com` and `googleapis.com` only                                                                                                                                        |
+| Google OAuth      | Search, comments, video/channel details, and your own subscriptions/playlists/liked videos have no unauthenticated equivalent | **`youtube.readonly` only** — cannot post comments, rate, subscribe, or modify playlists                                                                                       |
+| Credential read   | Finds the OAuth **client** you created                                                                                        | `~/.config/youtube-skill/credentials.json`, falling back to `~/.config/gogcli/credentials.json` if you already set up the sibling Google skill                                 |
+| Credential write  | Stores the resulting token so you sign in once                                                                                | one JSON file, `0600`, path named in the prompt before it is written                                                                                                           |
+| Subprocess exec   | Downloads are delegated to `yt-dlp`                                                                                           | one binary found via `PATH`, invoked as an **argv list — never `shell=True`**, arguments limited to a YouTube URL, a format string from a fixed table, and your `-o` directory |
+| File write        | Media and subtitles from downloads                                                                                            | the directory you choose, or the current directory                                                                                                                             |
+| Account data read | `subscriptions`, `playlists`, `liked`, `channel` are the point of those commands                                              | read-only, on demand, never fetched by the other commands                                                                                                                      |
 
 **Consent, and where it fires.** The first command that needs your account prints the token
 path and the requested scope, then stops and asks `Continue and store the token? [y/N]`. It
@@ -113,10 +113,10 @@ that link when you log out.
 
 **Upgrading from ≤4.2.3.** Older versions requested three scopes, two of which were
 **read-write** (`youtube`, `youtube.force-ssl`), and stored the token as a **pickle** — a format
-that executes code on load. 4.3.0 requests read-only only, and migrates any existing
-`token.pickle` to `token.json` at mode `0600`, deleting the pickle. Your old grant keeps its
-broad scopes at Google until you re-consent: run `logout` then `auth` to downgrade it to
-read-only. Worth the thirty seconds.
+that executes code on load. Current versions request read-only only and never open an existing
+`token.pickle`: the first account command says it is ignoring the file and goes through the
+normal consent prompt, and `logout` deletes it without reading it. Your old grant keeps its
+broad scopes at Google until you revoke it at the link above.
 
 **Read it before you run it.** `scripts/youtube.py` is a single self-contained file with no
 build step and no hidden imports. That is the whole security model: one file, readable in a
@@ -143,3 +143,7 @@ Full command reference, aliases and setup: see `README.md` in this package.
 **Requirements:** `uv` for the script's inline dependencies; `yt-dlp` on `PATH` for downloads
 only. The Data API commands need an OAuth **client ID you create yourself** in Google Cloud —
 there is no shared key, no account of ours in the loop, and no key to leak.
+
+## Changelog
+
+- 4.3.1 — a legacy `token.pickle` is no longer unpickled (4.3.0 auto-migrated it before any consent); it is ignored and you sign in again.

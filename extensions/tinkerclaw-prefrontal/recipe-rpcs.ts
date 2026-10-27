@@ -56,6 +56,7 @@ import {
   type RecipeSpec,
   type RecipeParamSpec,
 } from "./recipe-author.js";
+import { extractSection } from "./recipe-extract.js";
 import { findRecipeFile } from "./recipe-locate.js";
 import {
   bumpVersion,
@@ -67,6 +68,7 @@ import {
   loadRecipeIndex,
   matchRecipesDetailed,
   invalidateRecipeIndexCache,
+  recipeIndexExtraDirs,
 } from "./recipe-matcher.js";
 import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
@@ -311,7 +313,7 @@ function recipeFileSlug(fileName: string): string {
  *      folders (`writing/papers/*.md`). Every `.md` at any depth becomes visible;
  *      slug = frontmatter id/slug or the filename; category = the TOP folder name;
  *      subdivision = the nested folder path beneath it (frontmatter `subdivision`
- *      overrides). This is the user's "subfolders as subdivisions of the same
+ *      overrides). This is the architect's "subfolders as subdivisions of the same
  *      category" contract.
  * A bare `<name>.md` sitting at the recipes root is also surfaced (category from
  * frontmatter). DUAL-READ within a kit dir: recipe.md first, kit.md legacy.
@@ -562,6 +564,65 @@ export interface KitRpcsDeps {
    * (back-compat: a fitness-less deploy / offline test keeps working).
    */
   engramBaseDir?: string;
+  /**
+   * Opt-in gates for the three RPCs that reach beyond local recipe state. Each is
+   * OFF unless the operator enables it in the plugin config (index.ts maps the
+   * config keys named below onto these fields):
+   *   allowOrchestrationScripts ← orchestration.allowScripts
+   *     prefrontal.recipe.orchestrate evaluates a caller-supplied JavaScript body
+   *     inside the gateway process with full privileges.
+   *   allowRecipePublish        ← marketplace.allowPublish
+   *     prefrontal.recipe.publish uploads a local recipe to JourneyKits.
+   *   allowRemoteRecipeInstall  ← marketplace.allowRemoteInstall
+   *     prefrontal.recipe.install downloads recipe files from JourneyKits.
+   */
+  allowOrchestrationScripts?: boolean;
+  /**
+   * Most orchestration units in flight at once: min(agents.defaults.subagents.maxConcurrent,
+   * maxChildrenPerAgent). A spawn past maxChildrenPerAgent is refused, not queued. (2026-10-09)
+   */
+  orchestrationMaxInFlight?: number;
+  allowRecipePublish?: boolean;
+  allowRemoteRecipeInstall?: boolean;
+}
+
+/**
+ * Resolve `candidate` to a real path and return it only when it is a `.md` file
+ * inside one of `roots` (roots are realpath'd too, so a symlink cannot step out).
+ */
+async function resolveRecipePathInsideRoots(
+  candidate: string,
+  roots: string[],
+): Promise<string | null> {
+  if (!candidate.trim().toLowerCase().endsWith(".md")) {
+    return null;
+  }
+  let real: string;
+  try {
+    real = await fs.realpath(path.resolve(candidate.trim()));
+  } catch {
+    return null;
+  }
+  for (const root of roots) {
+    let realRoot: string;
+    try {
+      realRoot = await fs.realpath(root);
+    } catch {
+      continue;
+    }
+    const rel = path.relative(realRoot, real);
+    if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+      return real;
+    }
+  }
+  return null;
+}
+
+/** Thrown when an opt-in RPC is called while its config gate is off. */
+function refuseDisabled(method: string, configKey: string): never {
+  throw new Error(
+    `${method} is disabled. Set plugins.entries.tinkerclaw-prefrontal.config.${configKey} = true to enable it.`,
+  );
 }
 
 // ─── BROCA visibility (2026-06-06): recipe.read return contract ──────────────
@@ -807,7 +868,10 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         // hard-failing the search. The local matcher scores the query against the
         // own-kits catalog (+ bridged imports) so a network outage still surfaces
         // the recipes Jarvis already has. Never throws on the fallback path.
-        const index = await loadRecipeIndex(deps.ownRecipesDir, [bridgedSkillsDir]);
+        const index = await loadRecipeIndex(
+          deps.ownRecipesDir,
+          recipeIndexExtraDirs(bridgedSkillsDir),
+        );
         // FORK 2026-06 (U1) + 2026-06-01 (U12): same fitness+rating signals as the
         // turn-start seed so the local fallback ranks proven/popular recipes higher.
         const { matches } = matchRecipesDetailed(p.query, index, {
@@ -862,6 +926,12 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       }
 
       // ── Journey install path (with transitive dep resolution) ────────────────
+      if (deps.allowRemoteRecipeInstall !== true) {
+        refuseDisabled(
+          "prefrontal.recipe.install (JourneyKits download)",
+          "marketplace.allowRemoteInstall",
+        );
+      }
       // FORK 2026-06-01 (U12): resolve a version-constraint to a concrete release
       // before fetching the install payload (marketplace-less → ref passes through).
       const seen = new Set<string>([p.kitRef]);
@@ -968,10 +1038,23 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       const slug = p.slug ?? (p.kitRef ? p.kitRef.split("/")[1] : undefined);
 
       // Resolve a LOCAL recipe md (ours, then downloaded), mirroring recipe.list.
+      // An explicit `path` is only honoured for a .md file that resolves (symlinks
+      // followed) inside one of the recipe directories this plugin owns; any other
+      // path is refused rather than read.
       let md: string | null = null;
       if (typeof p.path === "string" && p.path.trim()) {
+        const target = await resolveRecipePathInsideRoots(p.path, [
+          deps.ownRecipesDir,
+          deps.recipeInstallSandbox,
+          resolveRecipeOverlayDir(),
+        ]);
+        if (!target) {
+          throw new Error(
+            "prefrontal.recipe.read: path must be a .md file inside the recipe directories (own recipes, install sandbox or ~/.openclaw/recipes)",
+          );
+        }
         try {
-          md = await fs.readFile(p.path, "utf-8");
+          md = await fs.readFile(target, "utf-8");
         } catch {
           md = null;
         }
@@ -1062,6 +1145,9 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     },
 
     "prefrontal.recipe.publish": async (raw: unknown) => {
+      if (deps.allowRecipePublish !== true) {
+        refuseDisabled("prefrontal.recipe.publish", "marketplace.allowPublish");
+      }
       const p = check<PrefrontalKitPublishParams>(vPublish, raw, "prefrontal.recipe.publish");
       if (!deps.apiKey)
         throw new Error(
@@ -1167,7 +1253,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       // events into — co-locating the attribution marker with the run's episode.
       const engramBaseDir =
         deps.engramBaseDir ??
-        path.join(process.env.OPENCLAW_HOME ?? homedir(), ".openclaw", "engram");
+        path.join(process.env.OPENCLAW_HOME ?? path.join(homedir(), ".openclaw"), "engram");
       const skillLibrary = createSkillLibrary({ baseDir: engramBaseDir });
 
       // SS1 follow-up (U1 fitness CONSUMER): fold the recipe's empirical success
@@ -1514,6 +1600,9 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     // production spawn path (orchestration-deps) mirrors reasoning-runtime.ts and is
     // type-clean but awaits a live-restart smoke test.
     "prefrontal.recipe.orchestrate": async (raw: unknown) => {
+      if (deps.allowOrchestrationScripts !== true) {
+        refuseDisabled("prefrontal.recipe.orchestrate", "orchestration.allowScripts");
+      }
       const p = check<PrefrontalKitOrchestrateParams>(
         vOrchestrate,
         raw,
@@ -1523,6 +1612,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         callGateway,
         parentSessionKey: p.sessionKey,
         runTimeoutSeconds: p.runTimeoutSeconds,
+        maxInFlight: deps.orchestrationMaxInFlight,
         onPhase: (title) => {
           void callGateway({
             method: "fork.prefrontal.setRecipe",
@@ -1641,6 +1731,35 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         note: r.replaced
           ? `overwrote existing kit "${r.slug}"`
           : `authored new kit "${r.slug}" — matchable on the next turn`,
+      };
+    },
+
+    // FORK 2026-10-06 (Broca retrieval v2, phase D): lift ONE numbered step of a recipe into a recipe of its own and leave
+    // `uses: <slug>` where it was (recipe-extract.ts says what it proves, what it refuses and how a failure is rolled
+    // back). The parent is found in the overlay (`~/.openclaw/recipes`) first, then the shipped dir, as the runner reads
+    // them; the new recipe is created beside it. A refusal is a typed result carrying every reason, with nothing written.
+    "prefrontal.recipe.extract": async (raw: unknown) => {
+      const p = (raw ?? {}) as Record<string, unknown>;
+      for (const k of ["from", "section", "slug", "title"] as const) {
+        if (typeof p[k] !== "string" || !(p[k] as string).trim()) {
+          throw new Error(`prefrontal.recipe.extract: ${k} (non-empty string) required`);
+        }
+      }
+      const r = await extractSection(
+        [resolveRecipeOverlayDir(), deps.ownRecipesDir],
+        {
+          from: (p.from as string).trim(),
+          section: (p.section as string).trim(),
+          slug: (p.slug as string).trim(),
+          title: (p.title as string).trim(),
+        },
+        {},
+      );
+      if (!r.ok) return { ok: false, refused: r.refused };
+      invalidateRecipeIndexCache(); // the matcher sees the new recipe on the next turn
+      return {
+        ...r,
+        note: `lifted step ${r.step} ("${r.stepTitle}") of ${p.from as string} into ${r.kitRef}; the parent now has uses: ${r.slug} there. Previous text archived at ${r.archive}`,
       };
     },
 
@@ -1864,7 +1983,10 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     "prefrontal.recipe.match": async (raw: unknown) => {
       const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.recipe.match");
       // FORK 2026-06-01 (U11): include bridged CC-skill imports in the match catalog.
-      const index = await loadRecipeIndex(deps.ownRecipesDir, [bridgedSkillsDir]);
+      const index = await loadRecipeIndex(
+        deps.ownRecipesDir,
+        recipeIndexExtraDirs(bridgedSkillsDir),
+      );
       // FORK 2026-06 (U1) + 2026-06-01 (U12): fold empirical-fitness + marketplace-
       // rating into the score so recipe.match returns the same proven/popular-aware
       // ranking the turn-start seed uses (single scoring policy across both seams).

@@ -33,6 +33,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import secretstore
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _secure_write import write_private_json  # owner-only JSON writes
 
 USAGE_JSON_PATH = Path.home() / '.openclaw/workspace/memory/chatgpt-usage.json'
 
@@ -235,9 +237,8 @@ def main():
     if '--json' in args:
         print(json.dumps(output, indent=2))
     elif '--update' in args:
-        USAGE_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(USAGE_JSON_PATH, 'w') as f:
-            json.dump(output, f, indent=2)
+        # Reports your plan and rate limits — owner-only, never through a symlink.
+        write_private_json(USAGE_JSON_PATH, output)
         print(f"✓ Updated {USAGE_JSON_PATH}")
         for model, info in output["models"].items():
             pct = info.get("utilization_pct")

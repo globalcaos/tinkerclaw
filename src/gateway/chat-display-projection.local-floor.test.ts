@@ -135,4 +135,39 @@ describe("limitChatDisplayMessages local-tail floor", () => {
       expect(limitChatDisplayMessages(messages, limit)).toHaveLength(limit);
     }
   });
+
+  // FORK 2026-10-09 (agent:main:tinker:mue2cvin): dropImportCoveredLocalAssistants deletes a
+  // turn's local answer whenever an import re-provides it, so for every claude-cli turn the
+  // imported end_turn row IS the answer. The floor reserved only local rows, so a newer turn's
+  // tool-loop imports took the rest of the window and the older answers fell out of both
+  // populations: limit 100 served 12 prompts with 4 of their answers missing.
+  test("an imported end_turn answer whose local copy was dropped survives a tool-loop flood", () => {
+    const prompts = [0, 1, 2].map((i) => ({
+      role: "user",
+      content: [{ type: "text", text: `prompt-${i}` }],
+      timestamp: 100 + i * 10,
+    }));
+    const answers = [0, 1, 2].map((i) => ({
+      ...importedMsg(900 + i, 105 + i * 10),
+      stopReason: "end_turn",
+    }));
+    const flood = Array.from({ length: 60 }, (_, i) => ({
+      role: "assistant",
+      content: [{ type: "thinking", thinking: `step-${i}` }],
+      stopReason: "tool_use",
+      timestamp: 1_000 + i,
+      __openclaw: { importedFrom: "claude-cli", externalId: `flood-${i}` },
+    }));
+    const messages = [...prompts, ...answers, ...flood].sort(
+      (a, b) => (a.timestamp as number) - (b.timestamp as number),
+    );
+
+    const out = limitChatDisplayMessages(messages, 20);
+    expect(out).toHaveLength(20);
+    // Every prompt keeps its answer.
+    expect(out.filter((m) => m.stopReason === "end_turn")).toEqual(answers);
+    expect(out.filter((m) => m.role === "user")).toEqual(prompts);
+    const ts = timestampsOf(out);
+    expect(ts).toEqual([...ts].sort((a, b) => a - b));
+  });
 });

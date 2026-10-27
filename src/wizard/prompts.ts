@@ -23,6 +23,8 @@ export type WizardTextParams = {
   initialValue?: string;
   placeholder?: string;
   validate?: (value: string) => string | undefined;
+  /** A secret (a token, a key): the terminal masks what is typed and a session step is marked `sensitive`. */
+  sensitive?: boolean;
 };
 
 export type WizardConfirmParams = {

@@ -10,7 +10,7 @@ Each task in a plan becomes a sub-agent prompt. Vague steps ("add validation") l
 
 ## Template
 
-```markdown
+````markdown
 # Plan: [Feature Name]
 
 **Date:** YYYY-MM-DD
@@ -33,10 +33,13 @@ Each task in a plan becomes a sub-agent prompt. Vague steps ("add validation") l
 **Depends on:** none
 
 Steps:
+
 1. Write failing test in `[test file path]`:
    ```typescript
    [complete test code]
    ```
+````
+
 2. Run: `pnpm test -- [test file]` → expect 1 failure
 3. Implement in `[source file path]`:
    ```typescript
@@ -61,6 +64,7 @@ Steps:
 ### Task N: Integration & Final Verification
 
 Steps:
+
 1. Run full test suite: `pnpm test` → expect 0 failures
 2. Run build: `pnpm build` → expect exit 0
 3. Run lint: `pnpm check` → expect 0 errors
@@ -68,6 +72,7 @@ Steps:
 5. Commit: `git commit -m "feat: [summary]"`
 
 **Verification:** All commands above pass with evidence.
+
 ```
 
 <guidelines>
@@ -78,3 +83,4 @@ Steps:
 - Make dependencies between tasks explicit.
 - The final task always runs the full verification suite.
 </guidelines>
+```

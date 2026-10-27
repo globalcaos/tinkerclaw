@@ -3,6 +3,7 @@
  * The model calls recall(query) to retrieve compacted events.
  */
 
+import { emitJRecallResolve } from "../../infra/events/j-rows.js";
 import type { EmbeddingCache } from "./embedding-cache.js";
 import type { EmbedFn } from "./embedding-worker.js";
 import type { EventStore } from "./event-store.js";
@@ -100,7 +101,16 @@ function mmrSelect(
 }
 
 /**
- * Pack selected events under a token budget.
+ * Pack selected events under a token budget, in rank order.
+ *
+ * An event that does not fit the remaining budget is skipped and the walk goes on, so
+ * smaller, lower-ranked hits still get packed. `truncated` is true whenever any ranked
+ * event was left out, and the packed total never exceeds `maxTokens`.
+ *
+ * FORK 2026-10-09 — SKIP, NEVER STOP. This loop used to `break` at the first event that
+ * did not fit, so one oversized top hit (a long tool result) hid every hit below it:
+ * recall() returned 0 events with truncated=true, and the gateway RPC `engram.search`
+ * answered nothing for ordinary queries.
  */
 function packUnderBudget(
   events: ScoredRecallEvent[],
@@ -114,7 +124,7 @@ function packUnderBudget(
     const eventTokens = e.event.tokens || estimateTokens(e.event.content);
     if (tokens + eventTokens > maxTokens) {
       truncated = true;
-      break;
+      continue;
     }
     packed.push(e);
     tokens += eventTokens;
@@ -183,6 +193,22 @@ export async function recall(
     candidateCount: candidateMap.size,
     resultCount: packed.length,
     truncated,
+  });
+
+  // logging.md §4.12 (J1): one row per recall — the question pointer compaction has to answer is
+  // whether an evicted range comes BACK when asked for. `pointer_age_ms` is how far back the
+  // oldest returned event reaches, so a hit on a week-old range is visibly different from a hit
+  // on the current turn; a miss carries null rather than a zero, because nothing was reached
+  // (L7). The query text, the candidate contents and the scores never leave this function (L4).
+  const oldestReturnedMs = packed.reduce<number | null>((oldest, scored) => {
+    const at = Date.parse(scored.event.timestamp);
+    return Number.isFinite(at) && (oldest === null || at < oldest) ? at : oldest;
+  }, null);
+  emitJRecallResolve({
+    outcome: packed.length > 0 ? "hit" : "miss",
+    pointerAgeMs: oldestReturnedMs === null ? null : Math.max(0, Date.now() - oldestReturnedMs),
+    eventsReturned: packed.length,
+    sessionKey: store.sessionKey,
   });
 
   return {

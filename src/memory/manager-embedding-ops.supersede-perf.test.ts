@@ -228,13 +228,14 @@ describe("indexFile persist loop", () => {
     persist(false, "cand-run", "new-hash-b");
     expect(spy.supersedeCalls).toBe(1);
 
-    // ...and it did real work: the prior interval is closed as of the candidate's
-    // validity_start. This is what stops the optimisation from quietly deleting the feature.
+    // ...and the writer ran, but HELD the closure: the live path wires no judgement step, so
+    // no automatic closure happens (2026-10-09, after 22,340 false sibling closures). The prior
+    // fact stays current until a judge with measured precision approves a closure.
     const prior = handle
       .prepare(`SELECT validity_end AS ve, superseded_by AS sb FROM chunks WHERE id = 'prior-1'`)
       .get() as { ve: number | null; sb: string | null };
-    expect(prior.ve).toBe(5000);
-    expect(prior.sb).toBe("cand-run");
+    expect(prior.ve).toBeNull();
+    expect(prior.sb).toBeNull();
   });
 
   it("persists inside a transaction and rolls the batch back when an insert throws", async () => {

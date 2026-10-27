@@ -275,3 +275,96 @@ describe("reorderChain — the error tells you the DIRECTION of the reroute", ()
     expect(reorderChain(chain, "capacity")).not.toBe(chain); // never mutates the caller's ladder
   });
 });
+
+// the architect, 2026-10-02 (full deploy): his picks are suggestions; a limit cools its supply.
+describe("a suggestion in the plan", () => {
+  const COOL_UNTIL = NOW + 90 * 60 * 1000;
+
+  it("runs on a general task whatever the dial's own pick, at its effort, and the chain stays supply-diverse", () => {
+    const p = plan({ biasIdx: 6, suggestion: { key: GROK, effort: "low" } })!;
+    expect(p.primary).toMatchObject({ key: GROK, effort: "low" });
+    expect(p.suggestion).toMatchObject({ state: "kept", key: GROK, effort: "low" });
+    expect(keysOf(p.chain)).not.toContain(GROK);
+    expect(new Set(keysOf(p.chain).map(supplyOfKey)).size).toBe(p.chain.length);
+  });
+
+  it("is moved, naming the cooling supply and when it reopens, when that supply is cooling", () => {
+    const p = plan({
+      suggestion: { key: GROK, effort: "high" },
+      cooling: new Set<SupplyId>(["xai"]),
+      coolingUntil: new Map<SupplyId, number>([["xai", COOL_UNTIL]]),
+    })!;
+    expect(p.primary.key).not.toBe(GROK);
+    expect(p.suggestion).toMatchObject({
+      state: "moved",
+      key: GROK,
+      cause: "cooling",
+      untilMs: COOL_UNTIL,
+    });
+    expect(p.coolingShift).toMatchObject({ supply: "xai", untilMs: COOL_UNTIL });
+    expect(p.coolingShift?.from.key).toBe(GROK);
+    expect(p.vetoes.some((v) => v.veto === "supply-cooling")).toBe(true);
+  });
+
+  it("is moved with cause spent, and the reset of the window that spent it, when the usage says spent", () => {
+    const s = supplies();
+    s.set("anthropic", supplyStateFrom("anthropic", [win("5-hour", 100, 2 * HOUR)], NOW));
+    const p = thalamusPlan({
+      rungs: BOARD,
+      supplies: s,
+      biasIdx: 3,
+      nowMs: NOW,
+      suggestion: { key: OPUS, effort: "high" },
+    })!;
+    expect(p.suggestion).toMatchObject({
+      state: "moved",
+      key: OPUS,
+      cause: "spent",
+      untilMs: NOW + 2 * HOUR,
+    });
+    expect(p.primary.key).not.toBe(OPUS);
+  });
+
+  it("is moved with cause capacity when the job does not fit its window", () => {
+    const p = plan({
+      suggestion: { key: GROK, effort: "high" },
+      estimatedTokens: 400_000,
+      contextWindowFor: (k) => (k === GROK ? 200_000 : undefined),
+    })!;
+    expect(p.suggestion).toMatchObject({ state: "moved", key: GROK, cause: "capacity" });
+  });
+
+  it("is ignored, and the plan is exactly the unsuggested one, when its model is not on the board", () => {
+    const base = plan()!;
+    const p = plan({ suggestion: { key: "nobody/model", effort: "max" } })!;
+    expect(p.suggestion).toEqual({ state: "ignored", key: "nobody/model", reason: "not-on-board" });
+    expect(p.primary).toEqual(base.primary);
+    expect(p.reason).toContain("not on the board, ignored");
+  });
+
+  it("opens the reserved set for a reserved suggestion and names it", () => {
+    const p = plan({ suggestion: { key: FABLE, effort: "high" } })!;
+    expect(p.primary.key).toBe(FABLE);
+    expect(p.reservedReason).toBe("suggestion");
+  });
+
+  it("a cooling supply that would NOT have been picked is not a cooling shift", () => {
+    const p = plan({
+      cooling: new Set<SupplyId>(["xai"]),
+      coolingUntil: new Map<SupplyId, number>([["xai", COOL_UNTIL]]),
+    })!;
+    expect(p.primary.key).toBe(OPUS);
+    expect(p.coolingShift).toBeUndefined();
+  });
+
+  it("with no suggestion, a cooled anchor moves the pick and the plan says what the open board would have run", () => {
+    const p = plan({
+      cooling: new Set<SupplyId>(["anthropic"]),
+      coolingUntil: new Map<SupplyId, number>([["anthropic", COOL_UNTIL]]),
+    })!;
+    expect(supplyOfKey(p.primary.key)).not.toBe("anthropic");
+    expect(p.coolingShift).toMatchObject({ supply: "anthropic", untilMs: COOL_UNTIL });
+    expect(p.coolingShift?.from.key).toBe(OPUS);
+    expect(p.suggestion).toBeUndefined();
+  });
+});

@@ -25,7 +25,7 @@ import { colorForSubagent } from "../subagent-color.js";
 // (yellow) ONLY when the label is EXACTLY a known skill id; otherwise it returns
 // the HTML-escaped label unchanged. No fuzzy prose matching, no links.
 import { colorSkillTokens } from "./broca.js";
-// FORK 2026-08-06 (the user: unify the thinking indicators): the root node's glow
+// FORK 2026-08-06 (the architect: unify the thinking indicators): the root node's glow
 // is the running model's EEG trace color, resolved at the same central point as
 // every other surface — eeg-trace.ts is pure (no DOM), so panels may import it.
 import { resolveEegGlowColor } from "./eeg-trace.js";
@@ -918,7 +918,7 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     glyph.style.color = node.status === "failed" ? "#f85149" : color;
     row.appendChild(glyph);
 
-    // Logo — FORK 2026-08-06: resolve by MODEL id first (the user: "inside recipes
+    // Logo — FORK 2026-08-06: resolve by MODEL id first (the architect: "inside recipes
     // the logo of the model does not update correctly"). getProviderLogoSvg
     // defaults to the Anthropic sparkle, so an openrouter vendor run showed a
     // Claude sparkle next to a Qwen model. The vendor mark wins when the model

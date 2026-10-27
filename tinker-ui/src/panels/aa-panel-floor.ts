@@ -3,7 +3,7 @@
 // The SMART MODELS intelligence floor, expressed as a POSITION in the catalog rather
 // than as a score.
 //
-// FORK 2026-09-05 (the user: "in the model picker panel I only have 2 models available
+// FORK 2026-09-05 (the architect: "in the model picker panel I only have 2 models available
 // now"). Artificial Analysis rebased its Intelligence Index overnight — every scored
 // model fell ~15-25% in one scrape (Fable 5.1 65.65 -> 56.76). The nightly refresh
 // wrote the new scores into agents.defaults.models correctly; nothing was deleted and
@@ -16,7 +16,7 @@
 //
 // N = 23 reproduces exactly what the 53 cut admitted the day before the rescale. Move N
 // when the list stops being scannable at a glance — that, not any number, is the
-// criterion the user has stated twice (2026-08-22, 2026-09-05).
+// criterion the architect has stated twice (2026-08-22, 2026-09-05).
 export const AA_PANEL_TOP_N = 23;
 
 /**

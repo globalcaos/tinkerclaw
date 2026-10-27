@@ -1,8 +1,41 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
+
+    <!-- FORK 2026-10-19 (the architect: phone app) — what the Jarvis build adds: the jarvis://pair deep
+         link (one MainActivity instance, so the link lands in the running app), the self-updater
+         (install permission + the PackageInstaller status receiver) and vibrate() for the page's
+         JarvisNative bridge. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 2026-10-22 (the architect: "I want you to be able to update the app anytime"): lets the
+         installer of record update itself with no confirmation screen (Android 12+). -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Loopback cleartext only in a JARVIS_DEV build (see build.gradle.kts). -->
+    <application
+        android:networkSecurityConfig="${jarvisNetworkSecurityConfig}"
+        tools:replace="android:networkSecurityConfig">
+        <activity
+            android:name="ai.openclaw.app.MainActivity"
+            android:launchMode="singleTask"
+            tools:node="merge">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="pair"
+                    android:scheme="jarvis" />
+            </intent-filter>
+        </activity>
+        <receiver
+            android:name="ai.openclaw.app.update.AppUpdateReceiver"
+            android:exported="false" />
+    </application>
 </manifest>

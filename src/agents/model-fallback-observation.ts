@@ -1,3 +1,4 @@
+import { emitThalamusTurnFallback } from "../infra/thalamus-turn-telemetry.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
 import { buildTextObservationFields } from "./embedded-agent-error-observation.js";
@@ -137,6 +138,19 @@ export function logModelFallbackDecision(
           previousAttempts: params.previousAttempts,
         })
       : undefined;
+  // The Tinker THALAMUS panel shows which model took over mid-turn and why
+  // (src/infra/thalamus-turn-telemetry.ts). Only a SUCCESSFUL step: a candidate that also failed is
+  // not who did the work.
+  if (params.decision === "candidate_succeeded" && fallbackStepFields?.fallbackStepToModel) {
+    emitThalamusTurnFallback(params.runId, {
+      from: fallbackStepFields.fallbackStepFromModel,
+      to: fallbackStepFields.fallbackStepToModel,
+      reason: fallbackStepFields.fallbackStepFromFailureReason ?? "unknown",
+      ...(fallbackStepFields.fallbackStepFromFailureDetail
+        ? { detail: fallbackStepFields.fallbackStepFromFailureDetail.slice(0, 160) }
+        : {}),
+    });
+  }
   const providerErrorTypeSuffix = observedError.providerErrorType
     ? ` providerErrorType=${sanitizeForLog(observedError.providerErrorType)}`
     : "";

@@ -10,6 +10,15 @@ tools: [read, grep, glob, exec, edit]
 children: []
 ---
 
+> **Status (2026-09-26): a merge cannot work any more.** Upstream `openclaw/openclaw`
+> rewrote its history after our last sync, so `git merge-base develop upstream/main` is
+> empty. Our fork point in upstream terms is `f155a5f9559` (2026-04-28, OpenClaw
+> 2026.4.27). Do not run `git merge` (unrelated histories) and do not revive the daily
+> sync cron. To bring something in, port it by hand with the upstream commit as the
+> spec: find it with `git log f155a5f9559..upstream/main -- <path>`. For a plugin, first
+> diff its `openclaw/plugin-sdk/*` imports against our `package.json` exports; each
+> missing subpath is part of the port. The steps below describe the old merge flow.
+
 ## Goal
 
 Merge upstream changes into the fork while preserving all fork-specific patches, wiring, and configuration.

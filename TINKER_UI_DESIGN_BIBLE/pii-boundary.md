@@ -139,6 +139,15 @@ worst shape of it, because bash silently keeps the last assignment while a reade
 The check now counts definitions, per file and in total, as its name always claimed. Confirmed by negative
 test: duplicating the assignment inside `scripts/pii-pre-push.sh` was green before the fix and is red after.
 
+## Jev reads and the Thalamus replay set (2026-10-01)
+
+**What this is for.** The two places the v4 router could let conversation content leave the machine, and the rule for each. **Derived from** paper J19 v4.1 §4 "Privacy comes first" and the charter's defaults for the build. **Status:** `IMPLEMENTED` on `feat/thalamus-v4`; Jev has seen synthetic cases only.
+
+- **A private source with real content makes no Jev call at all**, asserted on the mock's call count. Private sources are `privacy.privateSources` (default `channel:*`) and `privacy.privatePaths`; they route by local rules and the cautious options, and only `privacy.approvedProviders` (default `claude-code`) may see them. Live shadow reads are local until the architect sets `jev.sendRealSituations`.
+- **The nightly replay set** (`enh_replay_set`) keeps a redacted, clipped task (`learning.replayMaxChars`), only from sources Jev may read (`privacy.jevApprovedSources`). Private tasks never enter.
+- **The UI and the gateway method `thalamus.panel` carry no task text, prompt or session key.**
+- **Question wording never appears in docs, the UI or a paper**; it lives in `extensions/tinkerclaw-thalamus/questions/*.json` only.
+
 ## Don't regress
 
 - The leak-grep regex has exactly ONE executable home: `PII_RE` in `scripts/pii-pre-push.sh`. This file

@@ -33,6 +33,8 @@ describe("startGatewayEarlyRuntime", () => {
       removeChatRun: () => {},
       agentRunSeq: new Map(),
       nodeSendToSession: () => {},
+      broadcastToConnIds: () => {},
+      getSessionEventSubscriberConnIds: () => new Set<string>(),
       skillsRefreshDelayMs: 30_000,
       getSkillsRefreshTimer: () => null,
       setSkillsRefreshTimer: () => {},

@@ -8,6 +8,7 @@ import {
   type Tool,
 } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
+import { ledgeredCompletion } from "../forensic/llm-ledger.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { inferParamBFromIdOrName } from "../shared/model-param-b.js";
 import {
@@ -272,7 +273,7 @@ async function probeTool(
   const startedAt = Date.now();
   try {
     const message = await withTimeout(timeoutMs, (signal) =>
-      complete(model, context, {
+      ledgeredCompletion("probe:model-scan", complete)(model, context, {
         apiKey,
         maxTokens: 256,
         temperature: 0,
@@ -320,7 +321,7 @@ async function probeImage(
   const startedAt = Date.now();
   try {
     await withTimeout(timeoutMs, (signal) =>
-      complete(model, context, {
+      ledgeredCompletion("probe:model-scan", complete)(model, context, {
         apiKey,
         maxTokens: 16,
         temperature: 0,

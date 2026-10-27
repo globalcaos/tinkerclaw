@@ -215,6 +215,20 @@ const { createInitialConsolidationState } = jiti(
 );
 const { runSleepConsolidation } = jiti(join(repoRoot, "src/memory/engram/sleep-consolidation.ts"));
 
+// This process runs no events writer, so emit.ts used to drop every `j.consolidation.run` row it
+// was handed: 0 rows from 09-25 to 10-09 although this ran every night. The spool keeps them for
+// the gateway, which ingests them when its writer next starts. emit.ts is already loaded through
+// sleep-consolidation.ts, so this reaches the opt-in without widening the import graph.
+let eventsSpool = null;
+if (!dryRun) {
+  const { startEventSpool } = jiti(join(repoRoot, "src/infra/events/emit.ts"));
+  eventsSpool = startEventSpool();
+}
+// j-rows.ts is already loaded through sleep-consolidation.ts. This script owns the cycle, so it
+// writes ONE j.consolidation.run row for the whole night (one per store put 4,736 rows into one
+// cycle on 2026-10-10).
+const { emitJConsolidationRun } = jiti(join(repoRoot, "src/infra/events/j-rows.ts"));
+
 // ---------------------------------------------------------------------------
 // Per-store cursors: Record<sessionKey, ConsolidationState>.
 // ---------------------------------------------------------------------------
@@ -269,6 +283,8 @@ const storeFailures = [];
 const dryRunPlan = [];
 
 const artifactStore = dryRun ? null : createArtifactStore({ baseDir });
+const cycleStartedAt = Date.now();
+let skillsExtracted = 0;
 
 for (const key of selected) {
   try {
@@ -291,11 +307,14 @@ for (const key of selected) {
       continue;
     }
 
-    const result = await runSleepConsolidation(store, artifactStore, sessionState);
+    const result = await runSleepConsolidation(store, artifactStore, sessionState, {
+      emitCycleRow: false,
+    });
     allState[key] = sessionState;
     sessionsProcessed++;
     episodes += result.newEpisodes.length;
     eventsProcessed += result.eventsProcessed;
+    skillsExtracted += result.skillsExtracted ?? 0;
     for (const ep of result.newEpisodes) {
       if (reportedEpisodes.length < MAX_REPORTED_EPISODES) {
         reportedEpisodes.push({
@@ -319,6 +338,13 @@ for (const key of selected) {
 }
 
 if (!dryRun) {
+  emitJConsolidationRun({
+    durMs: Date.now() - cycleStartedAt,
+    eventsScanned: eventsProcessed,
+    skillsExtracted,
+    skillsDeprecated: 0,
+    sessionKey: null,
+  });
   // Atomic cursor write — a crash mid-write must not leave an unparseable cursor file.
   const tmpFile = `${stateFile}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpFile, JSON.stringify(allState, null, 2), "utf-8");
@@ -342,6 +368,7 @@ const report = {
     : {
         episodes,
         eventsProcessed,
+        eventsSpool,
         newEpisodes: reportedEpisodes,
         ...(episodes > reportedEpisodes.length
           ? { newEpisodesOmitted: episodes - reportedEpisodes.length }

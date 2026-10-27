@@ -114,6 +114,8 @@ Large files are truncated per-file using `agents.defaults.bootstrapMaxChars` (de
 
 When truncation occurs, the runtime can inject an in-prompt warning block under Project Context. Configure this with `agents.defaults.bootstrapPromptTruncationWarning` (`off`, `once`, `always`; default `once`).
 
+`MEMORY.md` also has a soft budget of its own, `agents.defaults.memoryIndexMaxChars` (default `8000` chars), because it is the memory index and loads on every main-session turn. Over it, `/context` and `openclaw doctor` say so and the gateway logs it; `agents.defaults.memoryIndexWarning` (`off`, `watch`, `once`, `always`; default `watch`) decides whether the agent is told too. It never truncates the file.
+
 ## Skills: injected vs loaded on-demand
 
 The system prompt includes a compact **skills list** (name + description + location). This list has real overhead.

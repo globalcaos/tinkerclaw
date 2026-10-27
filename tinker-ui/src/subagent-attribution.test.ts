@@ -45,7 +45,7 @@ describe("subagentBelongsToViewedTab", () => {
     expect(subagentBelongsToViewedTab(other, TAB_A, deps())).toBe(false);
   });
 
-  // REGRESSION (2026-07-28, the user): typing in one tab showed Sol/Grok "thinking" because a
+  // REGRESSION (2026-07-28, the architect): typing in one tab showed Sol/Grok "thinking" because a
   // subagent dispatched from elsewhere matched on the shared agent root alone.
   it("does NOT claim another tab's subagent when ownership is known", () => {
     const d = deps({ ownerOf: () => TAB_B, attachedTabCount: () => 2 });
@@ -83,7 +83,7 @@ describe("subagentBelongsToViewedTab", () => {
     expect(subagentBelongsToViewedTab(SUB, TAB_A, d)).toBe(true);
   });
 
-  // REGRESSION (2026-08-08, the user: "Jarvis is doing things in parallel but the EEG does not show
+  // REGRESSION (2026-08-08, the architect: "Jarvis is doing things in parallel but the EEG does not show
   // the traces"). An orchestrator-dispatched fan-out resolves its owner to `agent:main:orchestrator`
   // — a session, but not a tab. That used to return false for EVERY tab, so four live legs were
   // invisible everywhere at once. A non-tab owner is the ABSENCE of tab evidence, not evidence of

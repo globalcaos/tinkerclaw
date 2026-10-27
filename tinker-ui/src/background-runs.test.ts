@@ -117,7 +117,7 @@ describe("touchBackgroundRuns", () => {
 
 // The point of the whole module: what the ONE resolver answers once these entries reach it.
 describe("the out-of-focus tab, end to end through run-state", () => {
-  // The exact state the user hit: the gateway knows the run is live, but the UI's snapshot was taken
+  // The exact state the architect hit: the gateway knows the run is live, but the UI's snapshot was taken
   // at the END of the previous turn, so `row.run.live` is false and no viewed-gated client entry
   // exists. Before this module the resolver returned run-set-idle and the tab stayed dark.
   const staleIdleRow = { key: BACKGROUND, run: { live: false, count: 0 } };
@@ -148,7 +148,7 @@ describe("the out-of-focus tab, end to end through run-state", () => {
       rowsFetchedAt,
     });
     expect(state.live).toBe(true);
-    // Named, not a bare "working" — the indicator must identify the model (the user, 2026-08-06).
+    // Named, not a bare "working" — the indicator must identify the model (the architect, 2026-08-06).
     expect(state.model).toBe("claude-opus-5");
     expect(state.provider).toBe("claude-code");
   });

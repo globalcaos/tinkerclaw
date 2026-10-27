@@ -220,6 +220,38 @@ function copyDeclaredPluginSkillPaths(params) {
   return copiedSkills;
 }
 
+// FORK 2026-09-30: folders a plugin reads from its own root at run time (seed data, hook scripts),
+// declared in the manifest as "runtimeAssets": ["./questions", ...] and copied verbatim beside
+// index.js. Skills were the only copied folders before, so tinkerclaw-amygdala built fine and then
+// failed to start from dist (ENOENT scanning questions/). The old copy is replaced so a file removed
+// from source does not linger in dist.
+function copyDeclaredRuntimeAssets(params) {
+  const assets = Array.isArray(params.manifest.runtimeAssets) ? params.manifest.runtimeAssets : [];
+  const copied = [];
+  for (const raw of assets) {
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+      continue;
+    }
+    const relative = normalizeManifestRelativePath(raw);
+    const sourcePath = ensurePathInsideRoot(params.pluginDir, relative);
+    const targetPath = ensurePathInsideRoot(params.distPluginDir, relative);
+    if (!fs.existsSync(sourcePath)) {
+      console.warn(
+        `[bundled-plugin-metadata] skipping missing runtime asset ${sourcePath} (plugin ${params.manifest.id ?? path.basename(params.pluginDir)})`,
+      );
+      continue;
+    }
+    removePathIfExists(targetPath);
+    copySkillPathWithRetry({
+      sourcePath,
+      targetPath,
+      copyOptions: { dereference: true, force: true, recursive: true },
+    });
+    copied.push(relative);
+  }
+  return copied;
+}
+
 function readGeneratedBundledChannelConfigs(repoRoot) {
   const metadataPath = path.join(repoRoot, GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA_PATH);
   if (!fs.existsSync(metadataPath)) {
@@ -371,6 +403,11 @@ export function copyBundledPluginMetadata(params = {}) {
         pluginDir,
         distPluginDir,
         repoRoot,
+      });
+      copyDeclaredRuntimeAssets({
+        manifest: manifestWithGeneratedChannelConfigs,
+        pluginDir,
+        distPluginDir,
       });
       const bundledManifest = Array.isArray(manifestWithGeneratedChannelConfigs.skills)
         ? { ...manifestWithGeneratedChannelConfigs, skills: copiedSkills }

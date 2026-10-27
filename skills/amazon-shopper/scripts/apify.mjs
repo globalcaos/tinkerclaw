@@ -6,11 +6,17 @@
 // ~5,000 Amazon product lookups per month — well within this skill's
 // shopping use case.
 //
-// Env vars (token is required; the rest have defaults):
-//   AMAZON_SHOPPER_APIFY_TOKEN          — Personal API token (Apify Settings → Integrations)
-//   AMAZON_SHOPPER_APIFY_SEARCH_ACTOR   — Actor id for keyword search (default: junglee/amazon-crawler)
-//   AMAZON_SHOPPER_APIFY_DETAIL_ACTOR   — Actor id for product detail (default: junglee/amazon-crawler — same actor, different input)
-//   AMAZON_SHOPPER_APIFY_DOMAIN         — Amazon marketplace (default: amazon.es)
+// Env vars:
+//   AMAZON_SHOPPER_APIFY_TOKEN   — Personal API token (Apify Settings → Integrations). Required.
+//   AMAZON_SHOPPER_APIFY_DOMAIN  — Amazon marketplace (default: amazon.es). Must be one of
+//                                  AMAZON_MARKETPLACES below; anything else is refused.
+//
+// THE ACTOR IS NOT CONFIGURABLE (since 1.2.1). It used to be:
+// AMAZON_SHOPPER_APIFY_SEARCH_ACTOR / _DETAIL_ACTOR named the actor id, so an
+// environment variable chose which third party's container ran against your Apify
+// account, on your credit, and returned the JSON this skill then ranks and
+// recommends from. That is a code-execution and data-provenance decision, and an
+// env var is not the place to make it. The actor is now the constant below.
 //
 // PRIVACY: using this path sends YOUR SEARCH TERMS and the ASINs you look up to
 // api.apify.com, a third party, and costs money per run. It is off unless you set
@@ -24,9 +30,26 @@
 // this module. Apify > Creators API > HTML fetcher (the last is currently
 // WAF-blocked from this gateway IP; honest exit).
 
-const DEFAULT_SEARCH_ACTOR = "junglee/amazon-crawler";
-const DEFAULT_DETAIL_ACTOR = "junglee/amazon-crawler";
+// The one actor this skill runs, for both search and detail (same actor, different
+// input). Pinned, not defaulted: there is no override.
+const SEARCH_ACTOR = "junglee/amazon-crawler";
+const DETAIL_ACTOR = "junglee/amazon-crawler";
 const DEFAULT_DOMAIN = "amazon.es";
+
+// The marketplaces this skill will name to Apify. The domain ends up inside the
+// URL the actor is asked to fetch, so an unconstrained value would have this skill
+// pointing a paid third-party scraper at any host at all.
+const AMAZON_MARKETPLACES = new Set([
+  "amazon.es",
+  "amazon.com",
+  "amazon.co.uk",
+  "amazon.de",
+  "amazon.fr",
+  "amazon.it",
+  "amazon.nl",
+  "amazon.pl",
+  "amazon.se",
+]);
 const API_BASE = "https://api.apify.com/v2";
 
 export function apifyConfigured() {
@@ -36,12 +59,14 @@ export function apifyConfigured() {
 function getConfig() {
   const token = process.env.AMAZON_SHOPPER_APIFY_TOKEN;
   if (!token) throw new Error("Apify not configured (AMAZON_SHOPPER_APIFY_TOKEN missing).");
-  return {
-    token,
-    searchActor: process.env.AMAZON_SHOPPER_APIFY_SEARCH_ACTOR || DEFAULT_SEARCH_ACTOR,
-    detailActor: process.env.AMAZON_SHOPPER_APIFY_DETAIL_ACTOR || DEFAULT_DETAIL_ACTOR,
-    domain: process.env.AMAZON_SHOPPER_APIFY_DOMAIN || DEFAULT_DOMAIN,
-  };
+  const domain = (process.env.AMAZON_SHOPPER_APIFY_DOMAIN || DEFAULT_DOMAIN).trim().toLowerCase();
+  if (!AMAZON_MARKETPLACES.has(domain)) {
+    throw new Error(
+      `AMAZON_SHOPPER_APIFY_DOMAIN="${domain}" is not an Amazon marketplace this skill will query ` +
+        `(allowed: ${[...AMAZON_MARKETPLACES].join(", ")}).`,
+    );
+  }
+  return { token, searchActor: SEARCH_ACTOR, detailActor: DETAIL_ACTOR, domain };
 }
 
 function actorPath(actorId) {
@@ -171,8 +196,11 @@ export async function getItem(asin, { _fetch = globalThis.fetch } = {}) {
   const items = await runActorSync(
     cfg.detailActor,
     {
-      productUrls: [{ url: `https://www.${cfg.domain}/dp/${asin}/` }],
+      // junglee/amazon-crawler requires categoryOrProductUrls even for a /dp/
+      // page. productUrls-only returns HTTP 400 invalid-input (measured 2026-09-08).
+      categoryOrProductUrls: [{ url: `https://www.${cfg.domain}/dp/${asin}/` }],
       proxyCountry: "ES",
+      scrapeProductDetails: true,
     },
     { token: cfg.token, _fetch },
   );

@@ -42,7 +42,7 @@ describe("isTranscriptOnlyModel", () => {
 });
 
 describe("compactUnknownModelLabel", () => {
-  // The literal string the user reported reading in the indicator.
+  // The literal string the architect reported reading in the indicator.
   it("no longer produces the 'gatewa' stub", () => {
     expect(compactUnknownModelLabel("gateway-injected")).not.toBe("gatewa");
     expect(compactUnknownModelLabel("gateway-injected")).toBe("gateway…");

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-// Read the user's SHARED amazon tab and dump its search-result cards to disk.
+// Read the architect's SHARED amazon tab and dump its search-result cards to disk.
 // Written as a file (not a shell -e string) to dodge the CDP template-literal
 // escape trap: the expression contains both quote flavours.
 import { WebSocket } from "ws";

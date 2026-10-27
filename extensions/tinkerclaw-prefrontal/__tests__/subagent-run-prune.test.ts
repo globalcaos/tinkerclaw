@@ -1,5 +1,5 @@
 /**
- * FORK 2026-08-04 (the user): bounded retention for terminal Prefrontal subagent runs.
+ * FORK 2026-08-04 (the architect): bounded retention for terminal Prefrontal subagent runs.
  * Target: subagent-run-prune.ts (pruneTerminalRuns -> run map + liveness clock + progress).
  * Bug-history: `sharedSubagentRuns` in index.ts had only `.set()` calls — no `.delete`, no
  *   `.clear` anywhere in the plugin — so the Prefrontal tree grew monotonically (observed

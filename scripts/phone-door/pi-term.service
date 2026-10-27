@@ -1,0 +1,21 @@
+# pi-term.service: the phone terminal's session, kept alive until the Pi reboots.
+# Why (the architect, 2026-10-22): "every time the app updates or restarts, the console is restarted ... I want
+# the console connection to be persistent until the pi itself restarts", and Claude Code already open in
+# ~/src/jarvis-icu. The tmux server lives in THIS unit, not in phone-door.service, so restarting the door
+# or the app only detaches the phone; term-pty.py re-attaches it. Leaving claude drops to a shell there;
+# leaving that shell ends the session and the unit starts a fresh one.
+# Install: cp scripts/phone-door/pi-term.service ~/.config/systemd/user/ && systemctl --user enable --now pi-term
+[Unit]
+Description=Jarvis phone terminal session (tmux -L jarvis, Claude Code in ~/src/jarvis-icu)
+
+[Service]
+Type=forking
+WorkingDirectory=%h/src/jarvis-icu
+Environment=TERM=xterm-256color COLORTERM=truecolor
+ExecStart=/usr/bin/tmux -L jarvis -f %h/src/tinkerclaw/scripts/phone-door/pi-term.tmux.conf new-session -d -s jarvis -x 80 -y 24 -c %h/src/jarvis-icu "bash -lic 'claude; exec bash -il'"
+ExecStop=/usr/bin/tmux -L jarvis kill-server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

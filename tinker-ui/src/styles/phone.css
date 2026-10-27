@@ -1,0 +1,647 @@
+/* FORK 2026-10-19 (the architect: phone app) — Tinker phone mode. src/phone/phone-mode.ts puts
+   `phone` on <body> on a narrow screen (max-width 820px), inside the Jarvis Android app
+   (html.jarvis-app) or with ?phone=1. EVERY rule here is scoped under body.phone, so the desktop
+   layout is untouched while it is off.
+
+   One column: the compact phone header on top, then the chat (or the alt view) filling the
+   dynamic viewport. The left nav rail and the right panels become off-canvas drawers; the desktop
+   topbar, timeline and treemap are not shown (the toolbox moves into the left drawer). */
+
+body.phone {
+  --phone-header-h: 48px;
+  --phone-top: calc(var(--phone-header-h) + env(safe-area-inset-top, 0px));
+  --phone-left-w: min(80vw, 320px);
+  --phone-right-w: min(92vw, 420px);
+  --phone-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  overflow: hidden;
+  overscroll-behavior: none;
+  font-size: 15px;
+}
+
+body.phone #app {
+  height: var(--phone-vh, 100dvh);
+  width: 100vw;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  transition: none;
+}
+body.phone #app.bottom-collapsed,
+body.phone #app.right-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+/* ── what phone mode does not show ── */
+body.phone .topbar,
+body.phone .context-timeline,
+body.phone .bottom-right-panel,
+body.phone .exec-panel {
+  display: none !important;
+}
+
+/* ── header ── */
+body.phone .phone-header {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--phone-top);
+  padding: env(safe-area-inset-top, 0px) max(6px, env(safe-area-inset-right, 0px)) 0
+    max(6px, env(safe-area-inset-left, 0px));
+  background: url("./wood-panel.jpg") repeat;
+  background-blend-mode: multiply;
+  background-color: #6b5545;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 30;
+}
+body.phone .phone-hbtn {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.phone .phone-hbtn:active,
+body.phone .phone-chat-btn:active {
+  background: rgba(0, 0, 0, 0.25);
+}
+body.phone.phone-left-open #phone-menu-btn,
+body.phone.phone-right-open #phone-more-btn {
+  background: var(--surface2);
+  color: var(--accent);
+}
+body.phone .phone-chat-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid rgba(232, 224, 212, 0.18);
+  border-radius: 10px;
+  background: rgba(26, 21, 16, 0.55);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+body.phone .phone-chat-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.phone .phone-caret {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 13px;
+  transition: transform 0.2s var(--phone-ease);
+}
+body.phone.phone-sheet-open .phone-caret {
+  transform: rotate(180deg);
+}
+
+/* The running dot: the tab glow's colour when renderTabs drew one, else the accent. */
+body.phone .phone-run-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: transparent;
+}
+body.phone .phone-chat-btn .phone-run-dot {
+  display: none;
+}
+body.phone .phone-chat-btn .phone-run-dot.on {
+  display: block;
+}
+body.phone .phone-run-dot.on {
+  background: var(--run, #d97757);
+  box-shadow: 0 0 8px var(--run, #d97757);
+  animation: phone-run-pulse 1.4s ease-in-out infinite;
+}
+@keyframes phone-run-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.phone .phone-run-dot.on {
+    animation: none;
+  }
+}
+
+/* ── main column ── */
+body.phone #recipe-banner {
+  grid-column: 1;
+  grid-row: 2;
+}
+body.phone .chat-area,
+body.phone .alt-view.alt-active {
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  min-height: 0;
+  border-right: none;
+}
+body.phone .messages {
+  padding: 8px 10px;
+  overflow-x: hidden;
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior: contain;
+}
+body.phone .alt-view {
+  touch-action: pan-y pinch-zoom;
+}
+body.phone .msg {
+  max-width: 92%;
+  font-size: 15px;
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+body.phone .msg pre,
+body.phone .msg table {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+body.phone .msg table {
+  display: block;
+}
+/* .msg wraps anywhere on the phone; inside a table that squeezes columns to a few letters.
+   Cells keep whole words and the table scrolls sideways inside itself instead. */
+body.phone .msg table th,
+body.phone .msg table td {
+  overflow-wrap: normal;
+  word-break: normal;
+  min-width: 5.5em;
+}
+body.phone .msg pre {
+  font-size: 12px;
+}
+body.phone .msg img {
+  max-width: 100%;
+  height: auto;
+}
+body.phone .chat-input {
+  gap: 6px;
+  padding: 6px max(8px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px))
+    max(8px, env(safe-area-inset-left, 0px));
+}
+body.phone .chat-input textarea {
+  min-width: 0;
+  min-height: 44px;
+  font-size: 16px; /* 16px stops mobile browsers zooming in on focus */
+  padding: 10px 12px;
+  /* 2026-10-19 (the architect): grows with the text (app.ts autoResizeTA) up to a third of the VISIBLE
+     screen, keyboard excluded (--phone-vh), then scrolls. */
+  max-height: calc(var(--phone-vh, 100dvh) / 3);
+  overflow-y: auto;
+}
+body.phone .chat-input button {
+  min-width: 64px;
+  min-height: 44px;
+  font-size: 14px;
+}
+/* The strips where a thumb starts most edge swipes do not scroll, so nothing gave them a
+   touch-action: the browser took a slow sideways drag there (pointercancel) and the drawer snapped
+   back. Same rule as the scrollers: vertical pans and zoom stay the browser's, sideways is ours.
+   The composer textarea is a scroller of its own, so it needs the rule itself, not inherited. */
+body.phone .phone-header,
+body.phone .chat-input,
+body.phone .chat-input textarea {
+  touch-action: pan-y pinch-zoom;
+}
+
+/* ── drawers ── */
+body.phone nav.sidebar,
+body.phone .right-panels {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 1200;
+  height: var(--phone-vh, 100dvh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y pinch-zoom;
+  transition: transform 0.26s var(--phone-ease);
+  will-change: transform;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.55);
+}
+body.phone.phone-dragging nav.sidebar,
+body.phone.phone-dragging .right-panels,
+body.phone.phone-dragging .phone-backdrop {
+  transition: none;
+}
+
+body.phone nav.sidebar {
+  left: 0;
+  width: var(--phone-left-w);
+  transform: translateX(-105%);
+  grid-row: auto;
+  align-items: stretch;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 10px
+    calc(env(safe-area-inset-bottom, 0px) + 12px) max(10px, env(safe-area-inset-left, 0px));
+  gap: 2px;
+}
+body.phone.phone-left-open nav.sidebar {
+  transform: none;
+}
+body.phone nav.sidebar .nav-sep {
+  width: auto;
+  margin: 6px 4px;
+}
+/* 2026-10-19 (the architect): the left drawer reads at the right drawer's size (its session labels are 10px). */
+body.phone nav.sidebar .nav-btn {
+  width: 100%;
+  height: 34px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+body.phone nav.sidebar .nav-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+/* The label is the button's own data-hint, so a view added to the rail is labelled for free. */
+body.phone nav.sidebar .nav-btn::after {
+  content: attr(data-hint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.phone nav.sidebar .nav-btn.nav-active {
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
+/* The topbar toolbox, moved into the left drawer (phone-mode.ts). */
+body.phone .phone-drawer-tools {
+  margin-top: auto;
+  padding: 12px 4px 0;
+  border-top: 1px solid var(--border);
+}
+body.phone .phone-drawer-tools .topbar-controls {
+  /* base.css end-aligns it in the topbar grid; Chrome honours justify-self in block layout too */
+  justify-self: stretch;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+body.phone .phone-drawer-tools .toolbox {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+body.phone .phone-drawer-tools .topbar-icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  border-radius: 10px;
+}
+body.phone .phone-drawer-tools #gw-status {
+  font-size: 13px !important;
+  padding: 0 6px;
+}
+
+body.phone .right-panels {
+  right: 0;
+  width: var(--phone-right-w);
+  transform: translateX(105%);
+  display: block !important; /* app.ts hides it inline in alt views; the drawer works from any view */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-left: 1px solid var(--border);
+}
+body.phone.phone-right-open .right-panels {
+  transform: none;
+}
+body.phone #app.right-collapsed .right-panels {
+  opacity: 1;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+body.phone .right-panels .rpanel-header {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+/* ── backdrop ── */
+body.phone .phone-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(10, 8, 5, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.26s var(--phone-ease);
+}
+body.phone.phone-left-open .phone-backdrop,
+body.phone.phone-right-open .phone-backdrop,
+body.phone.phone-sheet-open .phone-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+body.phone.phone-sheet-open .phone-backdrop {
+  top: var(--phone-top);
+}
+body.phone.phone-dragging .phone-backdrop {
+  pointer-events: auto;
+}
+
+/* ── chat dropdown ── */
+body.phone .phone-sheet {
+  position: fixed;
+  top: var(--phone-top);
+  left: 0;
+  right: 0;
+  z-index: 1150;
+  max-height: calc(var(--phone-vh, 100dvh) - var(--phone-top) - 24px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6);
+  transform: translateY(-8px);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+body.phone.phone-sheet-open .phone-sheet {
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+body.phone .phone-sheet-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+}
+/* 2026-10-23: the app's update line, pinned under the chat list (outside the scroll). */
+body.phone .phone-sheet-update {
+  flex: none;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(232, 184, 109, 0.4);
+  color: #e8b86d;
+  font-size: 13px;
+}
+body.phone .phone-sheet-update[hidden] {
+  display: none;
+}
+body.phone .phone-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 4px 0 16px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  font-size: 15px;
+}
+body.phone .phone-sheet-row:active {
+  background: var(--surface2);
+}
+body.phone .phone-sheet-row.active {
+  background: var(--surface2);
+  border-left-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+body.phone .phone-sheet-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.phone .phone-sheet-more,
+body.phone .phone-sheet-close,
+body.phone .phone-sheet-close-spacer {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+}
+body.phone .phone-sheet-more {
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+body.phone .phone-sheet-more:active {
+  background: var(--surface2);
+}
+body.phone .phone-sheet-close {
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+body.phone .phone-sheet-close:active {
+  background: rgba(205, 92, 92, 0.25);
+  color: var(--red);
+}
+body.phone .phone-sheet-foot {
+  display: flex;
+  border-top: 1px solid var(--border);
+}
+body.phone .phone-sheet-act {
+  flex: 1 1 50%;
+  min-height: 48px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+body.phone .phone-sheet-act + .phone-sheet-act {
+  border-left: 1px solid var(--border);
+}
+body.phone .phone-sheet-act:active {
+  background: var(--surface2);
+}
+
+/* "New session in this chat" at the head of the drawer toolbox: the desktop logo's action. */
+body.phone .phone-drawer-act {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+body.phone .phone-drawer-act:active {
+  background: var(--surface2);
+}
+
+/* The tab menu (rename, clone, chain, delete) opened from a dropdown row's ⋯: above the
+   drawers and the sheet, with finger-sized rows. */
+body.phone .exec-context-menu {
+  z-index: 1300;
+  font-size: 15px;
+}
+body.phone .exec-context-menu .exec-context-item {
+  min-height: 44px;
+}
+
+/* 2026-10-19 22:46 (the architect) — phone layout of the desktop toolbar:
+   - left drawer keeps only 🌿 Fractal and 🔊 Voice, stacked, so the drawer can be narrow;
+   - 🗂️ side panel and 📊 timeline are not used on the phone (both panels open by swiping);
+   - 🎯 exec mode lives in the header (#phone-exec-btn), so its toolbar copy is hidden here;
+   - the header drops ☰, + and ⋯ (swipes open the drawers; no new session from the phone). */
+body.phone {
+  --phone-left-w: min(46vw, 180px);
+}
+body.phone .phone-drawer-tools .toolbox {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+body.phone .phone-drawer-tools #tb-exec,
+body.phone .phone-drawer-tools #tb-timeline,
+body.phone .phone-drawer-tools #tb-models {
+  display: none !important;
+}
+body.phone #phone-menu-btn,
+body.phone #phone-new-btn,
+body.phone #phone-more-btn {
+  display: none !important;
+}
+body.phone #phone-exec-btn.tb-active {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+}
+/* Exec mode on the phone: the exec panel alone, full screen under the header; 🎯 again returns. */
+body.phone #app.exec-mode .chat-area {
+  display: none !important;
+}
+body.phone #app.exec-mode .exec-panel {
+  display: flex !important;
+  position: fixed;
+  top: var(--phone-top);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-width: none;
+  z-index: 25;
+  overflow: auto;
+}
+
+/* 2026-10-20 (the architect): the left drawer is as wide as its content (10px labels, 🌿 🔊), no wider. */
+body.phone nav.sidebar {
+  width: max-content;
+  max-width: 70vw;
+}
+
+/* 2026-10-20 (the architect): the + row that ends the tab list. */
+body.phone .phone-sheet-new .phone-sheet-title {
+  text-align: center;
+  font-size: 20px;
+  opacity: 0.8;
+}
+
+/* 2026-10-20 (the architect): Pulse charts on the phone. A vertical slide scrolls the panel (the browser's);
+   sideways and pinch are the chart's (presence-graph.ts pan + pinch zoom). */
+body.phone .pg-body {
+  touch-action: pan-y;
+}
+body.phone .pg-chart[data-dragging="1"] {
+  opacity: 0.85;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+/* 2026-10-20 (the architect): the dropdown's button row side by side (first row since 2026-10-21). 2026-10-23: one
+   line-icon set (phone-mode.ts TOOL_ICONS); the stroke is set here so every icon matches. */
+body.phone .phone-sheet-tools {
+  display: flex;
+  justify-content: space-around;
+  gap: 6px;
+}
+body.phone .phone-sheet-tool {
+  flex: 1;
+  min-height: 40px;
+  font-size: 20px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.phone .phone-sheet-tool svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* 2026-10-25 (the architect: "same thickness of line, a bit thinner"): every path draws the same screen width. */
+body.phone .phone-sheet-tool svg * {
+  vector-effect: non-scaling-stroke;
+}
+
+/* 2026-10-20 (the architect): ✈ and ⚙ live in the tab dropdown's bottom row; the header copies go. (`hidden`
+   alone loses to .phone-hbtn's display.) */
+body.phone #phone-trip-btn,
+body.phone #phone-settings-btn {
+  display: none !important;
+}
+
+/* FORK 2026-10-21 (the architect): the PDF reader layer (phone/pdf-reader.ts), the pdf-review viewer over the
+   chat. Not scoped under body.phone: it stays usable if the phone is unfolded while it is open. */
+#pdf-reader-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  background: #f6efe2;
+  padding-top: env(safe-area-inset-top);
+}
+/* 2026-10-25 (the architect): no title bar and no ✕ over the frame; the phone's Back closes the layer. */
+#pdf-reader-layer .pdf-reader-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}

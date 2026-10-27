@@ -28,12 +28,38 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-restage_files=()
+# FORK 2026-10-02 — bug-log.md entries kept landing with failure-class chips that the taxonomy table does not
+# define (4 on 2026-10-01, 2 on 2026-10-02), caught only by the slow bible:invariants run. Check it here.
 for file in "${files[@]}"; do
-  if ! git check-ignore --no-index -q -- "$file"; then
-    restage_files+=("$file")
+  if [ "$file" = "TINKER_UI_DESIGN_BIBLE/bug-log.md" ]; then
+    if ! node "$ROOT_DIR/scripts/bible/bug-log-entry-integrity.mjs" --check=chips >&2; then
+      echo "pre-commit: define the chip in bug-log.md's failure-class taxonomy table (or reuse one), then commit again." >&2
+      exit 1
+    fi
   fi
 done
+
+# FORK 2026-09-26 — a staged file that ALSO has unstaged edits is partially staged. Formatting its
+# working copy and re-adding it commits those edits too: another session's WIP swept into this
+# commit, three times so far (2026-08-17, 2026-09-15, 2026-09-26), invisible until `git show --stat`.
+# Such a file is left exactly as staged (not formatted, not re-added) and named on stderr.
+unstaged=$'\n'"$(git -c core.quotePath=false diff --name-only)"$'\n'
+restage_files=()
+for file in "${files[@]}"; do
+  if git check-ignore --no-index -q -- "$file"; then
+    continue
+  fi
+  case "$unstaged" in
+    *$'\n'"$file"$'\n'*)
+      echo "pre-commit: $file also has unstaged edits; left exactly as staged (not formatted, not re-added)." >&2
+      ;;
+    *) restage_files+=("$file") ;;
+  esac
+done
+
+if [ "${#restage_files[@]}" -eq 0 ]; then
+  exit 0
+fi
 
 format_files=()
 while IFS= read -r -d '' file; do

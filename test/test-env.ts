@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import JSON5 from "json5";
@@ -235,7 +235,25 @@ function createIsolatedTestHome(restore: RestoreEntry[]): {
   process.env.XDG_STATE_HOME = path.join(tempHome, ".local", "state");
   process.env.XDG_CACHE_HOME = path.join(tempHome, ".cache");
 
+  // FORK 2026-10-10 — `process.env.HOME` alone did not isolate `os.homedir()`. Vitest runs test
+  // files in worker threads, and a thread's `process.env` is its own copy: assigning HOME there
+  // never reaches the process environment that `os.homedir()` reads. Probed: HOME was the temp
+  // dir while `homedir()` returned the developer's real home, at import and inside the test. So
+  // every module that builds a path from `homedir()` (total-recall's engram dir, its pack cache,
+  // its cognitive state) read and wrote the real `~/.openclaw` from tests: a cold-pack test
+  // replaced the real shared-memory-bank store with 50 synthetic events. `os.homedir` now follows
+  // HOME for as long as this isolation is installed; `syncBuiltinESMExports` carries the patch to
+  // `import { homedir } from "node:os"` bindings too.
+  const realHomedir = os.homedir;
+  const isolatedHomedir = () => process.env.HOME || realHomedir();
+  os.homedir = isolatedHomedir;
+  syncBuiltinESMExports();
+
   const cleanup = () => {
+    if (os.homedir === isolatedHomedir) {
+      os.homedir = realHomedir;
+      syncBuiltinESMExports();
+    }
     restoreEnv(restore);
     try {
       fs.rmSync(tempHome, { recursive: true, force: true });

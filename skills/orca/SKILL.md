@@ -21,14 +21,14 @@ ORCA is a Workflow. Invoke it through the **Workflow tool** using `scriptPath` (
 
 ```
 Workflow({
-  scriptPath: "<path-to-parallel-implement.workflow.js>",
+  scriptPath: "~/src/jarvis-icu/docs/superpowers/parallel-implement.workflow.js",
   args: {
-    repoRoot: "<absolute-repo-path>",
+    repoRoot: "~/src/tinkerclaw",   // absolute repo path
     units: [
       { id: "u1", task: "<what to change>", writes: ["path/a.ts"], reads: ["path/x.ts"] },
       { id: "u2", task: "<what to change>", writes: ["path/b.ts"] }
     ],
-    wrapPath: "<optional-bash-wrapper>",
+    wrapPath: "~/src/jarvis-icu/.claude/cmd_display.py",  // if the dir enforces a bash wrapper
     verifyHint: "typecheck only the file(s) you changed if a fast per-file check exists"
   }
 })
@@ -135,12 +135,16 @@ per unit, cheap), `'off'` (pre-routing behaviour). `crossProvider:false` restric
 
 Fail-open by construction: if routing is unavailable every unit runs exactly as before.
 
-Inspect routing without running anything if you have the conductor script on this machine.
-If you do not, skip this step — ORCA still works as a Workflow with `scriptPath` above.
+Inspect it without running anything:
+
+```bash
+node ~/src/jarvis-icu/docs/superpowers/orca-conductor.mjs plan --units /tmp/units.json --no-log-routes
+node ~/src/jarvis-icu/docs/superpowers/orca-conductor.mjs table --domain debug   # what it has learned
+```
 
 ## When NOT to use
 
 - A single-file change → just edit it.
 - Truly sequential edits where unit B must read unit A's committed result → split into separate ORCA runs.
 
-Keep the workflow script _with the repo you are editing_, not on a private helper machine.
+Canonical workflow + design spec live in `jarvis-icu`: `docs/superpowers/parallel-implement.workflow.js` and `docs/superpowers/specs/2026-06-04-parallel-multi-agent-coding-design.md`. Routing doctrine (what we took from Fugu and what we deliberately did not): `docs/superpowers/orca-fugu-doctrine.md`.

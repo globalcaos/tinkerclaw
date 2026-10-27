@@ -73,6 +73,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "doctor.memory.status",
     "doctor.memory.dreamDiary",
     "logs.tail",
+    // FORK 2026-09-24 (logging.md §9 step 3): the events writer's health snapshot; inspection only.
+    "logs.writer.stats",
+    // FORK 2026-09-25 (logging.md §8.2, §9 step 10): SAVED events queries by name and the catalog
+    // with last-seen times — read-only connection on the writer thread, no SQL text over RPC.
+    "logs.query",
+    "logs.catalog",
     "channels.status",
     "status",
     "usage.status",
@@ -94,10 +100,20 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "voicewake.get",
     "voicewake.routing.get",
     "briefing.resolve",
+    // FORK 2026-10-06: Jev availability (dormant / armed), read-only, never the token.
+    "jev.status",
+    // FORK 2026-10-09: Fractal v2 (charter C1/C3). The gate asks Jev a question and changes nothing; the ledger is a
+    // file read. Both READ, so the page and the bridge call them with the least-privilege client.
+    "fractal.gate",
+    "fractal.ledger",
+    // FORK 2026-10-25: the chat's live background tasks (a list from the bridge's seam), read-only.
+    "ccBridge.backgroundTasks",
     // FORK 2026-05-10: bare-filename → absolute-path resolver, used by
     // Tinker UI's `.fs-link` click handler when the link only carries the
     // basename (e.g. "BRIEFING.md") rather than a full path.
     "files.resolveBareName",
+    // FORK 2026-10-21: the ask-session card's transcript slice — a file read under ~/.claude/projects.
+    "askSession.slice",
     // FORK 2026-05-11: J15 RSC probes (see bible/probes.md). All READ_SCOPE:
     // returns inspection-only state, never credentials or write capability.
     "debug.session.config",
@@ -239,12 +255,48 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     // dedupeDreamDiary) is WRITE. `cron.run` is ADMIN because it runs an ARBITRARY named
     // job; this runs one fixed, known job.
     "fork.engram.consolidate.run",
+    // FORK 2026-09-25 (logging.md §8.2, §9 step 7): the UI's telemetry write into the events
+    // database. WRITE, never READ — READ is also granted to WRITE holders
+    // (authorizeOperatorScopesForMethod), so a READ classification would hand every read-only
+    // operator token a write path into the observability store. The catalog's `uiIngestable` flag
+    // is the second gate: even with WRITE, a client can only send the `ui.*` rows.
+    "logs.ingest",
+    // FORK 2026-10-25: the page's Fractal decisions as `[fractal-client]` journal lines. WRITE for the same reason as
+    // logs.ingest: a READ classification would give every read-only token a write path into the gateway's log.
+    "fractal.clientLog",
   ],
   [ADMIN_SCOPE]: [
     "channels.start",
     "channels.logout",
     "config.openExternalFile",
+    "config.readExternalFile",
     "debug.dumpUiSnapshot",
+    // FORK 2026-09-14: reveals function names + file paths of the running code; inspection only.
+    "diagnostic.cpuProfile",
+    // FORK 2026-10-09: these 14 were unclassified, so the server already required ADMIN (the `?? ADMIN_SCOPE`
+    // fallback) while least-privilege callers asked for nothing and were refused. Listing them here keeps the
+    // server's gate exactly as it was and gives the client the right ask.
+    // The LLM ledger: full model requests and responses, and the switch that records them.
+    "forensic.setMode",
+    "forensic.getMode",
+    "forensic.getLive",
+    "forensic.getLiveDetail",
+    "forensic.getCallLive",
+    "forensic.getResponseLive",
+    "forensic.getResponseDetail",
+    "forensic.listDumps",
+    "forensic.getDump",
+    "forensic.getDumpDetail",
+    "forensic.summarize",
+    // Fault injection for the probe round-trip tests (debug-simulate.ts).
+    "debug.simulate.stuckSession",
+    "debug.simulate.pluginLoadFail",
+    // The Clone-tab copy of a transcript. Its sibling `sessions.compaction.branch` is WRITE; moving this one there
+    // would loosen today's gate, so it stays ADMIN until the owner says otherwise.
+    "sessions.fork",
+    // FORK 2026-09-29: holds (and releases) every live turn for a restart (lifecycles.md L4b).
+    "gateway.drain",
+    "gateway.drainRelease",
     "agents.create",
     "agents.update",
     "agents.delete",
@@ -262,8 +314,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessions.delete",
     "sessions.compact",
     "sessions.compaction.restore",
+    // FORK 2026-09-30: points the tab at a branch without its last exchange (or back, with undo).
+    "sessions.rewind",
     "connect",
     "chat.inject",
+    // FORK 2026-09-29 (lifecycles.md L4b): display-only restart notice, written by boot recovery.
+    "chat.restartNotice",
     "nativeHook.invoke",
     "web.login.start",
     "web.login.wait",

@@ -73,7 +73,9 @@ declare -a exclude_paths=(
 # ugrep is not used because not all dev hosts have it; grep -P (PCRE) supports
 # lookbehind/lookahead, which the private list relies on.
 # The ONE literal definition (the bible checks source it from here): generic tokens only.
-PII_RE='glpat-|gh[pousr]_[A-Za-z0-9]{30,}'
+# FORK 2026-10-05: obvious fakes in redaction tests (an alphabet run, x's, 1234567890) are not
+# secrets; the first publish after the rewrite was blocked by six of them.
+PII_RE='glpat-|gh[pousr]_(?![a-z]*abcdefgh|[a-z0-9]*x{8}|[0-9a-z]*1234567890)[A-Za-z0-9]{30,}'
 PII_FILE="${TINKERCLAW_PII_FILE:-$HOME/.config/tinkerclaw/pii-private.re}"
 PII_RE+="|$(printf '%s' "$HOME" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
 if [[ -r "$PII_FILE" ]]; then

@@ -31,6 +31,7 @@
 // vanilla OpenClaw.
 import { recordAlgorithmOutcome } from "openclaw/plugin-sdk/fork-instrumentation";
 import { declareInstrument, noteInstrumentFired } from "openclaw/plugin-sdk/fork-instrumentation";
+import { stripPromptEnvelope } from "openclaw/plugin-sdk/fork-prompt-envelope";
 
 /** Stable instrument id — it is grepped and it appears in liveness reports. Do not rename. */
 const EFFORT_ROUTE_INSTRUMENT_ID = "prefrontal:effort-route";
@@ -95,7 +96,7 @@ export type ComplexityLevel = "trivial" | "standard" | "deep" | "ultra";
 export type OrchestrationMode = "solo" | "parallel" | "workflow";
 
 // FORK 2026-06-22: quota-headroom bias. When the weekly token quota is mostly
-// unspent (e.g. Monday morning, ~100% left) the user wants the auto-allocator to
+// unspent (e.g. Monday morning, ~100% left) the architect wants the auto-allocator to
 // "go aggressive in choosing both model and effort on the fly" — so a high
 // headroom bumps every non-trivial turn up one gear, and a tight quota pulls it
 // down one. Pure acks/greetings (trivial) are never escalated: spending opus on
@@ -418,7 +419,9 @@ export function buildEffortGuidance(
   prompt: string,
   bias: EffortBias = resolveEffortBias(),
 ): string | null {
-  const rec = classifyComplexity(prompt, bias);
+  // FORK 2026-10-09 (J-series plan 1.1): the hook's prompt is the gateway's envelope. The stamp and the appended
+  // doctrine (~28,000 characters on his prompts 10-01 … 10-08) are not the task; score the words of the turn.
+  const rec = classifyComplexity(stripPromptEnvelope(prompt), bias);
   // FORK 2026-07-28 — fire HERE: this is where a classification becomes a turn-shaping
   // DECISION. Deliberately BEFORE the trivial early-return below — recording only the tiers
   // that produce guidance would make the ledger a survivorship sample, and "trivial → inject

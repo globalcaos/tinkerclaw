@@ -2,17 +2,22 @@
 
 ## Endpoints
 
-| Resource | List | Single | Create | Update |
-|----------|------|--------|--------|--------|
-| Posts | GET posts | GET posts/ID | POST posts | PUT posts/ID |
-| Pages | GET pages | GET pages/ID | POST pages | PUT pages/ID |
-| Categories | GET categories | GET categories/ID | POST categories | PUT categories/ID |
-| Tags | GET tags | GET tags/ID | POST tags | PUT tags/ID |
-| Media | GET media | GET media/ID | POST media | PUT media/ID |
-| Plugins | GET plugins | GET plugins/SLUG | POST plugins | PUT plugins/SLUG |
-| Users | GET users | GET users/ID | — | PUT users/ID |
-| Comments | GET comments | GET comments/ID | POST comments | PUT comments/ID |
-| Settings | GET settings | — | — | PUT settings |
+Which consent flag `scripts/wp.sh` requires for each call. GET is always free. "publish" = `WP_ALLOW_PUBLISH=1`, "admin" = `WP_ALLOW_ADMIN=1`.
+
+| Resource | List / Single | Create | Update | Delete (trash) |
+|----------|---------------|--------|--------|----------------|
+| Posts | GET posts, posts/ID | POST posts — free, forced to draft | PUT posts/ID — publish | DELETE posts/ID — publish |
+| Pages | GET pages, pages/ID | POST pages — free, forced to draft | PUT pages/ID — publish | DELETE pages/ID — publish |
+| Categories | GET categories, categories/ID | POST categories — free | PUT categories/ID — publish | needs force, refused |
+| Tags | GET tags, tags/ID | POST tags — free | PUT tags/ID — publish | needs force, refused |
+| Media | GET media, media/ID | `wp-upload.sh` — publish | PUT media/ID — publish | needs force, refused |
+| Comments | GET comments, comments/ID | POST comments — publish | PUT comments/ID — publish | DELETE comments/ID — publish |
+| Plugins | GET plugins, plugins/SLUG | POST plugins — admin | PUT plugins/SLUG — admin | admin |
+| Users | GET users, users/ID | admin | PUT users/ID — admin | needs force, refused |
+| Settings | GET settings | — | PUT settings — admin | — |
+| Any other route | GET | admin | admin | admin |
+
+Any write whose body or query string sets `status` to `publish` or `future` also needs publish. `force` (permanent delete) and the `_method` / `rest_route` query parameters are refused.
 
 ## Post/Page Fields
 
@@ -72,6 +77,8 @@ POST to `/wp-json/wp/v2/media` with:
 
 ## Plugin Management
 
+Installing or activating a plugin runs its code on the site; every row below except the list needs `WP_ALLOW_ADMIN=1`.
+
 | Action | Method | Endpoint |
 |--------|--------|----------|
 | List installed | GET | plugins |
@@ -96,9 +103,11 @@ Set via post meta:
 ## Authentication
 
 Application Passwords (WordPress 5.6+):
-- Generate: Users → Profile → Application Passwords
-- Use: HTTP Basic Auth with `username:app-password`
+- Generate: Users → Profile → Application Passwords; revoke there too
+- Use: HTTP Basic Auth with `username:app-password` over HTTPS
 - Spaces in password are optional (accepted both ways)
+- Storage: `scripts/wp.sh --login` puts it in the OS keychain; otherwise a 0600 env file owned by you
+- The scripts never put it on a command line or in their output
 
 ## Rate Limits
 

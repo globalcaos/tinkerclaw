@@ -1,11 +1,18 @@
 /**
  * FORK: Identity Persistence (CORTEX) extension entry point.
  *
- * Registers three plugin hooks:
- * 1. `before_prompt_build` (priority 100) -- Persona injection from SOUL.md,
- *    AMYGDALA personality nudge, and mid-context re-injection when EWMA drifts.
- * 2. `llm_output` -- SyncScore evaluation every N turns (EWMA smoothing).
- * 3. `llm_output` -- Observation extraction at 30K token threshold.
+ * OPT-IN. Nothing here runs until BOTH hold: `config.enabled === true`, and a
+ * persona markdown file already exists (explicit `personaPath`, else the
+ * default `~/.openclaw/workspace/SOUL.md`). Otherwise register() returns having
+ * hooked nothing. The plugin never creates a persona file.
+ *
+ * Once opted in, registers three plugin hooks:
+ * 1. `before_prompt_build` (priority 100) -- Persona injection into the system
+ *    context of EVERY prompt, AMYGDALA personality nudge, and mid-context
+ *    re-injection when EWMA drifts.
+ * 2. `llm_output` -- the spoken-line marker probe on every finished home-chat
+ *    answer (`j.cortex.probe`), then SyncScore evaluation every N turns.
+ * 3. `llm_output` -- Observation extraction, appended to disk.
  *
  * Writes shared state to `~/.openclaw/cognitive/identity-persistence.json`
  * so other extensions (e.g. Computational Humor) can read persona data.
@@ -25,12 +32,17 @@ import {
   createObservationExtractor,
   type ObservationExtractor,
 } from "./src/observation-runtime.js";
+import { personaDeclaresSpokenLine, probeSpokenLine } from "./src/spoken-line-probe.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
-const OPENCLAW_DIR = join(homedir(), ".openclaw");
+// $HOME first, homedir() as the fallback: os.homedir() resolves the passwd
+// entry and ignores a redirected HOME, so a test could not keep this plugin's
+// writes (shared state, observation log) out of the developer's real
+// ~/.openclaw. Same value in production.
+const OPENCLAW_DIR = join(process.env.HOME ?? homedir(), ".openclaw");
 const COGNITIVE_DIR = join(OPENCLAW_DIR, "cognitive");
 const CORTEX_LOG_DIR = join(OPENCLAW_DIR, "cortex");
 const IDENTITY_STATE_PATH = join(COGNITIVE_DIR, "identity-persistence.json");
@@ -39,16 +51,6 @@ const TOTAL_RECALL_STATE_PATH = join(COGNITIVE_DIR, "total-recall.json");
 const OBSERVATION_LOG_PATH = join(CORTEX_LOG_DIR, "observations.jsonl");
 const SYNC_SCORE_LOG_PATH = join(CORTEX_LOG_DIR, "sync-score-log.jsonl");
 const DEFAULT_SOUL_PATH = join(OPENCLAW_DIR, "workspace", "SOUL.md");
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-}
 
 /**
  * Neutral fallback name, used only when the host config names no agent. It is
@@ -91,32 +93,55 @@ function resolveAgentName(config: unknown): string {
   return DEFAULT_AGENT_NAME;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 /**
- * Resolve the persona source path. Checks pluginConfig.personaPath first,
- * then falls back to ~/.openclaw/SOUL.md. If neither exists, bootstraps a
- * default SOUL.md (never overwrites existing files).
+ * The `llm_output` event as the host sends it (src/plugins/hook-types.ts PluginHookLlmOutputEvent):
+ * the answer is `assistantTexts`. Both handlers below read `payload.text ?? payload.content` until
+ * 2026-10-09, fields the event never had, so every turn returned early and CORTEX observed nothing
+ * (the twin of Total Recall's 08-04 fix). `text`/`content` stay as a fallback for older hosts.
  */
-function resolveSoulPath(cfg: Record<string, unknown>, agentName: string): string {
+type LlmOutputPayload = { assistantTexts?: string[]; text?: string; content?: string };
+type LlmOutputContext = { sessionKey?: string; runId?: string; trigger?: string };
+
+function assistantText(payload: LlmOutputPayload): string {
+  return (
+    payload.assistantTexts?.join("\n\n").trim() ||
+    payload.text ||
+    payload.content ||
+    ""
+  ).trim();
+}
+
+function ensureDir(dir: string): void {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+}
+
+/**
+ * Resolve the persona source path, or null when there is nothing to inject.
+ *
+ * The persona must be a file the OWNER wrote. This function never creates,
+ * bootstraps or overwrites one: a plugin that invents a persona for you is
+ * injecting someone else's identity into every prompt.
+ *
+ * - `personaPath` set and present  -> that file.
+ * - `personaPath` set and MISSING  -> null (no silent fallback: an explicit
+ *   path that does not resolve is a configuration error, not a cue to
+ *   substitute a different persona).
+ * - `personaPath` unset            -> the default path if it already exists,
+ *   otherwise null.
+ */
+function resolvePersonaPath(cfg: Record<string, unknown>): string | null {
   const configPath = cfg.personaPath as string | undefined;
   if (configPath) {
     const resolved = configPath.replace(/^~/, homedir());
-    if (existsSync(resolved)) {
-      return resolved;
-    }
+    return existsSync(resolved) ? resolved : null;
   }
-  // Bootstrap default SOUL.md if it doesn't exist
-  if (!existsSync(DEFAULT_SOUL_PATH)) {
-    try {
-      writeFileSync(
-        DEFAULT_SOUL_PATH,
-        `# ${agentName}\n\nA helpful, thoughtful AI assistant.\n`,
-        "utf8",
-      );
-    } catch {
-      // Non-fatal: persona will be created from defaults
-    }
-  }
-  return DEFAULT_SOUL_PATH;
+  return existsSync(DEFAULT_SOUL_PATH) ? DEFAULT_SOUL_PATH : null;
 }
 
 /**
@@ -212,22 +237,60 @@ export default definePluginEntry({
   id: "tinkerclaw-identity-persistence",
   name: "Identity Persistence",
   description:
-    "CORTEX -- Persona injection from SOUL.md, EWMA SyncScore drift detection, " +
-    "mid-context identity reinforcement, and observation extraction.",
+    "CORTEX -- Opt-in persona injection from a persona markdown file, EWMA " +
+    "SyncScore drift detection, mid-context identity reinforcement, and " +
+    "observation extraction. Registers no hooks unless enabled with a persona file.",
   register(api: OpenClawPluginApi) {
     const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
     const threshold = (cfg.syncScoreThreshold as number) ?? 0.6;
     const evaluationInterval = (cfg.evaluationInterval as number) ?? 10;
+    const personalityNudge = cfg.personalityNudge === true;
     const agentName = resolveAgentName(api.config);
 
+    // -----------------------------------------------------------------------
+    // Opt-in gate. This plugin mutates the system context of EVERY prompt and
+    // writes extracted observations to disk, so neither happens until the owner
+    // asks for it in two explicit ways: `enabled: true`, and a persona file
+    // that already exists. Registering nothing is the whole point — a hook that
+    // is registered and then no-ops is still a hook on every turn.
+    // -----------------------------------------------------------------------
+    if (cfg.enabled !== true) {
+      api.logger.info(
+        "[identity-persistence] disabled — set config.enabled=true to inject the persona (no hooks registered)",
+      );
+      return;
+    }
+
+    const soulPath = resolvePersonaPath(cfg);
+    if (!soulPath) {
+      api.logger.warn(
+        `[identity-persistence] no persona file — ${
+          cfg.personaPath
+            ? `configured personaPath '${String(cfg.personaPath)}' does not exist`
+            : `default ${DEFAULT_SOUL_PATH} does not exist`
+        }. Write one (or point personaPath at it); the plugin never creates a persona. No hooks registered.`,
+      );
+      return;
+    }
+
     // -- Initialize cortex runtime --
-    const soulPath = resolveSoulPath(cfg, agentName);
     const runtimeOpts: CortexRuntimeOptions = {
       soulPath,
       name: agentName,
       syncScoreInterval: evaluationInterval,
     };
     const cortex: CortexRuntime = createCortexRuntime(runtimeOpts);
+
+    // J4 Level 1: probe the spoken line only where the persona file itself declares it.
+    let declaresSpokenLine = false;
+    try {
+      declaresSpokenLine = personaDeclaresSpokenLine(
+        readFileSync(soulPath, "utf8"),
+        cortex.persona.name,
+      );
+    } catch {
+      // unreadable now: no probe rows, the rest of the plugin is unaffected
+    }
 
     // -- Initialize observation extractor --
     const observer: ObservationExtractor = createObservationExtractor();
@@ -262,8 +325,11 @@ export default definePluginEntry({
         // Tier 1 persona block
         const personaBlock = cortex.getPersonaBlock();
 
-        // AMYGDALA personality nudge (optional)
-        const nudge = readPersonalityNudge();
+        // AMYGDALA personality nudge — a SECOND prompt mutation, sourced from a
+        // file this plugin does not own (Learned Intuition writes it). Opt-in
+        // separately: enabling persona injection is not consent to inject
+        // whatever another plugin last dropped on disk.
+        const nudge = personalityNudge ? readPersonalityNudge() : "";
         const nudgeBlock = nudge ? `\n[Personality Nudge] ${nudge}\n` : "";
 
         // Mid-context re-injection when EWMA drifts below threshold
@@ -272,97 +338,102 @@ export default definePluginEntry({
           ? `\n[Identity Reinforcement — SyncScore ${reinjectResult.ewmaScore.toFixed(3)}]\n${personaBlock}\n`
           : "";
 
+        // FORK 2026-10-10 (J-series Phase 1.5): the persona is stable and stays in the system prompt; the nudge
+        // changes whenever Learned Intuition rewrites its file, so it rides the turn with the reinforcement block.
         return {
-          prependSystemContext: personaBlock + nudgeBlock,
-          prependContext: reinjectBlock,
+          prependSystemContext: personaBlock,
+          prependContext: nudgeBlock + reinjectBlock,
         };
       },
       { priority: 100 },
     );
 
     // -----------------------------------------------------------------------
-    // Hook 2: llm_output — SyncScore evaluation
+    // Hook 2: llm_output — spoken-line probe, then SyncScore evaluation
     // -----------------------------------------------------------------------
-    api.on(
-      "llm_output",
-      async (payload: { text?: string; content?: string }, _context: { sessionKey: string }) => {
-        turnCounter++;
+    api.on("llm_output", async (payload: LlmOutputPayload, context: LlmOutputContext) => {
+      turnCounter++;
 
-        // Only evaluate every N turns
-        if (turnCounter % evaluationInterval !== 0) {
-          return;
-        }
+      if (declaresSpokenLine) {
+        probeSpokenLine({
+          assistantTexts: payload.assistantTexts,
+          name: cortex.persona.name,
+          context,
+        });
+      }
 
-        const text = payload.text ?? payload.content ?? "";
-        if (!text) {
-          return;
-        }
+      // Only evaluate every N turns
+      if (turnCounter % evaluationInterval !== 0) {
+        return;
+      }
 
-        const result = cortex.evaluateSyncScore([text], turnCounter);
+      const text = assistantText(payload);
+      if (!text) {
+        return;
+      }
 
-        // Log to cortex sync-score log
-        try {
-          ensureDir(CORTEX_LOG_DIR);
-          appendFileSync(
-            SYNC_SCORE_LOG_PATH,
-            JSON.stringify({
-              turn: turnCounter,
-              rawScore: result.rawScore,
-              ewmaScore: result.ewmaScore,
-              needsReinjection: result.needsReinjection,
-              timestamp: result.timestamp,
-            }) + "\n",
-            "utf8",
-          );
-        } catch {
-          // Non-fatal
-        }
+      const result = cortex.evaluateSyncScore([text], turnCounter);
 
-        if (result.needsReinjection) {
-          api.logger.info(
-            `[identity-persistence] SyncScore drift: ewma=${result.ewmaScore.toFixed(3)} < ${threshold} (turn=${turnCounter})`,
-          );
-        }
-      },
-    );
+      // Log to cortex sync-score log
+      try {
+        ensureDir(CORTEX_LOG_DIR);
+        appendFileSync(
+          SYNC_SCORE_LOG_PATH,
+          JSON.stringify({
+            turn: turnCounter,
+            rawScore: result.rawScore,
+            ewmaScore: result.ewmaScore,
+            needsReinjection: result.needsReinjection,
+            timestamp: result.timestamp,
+          }) + "\n",
+          "utf8",
+        );
+      } catch {
+        // Non-fatal
+      }
+
+      if (result.needsReinjection) {
+        api.logger.info(
+          `[identity-persistence] SyncScore drift: ewma=${result.ewmaScore.toFixed(3)} < ${threshold} (turn=${turnCounter})`,
+        );
+      }
+    });
 
     // -----------------------------------------------------------------------
     // Hook 3: llm_output — Observation extraction
     // -----------------------------------------------------------------------
-    api.on(
-      "llm_output",
-      async (payload: { text?: string; content?: string }, _context: { sessionKey: string }) => {
-        const text = payload.text ?? payload.content ?? "";
-        if (!text) {
-          return;
-        }
+    api.on("llm_output", async (payload: LlmOutputPayload, _context: LlmOutputContext) => {
+      const text = assistantText(payload);
+      if (!text) {
+        return;
+      }
 
-        const observations = observer.extractObservations([text]);
-        if (observations.length === 0) {
-          return;
-        }
+      const observations = observer.extractObservations([text]);
+      if (observations.length === 0) {
+        return;
+      }
 
-        // Persist observations
-        try {
-          persistObservations(
-            observations.map((o) => ({
-              type: o.type,
-              content: o.content,
-              confidence: o.confidence,
-            })),
-          );
-        } catch (err) {
-          api.logger.warn(`[identity-persistence] observation persistence failed: ${err}`);
-        }
-
-        api.logger.info(
-          `[identity-persistence] extracted ${observations.length} observation(s) (total=${observer.totalExtracted})`,
+      // Persist observations
+      try {
+        persistObservations(
+          observations.map((o) => ({
+            type: o.type,
+            content: o.content,
+            confidence: o.confidence,
+          })),
         );
-      },
-    );
+      } catch (err) {
+        api.logger.warn(`[identity-persistence] observation persistence failed: ${err}`);
+      }
+
+      api.logger.info(
+        `[identity-persistence] extracted ${observations.length} observation(s) (total=${observer.totalExtracted})`,
+      );
+    });
 
     api.logger.info(
-      `[identity-persistence] ready (persona=${cortex.persona.name}, threshold=${threshold}, interval=${evaluationInterval})`,
+      `[identity-persistence] ready (persona=${cortex.persona.name}, source=${soulPath}, ` +
+        `threshold=${threshold}, interval=${evaluationInterval}, personalityNudge=${personalityNudge})`,
     );
   },
 });

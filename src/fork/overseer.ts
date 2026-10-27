@@ -2,7 +2,7 @@
  * FORK 2026-05-31: THE OVERSEER — a supervisory critic persona that closes a
  * nudge-loop around Jarvis on complex tasks.
  *
- * Shape (per the user's spec):
+ * Shape (per the architect's spec):
  *   - Triggered by the `overseer` recipe on complex tasks (sets the session active).
  *   - After each Jarvis turn completes, the Overseer — a DISTINCT persona, not Jarvis —
  *     is given the chat window + its task and asked whether the ORIGINAL prompt is fully

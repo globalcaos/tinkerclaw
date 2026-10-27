@@ -14,10 +14,15 @@
  *      logs readiness; v0.2 will register a score-modifier via the hybrid
  *      search pipeline once upstream exposes a stable hook point.
  *
- *   3. Contradiction-gate on writes — before memory-core's deep dreaming
- *      promotes a short-term recall to MEMORY.md, this plugin intercepts
- *      and flags contradictions against existing durable memory. In "warn"
- *      mode it logs; in "block" mode it vetoes the promotion.
+ *   3. Memory write gate (config key `contradictionGate`) — one gate in front
+ *      of every memory note write. It reads the notes in the same folder and
+ *      the always-loaded rule files and gives each write one outcome: saved
+ *      with its source, skipped as a repeat, saved with the old line struck
+ *      and dated, refused until the owner answers a clash, or kept as a quote.
+ *      The gate is engram's (openclaw/plugin-sdk/memory-engram); this plugin
+ *      publishes its config for the tinkerclaw-core Claude Code hook and runs
+ *      the gateway door (before_tool_call on write/edit). "warn" = watch (log
+ *      only, the default), "block" = enforce. See src/write-gate-door.ts.
  *
  *   4. Compaction-aware capture — before context compaction drops old
  *      messages, snapshot them into the memory-core corpus so nothing
@@ -29,14 +34,22 @@
  * the fork wins. Install it on a vanilla openclaw and memory-core gains
  * the fork wins.
  *
- * Status: v0.1 — skeleton with hippocampus index wired and running.
- * Other three features log readiness but defer implementation to v0.2+.
- * This is the scaffold for the marketable plugin.
+ * Status: hippocampus index and the memory write gate run; task-conditioned
+ * scoring is still a scaffold and compaction-capture an observer.
  */
 
 import path from "node:path";
+import { resolveDefaultAgentId } from "openclaw/plugin-sdk/config-runtime";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { publishMemoryGateConfig } from "openclaw/plugin-sdk/memory-engram";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { HippocampusIndex, type HippocampusIndexConfig } from "./src/hippocampus-index.js";
+import {
+  createWriteGateHook,
+  defaultGateConfig,
+  resolveGateMode,
+  type ContradictionGateConfig,
+} from "./src/write-gate-door.js";
 
 interface MemoryEnhancementsConfig {
   enabled?: boolean;
@@ -50,10 +63,7 @@ interface MemoryEnhancementsConfig {
     enabled?: boolean;
     taskWeight?: number;
   };
-  contradictionGate?: {
-    enabled?: boolean;
-    mode?: "warn" | "block";
-  };
+  contradictionGate?: ContradictionGateConfig;
   compactionCapture?: {
     enabled?: boolean;
     captureMode?: "dropped-only" | "full-context";
@@ -122,15 +132,48 @@ export default definePluginEntry({
     }
 
     // ---------------------------------------------------------------------
-    // 3. Contradiction-gate — v0.1 stub. Will register on before_message_write
-    //    once upstream exposes the hook against memory-core's write path.
+    // 3. Memory write gate. Publish the config the Claude Code hook reads (or
+    //    remove it when off), then guard the embedded runner's write/edit.
     // ---------------------------------------------------------------------
-    const cgEnabled = cfg.contradictionGate?.enabled !== false;
-    if (cgEnabled) {
-      const mode = cfg.contradictionGate?.mode ?? "warn";
-      api.logger.info(
-        `[memory-enhancements] contradiction-gate: scaffold ready (mode=${mode}); full wiring lands in v0.2 against memory-core's short-term → deep promotion path`,
+    const gateMode = resolveGateMode(cfg.contradictionGate);
+    const stateDir = resolveStateDir();
+    const agentIds = (api.config.agents?.list ?? []).map((a) => a.id).filter(Boolean);
+    const defaultAgentId = resolveDefaultAgentId(api.config);
+    const workspaceFor = (agentId: string | undefined): string | undefined => {
+      try {
+        return api.runtime.agent.resolveAgentWorkspaceDir(api.config, agentId ?? defaultAgentId);
+      } catch {
+        return undefined;
+      }
+    };
+    const workspaceDirs = [...new Set([defaultAgentId, ...agentIds])]
+      .map(workspaceFor)
+      .filter((d): d is string => Boolean(d));
+    const gateConfig = gateMode
+      ? defaultGateConfig(gateMode, workspaceDirs, cfg.contradictionGate)
+      : null;
+    try {
+      publishMemoryGateConfig(stateDir, gateConfig);
+    } catch (err) {
+      api.logger.warn(
+        `[memory-enhancements] write gate: could not publish its config (${err instanceof Error ? err.message : String(err)}); the Claude Code hook stays off`,
       );
+    }
+    if (gateConfig) {
+      api.on(
+        "before_tool_call",
+        createWriteGateHook({
+          config: gateConfig,
+          stateDir,
+          workspaceFor,
+          warn: (m) => api.logger.warn(m),
+        }),
+      );
+      api.logger.info(
+        `[memory-enhancements] write gate: ${gateConfig.mode} on ${gateConfig.roots.length} memory roots, ${gateConfig.rulesFiles.length} rule files; decisions in ${path.join(stateDir, "data", "memory-gate", "gate.jsonl")}`,
+      );
+    } else {
+      api.logger.info("[memory-enhancements] write gate: off (contradictionGate.enabled=false)");
     }
 
     // ---------------------------------------------------------------------
@@ -167,7 +210,7 @@ export default definePluginEntry({
     }
 
     api.logger.info(
-      "[memory-enhancements] ready — hippocampus index live; scoring/contradiction-gate/compaction-capture remain v0.1 scaffolds (see plugin description).",
+      "[memory-enhancements] ready — hippocampus index and write gate live; scoring is a scaffold, compaction-capture an observer (see plugin description).",
     );
   },
 });

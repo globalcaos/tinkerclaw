@@ -13,7 +13,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import fs from "node:fs/promises";
 import { join } from "node:path";
 import {
   extractErrorCode,
@@ -22,7 +21,13 @@ import {
   SUBAGENT_RUNTIME_REQUEST_SCOPE_ERROR_CODE,
 } from "openclaw/plugin-sdk/error-runtime";
 import { declareInstrument, noteInstrumentFired } from "openclaw/plugin-sdk/fork-instrumentation";
-import { FRACTAL_SESSION_PREFIX, type FractalConfig, type FractalRow } from "./types.js";
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
+import {
+  FRACTAL_SESSION_PREFIX,
+  readEvidenceFile,
+  type FractalConfig,
+  type FractalRow,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants — documented CEILINGS (design-principle #19), never working targets
@@ -472,11 +477,12 @@ async function verifyFindingQuotes(findings: ParsedFinding[]): Promise<{
       surviving.push(finding);
       continue;
     }
-    let content: string;
-    try {
-      content = await fs.readFile(finding.path, "utf-8");
-    } catch {
-      abstainedFindings += 1; // missing/unreadable file → drop
+    // Bounded: regular files up to MAX_EVIDENCE_READ_BYTES only. The path comes
+    // from model output, so a FIFO/device/huge file must not hang or bloat the
+    // gateway — an unreadable or out-of-bounds path abstains like a missing one.
+    const content = readEvidenceFile(finding.path);
+    if (content === null) {
+      abstainedFindings += 1; // missing/unreadable/oversized file → drop
       continue;
     }
     if (!content.includes(finding.quote)) {
@@ -681,22 +687,54 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
   noteInstrumentFired("fractal:triage-entry", input.sessionKey || "(no sessionKey)");
 
   const ts = new Date().toISOString();
+  const startedAtMs = Date.now();
   let spawnedAtMs: number | undefined;
   let triageRunId: string | undefined;
 
-  const errorRow = (message: string): FractalRow => ({
-    v: 1,
-    parentRunId: input.parentRunId,
-    sessionKey: input.sessionKey,
-    ...(triageRunId !== undefined ? { triageRunId } : {}),
-    status: "error",
-    headline: message,
-    findings: [],
-    abstainedFindings: 0,
-    escalated: false,
-    ...(spawnedAtMs !== undefined ? { timeToDockMs: Date.now() - spawnedAtMs } : {}),
-    ts,
-  });
+  /**
+   * J3 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.fractal.run` (§9 step 9) — ONE row per
+   * runTriage call, in the closed label set §4.12 declares. The mapping is stated once here,
+   * because the row's three labels are coarser than this lane's FractalRow statuses:
+   *   success — a verdict came back and parsed (the `fractal:triage-docked` condition — the
+   *             number that sat at zero for eight weeks)
+   *   docked  — the triage run itself finished, but nothing usable came back (no assistant reply
+   *             text, or an unparsable verdict). It ARRIVED and produced nothing, which is a
+   *             different failure from never getting there; that distinction is the whole reason
+   *             there are two non-success labels.
+   *   failed  — it never got there: no prompt, no subagent runtime, spawn refused, the run ended
+   *             non-ok, or the function threw.
+   *
+   * `durMs` is the WHOLE call, not `timeToDockMs` (which starts at the spawn): a run that dies
+   * before spawning still costs the turn its time, and a duration that only existed on the happy
+   * path would make the failing lane look free.
+   */
+  const emitRun = (outcome: "success" | "docked" | "failed"): void => {
+    emitEvent("j.fractal.run", {
+      sessionKey: input.sessionKey,
+      runId: input.parentRunId,
+      label: outcome,
+      durMs: Date.now() - startedAtMs,
+    });
+  };
+
+  const errorRow = (message: string, outcome: "docked" | "failed" = "failed"): FractalRow => {
+    // Every failing return in this function goes through errorRow, so the row is emitted here
+    // rather than at each `return` — a new early return cannot silently skip it.
+    emitRun(outcome);
+    return {
+      v: 1,
+      parentRunId: input.parentRunId,
+      sessionKey: input.sessionKey,
+      ...(triageRunId !== undefined ? { triageRunId } : {}),
+      status: "error",
+      headline: message,
+      findings: [],
+      abstainedFindings: 0,
+      escalated: false,
+      ...(spawnedAtMs !== undefined ? { timeToDockMs: Date.now() - spawnedAtMs } : {}),
+      ts,
+    };
+  };
 
   try {
     // (1) compact digest of the finished turn
@@ -764,8 +802,11 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
       parentRunId: input.parentRunId,
     });
     if (!reply.text) {
+      // The run finished; the transcript had nothing readable. It docked empty, it did not fail
+      // to get there.
       return errorRow(
         `triage run produced no assistant reply text (after ${reply.attempts} reads over ${reply.waitedMs}ms)`,
+        "docked",
       );
     }
     const replyText = reply.text;
@@ -773,7 +814,8 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
     // (6) parse the LAST fenced json verdict block
     const parsed = parseTriageVerdict(replyText);
     if ("error" in parsed) {
-      return errorRow(`triage verdict unusable: ${parsed.error}`);
+      // A reply arrived and the grammar rejected it: docked, not failed (see emitRun).
+      return errorRow(`triage verdict unusable: ${parsed.error}`, "docked");
     }
     const timeToDockMs = Date.now() - spawnedAtMs;
 
@@ -802,6 +844,7 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
     // Reached only with a parsed verdict in hand, so it cannot report health that
     // a returned-but-empty row would fake.
     noteInstrumentFired("fractal:triage-docked", `${status} in ${timeToDockMs}ms`);
+    emitRun("success");
     return {
       v: 1,
       parentRunId: input.parentRunId,

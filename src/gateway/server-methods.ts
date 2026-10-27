@@ -11,9 +11,15 @@ import { consumeControlPlaneWriteBudget } from "./control-plane-rate-limit.js";
 import { ADMIN_SCOPE, authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import { ErrorCodes, errorShape } from "./protocol/index.js";
 import { isRoleAuthorizedForMethod, parseGatewayRole } from "./role-policy.js";
-import { noteRpcDispatch, noteRpcRefusal, registerKnownRpcMethods } from "./rpc-observability.js";
+import {
+  noteRpcDispatch,
+  noteRpcHandlerDuration,
+  noteRpcRefusal,
+  registerKnownRpcMethods,
+} from "./rpc-observability.js";
 import { agentHandlers } from "./server-methods/agent.js";
 import { agentsHandlers } from "./server-methods/agents.js";
+import { askSessionHandlers } from "./server-methods/ask-session.js";
 import { briefingHandlers } from "./server-methods/briefing.js";
 import { channelsHandlers } from "./server-methods/channels.js";
 import { chatHandlers } from "./server-methods/chat.js";
@@ -28,14 +34,18 @@ import { debugProbesHandlers } from "./server-methods/debug-probes.js";
 import { debugSimulateHandlers } from "./server-methods/debug-simulate.js";
 import { debugUiSnapshotHandlers } from "./server-methods/debug-ui-snapshot.js";
 import { deviceHandlers } from "./server-methods/devices.js";
+import { diagnosticCpuProfileHandlers } from "./server-methods/diagnostic-cpu-profile.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
 import { doctorHandlers } from "./server-methods/doctor.js";
 import { forkStrategyHandlers } from "./server-methods/engram-strategy.js";
 import { execApprovalsHandlers } from "./server-methods/exec-approvals.js";
 import { filesResolveBareHandlers } from "./server-methods/files-resolve-bare.js";
 import { forensicHandlers } from "./server-methods/forensic.js";
+import { fractalHandlers } from "./server-methods/fractal.js";
+import { gatewayDrainHandlers } from "./server-methods/gateway-drain.js";
 import { gatewayProbesHandlers } from "./server-methods/gateway-probes.js";
 import { healthHandlers } from "./server-methods/health.js";
+import { jevHandlers } from "./server-methods/jev.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsAuthStatusHandlers } from "./server-methods/models-auth-status.js";
 import { modelsHandlers } from "./server-methods/models.js";
@@ -102,6 +112,9 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...voicewakeRoutingHandlers,
   ...healthHandlers,
   ...briefingHandlers,
+  ...jevHandlers,
+  // FORK 2026-10-09: fractal.gate / fractal.ledger — Fractal v2 trigger gate and run ledger (charter C1/C3).
+  ...fractalHandlers,
   ...channelsHandlers,
   ...chatHandlers,
   ...commandsHandlers,
@@ -122,10 +135,19 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // HTML to a file on every render so the architect-side Claude Code session
   // can introspect the live DOM via simple Read(file). See bible §11.x.
   ...debugUiSnapshotHandlers,
+  // FORK 2026-09-14: diagnostic.cpuProfile — in-process V8 sampling profile of the main thread
+  // (perf/ptrace are locked down on the host and SIGUSR1 restarts the gateway).
+  ...diagnosticCpuProfileHandlers,
+  // FORK 2026-09-29: gateway.drain / gateway.drainRelease — hold every live turn at its next
+  // model-call boundary before a restart (lifecycles.md L4b).
+  ...gatewayDrainHandlers,
   // FORK 2026-05-10: files.resolveBareName — bare-filename → absolute-path
   // resolver that walks an allowlist of project roots so the click handler can
   // open files referenced as just `BRIEFING.md` (no leading path) via xdg-open.
   ...filesResolveBareHandlers,
+  // FORK 2026-10-21: askSession.slice — the byte range a woken session appended to its own
+  // transcript, for the Tinker UI's purple ask-session card. Read-only, ~/.claude/projects only.
+  ...askSessionHandlers,
   // FORK 2026-05-11: J15 RSC probes — debug.session.config, debug.session.state,
   // debug.tail.lastN, cron.lastRun, cron.listJobs, wa.lastOutbound, wa.recentOutbound.
   // See bible/probes.md.
@@ -264,8 +286,24 @@ export async function handleGatewayRequest(
       respond,
       context,
     });
-  // All handlers run inside a request scope so that plugin runtime
-  // subagent methods (e.g. context engine tools spawning sub-agents
-  // during tool execution) can dispatch back into the gateway.
-  await withPluginRuntimeGatewayRequestScope({ context, client, isWebchatConnect }, invokeHandler);
+  // FORK 2026-09-25 (logging.md §4.2) — the handler is TIMED at the same chokepoint, which is the
+  // only place a per-method latency exists at all: the `⇄ res` line fires for slow and failed
+  // calls only, so no percentile could ever be computed from it. Two stack slots and one Date.now()
+  // pair per request; the per-minute rollup and the slow-call row are built in rpc-observability.ts.
+  // The `finally` cannot swallow a rejection — it neither returns nor throws, and emitEvent is
+  // documented never to throw (§7.5) — so a handler's error propagates exactly as before.
+  const handlerStartedMs = Date.now();
+  let completed = false;
+  try {
+    // All handlers run inside a request scope so that plugin runtime
+    // subagent methods (e.g. context engine tools spawning sub-agents
+    // during tool execution) can dispatch back into the gateway.
+    await withPluginRuntimeGatewayRequestScope(
+      { context, client, isWebchatConnect },
+      invokeHandler,
+    );
+    completed = true;
+  } finally {
+    noteRpcHandlerDuration(req.method, Date.now() - handlerStartedMs, !completed);
+  }
 }

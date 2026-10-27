@@ -9,15 +9,22 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, resolve, sep } from "node:path";
+import { resolveTrustedBin } from "./resolve-bin.mjs";
 
 // SAFETY: AMAZON_SHOPPER_LLM_CMD names a program this skill will execute, so it
 // is a security boundary and not a convenience setting.
 //
 // Two rules, neither of which can be turned off:
 //   * the command must be one of the LLM CLIs below, and
-//   * it must be a BARE NAME resolved from PATH — a value containing a path
-//     separator is refused, so `/tmp/anything/claude` cannot impersonate an
-//     allowed binary by borrowing its name.
+//   * it must be a BARE NAME — a value containing a path separator is refused,
+//     so `/tmp/anything/claude` cannot impersonate an allowed binary by
+//     borrowing its name.
+//
+// The name is then resolved by scripts/resolve-bin.mjs, not by the OS at exec
+// time: only absolute PATH entries, every symlink followed, and every directory
+// on the way to the real file owned by root or the current user and not writable
+// by others; the real binary is owned by root or you and not group/world-writable.
+// PATH only picks which trusted copy runs. The resolved ABSOLUTE path is spawned.
 //
 // The AMAZON_SHOPPER_ALLOW_ANY_LLM_CMD=1 bypass was removed in 1.2.0. An
 // allowlist with an env-var override is not an allowlist: it widened this into
@@ -53,7 +60,19 @@ async function mockLLM(call_site) {
 
 function runCmd(cmd, args, stdinPayload) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const refused = [];
+    const bin = resolveTrustedBin(cmd, { onRefuse: (c, why) => refused.push(`${c} (${why})`) });
+    if (!bin) {
+      reject(
+        new Error(
+          `${cmd} not found at a trusted location: every directory on the way to the real file must be ` +
+            `owned by root or you and not writable by others` +
+            (refused.length ? `; refused: ${refused.join("; ")}` : ""),
+        ),
+      );
+      return;
+    }
+    const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "",
       err = "";
     child.stdout.on("data", (d) => (out += d.toString()));

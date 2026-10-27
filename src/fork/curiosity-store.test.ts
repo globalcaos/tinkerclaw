@@ -247,6 +247,29 @@ describe("extractTopic (2a)", () => {
   it("returns 'unspecified' when nothing salient", () => {
     expect(extractTopic([], "the a is of to")).toBe("unspecified");
   });
+  // 2026-10-09 (J8 §7): 296 of 319 gap topics were the delivery stamp, "fri 2026-10-09". Real prompt shapes below.
+  it("reads his words, not the stamp, the sender block or the appended doctrine", () => {
+    expect(
+      extractTopic(
+        ["I'm not sure"],
+        "[Fri 2026-10-09 10:00 GMT+2] What is the corporate tax rate in Spain?",
+      ),
+    ).toBe("corporate tax");
+    expect(
+      extractTopic(
+        ["I'm not sure"],
+        'Sender (untrusted metadata):\n```json\n{\n  "label": "Tinker UI (webchat-ui)"\n}\n```\n\n[Wed 2026-10-07 16:59 GMT+2] backup schedule?\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line.',
+      ),
+    ).toBe("backup schedule");
+  });
+  it("a turn an agent or the gateway wrote is not what the user wanted to know: the hedge decides", () => {
+    for (const prompt of [
+      "[Fri 2026-10-09 13:10 GMT+2] ⟦AGENT:🌿 Fractal · prompt 174⟧ The turn above is finished.",
+      "[Fri 2026-10-09 11:07 GMT+2] [System] The gateway restarted and interrupted your previous turn.",
+    ]) {
+      expect(extractTopic(["not sure about the nightly backup"], prompt)).toBe("nightly backup");
+    }
+  });
 });
 
 describe("appendGap / readGaps (JSONL I/O)", () => {

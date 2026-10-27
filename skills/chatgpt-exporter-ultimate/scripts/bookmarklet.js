@@ -1,5 +1,5 @@
 // ChatGPT Full Export Bookmarklet v2.1
-// Exports your conversations — including the ones inside Projects (folders) — to a JSON
+// Exports your conversations — and, if you say yes, the ones inside Projects (folders) — to a JSON
 // file in your Downloads folder. Paste this entire script in the DevTools console while
 // on chatgpt.com.
 //
@@ -9,9 +9,9 @@
 // stops or narrows the scope. Nothing is uploaded anywhere — the only output is the file
 // your browser downloads.
 //
-// CREDENTIALS: it authenticates with your existing session cookie. It only reads a bearer
-// token from /api/auth/session if the cookie call is rejected, and even then the token
-// stays in this function's scope: never logged, never stored, never sent off-origin.
+// CREDENTIALS: cookie only. Every request rides the session cookie the page already holds.
+// It reads no bearer token (it never calls /api/auth/session); if the cookie is rejected it
+// tells you to log in again and stops.
 //
 // OFF SWITCH: cancel the first dialog. Nothing is fetched and nothing is downloaded.
 
@@ -47,21 +47,20 @@
   );
 
   // ---------------------------------------------------------------- auth
-  // Cookie-first. The token branch is a fallback and the value never leaves this scope.
-  let headers = {};
+  // COOKIE ONLY. Every request below rides the session cookie the page already holds, exactly
+  // as the page's own code does. No credential is read, stored or sent. If the cookie is
+  // rejected the session is over, and the answer is to log in again.
+  const headers = {};
   const probe = await fetch("/backend-api/conversations?offset=0&limit=1", {
     credentials: "include",
   });
 
   if (probe.status === 401 || probe.status === 403) {
-    console.log("🔑 Session cookie was rejected — falling back to the session access token.");
-    const sessionResp = await fetch("/api/auth/session", { credentials: "include" });
-    const { accessToken } = await sessionResp.json();
-    if (!accessToken) {
-      alert("❌ Not logged in! Please log into ChatGPT first.");
-      return;
-    }
-    headers = { Authorization: `Bearer ${accessToken}` };
+    alert(
+      "❌ Not logged in, or the session has expired.\n\n" +
+        "Reload chatgpt.com, make sure you are logged in, and run this again.",
+    );
+    return;
   } else if (!probe.ok) {
     alert(`❌ ChatGPT API returned HTTP ${probe.status}. Try reloading chatgpt.com and re-running.`);
     return;

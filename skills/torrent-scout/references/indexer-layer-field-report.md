@@ -41,9 +41,9 @@ Every number below came from a command run during this session. Items I could no
 Jackett's startup log states its own search order for Cardigann YAML (verbatim):
 
 ```
-Loading Cardigann indexers from: $HOME/.config/cardigann/definitions/,
+Loading Cardigann indexers from: ~/.config/cardigann/definitions/,
                                 /etc/xdg/cardigan/definitions/,
-                                $HOME/.local/share/jackett/Jackett/Definitions
+                                ~/.local/share/jackett/Jackett/Definitions
 Loaded 554 Cardigann indexers.
 Loaded 619 indexers in total
 Adding aggregate indexer ('all' indexer) ...
@@ -54,7 +54,7 @@ Adding filter indexer ('type:semi-public' indexer) ...
 
 The first two directories do not exist here — **that is the drop-in path for custom definitions**: put a `.yml` in `~/.config/cardigann/definitions/` and it loads without touching the install. Note the aggregate filter is spelled `type:semi-public` even though the YAML field value is `semi-private`.
 
-A second, stale copy exists in a Timeshift snapshot at `/run/timeshift/backup$HOME/.local/share/jackett/Jackett/Definitions` — ignore it.
+A second, stale copy exists in a Timeshift snapshot at `/run/timeshift/backup~/.local/share/jackett/Jackett/Definitions` — ignore it.
 
 **No Prowlarr on this machine** (no binary, no `~/.config/Prowlarr`, nothing on :9696). Prowlarr consumes the same Cardigann schema, so the map below transfers.
 

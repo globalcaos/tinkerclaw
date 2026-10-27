@@ -163,6 +163,29 @@ describe("windowBallistic — NEAR and DEFICIT are both required", () => {
     expect(supplyStateFrom("openrouter", windows, NOW).ballistic).toBe(false);
     expect(supplyStateFrom("unknown", windows, NOW).ballistic).toBe(false);
   });
+
+  it("does NOT arm when a longer window of the same supply is ahead of pace", () => {
+    // Burning a short window's surplus spends the weekly allowance too. 5-hour: 90% elapsed,
+    // 50% used (would burn alone); 7-day: 99% used with three days left. Before the fix this
+    // priced the nearly-exhausted supply at σ = −1.
+    const s = supplyStateFrom(
+      "anthropic",
+      [win("5-hour", 50, 0.5 * HOUR), win("7-day", 99, 3 * DAY)],
+      NOW,
+    );
+    expect(s.ballistic).toBe(false);
+    expect(s.shadow).toBeGreaterThan(0);
+  });
+
+  it("still arms when every other window of the supply is behind pace", () => {
+    const s = supplyStateFrom(
+      "anthropic",
+      [win("5-hour", 50, 0.5 * HOUR), win("7-day", 20, 3 * DAY)],
+      NOW,
+    );
+    expect(s.ballistic).toBe(true);
+    expect(s.shadow).toBe(-1);
+  });
 });
 
 describe("effectiveCost — fairness enters as a price, not as a rule", () => {

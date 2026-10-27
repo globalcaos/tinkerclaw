@@ -2,14 +2,17 @@
 /**
  * linkedin.mjs — LinkedIn Voyager crawl via browser session cookies
  *
- * Pattern mirrors teams-hack: borrow the session the browser already holds,
- * store it, call LinkedIn's own internal API (Voyager) with it.
+ * The tab you shared is the only place the session ever lives. API calls are
+ * fetch() executed INSIDE that tab against LinkedIn's own internal API (Voyager);
+ * `search people` instead navigates that tab to a LinkedIn search URL and reads the
+ * rendered page. Either way `li_at` is never extracted, stored or replayed from here. Every
+ * target — request, navigation, tab pick — is pinned to the exact origin
+ * https://www.linkedin.com.
  *
  * Subcommands:
- *   session extract-browser     Print JS to pull cookies/csrf from linkedin.com tab
- *   session store --li-at <v> --jsessionid <v> [--csrf-token <v>] [--bcookie <v>] [--bscookie <v>]
- *   session test
- *   session status
+ *   session check               Confirm the shared tab is a signed-in LinkedIn session
+ *   session status              Where things stand; never prints a secret
+ *   session logout              Purge local data + anything <=1.2.0 left behind
  *   me
  *   profile <vanity-or-urn> [--raw]
  *   search people "<query>" [--top N] [--network F|S|O]
@@ -17,7 +20,7 @@
  *   connections [--top N] [--start N]
  *   conversations [--top N]
  *   messages <conversationUrn> [--top N]
- *   message-send <conversationUrn> --message <text>   # gated; needs --i-mean-it
+ *   message-send <conversationUrn> --message <text> --i-mean-it <conversationUrn>
  *   feed [--top N]
  *   notifications [--top N]
  *   company <vanity-or-id>
@@ -28,7 +31,6 @@
  */
 
 import { execFileSync } from "child_process";
-import { lookup as dnsLookup } from "dns/promises";
 import {
   readFileSync,
   writeFileSync,
@@ -37,31 +39,80 @@ import {
   chmodSync,
   unlinkSync,
   lstatSync,
+  openSync,
+  closeSync,
+  renameSync,
 } from "fs";
+import { isIPv4 } from "net";
 import { homedir, platform } from "os";
-import { join, isAbsolute, sep } from "path";
+import { join, isAbsolute, sep, resolve } from "path";
+import { fileURLToPath } from "url";
 
 const CREDS_DIR = join(homedir(), ".openclaw/credentials");
 const TOKEN_FILE = join(CREDS_DIR, "linkedin-session.json");
 const ACTIVITY_FILE = join(homedir(), ".openclaw/workspace/memory/linkedin-activity.json");
-const VOYAGER = "https://www.linkedin.com/voyager/api";
-const UA =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+// The ONE origin this skill will talk to, navigate to, or run script in. It is
+// compared with === against a parsed URL's `origin`, so a look-alike host
+// (www.linkedin.com.evil.example), a bare `linkedin.com`, a plain-http URL and a
+// non-default port all fail. No flag widens it.
+const LINKEDIN_ORIGIN = "https://www.linkedin.com";
+const VOYAGER = `${LINKEDIN_ORIGIN}/voyager/api`;
 const RELAY_CDP = process.env.LINKEDIN_CDP_URL || "ws://127.0.0.1:18792/cdp";
 const RELAY_HTTP = process.env.LINKEDIN_RELAY_HTTP || "http://127.0.0.1:18792";
 
 // Daily ceilings. These are published, conservative limits on how much this skill
 // will do in a day; they exist so an agent cannot run up an unbounded amount of
 // activity on your account without you noticing. They are a brake, not a disguise.
+//
+// What a counter counts: RECORDS REQUESTED from LinkedIn — the `count` a command asks
+// for (its --top), or 1 for a single-entity lookup. The full amount is reserved BEFORE
+// the first request goes out, a fallback request reuses that reservation, and a
+// failed request is not refunded. The limits in linkedin-activity.json can only
+// LOWER these numbers, never raise them.
 const DEFAULT_LIMITS = {
-  messages_sent: 25,
-  messages_read: 200,
-  profile_views: 40,
-  connections_sent: 15,
-  likes: 40,
-  sessions: 15,
-  total_minutes: 90,
+  sessions: 15, // session check
+  profile_views: 40, // me, profile, company, the profile lookup inside posts
+  search_results: 100, // search people / search companies, charged --top per search
+  connections_listed: 500, // connections, charged --top per call
+  conversations_listed: 100, // conversations, charged --top per call
+  messages_read: 200, // messages, charged --top per thread read
+  feed_items: 100, // feed, charged --top
+  notifications_read: 100, // notifications, charged --top
+  posts_read: 100, // posts, charged --top
+  messages_sent: 25, // message-send, 1 per send
 };
+
+// Hard per-call maximums for --top (and the other paging flags). A value outside the
+// range is REJECTED, not clamped, so a caller always sees what it actually asked for.
+const TOP_MAX = {
+  search: 25,
+  connections: 100,
+  conversations: 50,
+  messages: 50,
+  feed: 25,
+  notifications: 50,
+  posts: 25,
+};
+const START_MAX = 10000;
+const PAGE_MAX = 40;
+
+// Strict integer flag parser: digits only, inside [min, max]. `--top 1e9`, `--top -5`,
+// `--top 2.5`, `--top abc`, a bare `--top` and anything above max all fail loudly.
+function parseCount(flags, name, def, max, min = 1) {
+  const raw = flags[name];
+  if (raw === undefined) return def;
+  const str = String(raw);
+  if (raw === true || !/^[0-9]{1,6}$/.test(str)) {
+    throw new Error(
+      `--${name} must be an integer between ${min} and ${max} (got ${raw === true ? "no value" : str}).`,
+    );
+  }
+  const n = Number(str);
+  if (n < min || n > max) {
+    throw new Error(`--${name} must be an integer between ${min} and ${max} (got ${n}).`);
+  }
+  return n;
+}
 
 // Courtesy rate limiting: a fixed minimum interval between Voyager calls, so this
 // skill cannot hammer LinkedIn. It is deliberately DETERMINISTIC and announced —
@@ -70,17 +121,20 @@ const DEFAULT_LIMITS = {
 const PACE_BASE = Math.max(500, parseInt(process.env.LINKEDIN_PACE_MS || "1500", 10) || 1500);
 let _lastVoyagerAt = 0;
 
-// ─── Session store ───
-// `li_at` is password-equivalent: whoever holds it is signed in as you, with no
-// second factor and no per-request consent. So the ONLY store this skill will use
-// on its own is the OS keychain. If there is no keychain, persistence FAILS CLOSED:
-// nothing is written, and you are told to either install a keychain or run with
-// LINKEDIN_TRANSPORT=browser, which needs no stored session at all.
+// ─── No credential store ───
+// This skill does not extract, store or replay your LinkedIn cookies. Every request
+// runs inside the tab you shared, so `li_at` never leaves the browser and there is
+// nothing at rest for a backup tool, a sync client or another process to pick up.
 //
-// A 0600 file store still exists, but it is never reached by accident — it takes an
-// explicit, per-run `--allow-plaintext-store` (or LINKEDIN_ALLOW_PLAINTEXT_STORE=1),
-// it stores the minimum field set, and it self-expires after 24h.
-// There is no switch that disables the keychain.
+// Consequences worth stating plainly:
+//   * there is no plaintext file store, and no flag that creates one;
+//   * there is no external replay path, so a stolen jar would have nothing to drive.
+//
+// The one keychain helper below is DELETE-ONLY. It exists so `session logout` can
+// clean up an entry left behind by version <= 1.2.0, which did store a session. There
+// is no keychain lookup anywhere in this file: no code path asks the keychain for a
+// value, so a legacy secret is never copied into this process. Nothing in this
+// version writes a credential anywhere.
 const KEYRING_SERVICE = "openclaw-linkedin-hack";
 const KEYRING_ACCOUNT = "linkedin-session";
 const KEYCHAIN_BIN = platform() === "darwin" ? "security" : "secret-tool";
@@ -89,77 +143,21 @@ const KEYCHAIN_BIN = platform() === "darwin" ? "security" : "secret-tool";
 // file is ours before removing it.
 const MARKER = "openclaw-linkedin-hack";
 
-// The plaintext fallback is opt-in and short-lived.
-const FILE_STORE_TTL_MS = 24 * 3_600_000;
-let _allowPlaintextFlag = false;
-function plaintextStoreAllowed() {
-  return _allowPlaintextFlag || process.env.LINKEDIN_ALLOW_PLAINTEXT_STORE === "1";
-}
-
-// Write a file that only this user can read, whether or not it already existed
-// (the `mode` option is ignored for an existing file).
+// Write a file that only this user can read. The bytes go to a sibling temp file
+// (created 0600) that is then renamed over the target, so a reader never sees a
+// half-written file and the target always ends up 0600.
 function writePrivate(file, data) {
-  writeFileSync(file, data, { mode: 0o600 });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, data, { mode: 0o600 });
   try {
-    chmodSync(file, 0o600);
+    chmodSync(tmp, 0o600);
   } catch {}
+  renameSync(tmp, file);
 }
 
-// Each helper runs one fixed binary with a fixed argument list and no shell, and
-// returns false/null rather than throwing when the keychain is simply absent.
-//
-// On BOTH platforms the secret travels over stdin and never appears in argv, so it
-// cannot be read out of `ps`, an audit log, or a shell history. macOS `security`
-// reads the password from stdin when -w is given with no value (it may ask twice,
-// hence the doubled line). The write is then verified by reading it back — if the
-// value did not land, this returns false and the caller fails closed rather than
-// silently believing the session was sealed.
-function keychainSet(value) {
-  try {
-    if (KEYCHAIN_BIN === "security") {
-      execFileSync(
-        "security",
-        ["add-generic-password", "-U", "-s", KEYRING_SERVICE, "-a", KEYRING_ACCOUNT, "-w"],
-        { input: `${value}\n${value}\n`, stdio: ["pipe", "ignore", "ignore"] },
-      );
-    } else {
-      execFileSync(
-        "secret-tool",
-        [
-          "store",
-          "--label=OpenClaw LinkedIn session",
-          "service",
-          KEYRING_SERVICE,
-          "account",
-          KEYRING_ACCOUNT,
-        ],
-        { input: value, stdio: ["pipe", "ignore", "ignore"] },
-      );
-    }
-  } catch {
-    return false;
-  }
-  // Read-back verification: never report "sealed" on an unproven write.
-  return keychainGet() === value;
-}
-
-function keychainGet() {
-  try {
-    const argv =
-      KEYCHAIN_BIN === "security"
-        ? ["find-generic-password", "-s", KEYRING_SERVICE, "-a", KEYRING_ACCOUNT, "-w"]
-        : ["lookup", "service", KEYRING_SERVICE, "account", KEYRING_ACCOUNT];
-    const v = execFileSync(KEYCHAIN_BIN, argv, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const trimmed = String(v || "").replace(/\n$/, "");
-    return trimmed || null;
-  } catch {
-    return null;
-  }
-}
-
+// Runs one fixed binary with a fixed argument list and no shell. Its output is
+// discarded (stdio ignored) — delete prints no secret, and none is captured anyway.
+// Returns false rather than throwing when the keychain or the entry is simply absent.
 function keychainDelete() {
   try {
     const argv =
@@ -180,7 +178,14 @@ function keychainDelete() {
 // $HOME, a REGULAR FILE and never a SYMLINK (so it cannot be aimed elsewhere by
 // swapping a link), and it must be one this skill actually created — proven by the
 // MARKER it stamps into its own files.
-const OWNED_FILES = new Set([TOKEN_FILE, ACTIVITY_FILE]); // CACHE_FILE added at its definition
+//
+// One exception to the marker rule: the legacy session file at the fixed path
+// TOKEN_FILE. That file holds a password-equivalent cookie, so its contents are
+// never opened — not even to look for the marker. It is deleted on the structural
+// checks alone (absolute, inside $HOME, regular file, not a symlink), which is safe
+// because the path is a constant this skill owns, not something a caller supplies.
+const ACTIVITY_LOCK = `${ACTIVITY_FILE}.lock`;
+const OWNED_FILES = new Set([ACTIVITY_FILE, ACTIVITY_LOCK]); // CACHE_FILE added at its definition
 
 function isOwnedFile(file) {
   let parsed;
@@ -191,7 +196,7 @@ function isOwnedFile(file) {
   }
   if (parsed && parsed._openclaw_skill === MARKER) return true;
   // Files written by <=1.1.0 predate the marker. Accept them only at this skill's own
-  // three fixed paths, so the off switch keeps working for existing installs.
+  // fixed paths, so the off switch keeps working for existing installs.
   return OWNED_FILES.has(file) && parsed !== null && typeof parsed === "object";
 }
 
@@ -207,7 +212,8 @@ function safeUnlink(file) {
   }
   if (st.isSymbolicLink()) throw new Error(`refusing to delete a symlink: ${file}`);
   if (!st.isFile()) throw new Error(`refusing to delete a non-regular file: ${file}`);
-  if (!isOwnedFile(file)) {
+  // TOKEN_FILE is the fixed legacy credential path: deleted without reading it.
+  if (file !== TOKEN_FILE && !isOwnedFile(file)) {
     throw new Error(
       `refusing to delete ${file}: it carries no ${MARKER} marker, so this skill did not create it`,
     );
@@ -216,96 +222,8 @@ function safeUnlink(file) {
   return true;
 }
 
-function loadCreds() {
-  const sealed = keychainGet();
-  if (sealed) {
-    try {
-      return JSON.parse(sealed);
-    } catch {
-      console.error("Keychain entry is not valid JSON — ignoring it.");
-    }
-  }
-  if (!existsSync(TOKEN_FILE)) return {};
-  try {
-    const c = JSON.parse(readFileSync(TOKEN_FILE, "utf8"));
-    // The opt-in file store self-expires: an abandoned session file stops being a
-    // usable credential after a day, and is removed on the first run that sees it.
-    if (c.expires_at && Date.parse(c.expires_at) < Date.now()) {
-      console.error(
-        `The stored session in ${TOKEN_FILE} expired at ${c.expires_at} — deleting it.`,
-      );
-      try {
-        safeUnlink(TOKEN_FILE);
-      } catch (e) {
-        console.error(`Could not remove the expired file: ${e.message}`);
-      }
-      return {};
-    }
-    return c;
-  } catch {
-    return {};
-  }
-}
-
-// Returns 'keychain' or 'file' so callers can report where the secret landed.
-// Throws — rather than quietly writing a plaintext file — when there is no keychain
-// and the caller has not explicitly accepted the plaintext store.
-function saveCreds(creds) {
-  const blob = JSON.stringify({ ...creds, _openclaw_skill: MARKER }, null, 2);
-  if (keychainSet(blob)) {
-    // Never leave a second copy behind: an earlier run may have written the file.
-    if (existsSync(TOKEN_FILE)) {
-      try {
-        safeUnlink(TOKEN_FILE);
-      } catch (e) {
-        console.error(`Note: could not remove the old file copy: ${e.message}`);
-      }
-    }
-    console.error(
-      `Session sealed in the OS keychain (${KEYCHAIN_BIN}: ${KEYRING_SERVICE}/${KEYRING_ACCOUNT}).`,
-    );
-    return "keychain";
-  }
-
-  if (!plaintextStoreAllowed()) {
-    throw new Error(
-      `No usable OS keychain (${KEYCHAIN_BIN} is missing, refused, or failed read-back), so NOTHING was saved.\n` +
-        "Your LinkedIn session cookie is password-equivalent, and this skill will not write it to a plain\n" +
-        "file unless you say so in the same breath. Pick one:\n" +
-        "  1. Install a keychain — libsecret (secret-tool) on Linux, Keychain on macOS. Recommended.\n" +
-        "  2. Do not persist at all — LINKEDIN_TRANSPORT=browser (the default) keeps the cookies inside\n" +
-        "     the shared tab and needs no stored session.\n" +
-        "  3. Accept the risk explicitly: re-run with --allow-plaintext-store (or set\n" +
-        `     LINKEDIN_ALLOW_PLAINTEXT_STORE=1). That writes ${TOKEN_FILE} at mode 0600, keeps only the\n` +
-        "     fields needed to make a request, and expires it after 24h.",
-    );
-  }
-
-  // Explicitly accepted: keep the minimum field set, and stamp an expiry on it.
-  const minimal = {
-    li_at: creds.li_at,
-    jsessionid: creds.jsessionid,
-    csrf_token: creds.csrf_token,
-    source: creds.source || "browser-session",
-    updated_at: creds.updated_at || new Date().toISOString(),
-    expires_at: new Date(Date.now() + FILE_STORE_TTL_MS).toISOString(),
-    _openclaw_skill: MARKER,
-  };
-  mkdirSync(CREDS_DIR, { recursive: true });
-  writePrivate(TOKEN_FILE, JSON.stringify(minimal, null, 2));
-  console.error(
-    `WARNING: no OS keychain available (${KEYCHAIN_BIN} not found or refused), and you passed\n` +
-      "WARNING:   --allow-plaintext-store, so the session was written to disk.\n" +
-      `WARNING: file: ${TOKEN_FILE} (mode 0600, expires ${minimal.expires_at}).\n` +
-      "WARNING: that file is session-equivalent — anyone who reads it is signed in as you, with no\n" +
-      'WARNING: password and no second factor. Backup and sync tools count as "anyone".\n' +
-      "WARNING: run   linkedin session logout   as soon as you are done.",
-  );
-  return "file";
-}
-
-// The off switch. Clears BOTH stores and reports what was actually removed.
-function clearCreds() {
+// The off switch for anything an older version left on this machine.
+function clearLegacyCreds() {
   const removed = [];
   if (keychainDelete()) removed.push(`keychain:${KEYRING_SERVICE}/${KEYRING_ACCOUNT}`);
   if (existsSync(TOKEN_FILE)) {
@@ -318,37 +236,14 @@ function clearCreds() {
   return removed;
 }
 
-function requireSession() {
-  const c = loadCreds();
-  if (!c.li_at) {
-    throw new Error(
-      "No LinkedIn session. Sign in on linkedin.com/feed, share the tab, then:\n" +
-        "  linkedin session extract-cdp --store",
-    );
-  }
-  return c;
-}
-
-function cookieHeader(c) {
-  const parts = [`li_at=${c.li_at}`];
-  if (c.jsessionid) {
-    // JSESSIONID often arrives already-quoted ("ajax:…")
-    const j = c.jsessionid.startsWith('"') ? c.jsessionid : `"${c.jsessionid}"`;
-    parts.push(`JSESSIONID=${j}`);
-  }
-  if (c.bcookie) parts.push(`bcookie=${c.bcookie.startsWith('"') ? c.bcookie : `"${c.bcookie}"`}`);
-  if (c.bscookie)
-    parts.push(`bscookie=${c.bscookie.startsWith('"') ? c.bscookie : `"${c.bscookie}"`}`);
-  if (c.li_a) parts.push(`li_a=${c.li_a}`);
-  if (c.lidc) parts.push(`lidc=${c.lidc}`);
-  return parts.join("; ");
-}
-
-function csrfToken(c) {
-  // Voyager CSRF is the JSESSIONID value without quotes, often "ajax:NNNN"
-  if (c.csrf_token) return c.csrf_token.replace(/^"|"$/g, "");
-  if (c.jsessionid) return c.jsessionid.replace(/^"|"$/g, "");
-  throw new Error("Missing csrf/JSESSIONID");
+// True when the legacy session FILE written by version <= 1.2.0 is still on disk — an
+// existsSync on a fixed path, the file is not opened. The legacy KEYCHAIN entry is
+// deliberately not checked: the platform CLIs (`secret-tool lookup`,
+// `security find-generic-password -w`) answer "does it exist" by returning the secret
+// itself, so status reports the keychain as not checked and `session logout` deletes
+// the fixed entry unconditionally (a no-op when it is absent).
+function legacyFilePresent() {
+  return existsSync(TOKEN_FILE);
 }
 
 // ─── Activity / rate guard ───
@@ -368,15 +263,9 @@ function loadActivity() {
     lastSession: null,
     today: {
       date: todayISO(),
-      messages_sent: 0,
-      messages_read: 0,
-      profile_views: 0,
-      connections_sent: 0,
-      likes: 0,
-      sessions: 0,
-      total_minutes: 0,
+      ...Object.fromEntries(Object.keys(DEFAULT_LIMITS).map((k) => [k, 0])),
     },
-    thisWeek: { weekStart: weekStartISO(), connections_sent: 0, messages_sent: 0 },
+    thisWeek: { weekStart: weekStartISO(), messages_sent: 0 },
     warnings: [],
     securityChecks: [],
     limits: { ...DEFAULT_LIMITS },
@@ -384,13 +273,26 @@ function loadActivity() {
   if (!existsSync(ACTIVITY_FILE)) return blank;
   try {
     const a = JSON.parse(readFileSync(ACTIVITY_FILE, "utf8"));
-    if (a.today?.date !== todayISO()) {
-      a.today = { ...blank.today };
+    // Same day: keep today's counts, but make sure every current counter exists and is a
+    // non-negative number — a file from an older version lacking a counter must not
+    // leave that counter un-incrementable (and therefore unlimited).
+    a.today = a.today?.date === todayISO() ? { ...blank.today, ...a.today } : { ...blank.today };
+    a.thisWeek =
+      a.thisWeek?.weekStart === weekStartISO()
+        ? { ...blank.thisWeek, ...a.thisWeek }
+        : { ...blank.thisWeek };
+    for (const k of Object.keys(DEFAULT_LIMITS)) {
+      const v = a.today[k];
+      a.today[k] = Number.isFinite(v) && v > 0 ? v : 0;
     }
-    if (a.thisWeek?.weekStart !== weekStartISO()) {
-      a.thisWeek = { ...blank.thisWeek };
-    }
-    a.limits = { ...DEFAULT_LIMITS, ...(a.limits || {}) };
+    // Limits in the file may only LOWER a published ceiling, never raise it.
+    const fileLimits = a.limits && typeof a.limits === "object" ? a.limits : {};
+    a.limits = Object.fromEntries(
+      Object.entries(DEFAULT_LIMITS).map(([k, def]) => {
+        const v = fileLimits[k];
+        return [k, Number.isSafeInteger(v) && v >= 0 ? Math.min(v, def) : def];
+      }),
+    );
     return a;
   } catch {
     return blank;
@@ -402,26 +304,93 @@ function saveActivity(a) {
   writePrivate(ACTIVITY_FILE, JSON.stringify({ ...a, _openclaw_skill: MARKER }, null, 2));
 }
 
-function bumpActivity(counter, by = 1) {
-  const a = loadActivity();
-  a.lastSession = new Date().toISOString();
-  if (a.today[counter] !== undefined) a.today[counter] += by;
-  if (a.thisWeek[counter] !== undefined) a.thisWeek[counter] += by;
-  saveActivity(a);
-  return a;
+// Serialise every read-modify-write of the counters across processes. The lock is an
+// exclusive-create (O_EXCL) file next to the counters; a lock older than
+// ACTIVITY_LOCK_STALE_MS is treated as left behind by a crashed run and removed
+// through the same guarded delete helper. Waits up to ACTIVITY_LOCK_WAIT_MS, then
+// refuses the call rather than booking without the lock.
+const ACTIVITY_LOCK_WAIT_MS = 5000;
+const ACTIVITY_LOCK_STALE_MS = 30000;
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function assertUnderLimit(counter, by = 1) {
-  const a = loadActivity();
-  const limit = a.limits?.[counter] ?? DEFAULT_LIMITS[counter];
-  if (limit == null) return;
-  const cur = a.today?.[counter] ?? 0;
-  if (cur + by > limit) {
-    throw new Error(
-      `Rate guard: daily ${counter} would hit ${cur + by}/${limit}. ` +
-        `Slow down. linkedin activity show`,
-    );
+function withActivityLock(fn) {
+  mkdirSync(join(homedir(), ".openclaw/workspace/memory"), { recursive: true });
+  const deadline = Date.now() + ACTIVITY_LOCK_WAIT_MS;
+  for (;;) {
+    let fd;
+    try {
+      fd = openSync(ACTIVITY_LOCK, "wx", 0o600);
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      try {
+        if (Date.now() - lstatSync(ACTIVITY_LOCK).mtimeMs > ACTIVITY_LOCK_STALE_MS) {
+          safeUnlink(ACTIVITY_LOCK);
+          continue;
+        }
+      } catch {}
+      if (Date.now() > deadline) {
+        throw new Error(
+          `Rate guard: counters are locked by another run (${ACTIVITY_LOCK}); try again`,
+        );
+      }
+      sleepSync(25);
+      continue;
+    }
+    try {
+      writeFileSync(fd, JSON.stringify({ _openclaw_skill: MARKER, pid: process.pid }));
+      closeSync(fd);
+      return fn();
+    } finally {
+      try {
+        safeUnlink(ACTIVITY_LOCK);
+      } catch {}
+    }
   }
+}
+
+function bumpActivity(counter, by = 1) {
+  return withActivityLock(() => {
+    const a = loadActivity();
+    a.lastSession = new Date().toISOString();
+    if (a.today[counter] !== undefined) a.today[counter] += by;
+    if (a.thisWeek[counter] !== undefined) a.thisWeek[counter] += by;
+    saveActivity(a);
+    return a;
+  });
+}
+
+// Reserve the FULL requested amount on one or more counters before any request is
+// made. All counters are checked first and only then booked, in one read-modify-write
+// held under the cross-process counter lock and written by atomic rename, so two runs
+// at once cannot both pass the check and overshoot a ceiling, and a refused
+// reservation books nothing. The reservation is not refunded if the request then
+// fails, and a fallback request runs under the same reservation.
+function reserve(amounts) {
+  withActivityLock(() => reserveLocked(amounts));
+}
+
+function reserveLocked(amounts) {
+  const a = loadActivity();
+  for (const [counter, by] of Object.entries(amounts)) {
+    const limit = a.limits[counter];
+    if (limit == null) throw new Error(`Rate guard: unknown counter ${counter}`);
+    const cur = a.today[counter] ?? 0;
+    if (cur + by > limit) {
+      throw new Error(
+        `Rate guard: daily ${counter} would hit ${cur + by}/${limit}. ` +
+          `Slow down. linkedin activity show`,
+      );
+    }
+  }
+  for (const [counter, by] of Object.entries(amounts)) {
+    a.today[counter] = (a.today[counter] ?? 0) + by;
+    if (a.thisWeek[counter] !== undefined) a.thisWeek[counter] += by;
+  }
+  a.lastSession = new Date().toISOString();
+  saveActivity(a);
 }
 
 // ─── Local cache — re-crawls are free requests ───
@@ -484,17 +453,27 @@ async function pace() {
   _lastVoyagerAt = Date.now();
 }
 
-// Transport mode:
-//   browser (default) — fetch inside the shared LinkedIn tab via CDP (factorial pattern).
-//                       Cookies never leave the browser; survives LinkedIn's external-replay kill.
-//   external          — cookie-jar replay from Node (fragile; often 302 after first success).
-// Override: LINKEDIN_TRANSPORT=browser|external
-const TRANSPORT = (process.env.LINKEDIN_TRANSPORT || "browser").toLowerCase();
+// Transport: in-tab only.
+// Every Voyager call is a fetch() executed inside the linkedin.com tab you shared, so
+// the cookies stay in the browser and the request is same-origin by construction.
+// The external cookie-replay transport older versions shipped is GONE: it required a
+// stored password-equivalent cookie, LinkedIn answered it with a 302 in practice, and
+// it was the one path that could have carried your session to another host. There is
+// no LINKEDIN_TRANSPORT switch and no automatic fallback to fail over to.
 
+// Resolves a request target and CHECKS it, so a caller cannot smuggle an absolute URL
+// for another host into a request that runs with your LinkedIn session. Returns the
+// same-origin RELATIVE path the in-tab fetch will use — an absolute cross-origin URL
+// is never handed to fetch().
 function buildUrl(path, query) {
-  let url = path.startsWith("http")
-    ? path
-    : `${VOYAGER}${path.startsWith("/") ? path : `/${path}`}`;
+  const raw = String(path ?? "");
+  let url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+    // An absolute URL was passed: allowed only on the exact LinkedIn origin.
+    url = assertLinkedInUrl(raw);
+  } else {
+    url = `${VOYAGER}${raw.startsWith("/") ? raw : `/${raw}`}`;
+  }
   if (query) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(query)) {
@@ -502,16 +481,19 @@ function buildUrl(path, query) {
     }
     url += (url.includes("?") ? "&" : "?") + qs.toString();
   }
-  return url;
+  // Re-check once the query is attached, and keep the call inside the Voyager API.
+  const checked = new URL(assertLinkedInUrl(url));
+  if (!checked.pathname.startsWith("/voyager/api/")) {
+    throw new Error(`refusing a request target outside /voyager/api/: ${checked.pathname}`);
+  }
+  return { url: checked.toString(), rel: `${checked.pathname}${checked.search}` };
 }
 
 // ─── Voyager via in-tab fetch (preferred) ───
 async function voyagerBrowser(path, { method = "GET", body = null, query = null } = {}) {
-  const url = buildUrl(path, query);
-  // Use path relative to linkedin origin when possible — same-origin cookies always attach.
-  const rel = url.startsWith("https://www.linkedin.com")
-    ? url.slice("https://www.linkedin.com".length)
-    : url;
+  // buildUrl already refused anything that is not exactly on the LinkedIn origin and
+  // inside /voyager/api/, and it hands back the relative form.
+  const { rel } = buildUrl(path, query);
 
   await pace();
   const targetId = await findLinkedInTargetId();
@@ -523,18 +505,25 @@ async function voyagerBrowser(path, { method = "GET", body = null, query = null 
     });
     const sessionId = attached.sessionId;
 
-    // Sanity: not on login wall
+    // The relay's target list can be stale, so the origin is re-checked from INSIDE the
+    // tab immediately before any script runs there. This is the check that stops a tab
+    // which has navigated away from having your Voyager headers built inside it.
     const loc = await cdpCall(
       ws,
       2,
       "Runtime.evaluate",
-      { expression: "location.href", returnByValue: true },
+      { expression: 'location.origin + "|" + location.pathname', returnByValue: true },
       sessionId,
     );
-    const href = loc.result?.value || "";
-    if (/\/login|\/uas\/login|checkpoint/i.test(href)) {
+    const [tabOrigin, tabPath] = String(loc.result?.value ?? "|").split("|");
+    if (tabOrigin !== LINKEDIN_ORIGIN) {
       throw new Error(
-        `LinkedIn tab is on login/checkpoint (${href}). Sign in, open feed, re-share.`,
+        `Shared tab is on ${tabOrigin || "?"}, not ${LINKEDIN_ORIGIN}. Refusing to run in it.`,
+      );
+    }
+    if (/^\/(login|uas\/login|checkpoint)/i.test(tabPath || "")) {
+      throw new Error(
+        `LinkedIn tab is on login/checkpoint (${tabPath}). Sign in, open the feed, re-share.`,
       );
     }
 
@@ -550,13 +539,18 @@ async function voyagerBrowser(path, { method = "GET", body = null, query = null 
         'x-restli-protocol-version': '2.0.0',
         'x-li-lang': 'en_US',
       };
-      const init = { method: ${methodJs}, credentials: 'include', headers };
+      const init = { method: ${methodJs}, credentials: 'same-origin', headers };
       const bodyStr = ${bodyJs};
       if (bodyStr != null) {
         headers['content-type'] = 'application/json; charset=UTF-8';
         init.body = bodyStr;
       }
-      const r = await fetch(${relJs}, init);
+      // Last line of defence, inside the page: resolve the target and refuse anything
+      // that is not this exact origin, so nothing built here can carry the csrf-token
+      // above to another host.
+      const target = new URL(${relJs}, location.origin);
+      if (target.origin !== location.origin) return { __err: 'cross_origin_target', href: location.href };
+      const r = await fetch(target.pathname + target.search, init);
       const text = await r.text();
       let data = null;
       try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 500) }; }
@@ -599,85 +593,10 @@ async function voyagerBrowser(path, { method = "GET", body = null, query = null 
   }
 }
 
-// ─── Voyager HTTP (external cookie replay — fragile) ───
-async function voyagerExternal(path, { method = "GET", body = null, query = null } = {}) {
-  const c = requireSession();
-  const url = buildUrl(path, query);
-
-  await pace();
-
-  const headers = {
-    accept: "application/vnd.linkedin.normalized+json+2.1",
-    "accept-language": "en-US,en;q=0.9",
-    "user-agent": UA,
-    "csrf-token": csrfToken(c),
-    cookie: cookieHeader(c),
-    "x-restli-protocol-version": "2.0.0",
-    "x-li-lang": "en_US",
-    referer: "https://www.linkedin.com/feed/",
-    origin: "https://www.linkedin.com",
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-origin",
-  };
-  if (body != null) headers["content-type"] = "application/json; charset=UTF-8";
-
-  const resp = await fetch(url, {
-    method,
-    headers,
-    body: body != null ? JSON.stringify(body) : undefined,
-    redirect: "manual",
-  });
-
-  if (resp.status >= 300 && resp.status < 400) {
-    const loc = resp.headers.get("location") || "";
-    throw new Error(
-      `LinkedIn ${resp.status} redirect → ${loc.slice(0, 120) || "(no location)"}. ` +
-        `External cookie replay rejected. Prefer LINKEDIN_TRANSPORT=browser (default) with a shared feed tab.`,
-    );
-  }
-
-  const text = await resp.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text.slice(0, 500) };
-  }
-
-  if (resp.status === 429) {
-    throw new Error("Voyager 429 rate limit. Back off (minutes, not seconds).");
-  }
-  if (resp.status === 401 || resp.status === 403) {
-    throw new Error(
-      `LinkedIn ${resp.status} external — jar dead. Use browser transport + live tab.`,
-    );
-  }
-  if (!resp.ok) {
-    const msg = data?.message || data?.status || text.slice(0, 300);
-    throw new Error(`Voyager ${resp.status}: ${msg}`);
-  }
-  return data;
-}
-
+// Single entry point. In-tab only: there is no second transport, so there is nothing
+// to silently fall back to when the tab is missing — the call fails and says why.
 async function voyager(path, opts = {}) {
-  if (TRANSPORT === "external") return voyagerExternal(path, opts);
-  // browser default: try in-tab first; fall back to external only if no tab AND jar exists
-  try {
-    return await voyagerBrowser(path, opts);
-  } catch (e) {
-    const msg = e.message || String(e);
-    const noTab =
-      /No linkedin\.com tab|login wall|login\/checkpoint/i.test(msg) || /json\/list/i.test(msg);
-    if (noTab && existsSync(TOKEN_FILE)) {
-      const c = loadCreds();
-      if (c.li_at) {
-        console.error(`⚠ in-tab failed (${msg.slice(0, 80)}); trying external jar (fragile)…`);
-        return voyagerExternal(path, opts);
-      }
-    }
-    throw e;
-  }
+  return voyagerBrowser(path, opts);
 }
 
 // ─── CDP helpers (OpenClaw extension relay) ───
@@ -706,20 +625,26 @@ function cdpCall(ws, id, method, params = {}, sessionId = null) {
 }
 
 // ─── Relay guard ───
-// RELAY_CDP / RELAY_HTTP are overridable, and they carry the most sensitive traffic
-// this skill has: raw session cookies and full browser control. So before either is
-// used, both must point at loopback. Hostnames are RESOLVED first — `evil.example`
-// pointing at a public IP, or a name that only looks local, does not get through.
-// LINKEDIN_ALLOW_REMOTE_RELAY=1 is the deliberate escape hatch, and it says so loudly.
-const ALLOW_REMOTE_RELAY = process.env.LINKEDIN_ALLOW_REMOTE_RELAY === "1";
-let _relayChecked = false;
-
+// RELAY_CDP / RELAY_HTTP are overridable, and they carry the most sensitive channel
+// this skill has: full control of the browser tab that is signed in to LinkedIn. So
+// both MUST name a LITERAL loopback IP address (127.0.0.0/8 or [::1]). Hostnames —
+// `localhost` included — are refused rather than resolved: a name can resolve to
+// loopback when checked and to another address when the socket opens (DNS
+// rebinding), while a literal IP is connected to exactly as written. There is NO
+// override: the old LINKEDIN_ALLOW_REMOTE_RELAY escape hatch has been removed.
 function isLoopbackAddr(a) {
-  return a === "::1" || a === "::ffff:127.0.0.1" || /^127\./.test(a);
+  const s = String(a);
+  if (isIPv4(s)) return s.split(".")[0] === "127";
+  const v6 = s.toLowerCase();
+  if (v6 === "::1") return true;
+  const mapped = v6.match(/^::ffff:(.+)$/);
+  if (!mapped) return false;
+  if (isIPv4(mapped[1])) return mapped[1].split(".")[0] === "127";
+  // WHATWG URL normalises [::ffff:127.0.0.1] to [::ffff:7f00:1].
+  return /^7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(mapped[1]);
 }
 
-async function assertRelayIsLocal() {
-  if (_relayChecked) return;
+function assertRelayIsLocal() {
   for (const [label, raw] of [
     ["LINKEDIN_CDP_URL", RELAY_CDP],
     ["LINKEDIN_RELAY_HTTP", RELAY_HTTP],
@@ -731,53 +656,43 @@ async function assertRelayIsLocal() {
       throw new Error(`${label} is not a valid URL: ${raw}`);
     }
     const host = u.hostname.replace(/^\[|\]$/g, "");
-    let local = isLoopbackAddr(host);
-    if (!local) {
-      // Not a literal loopback IP: resolve it and require EVERY answer to be loopback.
-      try {
-        const addrs = await dnsLookup(host, { all: true });
-        local = addrs.length > 0 && addrs.every((a) => isLoopbackAddr(a.address));
-      } catch {
-        local = false;
-      }
-    }
-    if (local) continue;
-    if (!ALLOW_REMOTE_RELAY) {
-      throw new Error(
-        `${label} points off loopback (${raw}). This channel carries your LinkedIn session\n` +
-          "cookies and full control of your browser tab, so it is refused by default.\n" +
-          "Use the local OpenClaw relay, or set LINKEDIN_ALLOW_REMOTE_RELAY=1 if you really do\n" +
-          "run the relay on another host and the link between them is one you trust.",
-      );
-    }
-    console.error(
-      `WARNING: ${label} is remote (${raw}) and LINKEDIN_ALLOW_REMOTE_RELAY=1 is set.\n` +
-        "WARNING: your session cookies and browser control will cross the network to that host.",
+    if (isLoopbackAddr(host)) continue;
+    throw new Error(
+      `${label} points off loopback (${raw}). That channel carries full control of the\n` +
+        "browser tab holding your LinkedIn session, so it must be a literal loopback IP\n" +
+        "(e.g. 127.0.0.1) — hostnames, localhost included, are not resolved. Run the\n" +
+        "OpenClaw relay on this machine; there is no flag that permits a remote one.",
     );
   }
-  _relayChecked = true;
 }
 
-// Only ever navigate the shared tab within LinkedIn. The tab belongs to the user, and
-// a navigation helper that accepts any URL is one an agent can be talked into pointing
-// anywhere — including at a page that reads the session it is carrying.
+// THE origin check. Everything with a URL goes through here — Voyager targets, tab
+// navigation, and the relay's own target list. Exact-origin, so `https://linkedin.com`,
+// `https://www.linkedin.com.evil.example`, `http://www.linkedin.com` and
+// `https://www.linkedin.com:8443` are all refused.
 function assertLinkedInUrl(url) {
   let u;
   try {
     u = new URL(url);
   } catch {
-    throw new Error(`refusing to navigate to an invalid URL: ${url}`);
+    throw new Error(`refusing an invalid URL: ${url}`);
   }
-  if (u.protocol !== "https:" || !/^([a-z0-9-]+\.)?linkedin\.com$/.test(u.hostname)) {
-    throw new Error(
-      `refusing to navigate the shared tab outside https://www.linkedin.com (asked for ${url})`,
-    );
+  if (u.origin !== LINKEDIN_ORIGIN) {
+    throw new Error(`refusing a target outside ${LINKEDIN_ORIGIN} (asked for ${url})`);
   }
   return u.toString();
 }
 
+function isLinkedInUrl(url) {
+  try {
+    return new URL(url).origin === LINKEDIN_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
 async function openCdp() {
-  await assertRelayIsLocal();
+  assertRelayIsLocal();
   const ws = new WebSocket(RELAY_CDP);
   await new Promise((res, rej) => {
     ws.addEventListener("open", () => res(), { once: true });
@@ -786,71 +701,48 @@ async function openCdp() {
   return ws;
 }
 
-async function findLinkedInTargetId() {
-  // Prefer explicit override
-  if (process.env.LINKEDIN_TARGET_ID) return process.env.LINKEDIN_TARGET_ID;
-  await assertRelayIsLocal();
-  const r = await fetch(`${RELAY_HTTP}/json/list`);
+async function relayTargets() {
+  assertRelayIsLocal();
+  // No redirects: a 3xx from the relay must not move the request off loopback.
+  const r = await fetch(`${RELAY_HTTP}/json/list`, { redirect: "error" });
   if (!r.ok) throw new Error(`relay /json/list ${r.status}`);
-  const list = await r.json();
-  const hit = (list || []).find(
-    (t) =>
-      (t.url || "").includes("linkedin.com") &&
-      !(t.url || "").includes("/login") &&
-      !(t.url || "").includes("/uas/login"),
-  );
-  if (!hit) {
-    const any = (list || []).find((t) => (t.url || "").includes("linkedin.com"));
-    if (any) {
-      throw new Error(
-        `LinkedIn tab is on login wall (${any.url}). Sign in again, open feed, re-share tab.`,
-      );
-    }
-    throw new Error("No linkedin.com tab in relay. Share a Feed tab via the OpenClaw extension.");
-  }
-  return hit.id;
+  return (await r.json()) || [];
 }
 
-async function extractCookiesViaCdp() {
-  const targetId = await findLinkedInTargetId();
-  const ws = await openCdp();
-  try {
-    const attached = await cdpCall(ws, 1, "Target.attachToTarget", {
-      targetId,
-      flatten: true,
-    });
-    const sessionId = attached.sessionId;
-    await cdpCall(ws, 2, "Network.enable", {}, sessionId);
-    let cookies = [];
-    try {
-      const all = await cdpCall(ws, 3, "Network.getAllCookies", {}, sessionId);
-      cookies = (all.cookies || []).filter((c) => (c.domain || "").includes("linkedin"));
-    } catch {
-      const r = await cdpCall(
-        ws,
-        4,
-        "Network.getCookies",
-        { urls: ["https://www.linkedin.com", "https://www.linkedin.com/feed/"] },
-        sessionId,
+// Picks the tab to run in — and LINKEDIN_TARGET_ID goes through exactly the same check
+// as the automatic pick. It used to be trusted blind, which meant an id naming any
+// other tab got script execution and that page's cookies. Now the id must appear in
+// the relay's own list AND that target must be on the exact LinkedIn origin. The
+// automatic pick is exact-origin too: a substring match on 'linkedin.com' would have
+// accepted https://www.linkedin.com.evil.example/feed.
+async function findLinkedInTargetId() {
+  const list = await relayTargets();
+  const wanted = process.env.LINKEDIN_TARGET_ID;
+  if (wanted) {
+    const t = list.find((x) => x && x.id === wanted);
+    if (!t) {
+      throw new Error(`LINKEDIN_TARGET_ID ${wanted} is not a tab this relay is sharing.`);
+    }
+    if (!isLinkedInUrl(t.url)) {
+      throw new Error(
+        `LINKEDIN_TARGET_ID ${wanted} points at ${t.url || "?"}, not ${LINKEDIN_ORIGIN}. Refusing.`,
       );
-      cookies = r.cookies || [];
     }
-    const want = ["li_at", "JSESSIONID", "bcookie", "bscookie", "li_a", "lidc", "li_gc", "li_mc"];
-    const jar = {};
-    for (const c of cookies) {
-      if (want.includes(c.name)) jar[c.name] = c.value;
-    }
-    return {
-      targetId,
-      jar,
-      has_li_at: Boolean(jar.li_at),
-      names: cookies.map((c) => c.name),
-    };
-  } finally {
-    try {
-      ws.close();
-    } catch {}
+    return t.id;
   }
+  const onLinkedIn = list.filter((t) => t && isLinkedInUrl(t.url));
+  const hit = onLinkedIn.find(
+    (t) => !/^\/(login|uas\/login|checkpoint)/i.test(new URL(t.url).pathname),
+  );
+  if (hit) return hit.id;
+  if (onLinkedIn.length) {
+    throw new Error(
+      `LinkedIn tab is on a login wall (${onLinkedIn[0].url}). Sign in, open the feed, re-share the tab.`,
+    );
+  }
+  throw new Error(
+    `No ${LINKEDIN_ORIGIN} tab in the relay. Share a Feed tab via the OpenClaw extension.`,
+  );
 }
 
 // ─── Helpers ───
@@ -893,183 +785,19 @@ function pickProfile(p) {
 }
 
 // ─── Commands ───
-async function cmdSessionExtractBrowser() {
-  console.log(`// Prefer: linkedin session extract-cdp  (pulls httpOnly li_at via relay)
-// Fallback evaluate on a shared https://www.linkedin.com/feed/ tab:
-// (li_at is usually httpOnly — this often returns has_li_at:false)
 
-(() => {
-  const want = ['li_at', 'JSESSIONID', 'bcookie', 'bscookie', 'li_a', 'lidc', 'liap'];
-  const jar = document.cookie.split(';').map(s => s.trim()).filter(Boolean);
-  const cookies = {};
-  for (const part of jar) {
-    const eq = part.indexOf('=');
-    if (eq < 0) continue;
-    const k = part.slice(0, eq);
-    const v = part.slice(eq + 1);
-    if (want.includes(k)) cookies[k] = v;
-  }
-  const csrf =
-    cookies.JSESSIONID?.replace(/^"|"$/g, '') ||
-    (window.csrfToken || null);
-  return {
-    cookies,
-    csrf,
-    has_li_at: Boolean(cookies.li_at),
-    note: cookies.li_at
-      ? 'li_at present in document.cookie'
-      : 'li_at is httpOnly — run: node linkedin.mjs session extract-cdp',
-    href: location.href,
-  };
-})();`);
-}
-
-async function cmdSessionExtractCdp(args) {
-  const doStore = Boolean(args.flags.store || args.flags["store"]);
-  const doTest = Boolean(args.flags.test || args.flags["test"] || doStore);
-  console.error("CDP extract via", RELAY_CDP, "…");
-  const { targetId, jar, has_li_at, names } = await extractCookiesViaCdp();
-  // Never print secrets — only presence / lengths.
-  out({
-    targetId,
-    has_li_at,
-    has_jsessionid: Boolean(jar.JSESSIONID),
-    cookie_names: names,
-    lengths: Object.fromEntries(Object.entries(jar).map(([k, v]) => [k, String(v || "").length])),
-  });
-  if (!has_li_at) {
-    console.error(
-      "No li_at in jar. If the tab is on /login, sign in first and open the feed. " +
-        "If still missing, LinkedIn may have cleared the session — re-login manually.",
-    );
-    process.exit(1);
-  }
-  if (doStore) {
-    const creds = {
-      li_at: jar.li_at,
-      jsessionid: jar.JSESSIONID,
-      csrf_token: String(jar.JSESSIONID || "").replace(/^"|"$/g, ""),
-      bcookie: jar.bcookie || null,
-      bscookie: jar.bscookie || null,
-      li_a: jar.li_a || null,
-      lidc: jar.lidc || null,
-      li_gc: jar.li_gc || null,
-      source: "cdp-extract",
-      transport_hint: "browser",
-      updated_at: new Date().toISOString(),
-    };
-    const where = saveCreds(creds);
-    console.error(
-      `Session stored in the ${where === "keychain" ? "OS keychain" : "0600 file"} as a backup. ` +
-        "Primary path is in-tab browser transport. Erase it with: linkedin session logout",
-    );
-  }
-  // Always test via in-tab when possible — external /me after extract burns li_at (observed 2026-07-29).
-  if (doTest || doStore) {
-    console.error("Testing /me in-tab (browser transport)…");
-    const prev = process.env.LINKEDIN_TRANSPORT;
-    process.env.LINKEDIN_TRANSPORT = "browser";
-    try {
-      // re-read transport is const — call voyagerBrowser path via voyager with env already set at process start
-      // So call voyagerBrowser directly:
-      assertUnderLimit("sessions", 1);
-      const data = await voyagerBrowser("/me");
-      bumpActivity("sessions", 1);
-      const mini =
-        data?.included?.find((x) => (x.$type || "").includes("MiniProfile")) ||
-        data?.included?.find((x) => x.publicIdentifier) ||
-        data?.data ||
-        data;
-      out({
-        status: "ok",
-        transport: "browser",
-        me: pickProfile(typeof mini === "object" ? mini : {}) || mini,
-        jar_stored: doStore,
-      });
-    } finally {
-      if (prev === undefined) delete process.env.LINKEDIN_TRANSPORT;
-      else process.env.LINKEDIN_TRANSPORT = prev;
-    }
-  } else if (!doStore) {
-    console.error("Dry extract only. Re-run with --store to save jar backup + in-tab test.");
-  }
-}
-
-// Read the whole of stdin. Used so session material never has to be typed as an
-// argument.
-function readStdin() {
-  try {
-    return readFileSync(0, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-// `session store` takes the cookies on STDIN as JSON, never as flags. A cookie passed
-// as `--li-at <token>` ends up in your shell history, in `ps` output for every process
-// on the machine, and in any terminal recording — and it is password-equivalent.
-// Preferred route is still `session extract-cdp --store`, where it is never typed at all.
-async function cmdSessionStore(args) {
-  const raw = readStdin().trim();
-  if (!raw) {
-    console.error(
-      "Usage: linkedin session store   — with the session on STDIN as JSON:\n" +
-        '  echo \'{"li_at":"…","jsessionid":"ajax:…"}\' | linkedin session store\n' +
-        "\n" +
-        "Optional keys: csrf_token, bcookie, bscookie, li_a, lidc.\n" +
-        "Cookies are NOT accepted as command-line flags: argv is visible to every process on\n" +
-        "this machine and is kept in your shell history, and li_at is password-equivalent.\n" +
-        "Easier and safer: linkedin session extract-cdp --store",
-    );
-    process.exit(1);
-  }
-  let input;
-  try {
-    input = JSON.parse(raw);
-  } catch (e) {
-    console.error(`stdin is not valid JSON: ${e.message}`);
-    process.exit(1);
-  }
-  const liAt = input.li_at || input["li-at"];
-  const jsessionid = input.jsessionid || input.JSESSIONID;
-  if (!liAt || !jsessionid) {
-    console.error('stdin JSON must contain at least { "li_at": "…", "jsessionid": "ajax:…" }');
-    process.exit(1);
-  }
-  const csrf = input.csrf_token || input.csrf || jsessionid;
-  const creds = {
-    li_at: liAt,
-    jsessionid,
-    csrf_token: String(csrf).replace(/^"|"$/g, ""),
-    bcookie: input.bcookie || null,
-    bscookie: input.bscookie || null,
-    li_a: input.li_a || null,
-    lidc: input.lidc || null,
-    source: "browser-session",
-    updated_at: new Date().toISOString(),
-  };
-  saveCreds(creds);
-  console.error("Session saved. Testing…");
-  try {
-    await cmdSessionTest();
-  } catch (e) {
-    console.error(`FAIL ${e.message}`);
-    process.exit(1);
-  }
-}
-
-async function cmdSessionTest() {
-  assertUnderLimit("sessions", 1);
-  // Prefer in-tab; never force external /me right after extract (that burns li_at).
+// Confirms the shared tab really is a signed-in LinkedIn session — WITHOUT extracting
+// anything. It just runs /me inside the tab and reports who you came back as.
+async function cmdSessionCheck() {
+  reserve({ sessions: 1 });
   const data = await voyager("/me");
-  bumpActivity("sessions", 1);
   const mini =
     data?.included?.find((x) => (x.$type || "").includes("MiniProfile")) ||
     data?.included?.find((x) => x.publicIdentifier) ||
     data?.data ||
     data;
   const profile = pickProfile(typeof mini === "object" ? mini : {}) || mini;
-  out({ status: "ok", transport: TRANSPORT, me: profile });
+  out({ status: "ok", transport: "in-tab (browser)", origin: LINKEDIN_ORIGIN, me: profile });
 }
 
 // LinkedIn's own "Where you're signed in" page. Clearing the local copy does not
@@ -1084,7 +812,7 @@ async function cmdSessionLogout(args) {
     "Local logout: this erases what is on THIS machine. It does NOT sign the session out at\n" +
       `LinkedIn — anyone who already copied the cookie keeps access until you revoke it at\n  ${LINKEDIN_REVOKE_URL}`,
   );
-  const removed = clearCreds();
+  const removed = clearLegacyCreds();
   const keep = Boolean(args.flags["keep-data"]);
   const purged = [];
   if (!keep) {
@@ -1100,7 +828,9 @@ async function cmdSessionLogout(args) {
   out({
     status: "logged-out-locally",
     scope: "local only — the LinkedIn session itself is NOT revoked by this command",
-    cleared: removed.length ? removed : ["nothing was stored"],
+    cleared: removed.length
+      ? removed
+      : ["nothing was stored — this version never stores a session"],
     local_data: keep
       ? ["kept on your explicit --keep-data"]
       : purged.length
@@ -1112,26 +842,27 @@ async function cmdSessionLogout(args) {
 }
 
 async function cmdSessionStatus() {
-  const c = loadCreds();
   const a = loadActivity();
+  const legacyFile = legacyFilePresent();
   out({
-    hasSession: Boolean(c.li_at),
-    stored_in: keychainGet()
-      ? `os-keychain (${KEYCHAIN_BIN})`
-      : existsSync(TOKEN_FILE)
-        ? `file ${TOKEN_FILE} (0600)`
-        : "nothing stored",
-    updated_at: c.updated_at || null,
-    has_jsessionid: Boolean(c.jsessionid),
+    transport: "in-tab only — your cookies never leave the browser",
+    origin: LINKEDIN_ORIGIN,
+    relay: { cdp: RELAY_CDP, http: RELAY_HTTP, must_be_loopback: true },
+    stored_credentials: "none — this version never writes one",
+    legacy_session_file_found: legacyFile,
+    legacy_keychain_entry:
+      "not checked — looking it up would read the secret; `linkedin session logout` deletes it if present",
+    legacy_note: legacyFile
+      ? "A session file stored by version <= 1.2.0 is still on this machine. Remove it with: linkedin session logout"
+      : "If you ever ran version <= 1.2.0, run `linkedin session logout` once to delete any keychain entry it left.",
     activity: a.today,
-    limits: a.limits || DEFAULT_LIMITS,
+    limits: a.limits,
   });
 }
 
 async function cmdMe() {
-  assertUnderLimit("profile_views", 1);
+  reserve({ profile_views: 1 });
   const data = await voyager("/me");
-  bumpActivity("profile_views", 1);
   const mini = data?.included?.find((x) => (x.$type || "").includes("MiniProfile")) || data?.data;
   out(pickProfile(mini) || data);
 }
@@ -1150,7 +881,7 @@ async function cmdProfile(args) {
       return;
     }
   }
-  assertUnderLimit("profile_views", 1);
+  reserve({ profile_views: 1 });
 
   let data;
   if (id.startsWith("urn:li:")) {
@@ -1164,7 +895,6 @@ async function cmdProfile(args) {
       `/identity/dash/profiles?q=memberIdentity&memberIdentity=${encodeURIComponent(id)}&decorationId=com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93`,
     ).catch(async () => voyager(`/identity/profiles/${encodeURIComponent(id)}/profileView`));
   }
-  bumpActivity("profile_views", 1);
 
   if (args.flags.raw) return out(data);
 
@@ -1217,20 +947,22 @@ async function searchPeopleViaDom(query, top = 10, page = 1) {
       flatten: true,
     });
     const sessionId = attached.sessionId;
-    // Verify the tab is actually on LinkedIn — relay tab metadata can be stale,
-    // and the relay blocks cross-site navigation on shared tabs.
+    // Verify from INSIDE the tab that it is on the exact LinkedIn origin — relay tab
+    // metadata can be stale, and this script is about to navigate the tab and read the
+    // rendered page. A substring test on 'linkedin.com' would have accepted
+    // https://www.linkedin.com.evil.example/, so the check is origin equality.
     const loc = await cdpCall(
       ws,
       9,
       "Runtime.evaluate",
-      { expression: "location.hostname", returnByValue: true },
+      { expression: "location.origin", returnByValue: true },
       sessionId,
     );
-    const host = loc.result?.value || "";
-    if (!host.includes("linkedin.com")) {
+    const tabOrigin = loc.result?.value || "";
+    if (tabOrigin !== LINKEDIN_ORIGIN) {
       throw new Error(
-        `Shared tab is on ${host || "?"}, not linkedin.com (relay metadata was stale). ` +
-          `Navigate that tab back to linkedin.com/feed or share a LinkedIn tab, then retry.`,
+        `Shared tab is on ${tabOrigin || "?"}, not ${LINKEDIN_ORIGIN} (relay metadata was stale). ` +
+          `Navigate that tab back to ${LINKEDIN_ORIGIN}/feed/ or share a LinkedIn tab, then retry.`,
       );
     }
     await cdpCall(ws, 2, "Page.enable", {}, sessionId);
@@ -1340,9 +1072,9 @@ async function cmdSearchPeople(args) {
     console.error('Usage: linkedin search people "<query>" [--top 10] [--network F|S|O]');
     process.exit(1);
   }
-  const top = parseInt(args.flags.top, 10) || 10;
-  const page = parseInt(args.flags.page, 10) || 1;
-  assertUnderLimit("profile_views", Math.min(top, 5));
+  const top = parseCount(args.flags, "top", 10, TOP_MAX.search);
+  const page = parseCount(args.flags, "page", 1, PAGE_MAX);
+  reserve({ search_results: top });
 
   // Browser/DOM path is the working search (2026-07-29). Network filter is UI-only for now.
   if (args.flags.network) {
@@ -1380,7 +1112,6 @@ async function cmdSearchPeople(args) {
     result = { query, method: "voyager-legacy", count: people.length, people };
   }
 
-  bumpActivity("profile_views", 1);
   out(result);
 }
 
@@ -1390,7 +1121,8 @@ async function cmdSearchCompanies(args) {
     console.error('Usage: linkedin search companies "<query>" [--top 10]');
     process.exit(1);
   }
-  const top = parseInt(args.flags.top, 10) || 10;
+  const top = parseCount(args.flags, "top", 10, TOP_MAX.search);
+  reserve({ search_results: top });
   const keywords = encodeURIComponent(query);
   const path =
     `/search/dash/clusters?decorationId=com.linkedin.voyager.dash.deco.search.SearchClusterCollection-175` +
@@ -1439,18 +1171,16 @@ async function cmdSearchCompanies(args) {
 }
 
 async function cmdConnections(args) {
-  // Fat payload: one request, count up to 200 — fewer round-trips beats parallelism.
-  const top = parseInt(args.flags.top, 10) || 100;
-  const start = parseInt(args.flags.start, 10) || 0;
-  assertUnderLimit("profile_views", 1);
+  // Fat payload: one request, count up to 100 — fewer round-trips beats parallelism.
+  const top = parseCount(args.flags, "top", 100, TOP_MAX.connections);
+  const start = parseCount(args.flags, "start", 0, START_MAX, 0);
+  reserve({ connections_listed: top });
 
   const data = await voyager(
     `/relationships/dash/connections?decorationId=com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-15&count=${top}&q=search&sortType=RECENTLY_ADDED&start=${start}`,
   ).catch(async () =>
     voyager(`/relationships/connections?count=${top}&sortType=RECENTLY_ADDED&start=${start}`),
   );
-
-  bumpActivity("profile_views", 1);
 
   const people = (data.included || [])
     .filter((x) => (x.$type || "").includes("MiniProfile") || x.publicIdentifier)
@@ -1462,14 +1192,12 @@ async function cmdConnections(args) {
 }
 
 async function cmdConversations(args) {
-  const top = parseInt(args.flags.top, 10) || 20;
-  assertUnderLimit("messages_read", 1);
+  const top = parseCount(args.flags, "top", 20, TOP_MAX.conversations);
+  reserve({ conversations_listed: top });
 
   const data = await voyager(
     `/messaging/conversations?keyVersion=LEGACY_INBOX&q=syncToken&count=${top}`,
   ).catch(async () => voyager(`/messaging/conversations?q=searchQuery&count=${top}`));
-
-  bumpActivity("messages_read", 1);
 
   const convos = (data.included || data.elements || data.data?.elements || [])
     .filter(
@@ -1502,15 +1230,13 @@ async function cmdMessages(args) {
     console.error("Usage: linkedin messages <conversationUrn> [--top 30]");
     process.exit(1);
   }
-  const top = parseInt(args.flags.top, 10) || 30;
-  assertUnderLimit("messages_read", 1);
+  const top = parseCount(args.flags, "top", 30, TOP_MAX.messages);
+  reserve({ messages_read: top });
 
   const urn = encodeURIComponent(conv);
   const data = await voyager(
     `/messaging/conversations/${urn}/events?count=${top}&q=syncToken`,
   ).catch(async () => voyager(`/messaging/conversations/${urn}/events?count=${top}`));
-
-  bumpActivity("messages_read", Math.min(top, 10));
 
   const events = (data.included || data.elements || [])
     .filter((x) => (x.$type || "").includes("Event") || x.eventContent || x.body)
@@ -1537,16 +1263,32 @@ async function cmdMessageSend(args) {
   const message = args.flags.message;
   if (!conv || !message) {
     console.error(
-      'Usage: linkedin message-send <conversationUrn> --message "text" --i-mean-it\n' +
-        "  Send is gated. Drafts/outreach should stay human-approved.",
+      'Usage: linkedin message-send <conversationUrn> --message "text" --i-mean-it <conversationUrn>\n' +
+        "  Sending is the only write this skill can perform, and consent is PER ACTION:\n" +
+        "  --i-mean-it must repeat the exact conversation URN you are writing to.",
     );
     process.exit(1);
   }
-  if (!args.flags["i-mean-it"]) {
-    console.error("Refusing to send without --i-mean-it. LinkedIn bans are not theoretical.");
+  // Per-action consent. A bare --i-mean-it is NOT accepted: the flag has to name the
+  // exact conversation being written to, so one approved send cannot be carried over
+  // onto a different recipient by reusing the same command with a new URN.
+  // Without it this is a DRAFT: the message is printed and nothing is sent.
+  const consent = args.flags["i-mean-it"];
+  if (consent !== conv) {
+    out({
+      status: "draft-only",
+      sent: false,
+      would_send_to: conv,
+      message,
+      why:
+        consent === undefined || consent === true
+          ? "No per-action consent: --i-mean-it must carry the exact conversation URN."
+          : `Consent names a different conversation (${consent}) than the target (${conv}).`,
+      to_actually_send: `linkedin message-send ${conv} --message "…" --i-mean-it ${conv}`,
+    });
     process.exit(2);
   }
-  assertUnderLimit("messages_sent", 1);
+  reserve({ messages_sent: 1 });
 
   const urnEnc = encodeURIComponent(conv);
   let data;
@@ -1578,7 +1320,6 @@ async function cmdMessageSend(args) {
     });
   }
 
-  bumpActivity("messages_sent", 1);
   out({
     status: "sent",
     conversation: conv,
@@ -1588,7 +1329,8 @@ async function cmdMessageSend(args) {
 }
 
 async function cmdFeed(args) {
-  const top = parseInt(args.flags.top, 10) || 10;
+  const top = parseCount(args.flags, "top", 10, TOP_MAX.feed);
+  reserve({ feed_items: top });
   const data = await voyager(
     `/feed/updatesV2?count=${top}&q=chronFeed&moduleKey=home-feed%3Adesktop`,
   ).catch(async () => voyager(`/feed/updates?count=${top}&q=followingFeed`));
@@ -1618,7 +1360,8 @@ async function cmdFeed(args) {
 }
 
 async function cmdNotifications(args) {
-  const top = parseInt(args.flags.top, 10) || 15;
+  const top = parseCount(args.flags, "top", 15, TOP_MAX.notifications);
+  reserve({ notifications_read: top });
   const data = await voyager(`/identity/notifications?count=${top}`).catch(async () =>
     voyager(`/notifications?count=${top}`),
   );
@@ -1638,6 +1381,7 @@ async function cmdCompany(args) {
       return;
     }
   }
+  reserve({ profile_views: 1 });
   const data = await voyager(
     `/organization/companies?decorationId=com.linkedin.voyager.deco.organization.web.WebFullCompanyMain-12&q=universalName&universalName=${encodeURIComponent(id)}`,
   ).catch(async () => voyager(`/organizations/${encodeURIComponent(id)}`));
@@ -1667,12 +1411,11 @@ async function cmdPosts(args) {
     console.error("Usage: linkedin posts <vanity> [--top 10]");
     process.exit(1);
   }
-  const top = parseInt(args.flags.top, 10) || 10;
-  assertUnderLimit("profile_views", 1);
+  const top = parseCount(args.flags, "top", 10, TOP_MAX.posts);
+  reserve({ profile_views: 1, posts_read: top });
   const profileData = await voyager(
     `/identity/dash/profiles?q=memberIdentity&memberIdentity=${encodeURIComponent(vanity)}&decorationId=com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93`,
   ).catch(() => null);
-  bumpActivity("profile_views", 1);
 
   const memberUrn =
     (profileData?.included || []).find(
@@ -1709,9 +1452,18 @@ async function cmdActivity(args) {
   }
   if (sub === "bump") {
     const counter = args._[1];
-    const by = parseInt(args.flags.by || args._[2] || "1", 10);
+    const rawBy = String(args.flags.by ?? args._[2] ?? "1");
+    const by = /^[0-9]{1,6}$/.test(rawBy) ? Number(rawBy) : NaN;
     if (!counter) {
       console.error("Usage: linkedin activity bump <counter> [--by N]");
+      process.exit(1);
+    }
+    // Counters only ever go UP. A negative bump would wind the daily rate guard
+    // backwards, which is the single thing the guard exists to prevent.
+    if (!Number.isFinite(by) || by < 1) {
+      console.error(
+        "Usage: linkedin activity bump <counter> [--by N] — N must be a positive integer.",
+      );
       process.exit(1);
     }
     out(bumpActivity(counter, by));
@@ -1722,133 +1474,149 @@ async function cmdActivity(args) {
 }
 
 // ─── Router ───
-const args = parseArgs(process.argv.slice(2));
-const [cmd, sub, ...rest] = args._;
-// Consent for the plaintext fallback is per-run and explicit: --store alone is NOT it.
-_allowPlaintextFlag = Boolean(args.flags["allow-plaintext-store"]);
+// The checks above are exported and the CLI is guarded, so a test can import
+// assertLinkedInUrl / buildUrl and exercise them without running a command.
+export { LINKEDIN_ORIGIN, assertLinkedInUrl, isLinkedInUrl, buildUrl, isLoopbackAddr };
 
-function subArgs(extra = []) {
-  return { _: [...extra, ...rest], flags: args.flags };
-}
+const _isMain =
+  Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-try {
-  switch (cmd) {
-    case "session":
-      if (sub === "extract-browser") await cmdSessionExtractBrowser();
-      else if (sub === "extract-cdp") await cmdSessionExtractCdp({ _: rest, flags: args.flags });
-      else if (sub === "store") await cmdSessionStore({ _: rest, flags: args.flags });
-      else if (sub === "test") await cmdSessionTest();
-      else if (sub === "status") await cmdSessionStatus();
-      else if (sub === "logout" || sub === "revoke")
-        await cmdSessionLogout({ _: rest, flags: args.flags });
-      else
-        console.error(
-          "Usage: linkedin session [extract-cdp|extract-browser|store|test|status|logout]\n" +
-            "  extract-cdp [--store] [--test]  pull httpOnly li_at via OpenClaw relay\n" +
-            "  logout [--keep-data]            erase session + cached data (local only)",
-        );
-      break;
-    case "me":
-      await cmdMe();
-      break;
-    case "profile":
-      await cmdProfile(subArgs(sub ? [sub] : []));
-      break;
-    case "search":
-      if (sub === "people") await cmdSearchPeople(subArgs());
-      else if (sub === "companies") await cmdSearchCompanies(subArgs());
-      else console.error('Usage: linkedin search [people|companies] "<query>"');
-      break;
-    case "connections":
-      await cmdConnections({ _: [], flags: args.flags });
-      break;
-    case "conversations":
-      await cmdConversations({ _: [], flags: args.flags });
-      break;
-    case "messages":
-      await cmdMessages(subArgs(sub ? [sub] : []));
-      break;
-    case "message-send":
-      await cmdMessageSend(subArgs(sub ? [sub] : []));
-      break;
-    case "feed":
-      await cmdFeed({ _: [], flags: args.flags });
-      break;
-    case "notifications":
-      await cmdNotifications({ _: [], flags: args.flags });
-      break;
-    case "company":
-      await cmdCompany(subArgs(sub ? [sub] : []));
-      break;
-    case "posts":
-      await cmdPosts(subArgs(sub ? [sub] : []));
-      break;
-    case "activity":
-      await cmdActivity(subArgs(sub ? [sub] : []));
-      break;
-    default: {
-      // Unknown command must fail loudly: a typo in a caller script should not read as success.
-      const unknown = cmd && cmd !== "help" && cmd !== "--help" && cmd !== "-h";
-      const write = unknown ? console.error : console.log;
-      if (unknown)
-        write(`❌ Unknown command: ${cmd}
+if (_isMain) {
+  const args = parseArgs(process.argv.slice(2));
+  const [cmd, sub, ...rest] = args._;
+
+  function subArgs(extra = []) {
+    return { _: [...extra, ...rest], flags: args.flags };
+  }
+
+  try {
+    switch (cmd) {
+      case "session":
+        // `test` kept as an alias for `check` so existing scripts keep working.
+        if (sub === "check" || sub === "test") await cmdSessionCheck();
+        else if (sub === "status") await cmdSessionStatus();
+        else if (sub === "logout" || sub === "revoke")
+          await cmdSessionLogout({ _: rest, flags: args.flags });
+        else {
+          // A removed subcommand must fail loudly rather than exit 0 doing nothing: a
+          // caller still running `session store` needs to SEE that it no longer exists.
+          console.error(
+            "Usage: linkedin session [check|status|logout]\n" +
+              "  check                 confirm the shared tab is a signed-in LinkedIn session\n" +
+              "  status                posture + daily counters (never prints a secret)\n" +
+              "  logout [--keep-data]  purge local data, and anything <=1.2.0 stored\n" +
+              "\n" +
+              "REMOVED in 1.2.1: extract-cdp, extract-browser, store. This skill no longer\n" +
+              "extracts, stores or replays your LinkedIn cookies — every call runs inside the\n" +
+              "tab you shared, so there is nothing to save.",
+          );
+          process.exit(2);
+        }
+        break;
+      case "me":
+        await cmdMe();
+        break;
+      case "profile":
+        await cmdProfile(subArgs(sub ? [sub] : []));
+        break;
+      case "search":
+        if (sub === "people") await cmdSearchPeople(subArgs());
+        else if (sub === "companies") await cmdSearchCompanies(subArgs());
+        else console.error('Usage: linkedin search [people|companies] "<query>"');
+        break;
+      case "connections":
+        await cmdConnections({ _: [], flags: args.flags });
+        break;
+      case "conversations":
+        await cmdConversations({ _: [], flags: args.flags });
+        break;
+      case "messages":
+        await cmdMessages(subArgs(sub ? [sub] : []));
+        break;
+      case "message-send":
+        await cmdMessageSend(subArgs(sub ? [sub] : []));
+        break;
+      case "feed":
+        await cmdFeed({ _: [], flags: args.flags });
+        break;
+      case "notifications":
+        await cmdNotifications({ _: [], flags: args.flags });
+        break;
+      case "company":
+        await cmdCompany(subArgs(sub ? [sub] : []));
+        break;
+      case "posts":
+        await cmdPosts(subArgs(sub ? [sub] : []));
+        break;
+      case "activity":
+        await cmdActivity(subArgs(sub ? [sub] : []));
+        break;
+      default: {
+        // Unknown command must fail loudly: a typo in a caller script should not read as success.
+        const unknown = cmd && cmd !== "help" && cmd !== "--help" && cmd !== "-h";
+        const write = unknown ? console.error : console.log;
+        if (unknown)
+          write(`❌ Unknown command: ${cmd}
 `);
-      write(`linkedin — LinkedIn Voyager crawl via browser session
+        write(`linkedin — LinkedIn Voyager crawl via browser session
 
 Session:
-  session extract-cdp [--store]      Pull httpOnly li_at via OpenClaw relay (preferred)
-  session extract-browser            Print JS fallback (often misses li_at)
-  session store                      Read {"li_at":…,"jsessionid":…} as JSON on STDIN.
-                                     Cookies are never accepted as flags — argv is
-                                     world-readable and lands in shell history.
-  session test                       Verify session (calls /voyager/api/me)
-  session status                     Where the session is stored + daily counters
-  session logout [--keep-data]       Erase the session from the keychain AND the file,
-                                     AND delete the cached profiles and activity
-                                     counters, then print LinkedIn's revoke URL.
-                                     This is LOCAL ONLY: it does not sign the session
-                                     out at LinkedIn — do that at the revoke URL.
+  session check                      Confirm the shared tab is a signed-in LinkedIn
+                                     session (runs /voyager/api/me inside the tab).
+  session status                     Posture + daily counters. Prints no secret.
+  session logout [--keep-data]       Delete the cached profiles and activity counters,
+                                     and purge any session a version <=1.2.0 stored,
+                                     then print LinkedIn's revoke URL. This is LOCAL
+                                     ONLY: it does not sign the session out at
+                                     LinkedIn — do that at the revoke URL.
                                      --keep-data keeps the cache and counters.
 
 Identity & graph:
   me                                 Your mini-profile
   profile <vanity>                   Profile + positions
-  search people "<q>" [--top N] [--network F|S|O]
-  search companies "<q>" [--top N]
-  connections [--top N] [--start N]
+  search people "<q>" [--top N<=25] [--page N<=40] [--network F|S|O]
+  search companies "<q>" [--top N<=25]
+  connections [--top N<=100] [--start N<=10000]
   company <vanity>
-  posts <vanity> [--top N]
+  posts <vanity> [--top N<=25]
 
 Messaging:
-  conversations [--top N]
-  messages <conversationUrn> [--top N]
-  message-send <urn> --message "…" --i-mean-it
+  conversations [--top N<=50]
+  messages <conversationUrn> [--top N<=50]
+  message-send <urn> --message "…" --i-mean-it <urn>
+                                     The only write. Consent is per action: --i-mean-it
+                                     must repeat the exact URN. Without it you get the
+                                     draft on stdout and nothing is sent.
 
 Feed:
-  feed [--top N]
-  notifications [--top N]
+  feed [--top N<=25]
+  notifications [--top N<=50]
 
 Rate guard:
   activity show
   activity bump <counter> [--by N]
+  Daily ceilings count RECORDS REQUESTED (--top, or 1 per lookup), reserved in full
+  before the request. An out-of-range --top is rejected, not clamped. Limits in the
+  activity file can only lower a ceiling.
 
-Credentials: OS keychain only (secret-tool on Linux, security on macOS). The secret is
-             passed over stdin, never on a command line, and the write is read back to
-             confirm it landed. With no keychain, saving FAILS and nothing is written
-             unless you pass --allow-plaintext-store, which writes
-             ~/.openclaw/credentials/linkedin-session.json (0600, minimal fields, 24h expiry).
+Credentials: NONE stored. Every call is a fetch() run inside the linkedin.com tab you
+             shared, so your cookies never leave the browser. There is no external
+             replay, no plaintext file store, and no flag that creates either.
+Origin:      every request, navigation and tab pick is pinned to exactly
+             https://www.linkedin.com. A look-alike host or a non-https URL is refused.
 Activity:    ~/.openclaw/workspace/memory/linkedin-activity.json (0600)
 Cache:       OFF by default. LINKEDIN_CACHE=1 enables caching other people's profile data
              at ~/.openclaw/workspace/memory/linkedin-cache.json (0600, 12h default TTL).
-Relay:       must be on loopback; hostnames are resolved and checked.
-             LINKEDIN_ALLOW_REMOTE_RELAY=1 to override, with a warning.
+Relay:       must be a literal loopback IP (127.0.0.1 or [::1]); hostnames, localhost
+             included, are refused rather than resolved. There is no override.
 Off switch:  linkedin session logout   (then revoke at the URL it prints)
 `);
-      if (unknown) process.exit(2);
-      break;
+        if (unknown) process.exit(2);
+        break;
+      }
     }
+  } catch (e) {
+    console.error(`❌ ${e.message}`);
+    process.exit(1);
   }
-} catch (e) {
-  console.error(`❌ ${e.message}`);
-  process.exit(1);
 }

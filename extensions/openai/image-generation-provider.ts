@@ -32,7 +32,8 @@ import { resolveConfiguredOpenAIBaseUrl } from "./shared.js";
 
 const DEFAULT_OPENAI_IMAGE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_CODEX_IMAGE_BASE_URL = OPENAI_CODEX_RESPONSES_BASE_URL;
-const DEFAULT_OPENAI_CODEX_IMAGE_RESPONSES_MODEL = "gpt-5.5";
+// gpt-5.5 was retired for ChatGPT-account Codex on 2026-10-16 (HTTP 400 "not supported when using Codex with a ChatGPT account").
+const DEFAULT_OPENAI_CODEX_IMAGE_RESPONSES_MODEL = "gpt-6-luna";
 const OPENAI_CODEX_IMAGE_INSTRUCTIONS = "You are an image generation assistant.";
 const OPENAI_TRANSPARENT_BACKGROUND_IMAGE_MODEL = "gpt-image-1.5";
 const DEFAULT_OPENAI_IMAGE_TIMEOUT_MS = 180_000;
@@ -570,6 +571,12 @@ function createOpenAIImageGenerationProviderBase(params: {
   };
 }
 
+/** HTTP 429 from an empty prepaid wallet, as opposed to an ordinary rate limit. */
+function isOpenAIQuotaExhaustedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /insufficient_quota|credit_balance_exhausted/.test(message);
+}
+
 async function resolveOptionalApiKeyForProvider(
   params: Parameters<typeof resolveApiKeyForProvider>[0],
 ) {
@@ -868,10 +875,28 @@ export function buildOpenAIImageGenerationProvider(): ImageGenerationProvider {
           })();
       const { response, release } = requestResult;
       try {
-        await assertOkOrThrowHttpError(
-          response,
-          isEdit ? "OpenAI image edit failed" : "OpenAI image generation failed",
-        );
+        try {
+          await assertOkOrThrowHttpError(
+            response,
+            isEdit ? "OpenAI image edit failed" : "OpenAI image generation failed",
+          );
+        } catch (error) {
+          // An empty prepaid wallet is not a dead supply when a ChatGPT subscription is signed in.
+          const codexAuth =
+            publicOpenAIBaseUrl && isOpenAIQuotaExhaustedError(error)
+              ? await resolveOptionalApiKeyForProvider({
+                  provider: "openai-codex",
+                  cfg: req.cfg,
+                  agentDir: req.agentDir,
+                  store: req.authStore,
+                })
+              : null;
+          if (!codexAuth?.apiKey) {
+            throw error;
+          }
+          logCodexImageAuthSelected({ req, authMode: codexAuth.mode, timeoutMs });
+          return await generateOpenAICodexImage({ req, apiKey: codexAuth.apiKey });
+        }
 
         const data = (await response.json()) as OpenAIImageApiResponse;
         const output = resolveOutputMime(req.outputFormat);

@@ -1,9 +1,9 @@
-// FORK 2026-08-19 (the user: "I still would like to move cron collapsed cards
+// FORK 2026-08-19 (the architect: "I still would like to move cron collapsed cards
 // around, and similarly as with the tasks, I would like to filter them and be
 // able to classify them in groups and subgroups").
 //
 // THE ROOM, NOT THE FINDINGS. Card order already lives in ui-state
-// (`cron:cardOrder`) because no cron ever reads how the user arranged the cards.
+// (`cron:cardOrder`) because no cron ever reads how the architect arranged the cards.
 // Groups, membership and the filter chip are the same kind of fact — a layout
 // of the Crons tab, not something a nightly run compounds onto — so they ride
 // the same choices tier rather than growing a second store or borrowing the
@@ -100,7 +100,7 @@ export function parseCronTaxonomy(raw: string): CronTaxonomy {
   }
   const known = new Set(groups.map((g) => g.id));
   // A child whose parent vanished becomes a top-level group rather than
-  // disappearing — the user named it, the name stays.
+  // disappearing — the architect named it, the name stays.
   for (const group of groups) {
     if (group.parentId && !known.has(group.parentId)) group.parentId = null;
   }

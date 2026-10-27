@@ -69,4 +69,65 @@ describe("loadPluginRegistrySnapshotWithMetadata", () => {
     expect(result.source).toBe("persisted");
     expect(result.diagnostics).toEqual([]);
   });
+
+  // 2026-10-23 (JarvisPi): the auth probes behind every tool build ask with preferPersisted: false, and each call
+  // rebuilt the index from every manifest on the gateway's main thread.
+  describe("callers that skip the persisted registry", () => {
+    function setup() {
+      const tempRoot = makeTempDir();
+      const rootDir = path.join(tempRoot, "workspace");
+      const stateDir = path.join(tempRoot, "state");
+      const env = createHermeticEnv(tempRoot);
+      const config = { plugins: { load: { paths: [rootDir] } } };
+      writeManifestlessClaudeBundle(rootDir);
+      return { rootDir, stateDir, env, config };
+    }
+
+    it("reuse the derived index instead of rebuilding it on every call", () => {
+      const { stateDir, env, config } = setup();
+      const first = loadPluginRegistrySnapshotWithMetadata({
+        config,
+        env,
+        stateDir,
+        preferPersisted: false,
+      });
+      const second = loadPluginRegistrySnapshotWithMetadata({
+        config,
+        env,
+        stateDir,
+        preferPersisted: false,
+      });
+
+      expect(first.source).toBe("derived");
+      expect(second).toBe(first);
+    });
+
+    it("never receive a persisted-mode result", () => {
+      const { rootDir, stateDir, env, config } = setup();
+      writePersistedInstalledPluginIndexSync(
+        createManifestlessClaudeBundleIndex({ rootDir, env }),
+        { stateDir },
+      );
+
+      const persisted = loadPluginRegistrySnapshotWithMetadata({ config, env, stateDir });
+      const fresh = loadPluginRegistrySnapshotWithMetadata({
+        config,
+        env,
+        stateDir,
+        preferPersisted: false,
+      });
+
+      expect(persisted.source).toBe("persisted");
+      expect(fresh.source).toBe("derived");
+    });
+
+    it("still rebuild when they opt out with cache: false", () => {
+      const { stateDir, env, config } = setup();
+      const opts = { config, env, stateDir, preferPersisted: false, cache: false } as const;
+      const first = loadPluginRegistrySnapshotWithMetadata(opts);
+      const second = loadPluginRegistrySnapshotWithMetadata(opts);
+
+      expect(second).not.toBe(first);
+    });
+  });
 });

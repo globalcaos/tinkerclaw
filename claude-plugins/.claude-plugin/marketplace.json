@@ -1,0 +1,14 @@
+{
+  "name": "tinkerclaw",
+  "owner": { "name": "TinkerClaw" },
+  "metadata": {
+    "description": "TinkerClaw as Claude Code plugins: the agent's moral code, tools and skills, shared with every model TinkerClaw runs"
+  },
+  "plugins": [
+    {
+      "name": "tinkerclaw-core",
+      "source": "./tinkerclaw-core",
+      "description": "Delivers the TinkerClaw moral code once per session and after compaction, tells plain Claude Code and the chat worker which harness they run in (with the workspace persona files on the Claude Code side), suggests saved recipes per prompt in plain Claude Code, and keeps a background Fractal reflection to proposals for sends, deletes, publishes, spends and restarts"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "id": "tinkerclaw-harness-id",
+  "name": "Harness ID",
+  "description": "Designed to be used with an Anthropic API key only. Rename the harness in the model-facing identity sentence (fork branding) or strip it (privacy). DO NOT combine with cc-bridge (tinkerclaw-tinker-bridge): using the two together may breach the terms of an Anthropic subscription, so this plugin will not start while cc-bridge or an Anthropic OAuth/setup-token login is configured. See README.",
+  "enabledByDefault": false,
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["rename", "strip"],
+        "description": "rename: replace OpenClaw with `name`. strip: drop the harness name entirely."
+      },
+      "name": {
+        "type": "string",
+        "description": "Harness name for rename mode. Default: TinkerClaw. Names containing Claude/Anthropic are refused."
+      }
+    }
+  },
+  "uiHints": {
+    "mode": {
+      "label": "Mode",
+      "help": "rename = your fork's name; strip = no harness name at all (privacy)."
+    },
+    "name": {
+      "label": "Harness name",
+      "help": "Shown to the model instead of OpenClaw."
+    }
+  }
+}

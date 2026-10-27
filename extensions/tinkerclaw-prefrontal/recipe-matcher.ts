@@ -21,10 +21,12 @@
  * See bible subagents-and-kits.md + tool-loop.md.
  */
 import fs from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { parse as parseYaml } from "yaml";
+import { publishRecipeIndex } from "./recipe-index-publish.js";
 import { collectRecipeTargets, type RecipeFileTarget } from "./recipe-locate.js";
-import { parseKitStepsAndParallelism } from "./recipe-runner.js";
+import { parseKitStepsAndParallelism, resolveRecipeOverlayDir } from "./recipe-runner.js";
 import type { EmbedFn } from "./semantic-matcher.js";
 
 export interface RecipeIndexEntry {
@@ -51,6 +53,13 @@ export interface RecipeIndexEntry {
   antiTriggers?: string[];
   /** Other kit slugs this kit composes (frontmatter `composes:`). */
   composes: string[];
+  /**
+   * FORK 2026-10-09: frontmatter `category:` / `subdivision:` (the library's shelf,
+   * e.g. coding/review). Not scored; carried through so the published catalog
+   * (recipe-index-publish.ts) can list recipes by shelf for Claude Code sessions.
+   */
+  category?: string;
+  subdivision?: string;
   /** Absolute path to the kit.md, for lazy step parsing on a match. */
   path: string;
 }
@@ -255,6 +264,12 @@ async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeInd
       tags,
       antiTriggers,
       composes,
+      ...(typeof parsed.category === "string" && parsed.category
+        ? { category: parsed.category }
+        : {}),
+      ...(typeof parsed.subdivision === "string" && parsed.subdivision
+        ? { subdivision: parsed.subdivision }
+        : {}),
       path,
     });
   }
@@ -262,11 +277,25 @@ async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeInd
 }
 
 /**
+ * FORK 2026-10-06 (Broca retrieval v2): the roots the matcher scans after the shipped
+ * recipes dir. The overlay (`<OPENCLAW_HOME>/recipes`) holds recipes the runner can run
+ * but the matcher never saw. Turn hook and both RPCs call this, not their own list.
+ * Collision rule (the architect's ruling 2026-10-06): the overlay recipe wins over a shipped or
+ * bridged one of the same slug, as it does in the runner; `loadRecipeIndex` applies it.
+ */
+export function recipeIndexExtraDirs(bridgedSkillsDir: string): string[] {
+  return [bridgedSkillsDir, resolveRecipeOverlayDir()];
+}
+
+/**
  * Load the matcher's catalog. Scans `ownRecipesDir` plus any `extraDirs` (FORK
  * 2026-06-01 / U11: the bridged-skills dir where imported CC SKILL.md recipes
  * land), so imported recipes are matchable alongside the curated ones. A later
  * dir's entry wins on a slug collision (so a bridged recipe never shadows a
- * curated kit of the same slug — own-kits scan first). The cache key is the
+ * curated kit of the same slug — own-kits scan first), EXCEPT the overlay root
+ * (`resolveRecipeOverlayDir()`): an overlay recipe is the owner's override and beats
+ * a shipped or bridged one of the same slug, matching the runner's read order. Each
+ * such collision logs one line when the index is built. The cache key is the
  * combined mtime signature of every scanned dir, so a write to ANY of them
  * invalidates the cache (a missing dir contributes a stable "x" so its later
  * creation also busts the cache).
@@ -274,6 +303,7 @@ async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeInd
 export async function loadRecipeIndex(
   ownRecipesDir: string,
   extraDirs: string[] = [],
+  log?: { info?: (m: string) => void },
 ): Promise<RecipeIndexEntry[]> {
   const dirs = [ownRecipesDir, ...extraDirs];
   // FORK 2026-09-02: the cache key used to be the ROOT dir's mtime, which does not
@@ -304,14 +334,30 @@ export async function loadRecipeIndex(
   }
 
   // own-recipes first so a bridged import cannot shadow a curated recipe.
-  const bySlug = new Map<string, RecipeIndexEntry>();
-  for (const { targets } of scans) {
+  const overlayRoot = resolvePath(resolveRecipeOverlayDir());
+  const bySlug = new Map<string, { entry: RecipeIndexEntry; overlay: boolean }>();
+  for (const { dir, targets } of scans) {
+    const overlay = resolvePath(dir) === overlayRoot;
     for (const entry of await scanRecipeTargets(targets)) {
-      if (!bySlug.has(entry.slug)) bySlug.set(entry.slug, entry);
+      const held = bySlug.get(entry.slug);
+      if (!held) {
+        bySlug.set(entry.slug, { entry, overlay });
+      } else if (overlay && !held.overlay) {
+        log?.info?.(
+          `[recipe-matcher] slug collision "${entry.slug}": overlay ${entry.path} wins over ${held.entry.path}`,
+        );
+        bySlug.set(entry.slug, { entry, overlay });
+      }
     }
   }
-  const index = [...bySlug.values()];
+  const index = [...bySlug.values()].map((v) => v.entry);
   cache = { sig, index };
+  // FORK 2026-10-09: a REBUILT catalog is published for Claude Code sessions
+  // (`<stateDir>/prefrontal/recipe-index.json`, recipe-index-publish.ts). Fire-and-
+  // forget: not awaited on the turn's hot path, never throws (the publisher swallows
+  // and logs), and a cache hit above returned before reaching here, so the file only
+  // moves when the catalog did.
+  void publishRecipeIndex(index, { log });
   return index;
 }
 
@@ -586,6 +632,12 @@ export interface SeedPlanDeps {
    * by the caller via makeRatingLookup over the warmed marketplace cache.
    */
   rating?: RatingLookup;
+  /**
+   * FORK 2026-10-06 (Broca retrieval v2, phase E): may a plan be seeded from this matched recipe? The caller decides from
+   * the one ranked result per task: only a USE with high confidence seeds; an INSPIRE never does. A match it refuses seeds
+   * nothing and is NOT a recipe gap. Omitted → every match may seed (the historical behaviour).
+   */
+  allowSeed?: (slug: string, confidence: MatchConfidence) => boolean;
 }
 
 export interface SeedPlanOutcome {
@@ -652,7 +704,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
     return empty({ skipped: "plan-in-progress" });
   }
 
-  const index = await loadRecipeIndex(deps.ownRecipesDir, deps.extraKitDirs ?? []);
+  const index = await loadRecipeIndex(deps.ownRecipesDir, deps.extraKitDirs ?? [], deps.log);
   if (index.length === 0) {
     deps.log?.warn?.(`[recipe-matcher] no kits found in ${deps.ownRecipesDir}`);
     return empty({ skipped: "empty-catalog" });
@@ -696,6 +748,23 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       );
     }
   }
+  // J13 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.recipe.match` — ONE row per prompt that
+  // actually reached the matcher (a kit-completion re-injection, an in-progress plan or an empty
+  // catalog returned above and writes nothing), emitted where the outcome is DECIDED rather than
+  // at each return, so the closed label set can never drift from the branches below.
+  //   label: no_match (nothing cleared threshold) · merged (several recipes, which
+  //          buildMergedPlan composes into one plan) · matched (a single recipe)
+  //   n1 = the winning score · n2 = the catalog size it was chosen from — exactly the pair J13's
+  //   claim needs ("does the match rate rise as the library grows?").
+  // The NO-MATCH journal line below prints a prompt snippet; this row never does (L4).
+  emitEvent("j.recipe.match", {
+    sessionKey: deps.sessionKey,
+    runId: deps.runId,
+    label: matches.length === 0 ? "no_match" : matches.length > 1 ? "merged" : "matched",
+    n1: matches.reduce((best, m) => Math.max(best, m.score), 0),
+    n2: index.length,
+  });
+
   const matchSummary = matches.map((m) => ({
     slug: m.entry.slug,
     score: m.score,
@@ -708,6 +777,28 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       `[recipe-matcher] NO-MATCH sessionKey=${deps.sessionKey} prompt="${snippet}" (catalog=${index.length}) — recipe-gap; authoring offered`,
     );
     return empty({ catalogSize: index.length, noMatch: true });
+  }
+
+  if (deps.allowSeed) {
+    const allow = deps.allowSeed;
+    const allowed = matches.filter((m) => allow(m.entry.slug, confidence));
+    if (allowed.length === 0) {
+      deps.log?.info?.(
+        `[recipe-matcher] sessionKey=${deps.sessionKey} matched ${matches.map((m) => m.entry.slug).join("+")} but none is a high-confidence USE — no plan seeded`,
+      );
+      return empty({
+        catalogSize: index.length,
+        matches: matches.map((m) => ({
+          slug: m.entry.slug,
+          score: m.score,
+          title: m.entry.title,
+          path: m.entry.path,
+        })),
+        confidence,
+        skipped: "not-a-high-use",
+      });
+    }
+    matches = allowed;
   }
 
   const plan = await buildMergedPlan(matches, index);

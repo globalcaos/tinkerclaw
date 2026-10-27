@@ -6,6 +6,9 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Memory: `MEMORY.md` is now described and checked as the memory index. The workspace `AGENTS.md` template tells the agent to keep one line per topic, put the detail in `memory/<topic>.md` and open it with `memory_get`; a new soft budget `agents.defaults.memoryIndexMaxChars` (default 8000 chars, never truncates) is reported by `/context`, `openclaw doctor` (which also flags long index lines and pointers to missing topic files) and the gateway log, and `agents.defaults.memoryIndexWarning: "once"` also tells the agent (default `"watch"`); a truncated `MEMORY.md` now gets "move detail into topic files" advice instead of only "raise the limit". Thanks @globalcaos.
+- Jev: the amygdala and Thalamus plugins now load in a fresh install, in `shadow` mode, and stay dormant until a Jev token exists (env `TYPESAFE_API_KEY` or the key file `<state dir>/jev/token`, picked up without a restart); `openclaw jev status` and a Tinker chip show the state, and onboarding offers an optional token step.
+- Skills: new `tinkerclaw-pr-request`. When a user finds a TinkerClaw bug or wants an improvement, the agent files it upstream as a pull request (issues are off) with the details needed to act: reproduction steps, evidence, environment and a "done when" check. It refuses empty sections and private data, files only after the user says yes, and prints a one-click github.com link when there is no GitHub login.
 - Channels: add Yuanbao channel docs entrance so the Tencent Yuanbao bot appears in the channel listing and sidebar navigation. (#73443) Thanks @loongfay.
 
 ### Fixes

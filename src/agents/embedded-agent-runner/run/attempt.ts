@@ -11,6 +11,11 @@ import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import { getRuntimeConfig } from "../../../config/config.js";
+import {
+  appendMissingPromptKeyMarkers,
+  findPromptRowClaimedOnBranch,
+} from "../../../gateway/prompt-key-marker.js";
+import { bridgeReattachFor } from "../../../infra/bridge-reattach.js";
 import { emitTrustedDiagnosticEvent } from "../../../infra/diagnostic-events.js";
 import {
   createChildDiagnosticTraceContext,
@@ -21,6 +26,7 @@ import { isEmbeddedMode } from "../../../infra/embedded-mode.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
+import { isRestartDrainActive } from "../../../infra/restart-drain.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { listRegisteredPluginAgentPromptGuidance } from "../../../plugins/command-registry-state.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
@@ -60,6 +66,7 @@ import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
 import {
   analyzeBootstrapBudget,
+  analyzeMemoryIndexBudget,
   buildBootstrapPromptWarning,
   buildBootstrapTruncationReportMeta,
   buildBootstrapInjectionStats,
@@ -90,6 +97,8 @@ import {
   resolveBootstrapMaxChars,
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
+  resolveMemoryIndexMaxChars,
+  resolveMemoryIndexWarningMode,
 } from "../../embedded-agent-helpers.js";
 import { subscribeEmbeddedAgentSession } from "../../embedded-agent-subscribe.js";
 import { isTimeoutError } from "../../failover-error.js";
@@ -147,7 +156,11 @@ import {
   isSubagentEnvelopeSession,
   resolveSubagentCapabilityStore,
 } from "../../subagent-capabilities.js";
-import { resolveSystemPromptOverride } from "../../system-prompt-override.js";
+import { systemPromptStableChars } from "../../system-prompt-cache-boundary.js";
+import {
+  resolveSystemPromptIdentityLine,
+  resolveSystemPromptOverride,
+} from "../../system-prompt-override.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import {
@@ -164,9 +177,11 @@ import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { createBoundaryPauseGate } from "../boundary-pause.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
+import { planContinuation } from "../continuation.js";
 import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
 import { buildEmbeddedExtensionFactories, resolveCompactionMode } from "../extensions.js";
 import {
@@ -233,6 +248,7 @@ import { mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import { createEmbeddedAgentSessionWithResourceLoader } from "./attempt-session.js";
 import { evaluateSpawnBudget } from "./spawn-budget.js";
+import { buildKeyedSteerMessage, steerPromptKey } from "./steer-message.js";
 import { markSpan, turnSpan, turnSpanSync } from "./turn-span.js";
 export { buildContextEnginePromptCacheInfo } from "./attempt.context-engine-helpers.js";
 import {
@@ -240,11 +256,15 @@ import {
   shouldStripBootstrapFromEmbeddedContext,
 } from "./attempt-bootstrap-routing.js";
 export { shouldStripBootstrapFromEmbeddedContext } from "./attempt-bootstrap-routing.js";
+import { wrapStreamFnWithLedger } from "../../../forensic/llm-ledger.js";
 import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
+import { recordRunDone } from "../../../infra/events/turn-events.js"; // FORK: run.done row
+import { wrapStreamFnWithCallRouter } from "../call-router.js";
 import {
   rotateTranscriptAfterCompaction,
   shouldRotateCompactionTranscript,
 } from "../compaction-successor-transcript.js";
+import { wrapToolsWithDigest } from "../tool-result-digest.js";
 import { configureEmbeddedAttemptHttpRuntime } from "./attempt-http-runtime.js";
 import {
   assembleAttemptContextEngine,
@@ -328,7 +348,7 @@ import {
   queueRuntimeContextForNextTurn,
   resolveRuntimeContextPromptParts,
 } from "./runtime-context-prompt.js";
-import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
+import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult, ThinkSource } from "./types.js";
 
 export {
   appendAttemptCacheTtlIfNeeded,
@@ -391,6 +411,28 @@ export function resolveUnknownToolGuardThreshold(loopDetection?: {
 
 export function isPrimaryBootstrapRun(sessionKey?: string): boolean {
   return !isSubagentSessionKey(sessionKey) && !isAcpSessionKey(sessionKey);
+}
+
+/**
+ * FORK 2026-10-09 (effort slider) — the effort half of the `__openclaw*` options smuggle that
+ * runEmbeddedAttempt wraps around every model call: the level, WHO chose it, and Thalamus's
+ * ultracode call. The tinker-bridge reads all three (extensions/tinkerclaw-tinker-bridge
+ * stream.ts), so a human's pin is applied as a pin and an Auto decision as Auto. A run built by a
+ * path that resolved no provenance reads "default", never "pin". Ultracode is a user-turn
+ * decision: a memory flush or heartbeat that inherits the turn's base params never fans out.
+ */
+export function buildEffortSmuggleOptions(
+  params: Pick<EmbeddedRunAttemptParams, "thinkLevel" | "thinkSource" | "ultracode" | "trigger">,
+): {
+  __openclawThinkLevel: EmbeddedRunAttemptParams["thinkLevel"];
+  __openclawThinkSource: ThinkSource;
+  __openclawUltracode: boolean;
+} {
+  return {
+    __openclawThinkLevel: params.thinkLevel,
+    __openclawThinkSource: params.thinkSource ?? "default",
+    __openclawUltracode: params.ultracode === true && params.trigger === "user",
+  };
 }
 
 export function remapInjectedContextFilesToWorkspace(params: {
@@ -703,6 +745,7 @@ export async function runEmbeddedAttempt(
         return;
       }
       diagnosticRunCompleted = true;
+      recordRunDone(diagnosticRunBase, diagnosticRunStartedAt, outcome, err);
       emitTrustedDiagnosticEvent({
         type: "run.completed",
         ...diagnosticRunBase,
@@ -871,11 +914,12 @@ export async function runEmbeddedAttempt(
       : hookAdjustedBootstrapFiles;
     const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
     const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
+    const bootstrapInjectionStats = buildBootstrapInjectionStats({
+      bootstrapFiles: bootstrapFilesForInjectionStats,
+      injectedFiles: contextFiles,
+    });
     const bootstrapAnalysis = analyzeBootstrapBudget({
-      files: buildBootstrapInjectionStats({
-        bootstrapFiles: bootstrapFilesForInjectionStats,
-        injectedFiles: contextFiles,
-      }),
+      files: bootstrapInjectionStats,
       bootstrapMaxChars,
       bootstrapTotalMaxChars,
     });
@@ -885,7 +929,17 @@ export async function runEmbeddedAttempt(
       mode: bootstrapPromptWarningMode,
       seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
       previousSignature: params.bootstrapPromptWarningSignature,
+      memoryIndex: {
+        budget: analyzeMemoryIndexBudget({
+          files: bootstrapInjectionStats,
+          maxChars: resolveMemoryIndexMaxChars(params.config),
+        }),
+        mode: resolveMemoryIndexWarningMode(params.config),
+      },
     });
+    if (bootstrapPromptWarning.memoryIndexLogLine) {
+      log.warn(bootstrapPromptWarning.memoryIndexLogLine);
+    }
     const workspaceNotes: string[] = [];
     if (
       hookAdjustedBootstrapFiles.some(
@@ -997,7 +1051,19 @@ export async function runEmbeddedAttempt(
       senderIsOwner: params.senderIsOwner,
       warn: (message) => log.warn(message),
     });
-    const effectiveTools = [...tools, ...filteredBundledTools];
+    // FORK 2026-09-30 (THALAMUS v4, unit D3): a registered digester may condense a long text tool result before it
+    // enters the thread. Returns the same array when none is registered.
+    const effectiveTools = wrapToolsWithDigest([...tools, ...filteredBundledTools], {
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      agentId: params.agentId,
+      trigger: params.trigger,
+      provider: params.provider,
+      model: params.modelId,
+      api: params.model.api,
+      thinkLevel: params.thinkLevel,
+    });
     // Char weight of the tool schemas shipped with every request. pi's
     // estimateTokens() only walks messages, so the preemptive-compaction
     // precheck further down never counted tool schemas at all. Computed ONCE
@@ -1223,6 +1289,10 @@ export async function runEmbeddedAttempt(
         }) ??
         buildEmbeddedSystemPrompt({
           workspaceDir: effectiveWorkspace,
+          identityLine: resolveSystemPromptIdentityLine({
+            config: params.config,
+            agentId: sessionAgentId,
+          }),
           defaultThinkLevel: params.thinkLevel,
           reasoningLevel: params.reasoningLevel ?? "off",
           extraSystemPrompt: params.extraSystemPrompt,
@@ -2024,6 +2094,32 @@ export async function runEmbeddedAttempt(
           nextCallId: () => `${params.runId}:model:${(diagnosticModelCallSeq += 1)}`,
         },
       );
+      // FORK 2026-09-17: every model call → the LLM ledger (full request, response, driver).
+      activeSession.agent.streamFn = wrapStreamFnWithLedger(activeSession.agent.streamFn, {
+        source: "agent",
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        agentId: params.agentId,
+        spawnedBy: params.spawnedBy,
+        trigger: params.trigger,
+        provider: params.provider,
+        model: params.modelId,
+        api: params.model.api,
+      });
+      // FORK 2026-09-30 (THALAMUS v4): a registered call router sees every call before it goes out. Returns
+      // the same function when none is registered.
+      activeSession.agent.streamFn = wrapStreamFnWithCallRouter(activeSession.agent.streamFn, {
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        agentId: params.agentId,
+        trigger: params.trigger,
+        provider: params.provider,
+        model: params.modelId,
+        api: params.model.api,
+        thinkLevel: params.thinkLevel,
+      });
 
       // FORK 2026-04-24 (originally added in 2ad1400a0d, lost in an upstream
       // merge, restored 2026-05-09): pipe runId + sessionKey + sessionId through
@@ -2036,18 +2132,33 @@ export async function runEmbeddedAttempt(
       // (stream.ts:170/204 early-returned on every emitToolStart/Result call),
       // so claude-cli tool calls were invisible in the Tinker UI even though
       // the tool-event consumer at app.ts:1501 was wired correctly.
+      let pendingContinuationCall: { fallbackText?: string } | undefined;
       {
         const piped = activeSession.agent.streamFn;
         const pipedRunId = params.runId;
         const pipedSessionKey = params.sessionKey;
         const pipedSessionId = params.sessionId;
         activeSession.agent.streamFn = (model, context, options) => {
+          // FORK 2026-09-30 (lifecycles.md L4b): the first call of a continued run tells the
+          // cc-bridge to take the turn its worker still holds (see continueFromTranscript below).
+          const continuation = pendingContinuationCall;
+          pendingContinuationCall = undefined;
           const pipedOptions = {
             ...options,
             __openclawRunId: pipedRunId,
             __openclawSessionKey: pipedSessionKey,
             __openclawSessionId: pipedSessionId,
-            __openclawThinkLevel: params.thinkLevel,
+            // FORK 2026-10-09 (effort slider): the level plus who chose it and Thalamus's
+            // ultracode call (__openclawThinkSource / __openclawUltracode).
+            ...buildEffortSmuggleOptions(params),
+            // FORK 2026-10-02 (channel-reply): the bridge stamps a chat-channel run's final
+            // message so the channel gets the answer without the tool narration.
+            __openclawMessageChannel: runtimeChannel,
+            // FORK 2026-10-10 (per-turn blocks, J-series Phase 1.5): where the stable prefix ends. The provider
+            // transport below strips the boundary marker, so a bridge that keeps a warm worker cannot find it
+            // itself; tinker-bridge keys and writes its system prompt from this prefix and sends the rest per turn.
+            __openclawStablePromptChars: systemPromptStableChars(context.systemPrompt),
+            ...(continuation ? { __openclawContinuation: continuation } : {}),
           } as typeof options;
           return piped(model, context, pipedOptions);
         };
@@ -2246,6 +2357,8 @@ export async function runEmbeddedAttempt(
           session: activeSession,
           runId: params.runId,
           initialReplayState: params.initialReplayState,
+          modelId: params.model.id,
+          modelProvider: params.model.provider,
           hookRunner: getGlobalHookRunner() ?? undefined,
           verboseLevel: params.verboseLevel,
           reasoningMode: params.reasoningLevel ?? "off",
@@ -2336,20 +2449,46 @@ export async function runEmbeddedAttempt(
         abortRun(false, makeBudgetAbortReason());
       };
 
+      // FORK 2026-09-29 (lifecycles.md L4b): the restart drain holds this run at its next
+      // model-call boundary (boundary-pause.ts). A run that starts while a drain is active is held
+      // before its first call, so it spends nothing until the restart is done or called off.
+      const boundaryGate = createBoundaryPauseGate({
+        onPaused: () =>
+          log.info(
+            `restart drain: held at a model-call boundary runId=${params.runId} sessionId=${params.sessionId}`,
+          ),
+      });
+      // Not a cc-bridge run: it is one call for a whole Claude Code turn, and the bridge drains its
+      // worker at the API calls inside it (runs.ts drainEmbeddedRunsToBoundary).
+      if (isRestartDrainActive() && params.provider !== "claude-code") {
+        boundaryGate.requestPause();
+      }
       const queueHandle: EmbeddedPiQueueHandle & {
         kind: "embedded";
         cancel: (reason?: "user_abort" | "restart" | "superseded") => void;
       } = {
         kind: "embedded",
-        queueMessage: async (text: string) => {
+        // FORK 2026-10-05 (bug-log `steer-written-twice`): the steered message carries its prompt's
+        // key, so the row pi persists when it injects it is that prompt's row (run/steer-message.ts).
+        // Agent.steer directly, as attempt.sessions-yield.ts does; AgentSession.steer would rebuild
+        // the message from the text alone.
+        queueMessage: async (text: string, opts?: { promptKeys?: readonly string[] }) => {
+          const key = steerPromptKey(text, opts?.promptKeys);
+          if (key) {
+            activeSession.agent.steer(buildKeyedSteerMessage(text, key));
+            return;
+          }
           await activeSession.steer(text);
         },
+        persistsSteeredPrompt: true,
         isStreaming: () => activeSession.isStreaming,
         isCompacting: () => subscription.isCompacting(),
         cancel: () => {
           abortRun();
         },
         abort: abortRun,
+        boundaryPause: boundaryGate,
+        provider: params.provider,
       };
       let lastAssistant: AgentMessage | undefined;
       let currentAttemptAssistant: EmbeddedRunAttemptResult["currentAttemptAssistant"];
@@ -2533,6 +2672,7 @@ export async function runEmbeddedAttempt(
           bootstrapPromptWarning.lines,
           {
             preserveExactPrompt: heartbeatPrompt,
+            memoryIndexLines: bootstrapPromptWarning.memoryIndexLines,
           },
         );
         if (userPromptPrefixText) {
@@ -2595,6 +2735,10 @@ export async function runEmbeddedAttempt(
               hookPrependSystemContext: hookResult?.prependSystemContext,
             }),
             appendSystemContext: hookResult?.appendSystemContext,
+            leadingLine: resolveSystemPromptIdentityLine({
+              config: params.config,
+              agentId: sessionAgentId,
+            }),
           });
           if (prependedOrAppendedSystemPrompt) {
             const prependSystemLen = hookResult?.prependSystemContext?.trim().length ?? 0;
@@ -2652,6 +2796,9 @@ export async function runEmbeddedAttempt(
         if (googlePromptCacheStreamFn) {
           activeSession.agent.streamFn = googlePromptCacheStreamFn;
         }
+        // FORK 2026-09-29 (lifecycles.md L4b): OUTERMOST, so a held call reaches no other wrapper
+        // (no ledger row, no telemetry frame, no cache trace) until it is released.
+        activeSession.agent.streamFn = boundaryGate.wrap(activeSession.agent.streamFn);
 
         const routingSummary = describeProviderRequestRoutingSummary({
           provider: params.provider,
@@ -2970,7 +3117,86 @@ export async function runEmbeddedAttempt(
               messages: btwSnapshotMessages,
               inFlightPrompt: promptSubmission.prompt,
             });
-            if (promptSubmission.runtimeOnly) {
+            // FORK 2026-09-29 (lifecycles.md L4b): a restart-interrupted turn resumes from the
+            // transcript with Agent.continue(): no prompt, nothing re-asked. The drain left the
+            // transcript at a model-call boundary; continuation.ts trims a stub and closes any tool
+            // call the restart cut, persisting those results before the loop continues.
+            // A cc-bridge turn lives in its CLI session, not in these messages. It continues only
+            // when the bridge adopted the worker a restart froze mid-turn (src/infra/bridge-reattach.ts):
+            // the bridge then replays and thaws that turn. Any other bridge turn keeps the prompt.
+            const bridgeTurnHeld =
+              params.provider === "claude-code" &&
+              bridgeReattachFor(params.sessionKey)?.state === "pending";
+            // FORK 2026-10-05 (bug-log `failover-reprompt`): a later attempt of the same run (a
+            // provider failover, run.ts's thinking-level retry) finds the prompt row an earlier
+            // attempt wrote and continues from it, as a restart does. prompt() would persist the
+            // prompt a second time, unkeyed, after the failed attempt's rows. A fallback INTO
+            // claude-code keeps the prompt: its CLI session never received it.
+            const ownPromptRow =
+              !params.continueFromTranscript &&
+              !isRawModelRun &&
+              typeof sessionManager.getBranch === "function"
+                ? findPromptRowClaimedOnBranch(sessionManager.getBranch(), params.promptKeys)
+                : undefined;
+            const continuation =
+              (params.continueFromTranscript || ownPromptRow) &&
+              (params.provider !== "claude-code" || bridgeTurnHeld)
+                ? planContinuation(activeSession.agent.state.messages)
+                : undefined;
+            if (continuation && !continuation.ok) {
+              log.warn(
+                `${ownPromptRow ? "retry of a written prompt" : "continueFromTranscript"}: ${continuation.reason}; falling back to the prompt sessionKey=${params.sessionKey ?? params.sessionId} runId=${params.runId}`,
+              );
+            }
+            // A held bridge turn is taken either way. When the transcript cannot continue (a chat
+            // cut in its FIRST turn has nothing on disk: live test 2026-09-30), the prompt path
+            // carries the call, the resume text is only the visible row, and the worker's turn is
+            // what runs: the bridge never sends that text to the CLI (stream.ts continuation).
+            if (bridgeTurnHeld && params.continueFromTranscript) {
+              pendingContinuationCall = { fallbackText: promptSubmission.prompt };
+            }
+            // FORK 2026-10-01 (`[chat-divergence]` cause 1, bug-log.md): key the prompt pi is about
+            // to persist. chat.send writes the `openclaw.prompt-key` marker only on a transcript
+            // that already holds an assistant row, so a brand-new session's first prompt was never
+            // keyed and the outbox redrew it LOST. Written HERE, not at SessionManager.open:
+            // prepareSessionManagerForRun resets a pre-created transcript with no assistant row to
+            // its header, dropping anything appended before it, and a marker leaf ahead of the
+            // orphaned-user repair above would hide that repair. On a cold session pi's first
+            // flush lands the marker right before the user row. A key already in the session
+            // (chat.send's, or an earlier attempt's that flushed) gets no second marker. A
+            // continued turn persists no user row, so it gets none.
+            if (!continuation?.ok) {
+              const promptKeyMarkers = appendMissingPromptKeyMarkers(sessionManager, {
+                promptKeys: params.promptKeys,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                ts: Date.now(),
+              });
+              if (!promptKeyMarkers.ok) {
+                log.warn(
+                  `prompt-key marker not written runId=${params.runId} sessionKey=${params.sessionKey ?? params.sessionId}: ${formatErrorMessage(promptKeyMarkers.error)}`,
+                );
+              } else if (promptKeyMarkers.appended.length > 0) {
+                log.debug(
+                  `prompt-key marker written keys=${promptKeyMarkers.appended.join(",")} runId=${params.runId}`,
+                );
+              }
+            }
+            if (continuation?.ok) {
+              for (const result of continuation.synthetic) {
+                sessionManager.appendMessage(result as never);
+              }
+              activeSession.agent.state.messages = continuation.messages;
+              // This attempt's messages start where the continued context ends: a trimmed stub
+              // shortened the list, and counting from the old length would hide a one-message answer
+              // from findCurrentAttemptAssistantMessage.
+              prePromptMessageCount = continuation.messages.length - continuation.synthetic.length;
+              log.info(
+                ownPromptRow
+                  ? `retry continues from its prompt row entry=${ownPromptRow.entryId} key=${ownPromptRow.idempotencyKey} runId=${params.runId} provider=${params.provider}/${params.modelId} trimmed=${continuation.trimmed} closedToolCalls=${continuation.synthetic.length}`
+                  : `continueFromTranscript: resuming without a prompt sessionKey=${params.sessionKey ?? params.sessionId} trimmed=${continuation.trimmed} closedToolCalls=${continuation.synthetic.length}${bridgeTurnHeld ? " (cc-bridge worker held)" : ""}`,
+              );
+              await abortable(activeSession.agent.continue());
+            } else if (promptSubmission.runtimeOnly) {
               await abortable(activeSession.prompt(promptSubmission.prompt));
             } else {
               const runtimeContext = promptSubmission.runtimeContext?.trim();
@@ -3019,6 +3245,22 @@ export async function runEmbeddedAttempt(
                 // Persona re-injection is meant to persist past this turn, so the
                 // restore baseline tracks it; the U10 deliberation below must NOT.
                 preDeliberationSystemPromptText = systemPromptText;
+
+                // FORK 2026-10-23: junk-first eviction — old tool output leaves the desk before
+                // anything is summarized (fork/attempt-hooks.ts evictOldToolResults).
+                {
+                  const ev = _forkAttemptHooks.evictOldToolResults(
+                    activeSession.messages as Array<{ role: string; content?: unknown }>,
+                    params.contextTokenBudget ?? DEFAULT_CONTEXT_TOKENS,
+                  );
+                  if (ev.messages) {
+                    activeSession.agent.state.messages =
+                      ev.messages as typeof activeSession.agent.state.messages;
+                    log.info(
+                      `engram: junk-first eviction — ${ev.evicted} tool outputs evicted, ~${ev.tokensFreed} tokens freed`,
+                    );
+                  }
+                }
 
                 // FORK U10: pre-prompt Tree-of-Thoughts deliberation. Runs AFTER
                 // the retrieval-pack/reinject augmentation so the search sees the

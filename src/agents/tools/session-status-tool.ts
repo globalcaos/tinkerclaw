@@ -255,6 +255,8 @@ export function createSessionStatusTool(opts?: {
   agentSessionKey?: string;
   config?: OpenClawConfig;
   sandboxed?: boolean;
+  modelProvider?: string;
+  modelId?: string;
 }): AnyAgentTool {
   return {
     label: "Session Status",
@@ -529,11 +531,23 @@ export function createSessionStatusTool(opts?: {
       const defaultProviderForCard = hasExplicitModelOverride
         ? configured.provider
         : (runtimeProviderForCard ?? "");
-      const defaultModelForCard = hasExplicitModelOverride
-        ? configured.model
-        : runtimeModelForCard || configured.model;
-      const statusSessionEntry =
-        !hasExplicitModelOverride && !runtimeProviderForCard && runtimeModelForCard
+      const executingModel =
+        !changedModel &&
+        (requestedKeyParam === undefined || resolved.key === effectiveRequesterKey) &&
+        opts?.modelProvider &&
+        opts?.modelId
+          ? { provider: opts.modelProvider, model: opts.modelId }
+          : undefined;
+      const defaultModelForCard =
+        executingModel?.model ??
+        (hasExplicitModelOverride ? configured.model : runtimeModelForCard || configured.model);
+      const statusSessionEntry = executingModel
+        ? {
+            ...resolved.entry,
+            providerOverride: executingModel.provider,
+            modelOverride: executingModel.model,
+          }
+        : !hasExplicitModelOverride && !runtimeProviderForCard && runtimeModelForCard
           ? { ...resolved.entry, providerOverride: "" }
           : resolved.entry;
       const providerOverrideForCard = statusSessionEntry.providerOverride?.trim();

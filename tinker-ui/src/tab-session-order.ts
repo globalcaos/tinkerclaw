@@ -1,4 +1,4 @@
-// FORK 2026-09-01 (the user: drag-reorder context tabs; sessions panel follows
+// FORK 2026-09-01 (the architect: drag-reorder context tabs; sessions panel follows
 // that order — open tabs first, closed tabs immediately after).
 //
 // Pure (DOM-free, storage-free) helpers so the reorder + panel-sync rules can

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 /**
  * FORK 2026-06-11: openclaw-orchestrate -- CLI wrapper around the
  * prefrontal.recipe.orchestrate RPC, the sibling of openclaw-spawn-subagent.
@@ -23,6 +24,20 @@
  * Usage:
  *   openclaw-orchestrate --script-file <path.js> [--args '<json>']
  *     [--session <sessionKey>] [--label name] [--timeout 1800] [--json]
+ *     [--detach [--id <slug>] [--wake-session <sessionKey>]]
+ *   openclaw-orchestrate --status <id>
+ *
+ * --detach (FORK 2026-10-01, bug-log [fanout-dies-with-its-worker]; scripts/lib/fanout-unit.mjs)
+ * runs the fan-out as its own systemd user unit `tinkerclaw-fanout-<id>` and returns at once: the
+ * worker that launched it can end its turn, and its process, the pool's idle sweep and the 3-hour
+ * run limit no longer take the fan-out down. The result lands in ~/.openclaw/fanout/<id>/
+ * (result.json, done.json, run.log) and the chat in --wake-session (default $TC_SESSION_KEY) is
+ * woken with chat.send when it ends. --status <id> prints whether it is running, done, failed or
+ * dead (unit gone, no done.json) and exits 0 / 0 / 1 / 3.
+ *
+ * The fan-out itself still runs inside the gateway (prefrontal.recipe.orchestrate): a gateway
+ * restart ends it. The runner now notices the closed connection at once and reports the failure,
+ * instead of waiting out its timeout.
  *
  * --session defaults to the HEADLESS SINK `agent:main:orchestrator` (2026-08-04),
  * never the human Main tab. Unlike the spawn CLI the field cannot be omitted --
@@ -37,7 +52,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
+import {
+  buildDetachedLaunch,
+  buildFanoutWakeMessage,
+  deliverFanoutWake,
+  fanoutRoot,
+  gatewayCall,
+  isValidFanoutId,
+  newFanoutId,
+  readFanoutStatus,
+  statusExitCode,
+  systemctlIsActive,
+  writeJsonAtomic,
+} from "./lib/fanout-unit.mjs";
 
 const argv = process.argv.slice(2);
 function flag(name, fallback = undefined) {
@@ -49,6 +78,18 @@ function flag(name, fallback = undefined) {
 }
 function boolFlag(name) {
   return argv.includes(`--${name}`);
+}
+
+// --status <id>: is a detached fan-out alive? Needs no gateway.
+{
+  const statusId = flag("status");
+  if (statusId != null) {
+    const status = isValidFanoutId(statusId)
+      ? readFanoutStatus(statusId)
+      : { id: statusId, state: "unknown" };
+    console.log(JSON.stringify(status));
+    process.exit(statusExitCode(status.state));
+  }
 }
 
 const SCRIPT_FILE = flag("script-file") ?? flag("script");
@@ -139,6 +180,73 @@ const SESSION = flag("session") ?? flag("sessionKey") ?? HEADLESS_REQUESTER_SESS
 const LABEL = flag("label");
 const TIMEOUT_S = flag("timeout") != null ? Number(flag("timeout")) : 1800;
 const EMIT_JSON = boolFlag("json");
+// Inner mode of a detached fan-out (set by --detach on the unit it starts).
+const RESULT_DIR = flag("result-dir");
+const WAKE_SESSION = flag("wake-session");
+
+if (boolFlag("detach")) {
+  const id = flag("id") ?? newFanoutId(LABEL);
+  if (!isValidFanoutId(id)) {
+    console.error(`openclaw-orchestrate: --id must be lowercase letters, digits and dashes: ${id}`);
+    process.exit(2);
+  }
+  const wakeSession = WAKE_SESSION ?? process.env.TC_SESSION_KEY;
+  if (!wakeSession) {
+    console.error(
+      "openclaw-orchestrate: --detach needs a chat to wake: pass --wake-session <sessionKey> (TC_SESSION_KEY is not set here)",
+    );
+    process.exit(2);
+  }
+  const dir = path.join(fanoutRoot(), id);
+  const { unit, argv: launch } = buildDetachedLaunch({
+    id,
+    dir,
+    cwd: process.cwd(),
+    nodeBin: process.execPath,
+    scriptPath: fileURLToPath(import.meta.url),
+    argsJson: rawArgs ?? null,
+    attributionSession: SESSION,
+    label: LABEL,
+    timeoutS: TIMEOUT_S,
+    wakeSession,
+    env: process.env,
+  });
+  // One owner per fan-out, like longjob: an id whose unit still runs is refused.
+  if (systemctlIsActive(unit) === "active") {
+    console.error(`openclaw-orchestrate: ${unit} is already running`);
+    process.exit(2);
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(SCRIPT_FILE, path.join(dir, "plan.js"));
+  fs.rmSync(path.join(dir, "done.json"), { force: true });
+  const startedAt = Date.now();
+  writeJsonAtomic(path.join(dir, "job.json"), {
+    id,
+    unit,
+    label: LABEL ?? null,
+    wakeSession,
+    attributionSession: SESSION,
+    planSource: path.resolve(SCRIPT_FILE),
+    startedAt,
+  });
+  const r = spawnSync(launch[0], launch.slice(1), { encoding: "utf8" });
+  if (r.status !== 0) {
+    console.error(`openclaw-orchestrate: systemd-run failed: ${(r.stderr || "").trim()}`);
+    process.exit(1);
+  }
+  console.log(
+    JSON.stringify({
+      ok: true,
+      detached: true,
+      id,
+      unit,
+      dir,
+      wakeSession,
+      status: `node ${fileURLToPath(import.meta.url)} --status ${id}`,
+    }),
+  );
+  process.exit(0);
+}
 const WS_URL = (process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789")
   .replace(/^http/, "ws")
   .replace(/\/$/, "");
@@ -185,7 +293,71 @@ function req(method, params) {
   });
 }
 
+let finished = false;
 const done = (code, payload) => {
+  if (finished) {
+    return;
+  }
+  finished = true;
+  if (RESULT_DIR) {
+    void finishDetached(code, payload);
+    return;
+  }
+  report(code, payload);
+};
+
+/** A detached fan-out ends: its result and done marker on disk first, then the wake. */
+async function finishDetached(code, payload) {
+  const finishedAt = Date.now();
+  let job = {};
+  try {
+    job = JSON.parse(fs.readFileSync(path.join(RESULT_DIR, "job.json"), "utf-8"));
+  } catch {}
+  const ok = code === 0;
+  const error = ok ? undefined : String(payload?.error ?? "unknown error");
+  try {
+    writeJsonAtomic(path.join(RESULT_DIR, "result.json"), payload ?? null);
+    writeJsonAtomic(path.join(RESULT_DIR, "done.json"), {
+      ok,
+      exitCode: code,
+      finishedAt,
+      ...(error ? { error } : {}),
+    });
+  } catch (err) {
+    console.error(`openclaw-orchestrate: could not write the result: ${String(err)}`);
+  }
+  try {
+    ws.close();
+  } catch {}
+  if (WAKE_SESSION) {
+    await deliverFanoutWake({
+      call: (method, params) =>
+        gatewayCall({
+          WebSocket,
+          url: WS_URL,
+          token: TOKEN,
+          origin: process.env.OPENCLAW_SPAWN_ORIGIN ?? "http://127.0.0.1:18790",
+          method,
+          params,
+        }),
+      sessionKey: WAKE_SESSION,
+      message: buildFanoutWakeMessage({
+        id: job.id ?? path.basename(RESULT_DIR),
+        label: job.label ?? LABEL,
+        ok,
+        startedAt: job.startedAt,
+        finishedAt,
+        resultFile: path.join(RESULT_DIR, "result.json"),
+        error,
+      }),
+      idempotencyKey: `fanout-${job.id ?? path.basename(RESULT_DIR)}-${finishedAt}`,
+      wakeLog: path.join(RESULT_DIR, "wake.log"),
+    });
+  }
+  report(code, payload);
+}
+
+function report(code, payload) {
   if (EMIT_JSON) {
     console.log(JSON.stringify(payload));
   } else if (payload?.ok) {
@@ -204,7 +376,7 @@ const done = (code, payload) => {
     ws.close();
   } catch {}
   process.exit(code);
-};
+}
 
 ws.on("message", (buf) => {
   let frame;
@@ -259,6 +431,11 @@ ws.on("message", (buf) => {
 });
 
 ws.on("error", (err) => done(1, { ok: false, error: `ws-error: ${String(err)}` }));
+// FORK 2026-10-01: a closed connection before the answer (a gateway restart) ended the fan-out
+// inside the gateway; say so now instead of waiting out --timeout.
+ws.on("close", () =>
+  done(1, { ok: false, error: "gateway connection closed before the fan-out finished" }),
+);
 
 setTimeout(
   () => done(1, { ok: false, error: `timeout after ${TIMEOUT_S}s` }),

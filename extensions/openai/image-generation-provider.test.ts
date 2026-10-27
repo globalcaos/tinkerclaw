@@ -774,7 +774,7 @@ describe("openai image generation provider", () => {
         url: "https://chatgpt.com/backend-api/codex/responses",
         timeoutMs: 180_000,
         body: expect.objectContaining({
-          model: "gpt-5.5",
+          model: "gpt-6-luna",
           instructions: "You are an image generation assistant.",
           stream: true,
           store: false,
@@ -795,7 +795,7 @@ describe("openai image generation provider", () => {
     );
     expect(postMultipartRequestMock).not.toHaveBeenCalled();
     expect(logInfoMock).toHaveBeenCalledWith(
-      "image auth selected: provider=openai-codex mode=oauth transport=codex-responses requestedModel=gpt-image-2 responsesModel=gpt-5.5 timeoutMs=180000",
+      "image auth selected: provider=openai-codex mode=oauth transport=codex-responses requestedModel=gpt-image-2 responsesModel=gpt-6-luna timeoutMs=180000",
     );
     expect(result.images).toEqual([
       {
@@ -892,9 +892,82 @@ describe("openai image generation provider", () => {
       }),
     );
     expect(logInfoMock).toHaveBeenCalledWith(
-      "image auth selected: provider=openai-codex mode=oauth transport=codex-responses requestedModel=gpt-image-2 responsesModel=gpt-5.5 timeoutMs=180000",
+      "image auth selected: provider=openai-codex mode=oauth transport=codex-responses requestedModel=gpt-image-2 responsesModel=gpt-6-luna timeoutMs=180000",
     );
     expect(result.images[0]?.buffer).toEqual(Buffer.from("codex-image"));
+  });
+
+  it("falls back to Codex OAuth when the OpenAI API wallet is out of credit", async () => {
+    mockCodexAuthOnly();
+    resolveApiKeyForProviderMock.mockImplementation(async (params?: { provider?: string }) =>
+      params?.provider === "openai-codex"
+        ? { apiKey: "codex-key", source: "profile:openai-codex:default", mode: "oauth" }
+        : { apiKey: "openai-key" },
+    );
+    assertOkOrThrowHttpErrorMock.mockRejectedValueOnce(
+      new Error(
+        "OpenAI image generation failed (HTTP 429): You have no credits remaining. " +
+          "[type=insufficient_quota, code=credit_balance_exhausted]",
+      ),
+    );
+    mockCodexImageStream({ imageData: "codex-image" });
+
+    const provider = buildOpenAIImageGenerationProvider();
+    const result = await provider.generateImage({
+      provider: "openai",
+      model: "gpt-image-2",
+      prompt: "Draw with an empty wallet",
+      cfg: {
+        models: {
+          providers: {
+            openai: { baseUrl: "https://api.openai.com/v1", api: "openai-responses", models: [] },
+          },
+        },
+      },
+    });
+
+    expect(result.images[0]?.buffer.toString()).toBe("codex-image");
+    expect(postJsonRequestMock).toHaveBeenCalledTimes(2);
+    expect(postJsonRequestMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ url: expect.stringMatching(/\/responses$/) }),
+    );
+    expect(resolveApiKeyForProviderMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai-codex" }),
+    );
+  });
+
+  it("does not fall back to Codex OAuth on an ordinary OpenAI rate limit", async () => {
+    mockCodexAuthOnly();
+    resolveApiKeyForProviderMock.mockImplementation(async (params?: { provider?: string }) =>
+      params?.provider === "openai-codex"
+        ? { apiKey: "codex-key", source: "profile:openai-codex:default", mode: "oauth" }
+        : { apiKey: "openai-key" },
+    );
+    assertOkOrThrowHttpErrorMock.mockRejectedValueOnce(
+      new Error("OpenAI image generation failed (HTTP 429): Rate limit reached [type=requests]"),
+    );
+    mockCodexImageStream({ imageData: "codex-image" });
+
+    const provider = buildOpenAIImageGenerationProvider();
+    await expect(
+      provider.generateImage({
+        provider: "openai",
+        model: "gpt-image-2",
+        prompt: "Draw while rate limited",
+        cfg: {
+          models: {
+            providers: {
+              openai: { baseUrl: "https://api.openai.com/v1", api: "openai-responses", models: [] },
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("Rate limit reached");
+
+    expect(postJsonRequestMock).toHaveBeenCalledTimes(1);
+    expect(resolveApiKeyForProviderMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai-codex" }),
+    );
   });
 
   it("does not fall back to Codex OAuth for custom OpenAI-compatible image endpoints", async () => {
@@ -1009,7 +1082,7 @@ describe("openai image generation provider", () => {
     });
 
     expect(logInfoMock).toHaveBeenCalledWith(
-      "image auth selected: provider=openai-codex mode=oauth fakeignored transport=codex-responses requestedModel=gpt-image-2 forged=true next responsesModel=gpt-5.5 timeoutMs=180000",
+      "image auth selected: provider=openai-codex mode=oauth fakeignored transport=codex-responses requestedModel=gpt-image-2 forged=true next responsesModel=gpt-6-luna timeoutMs=180000",
     );
   });
 

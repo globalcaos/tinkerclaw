@@ -17,13 +17,19 @@
  * Behavior contract (matches bible §5.68):
  *   - Param: { path: string } — supports `~/…` expansion + absolute paths.
  *   - Returns: { ok: boolean, error?: string, path?: string }.
- *   - Allowlist: workspaceDir, ~/.openclaw, ~/src/tinkerclaw, ~/src/jarvis-icu.
- *   - Cross-platform: xdg-open (linux), open (macOS), Start-Process (windows).
+ *   - Allowlist: workspaceDir, ~/.openclaw, ~/src/tinkerclaw, ~/src/jarvis-icu,
+ *     ~/Documents, ~/Downloads, ~/Desktop, ~/Pictures (2026-07-08), and two
+ *     read-only skill trees, ~/.claude/skills + ~/.claude/plugins/cache
+ *     (2026-09-29). The rest of ~/.claude stays refused.
+ *   - Cross-platform: xdg-open (linux), open (macOS), cmd /c start (windows).
  *   - Detached + stdio:"ignore" + unref so the editor outlives the gateway.
- *   - Symlink escape NOT defended — relies on ADMIN_SCOPE gating + trusted
- *     callers (this RPC is not exposed to untrusted operators).
+ *   - Symlink escape NOT defended in general — relies on ADMIN_SCOPE gating +
+ *     trusted callers (this RPC is not exposed to untrusted operators). One
+ *     exception (2026-09-29): a target whose REAL path lands inside ~/.claude
+ *     must land in one of the two skill trees (`reachesPrivateClaudePath`).
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
@@ -39,8 +45,30 @@ export function __setSpawnImplForTest(impl: SpawnImpl | null): void {
 
 function defaultSpawn(cmd: string, args: string[]): Pick<ChildProcess, "unref"> {
   const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+  // FORK 2026-09-21: a missing opener (a headless host without xdg-open) emits 'error' AFTER this
+  // returns, outside the handler's try/catch. With no listener that was an uncaught exception, and
+  // one click on a file link in chat killed the whole gateway (Goku, 07:21 UTC).
+  child.on("error", (err) => {
+    console.warn(`[config.openExternalFile] ${cmd} failed: ${err.message}`);
+  });
   child.unref();
   return child;
+}
+
+/** Test seam for the real spawner. */
+export const __defaultSpawnForTest = defaultSpawn;
+
+/**
+ * Why this host cannot open a file for a human, or null when it can. Linux/BSD openers need a
+ * desktop session; a server running a child agent has none, and "ok" would be a lie there.
+ */
+export function headlessReason(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (platform === "darwin" || platform === "win32") return null;
+  if (env.DISPLAY || env.WAYLAND_DISPLAY) return null;
+  return "this host has no desktop session to open files in";
 }
 
 function expandTilde(input: string): string {
@@ -49,6 +77,12 @@ function expandTilde(input: string): string {
   }
   return input;
 }
+
+/**
+ * FORK 2026-09-29 — the only parts of ~/.claude a click may open. Shared by
+ * buildAllowlist and reachesPrivateClaudePath so the two cannot drift apart.
+ */
+const CLAUDE_OPENABLE_SUBTREES = ["skills", "plugins/cache"] as const;
 
 function buildAllowlist(workspaceDir: string | undefined | null): string[] {
   const home = os.homedir();
@@ -59,7 +93,7 @@ function buildAllowlist(workspaceDir: string | undefined | null): string[] {
   list.push(path.resolve(home, "src/jarvis-icu"));
   // FORK 2026-07-08: the four roots above are code/workspace dirs, but the
   // user's REAL documents (drafts, PDFs, plans we point him at) live under the
-  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. a village
+  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. an Townsville
   // licence draft under ~/Documents — was rejected server-side with "outside
   // allowlist" even after the client matcher learned to render spaced/accented
   // paths as clickable. The client fix was necessary but not sufficient; the
@@ -70,6 +104,17 @@ function buildAllowlist(workspaceDir: string | undefined | null): string[] {
   list.push(path.resolve(home, "Downloads"));
   list.push(path.resolve(home, "Desktop"));
   list.push(path.resolve(home, "Pictures"));
+  // FORK 2026-09-29: the skill chip in chat links the SKILL.md a turn used.
+  // User skills live in ~/.claude/skills/<n>/ and plugin skills in
+  // ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/<n>/, and
+  // no root above covered either, so every chip click died here with "outside
+  // allowlist". Only these two subtrees are added, never ~/.claude itself:
+  // .credentials.json and settings.json sit directly under it. The plugin
+  // cache holds third-party files (it already ships symlinks), so the handler
+  // also runs reachesPrivateClaudePath on the real target.
+  for (const sub of CLAUDE_OPENABLE_SUBTREES) {
+    list.push(path.resolve(home, ".claude", sub));
+  }
   return list;
 }
 
@@ -83,6 +128,36 @@ function isInsideAllowlist(absPath: string, allowlist: string[]): boolean {
   return false;
 }
 
+function realpathOrSelf(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    // Nothing on disk to follow; the opener reports a missing file itself.
+    return p;
+  }
+}
+
+/**
+ * FORK 2026-09-29 — true when the REAL target (symlinks followed) sits inside ~/.claude but
+ * outside the two openable skill trees. It runs for every root, so neither a link planted under
+ * ~/Documents nor one shipped in a downloaded plugin can open ~/.claude/.credentials.json.
+ * A link that leaves ~/.claude entirely is not refused here, the same as every other root:
+ * 5 of the 9 entries in ~/.claude/skills (counted 2026-09-29) are symlinks into
+ * ~/.agents/skills, and a plain realpath-then-allowlist check would have refused exactly those.
+ */
+export function reachesPrivateClaudePath(absPath: string, home: string = os.homedir()): boolean {
+  const real = realpathOrSelf(absPath);
+  const claudeRoot = path.resolve(home, ".claude");
+  if (!isInsideAllowlist(real, [claudeRoot, realpathOrSelf(claudeRoot)])) {
+    return false;
+  }
+  const openable = CLAUDE_OPENABLE_SUBTREES.flatMap((sub) => {
+    const root = path.resolve(home, ".claude", sub);
+    return [root, realpathOrSelf(root)];
+  });
+  return !isInsideAllowlist(real, openable);
+}
+
 function platformOpenCommand(): { cmd: string; argsBefore: string[] } {
   switch (process.platform) {
     case "darwin":
@@ -94,7 +169,95 @@ function platformOpenCommand(): { cmd: string; argsBefore: string[] } {
   }
 }
 
+/**
+ * FORK 2026-10-15 — the path checks both RPCs share: traversal, allowlist, private ~/.claude.
+ * Returns the absolute path, or the refusal text.
+ */
+function checkOpenablePath(
+  inputPath: unknown,
+  workspaceDir: string | undefined | null,
+): { absPath: string } | { error: string; path?: string } {
+  if (typeof inputPath !== "string" || inputPath.length === 0) return { error: "path is required" };
+  if (inputPath.includes("..")) return { error: "path traversal not allowed" };
+  const absPath = path.resolve(expandTilde(inputPath));
+  if (!isInsideAllowlist(absPath, buildAllowlist(workspaceDir))) {
+    return { error: "outside allowlist", path: absPath };
+  }
+  if (reachesPrivateClaudePath(absPath)) {
+    return { error: "resolves into a private ~/.claude path", path: absPath };
+  }
+  return { absPath };
+}
+
+/** Largest file the browser path will carry over the socket (base64 adds a third). */
+export const READ_EXTERNAL_MAX_BYTES = 40 * 1024 * 1024;
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".md": "text/markdown",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+};
+
 export const configOpenExternalHandlers: GatewayRequestHandlers = {
+  /**
+   * FORK 2026-10-15 (the architect: the agent may run on another machine, e.g. the Pi): returns the file's
+   * bytes so the BROWSER shows it, instead of a viewer opening on the gateway's own desktop. Same
+   * allowlist and refusals as config.openExternalFile; ADMIN scope like it.
+   */
+  "config.readExternalFile": async ({ params, context, respond }) => {
+    const cfg = context.getRuntimeConfig();
+    const checked = checkOpenablePath(
+      params && typeof params === "object" ? (params as { path?: unknown }).path : undefined,
+      resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg)),
+    );
+    if ("error" in checked) {
+      respond(true, { ok: false, ...checked }, undefined);
+      return;
+    }
+    const { absPath } = checked;
+    try {
+      const st = fs.statSync(absPath);
+      if (!st.isFile()) {
+        respond(true, { ok: false, error: "not a file", path: absPath }, undefined);
+        return;
+      }
+      if (st.size > READ_EXTERNAL_MAX_BYTES) {
+        respond(
+          true,
+          { ok: false, error: "file too large for the browser", path: absPath },
+          undefined,
+        );
+        return;
+      }
+      const ext = path.extname(absPath).toLowerCase();
+      respond(
+        true,
+        {
+          ok: true,
+          path: absPath,
+          name: path.basename(absPath),
+          mime: MIME_BY_EXT[ext] ?? "text/plain",
+          size: st.size,
+          base64: fs.readFileSync(absPath).toString("base64"),
+        },
+        undefined,
+      );
+    } catch (err) {
+      respond(true, { ok: false, error: (err as Error).message, path: absPath }, undefined);
+    }
+  },
   "config.openExternalFile": async ({ params, context, respond }) => {
     const inputPath =
       params && typeof params === "object" ? (params as { path?: unknown }).path : undefined;
@@ -113,6 +276,16 @@ export const configOpenExternalHandlers: GatewayRequestHandlers = {
     const allowlist = buildAllowlist(workspaceDir);
     if (!isInsideAllowlist(absPath, allowlist)) {
       respond(true, { ok: false, error: "outside allowlist", path: absPath }, undefined);
+      return;
+    }
+    if (reachesPrivateClaudePath(absPath)) {
+      const error = "resolves into a private ~/.claude path";
+      respond(true, { ok: false, error, path: absPath }, undefined);
+      return;
+    }
+    const headless = spawnImpl ? null : headlessReason();
+    if (headless) {
+      respond(true, { ok: false, error: headless, path: absPath }, undefined);
       return;
     }
     try {

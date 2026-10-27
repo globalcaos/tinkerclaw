@@ -7,9 +7,17 @@ override-target: ~/.openclaw/workspace/plan-tools.md
 
 When a user request will take more than two distinct steps, call
 `openclaw gateway call prefrontal.plan.set` first with intent + step titles.
+Every plan call needs your session key, which the bridge exports as
+`$TC_SESSION_KEY` (without it the call fails: "must have required property
+'sessionKey'"), e.g.
+`openclaw gateway call prefrontal.plan.set --params "{\"sessionKey\":\"$TC_SESSION_KEY\",\"intent\":\"…\",\"steps\":[{\"title\":\"…\"}]}"`.
 Mark each step in_progress when you start it, and done with a one-line note
 when you finish. The note should be the smallest summary that lets a future
 you skip redoing the step (e.g. "wrote slo-burn.test.ts with 5 cases").
+The step call takes `stepIndex` (0-based, not `index`):
+`openclaw gateway call prefrontal.plan.step --timeout 60000 --params "{\"sessionKey\":\"$TC_SESSION_KEY\",\"stepIndex\":0,\"status\":\"done\",\"note\":\"…\"}"`.
+Pass `--timeout 60000` on every plan call: the CLI's 10 s default times out while
+the gateway is busy with a fan-out, and the step is silently not recorded.
 
 If you are restarted mid-step, you will be auto-resumed by a [System] continue
 turn. Read your plan file (path will be given) before doing anything — your

@@ -1,4 +1,4 @@
-// FORK 2026-08-18 — feature (the user): "If a process is attached to a tab and it prevents me to send
+// FORK 2026-08-18 — feature (the architect): "If a process is attached to a tab and it prevents me to send
 // more prompts, instead of setting up timers and watchdogs I would prefer if it was shown as a
 // progress indicator with a stop button, so I can kill it or understand it better. The more
 // background activity we bring to the ui, with controls, the better it is going to be flowing."
@@ -65,7 +65,7 @@ export function liveAgeMs(
 }
 
 /**
- * Human age for one row. Three bands, matching the mock the user approved:
+ * Human age for one row. Three bands, matching the mock the architect approved:
  *   >= 1h  -> "13h55m"   minutes zero-padded so a ticking readout keeps a constant width
  *   >= 1m  -> "12m 37s"  seconds zero-padded for the same reason
  *   <  1m  -> "45s"

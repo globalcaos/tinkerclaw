@@ -306,14 +306,12 @@ describe("runWithModelFallback – probe logic", () => {
       .fn()
       .mockRejectedValueOnce(Object.assign(new Error("rate limited"), { status: 429 }))
       .mockResolvedValueOnce("fallback-ok");
-    const onFallbackStep = vi.fn();
 
     const fallbackResult = await runWithModelFallback({
       cfg: fallbackCfg,
       provider: "openai",
       model: "gpt-4.1-mini",
       run: fallbackRun,
-      onFallbackStep,
     });
     await logCapture.flush();
 
@@ -376,26 +374,8 @@ describe("runWithModelFallback – probe logic", () => {
         }),
       ]),
     );
-    expect(onFallbackStep).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fallbackStepType: "fallback_step",
-        fallbackStepFromModel: "openai/gpt-4.1-mini",
-        fallbackStepToModel: "anthropic/claude-haiku-3-5",
-        fallbackStepFromFailureReason: "rate_limit",
-        fallbackStepChainPosition: 1,
-        fallbackStepFinalOutcome: "next_fallback",
-      }),
-    );
-    expect(onFallbackStep).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fallbackStepType: "fallback_step",
-        fallbackStepFromModel: "openai/gpt-4.1-mini",
-        fallbackStepToModel: "anthropic/claude-haiku-3-5",
-        fallbackStepFromFailureReason: "rate_limit",
-        fallbackStepChainPosition: 2,
-        fallbackStepFinalOutcome: "succeeded",
-      }),
-    );
+    // The fallback steps are asserted on the decision records above. `onFallbackStep` itself left the
+    // `runWithModelFallback` signature in an upstream merge (fork note in agent-command.ts, "chunk-23").
   });
 
   it("probes primary model when cooldown already expired", async () => {

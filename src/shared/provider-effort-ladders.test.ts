@@ -13,6 +13,11 @@ describe("xAI grok-4.6 has a real reasoning_effort ladder", () => {
     expect(l.kind).toBe("graded");
     expect(l.levels).toEqual(["low", "medium", "high", "xhigh"]);
   });
+  it("grok-4.7 shares the 4.6 ladder — catalog 2026-09-22 lists xhigh/high/medium/low", () => {
+    const l = resolveProviderEffortLadder("xai", "grok-4.7");
+    expect(l.kind).toBe("graded");
+    expect(l.levels).toEqual(["low", "medium", "high", "xhigh"]);
+  });
   it("grok-4.5 stops at high — xhigh is treated as high", () => {
     expect(resolveProviderEffortLadder("xai", "grok-4.5").levels).toEqual([
       "low",
@@ -166,5 +171,17 @@ describe("Anthropic point releases keep their class ladder", () => {
     expect(resolveProviderEffortLadder("claude-code", "claude-sonnet-4-6").levels).not.toContain(
       "xhigh",
     );
+  });
+
+  it("gives Claude Opus 5.5 the 5-class ladder, not the lookahead-blocked base", () => {
+    const l = resolveProviderEffortLadder("claude-code", "claude-opus-5-5");
+    expect(l.levels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(l.levels).not.toContain("minimal");
+  });
+
+  it("gives Claude Sonnet 5.5 the 5-class ladder, not the lookahead-blocked base", () => {
+    const l = resolveProviderEffortLadder("claude-code", "claude-sonnet-5-5");
+    expect(l.levels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(l.levels).not.toContain("minimal");
   });
 });

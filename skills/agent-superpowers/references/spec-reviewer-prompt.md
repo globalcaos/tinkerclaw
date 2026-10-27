@@ -64,8 +64,8 @@ If issues found, list them as:
 sessions_spawn({
   task: `[paste template above with filled placeholders]`,
   runtime: "subagent",
-  model: "haiku",  // fast, focused comparison
+  model: "haiku", // fast, focused comparison
   mode: "run",
-  cwd: "/path/to/project"
-})
+  cwd: "/path/to/project",
+});
 ```

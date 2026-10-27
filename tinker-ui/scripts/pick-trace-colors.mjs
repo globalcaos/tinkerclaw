@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tinker-ui/scripts/pick-trace-colors.mjs
-// FORK 2026-08-04 (the user): "use a montecarlo random sampling of the 3D space
+// FORK 2026-08-04 (the architect): "use a montecarlo random sampling of the 3D space
 // populated by the already taken colors and sequentially choose one whose
 // distance to all the previous points is maximal."
 //
@@ -83,16 +83,16 @@ const TAKEN = {
 const SLOTS = [
   {
     key: "github-copilot",
-    // the user asked for pink, then "rethink the pink also" — so pink is a hue
+    // the architect asked for pink, then "rethink the pink also" — so pink is a hue
     // WINDOW and the sampler finds the most separable point inside it. 320-352
     // is empty space: the nearest occupied hue is mistral at 38.
     hue: [320, 352],
-    note: "the user's pick: pink (not a brand colour)",
+    note: "the architect's pick: pink (not a brand colour)",
   },
   {
     key: "qwen",
     // Qwen brand is #6336E7 (h=285) / #6F69F7 (h=280) — indigo-violet, which is
-    // what the user means by "blue". Window pushed to the violet side of the brand
+    // what the architect means by "blue". Window pushed to the violet side of the brand
     // so it clears DeepSeek (h=270) instead of sitting on top of it.
     hue: [286, 308],
     note: "Qwen brand indigo-violet (#6336E7 h=285)",

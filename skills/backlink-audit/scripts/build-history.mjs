@@ -30,17 +30,37 @@ const SERIES = {
   // was present from publish. external RE-VERIFIED = 0 (clawskills.sh + canitrunopenclaw
   // do NOT link tinkerclaw — prior external=3 was fiction).
   "graph.inbound.tinkerclaw.ours": [
-    { date: "2026-02-06", cumulative: 1,  note: "clawhub:whatsapp-ultimate" },
-    { date: "2026-02-11", cumulative: 2,  note: "+gh openclaw#13991 (first github backlink)" },
-    { date: "2026-02-20", cumulative: 9,  note: "+7 clawhub skills (jarvis-voice, youtube/chatgpt-exporter/token-panel/shell-security-ultimate, outlook-hack, memory-bench-pioneer)" },
-    { date: "2026-02-21", cumulative: 11, note: "+clawhub token-efficiency-guide, fork-and-skill-scanner-ultimate" },
+    { date: "2026-02-06", cumulative: 1, note: "clawhub:whatsapp-ultimate" },
+    { date: "2026-02-11", cumulative: 2, note: "+gh openclaw#13991 (first github backlink)" },
+    {
+      date: "2026-02-20",
+      cumulative: 9,
+      note: "+7 clawhub skills (jarvis-voice, youtube/chatgpt-exporter/token-panel/shell-security-ultimate, outlook-hack, memory-bench-pioneer)",
+    },
+    {
+      date: "2026-02-21",
+      cumulative: 11,
+      note: "+clawhub token-efficiency-guide, fork-and-skill-scanner-ultimate",
+    },
     { date: "2026-02-22", cumulative: 12, note: "+clawhub subagent-overseer" },
-    { date: "2026-02-26", cumulative: 16, note: "+gh OpenViking#311, MemOS#1129, memU#361, mnemon-dev/mnemon#1" },
+    {
+      date: "2026-02-26",
+      cumulative: 16,
+      note: "+gh OpenViking#311, MemOS#1129, memU#361, mnemon-dev/mnemon#1",
+    },
     { date: "2026-03-03", cumulative: 17, note: "+clawhub tinker-command-center" },
     { date: "2026-03-06", cumulative: 18, note: "+clawhub smart-model-router" },
     { date: "2026-03-07", cumulative: 19, note: "+clawhub model-prompt-adapter" },
-    { date: "2026-03-17", cumulative: 33, note: "+14 gh threads (openclaw #11919/#12219/#18099/#28108/#30286 + PRs #16689/#17307/#17326/#6500/#6735/#6747/#6753, DenchClaw#95, ALucek/agentic-memory#3 — backlink campaign)" },
-    { date: "2026-03-23", cumulative: 36, note: "+clawhub owntracks-location, agent-superpowers, wordpress-ultimate" },
+    {
+      date: "2026-03-17",
+      cumulative: 33,
+      note: "+14 gh threads (openclaw #11919/#12219/#18099/#28108/#30286 + PRs #16689/#17307/#17326/#6500/#6735/#6747/#6753, DenchClaw#95, ALucek/agentic-memory#3 — backlink campaign)",
+    },
+    {
+      date: "2026-03-23",
+      cumulative: 36,
+      note: "+clawhub owntracks-location, agent-superpowers, wordpress-ultimate",
+    },
     { date: "2026-04-02", cumulative: 37, note: "+clawhub computational-humor" },
     { date: "2026-06-02", cumulative: 43, note: "+6 moltbook.com posts" },
     { date: "2026-06-04", cumulative: 65, note: "+22 moltbook.com posts (28 total)" },
@@ -53,8 +73,16 @@ const SERIES = {
     // link is gone — that file is now a stub), down from the earlier 9.
     { date: "2026-02-14", cumulative: 1, note: "README.md" },
     { date: "2026-03-30", cumulative: 2, note: "+src/fork/fractal-prompt.md (link later removed)" },
-    { date: "2026-04-29", cumulative: 9, note: "+7 extension/skill READMEs (npm-publish-prep commit)" },
-    { date: "2026-06-10", cumulative: 8, note: "fractal-prompt stub no longer links it → 8 README pages" },
+    {
+      date: "2026-04-29",
+      cumulative: 9,
+      note: "+7 extension/skill READMEs (npm-publish-prep commit)",
+    },
+    {
+      date: "2026-06-10",
+      cumulative: 8,
+      note: "fractal-prompt stub no longer links it → 8 README pages",
+    },
   ],
 };
 
@@ -64,7 +92,9 @@ for (const [metric, points] of Object.entries(SERIES)) {
   for (const p of points) {
     const params = JSON.stringify({ id: metric, value: p.cumulative, ts: tsOf(p.date) });
     try {
-      execFileSync("openclaw", ["gateway", "call", "control-panel.record", "--params", params], { encoding: "utf8" });
+      execFileSync("openclaw", ["gateway", "call", "control-panel.record", "--params", params], {
+        encoding: "utf8",
+      });
       console.log(`  ${metric}  ${p.date} = ${p.cumulative}  (${p.note})`);
       wrote++;
     } catch (e) {
@@ -72,4 +102,6 @@ for (const [metric, points] of Object.entries(SERIES)) {
     }
   }
 }
-console.log(`\nwrote ${wrote} dated observations. The Inbound-links graph now shows the historical 'ours' growth curve.`);
+console.log(
+  `\nwrote ${wrote} dated observations. The Inbound-links graph now shows the historical 'ours' growth curve.`,
+);
