@@ -38,9 +38,7 @@ describe("renderFractalDock — collapsed verdict dock", () => {
     expect(err.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · ⚠ error ⓘ");
     const skipped = renderFractalDock(row({ status: "skipped", reason: "quota" }));
     expect(skipped.classList.contains("fractal-status-skipped")).toBe(true);
-    expect(skipped.querySelector("summary")?.textContent).toBe(
-      "🔍 Fractal Reasoning · skipped:quota ⓘ",
-    );
+    expect(skipped.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · skipped:quota ⓘ");
   });
 
   it("summary appends a findings count only when findings exist", () => {
@@ -55,9 +53,7 @@ describe("renderFractalDock — collapsed verdict dock", () => {
         ],
       }),
     );
-    expect(two.querySelector("summary")?.textContent).toBe(
-      "🔍 Fractal Reasoning · flagged · 2 findings ⓘ",
-    );
+    expect(two.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · flagged · 2 findings ⓘ");
   });
 
   it("expanded body renders headline, findings (kind chip + claim + path), reasoning as text", () => {

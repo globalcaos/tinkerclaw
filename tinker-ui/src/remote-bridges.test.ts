@@ -64,4 +64,32 @@ describe("Jarvis voice on a remote page (2026-10-15)", () => {
     stop();
     expect(played).toEqual(["/tinker/api/jarvis-voice/250.wav"]);
   });
+
+  it("waits for the line still speaking before starting the next (2026-10-27)", async () => {
+    const answers = ["100.wav", "200.wav", "300.wav"];
+    const played: string[] = [];
+    let finish: () => void = () => {};
+    let i = 0;
+    const stop = startVoicePolling({
+      base: "/tinker",
+      intervalMs: 1,
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ latest: answers[Math.min(i++, 2)] }),
+      }),
+      play: (u) => {
+        played.push(u);
+        return new Promise<void>((r) => (finish = r));
+      },
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(played).toEqual(["/tinker/api/jarvis-voice/200.wav"]);
+    finish();
+    await new Promise((r) => setTimeout(r, 40));
+    stop();
+    expect(played).toEqual([
+      "/tinker/api/jarvis-voice/200.wav",
+      "/tinker/api/jarvis-voice/300.wav",
+    ]);
+  });
 });

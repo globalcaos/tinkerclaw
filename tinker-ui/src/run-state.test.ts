@@ -3,6 +3,8 @@ import {
   bareModelTail,
   catalogKeyIn,
   clientRunIsFresh,
+  JOB_CENSUS_STALE_MS,
+  jobIsFresh,
   liveCountForModel,
   liveRunCountsByModel,
   liveRunSessionsByModel,
@@ -11,8 +13,10 @@ import {
   resolveSessionRunState,
   RUN_STALE_MS,
   sessionHasFreshClientRun,
+  sessionJobActivity,
   transcriptWriterIsLive,
   type ClientRun,
+  type JobEvidence,
   type KeyMatcher,
   type SessionRow,
 } from "./run-state.js";
@@ -1008,5 +1012,103 @@ describe("transcriptWriterIsLive", () => {
     expect(
       transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: run(T - RUN_STALE_MS - 1), now: T }),
     ).toBe(false);
+  });
+});
+
+// FORK 2026-10-27 — the job lane: a running background job is the third activity state.
+describe("jobIsFresh", () => {
+  const job = (over: Partial<JobEvidence> = {}): JobEvidence => ({
+    id: "build",
+    session: "agent:main:tinker:abc",
+    kind: "process",
+    status: "running",
+    updatedAt: NOW - 5_000,
+    intervalMs: 5_000,
+    ...over,
+  });
+
+  it("believes a running longjob whose worker wrote its state recently", () => {
+    expect(jobIsFresh(job(), NOW)).toBe(true);
+  });
+
+  it("never believes a finished or failed job", () => {
+    expect(jobIsFresh(job({ status: "done" }), NOW)).toBe(false);
+    expect(jobIsFresh(job({ status: "failed" }), NOW)).toBe(false);
+  });
+
+  it("drops a longjob whose worker went silent past RUN_STALE_MS (killed unit, reboot)", () => {
+    expect(jobIsFresh(job({ updatedAt: NOW - RUN_STALE_MS }), NOW)).toBe(true);
+    expect(jobIsFresh(job({ updatedAt: NOW - RUN_STALE_MS - 1 }), NOW)).toBe(false);
+  });
+
+  it("gives a slow-polling job six of its own intervals", () => {
+    const slow = job({ intervalMs: 60_000, updatedAt: NOW - 5 * 60_000 });
+    expect(jobIsFresh(slow, NOW)).toBe(true);
+    expect(jobIsFresh({ ...slow, updatedAt: NOW - 6 * 60_000 - 1 }, NOW)).toBe(false);
+  });
+
+  it("lets a background task (no timestamp of its own) be decided by its list", () => {
+    expect(jobIsFresh({ id: "t1", status: "running", kind: "background" }, NOW)).toBe(true);
+  });
+});
+
+describe("sessionJobActivity", () => {
+  const longjob = (over: Partial<JobEvidence> = {}): JobEvidence => ({
+    id: "build",
+    label: "Build the bundle",
+    session: "agent:main:tinker:abc",
+    kind: "process",
+    status: "running",
+    startedAt: NOW - 60_000,
+    updatedAt: NOW - 2_000,
+    intervalMs: 5_000,
+    ...over,
+  });
+  const ask = (census: { jobs: JobEvidence[]; fetchedAt: number }[], sessionKey = "tinker:abc") =>
+    sessionJobActivity({ sessionKey, census, matches, now: NOW });
+
+  it("names the session's running job, matching the short tab key against the full job key", () => {
+    expect(ask([{ jobs: [longjob()], fetchedAt: NOW - 1_000 }])).toEqual({
+      label: "Build the bundle",
+      kind: "process",
+      count: 1,
+    });
+  });
+
+  it("is null for another session's job — every tab answers for itself", () => {
+    expect(ask([{ jobs: [longjob()], fetchedAt: NOW }], "tinker:other")).toBeNull();
+  });
+
+  it("stops believing a list that has not answered for JOB_CENSUS_STALE_MS", () => {
+    expect(ask([{ jobs: [longjob()], fetchedAt: NOW - JOB_CENSUS_STALE_MS }])).not.toBeNull();
+    expect(ask([{ jobs: [longjob()], fetchedAt: NOW - JOB_CENSUS_STALE_MS - 1 }])).toBeNull();
+  });
+
+  it("does not let a finished or dead job keep the tab busy", () => {
+    expect(ask([{ jobs: [longjob({ status: "done" })], fetchedAt: NOW }])).toBeNull();
+    expect(
+      ask([{ jobs: [longjob({ updatedAt: NOW - RUN_STALE_MS - 1 })], fetchedAt: NOW }]),
+    ).toBeNull();
+  });
+
+  it("counts jobs across lists, names the oldest, and counts a job two lists share once", () => {
+    const bg: JobEvidence = {
+      id: "task-7",
+      label: "Workflow review",
+      session: "agent:main:tinker:abc",
+      kind: "background",
+      status: "running",
+      startedAt: NOW - 120_000,
+    };
+    const state = ask([
+      { jobs: [longjob()], fetchedAt: NOW },
+      { jobs: [bg], fetchedAt: NOW },
+      { jobs: [bg], fetchedAt: NOW }, // two tabs on one session each asked the bridge
+    ]);
+    expect(state).toEqual({ label: "Workflow review", kind: "background", count: 2 });
+  });
+
+  it("is null for an empty session key — no key owns every job", () => {
+    expect(ask([{ jobs: [longjob()], fetchedAt: NOW }], "")).toBeNull();
   });
 });

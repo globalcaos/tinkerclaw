@@ -1,0 +1,11 @@
+[Unit]
+Description=pdf-review: pdf.js review viewer for TinkerClaw (loopback :18820)
+
+[Service]
+ExecStart=%h/src/tinkerclaw/apps/pdf-review/.venv/bin/python %h/src/tinkerclaw/apps/pdf-review/server.py
+Restart=on-failure
+StandardOutput=append:%h/.local/state/pdf-review.log
+StandardError=append:%h/.local/state/pdf-review.log
+
+[Install]
+WantedBy=default.target

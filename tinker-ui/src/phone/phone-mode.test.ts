@@ -224,6 +224,24 @@ describe("initPhoneMode", () => {
       expect(sheet().innerHTML).toContain("Alpha &lt;b&gt;");
     });
 
+    // FORK 2026-10-27 — an unread result: a still dot on its row, and on the header button while it
+    // is another chat's (the dropdown is where to find it).
+    it("marks unread chats in the list and on the header when the unread one is not on screen", () => {
+      const unread = new Set(["tab-b"]);
+      deps.isUnread = (id: string) => unread.has(id);
+      phoneTabsChanged();
+      ctl.toggleSheet(true);
+      expect(sheet().querySelector('[data-phone-tab="tab-b"] .phone-unread-dot')).not.toBeNull();
+      expect(sheet().querySelector('[data-phone-tab="tab-a"] .phone-unread-dot')).toBeNull();
+      const elsewhere = header().querySelector<HTMLElement>(".phone-unread-elsewhere")!;
+      expect(elsewhere.hidden).toBe(false);
+      activeId = "tab-b"; // he opens it
+      unread.clear();
+      phoneTabsChanged();
+      expect(elsewhere.hidden).toBe(true);
+      expect(sheet().querySelector(".phone-unread-dot")).toBeNull();
+    });
+
     it("re-renders when the tab array changes", () => {
       tabs.push({ id: "tab-c", title: "Charlie" });
       phoneTabsChanged();

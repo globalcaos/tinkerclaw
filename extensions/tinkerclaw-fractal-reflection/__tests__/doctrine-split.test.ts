@@ -40,9 +40,12 @@ describe("fractal doctrine split (core + chapters)", () => {
     expect(CHAPTER_NAMES).toEqual(["correction", "friction", "delivery", "channel"]);
   });
 
-  it("keeps the core between 6,000 and 8,000 chars (v4 sent 49.5k on every call)", () => {
+  // Cap raised 8,000 → 9,500 on 2026-10-27: the architect's own 2ef243ae111 (10-26) put
+  // "Make the next run cheaper" in the core (8,835 chars). It must stay there: a
+  // clean but costly turn gets no chapter. The cap still guards the v4 regression.
+  it("keeps the core between 6,000 and 9,500 chars (v4 sent 49.5k on every call)", () => {
     expect(core.length).toBeGreaterThanOrEqual(6000);
-    expect(core.length).toBeLessThanOrEqual(8000);
+    expect(core.length).toBeLessThanOrEqual(9500);
   });
 
   it("has one chapter file per trigger, each headed by its name", () => {
@@ -106,7 +109,7 @@ describe("fractal doctrine split (core + chapters)", () => {
       "napkin diagrams",
       "my signature is not correct",
       "Gantt tab",
-      "response from the supplier",
+      "Roger",
       "openclaw browser tabs",
       "FlashBack",
       "Fore1 and Fore2",
@@ -144,7 +147,7 @@ describe("fractal doctrine split (core + chapters)", () => {
       "cannot merge is not a fix",
       "Reversibility gates",
       "propose the exact",
-      "alarm-company",
+      "Securitas",
       "222fa1a6e83",
       // ch.7
       "Define the class",

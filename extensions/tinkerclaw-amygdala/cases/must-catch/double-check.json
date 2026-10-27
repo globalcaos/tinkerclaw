@@ -356,7 +356,7 @@
       "situation": {
         "originKind": "synthetic",
         "request": {
-          "value": "Someone just added me to the group, make me a summary of past messages",
+          "value": "Rubén just added me to the group, make me a summary of past messages",
           "origin": "observed"
         },
         "reply": {

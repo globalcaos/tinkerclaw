@@ -90,20 +90,11 @@ describe("describeTurnAnchor — what is captured when a row is born", () => {
 describe("resolveTurnAnchor — the prompt wins, then time, then the ordinal", () => {
   it("finds the prompt even when the served copy carries the injected prefix and suffix", () => {
     const server = [
-      user(
-        "[Tue 2026-09-08 07:05 GMT+2] Ok, ship the 11. At the same time, fix it  ---  **After your reply**",
-        100,
-      ),
+      user("[Tue 2026-09-08 07:05 GMT+2] Ok, ship the 11. At the same time, fix it  ---  **After your reply**", 100),
       assistant("a1"),
       user("next", 200),
     ];
-    expect(
-      resolveTurnAnchor(server, {
-        turn: 9,
-        at: 150,
-        prompt: "Ok, ship the 11. At the same time, fix it",
-      }),
-    ).toBe(1);
+    expect(resolveTurnAnchor(server, { turn: 9, at: 150, prompt: "Ok, ship the 11. At the same time, fix it" })).toBe(1);
   });
 
   it("disambiguates identical prompts ('keep going' × 3) by the row's time", () => {
@@ -128,13 +119,7 @@ describe("resolveTurnAnchor — the prompt wins, then time, then the ordinal", (
   });
 
   it("with no prompt on file and an ordinal that no longer fits, counts prompts by time", () => {
-    const server = [
-      user("u1", 100),
-      assistant("a1"),
-      user("u2", 300),
-      assistant("a2"),
-      user("u3", 500),
-    ];
+    const server = [user("u1", 100), assistant("a1"), user("u2", 300), assistant("a2"), user("u3", 500)];
     // ordinal 44 came from a much longer local list; the row was measured between u2 and u3
     expect(resolveTurnAnchor(server, { turn: 44, at: 320 })).toBe(2);
     // and one measured before anything was ever asked is turn 0

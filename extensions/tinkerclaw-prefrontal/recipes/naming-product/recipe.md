@@ -299,7 +299,7 @@ If the owner then asks **what a filing costs** (this is a later ask, not this re
   started with Goku, and this universe is reserved for agents." Fix: Step 1 asks the
   shape (family label vs one character per member) before any name is proposed.
 - **Two rounds of manga and childhood TV (2026-10-11):** Step 1 said "a universe
-  people of his age where he grew up all know", so round 1 led with Saint Seiya and
+  people around 45 in Catalonia/Spain all know", so round 1 led with Saint Seiya and
   round 2 with Transformers. the architect: "I never watched this Saint Seiya", then "you are
   narrowing yourself into manga. OpenAI just used stellar bodies … and I am sure there
   is a rationale behind Anthropic's names too." Fix: Step 1 now opens with the labs'

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PDF Review
+GenericName=PDF Viewer
+Comment=Read page by page, annotate, and listen to PDFs (pdf.js)
+Exec=open-pdf %F
+Icon=application-pdf
+Terminal=false
+MimeType=application/pdf;application/x-pdf;
+Categories=Office;Viewer;

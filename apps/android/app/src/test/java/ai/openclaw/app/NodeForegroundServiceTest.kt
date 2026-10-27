@@ -35,15 +35,27 @@ class NodeForegroundServiceTest {
   fun foregroundServiceTypesForVoiceMode_addsMicrophoneOnlyForTalkMode() {
     assertEquals(
       ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.Off),
+      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.Off, jarvisApp = false),
     )
     assertEquals(
       ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.ManualMic),
+      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.ManualMic, jarvisApp = false),
     )
     assertEquals(
       ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.TalkMode),
+      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.TalkMode, jarvisApp = false),
+    )
+  }
+
+  @Test
+  fun foregroundServiceTypesForVoiceMode_jarvisBuildUsesSpecialUseNotTimeCappedDataSync() {
+    assertEquals(
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.Off, jarvisApp = true),
+    )
+    assertEquals(
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+      foregroundServiceTypesForVoiceMode(VoiceCaptureMode.TalkMode, jarvisApp = true),
     )
   }
 

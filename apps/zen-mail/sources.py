@@ -80,7 +80,7 @@ def fetch_outlook(conn, acct, days):
 
 def complete_outlook_threads(conn, acct):
     """Bring in every message of each mail thread, from any folder (the architect, 2026-10-15 15:03: the a customer topic showed
-    one mail of eight; the customer's mail and his forward to a colleague sat in Archive and in Sent older than the window).
+    one mail of eight; the customer's mail and his forward to Pere sat in Archive and in Sent older than the window).
     A thread is fetched again only when its newest message changed. Rows land with box='thread', which tidy never
     moves; a message already stored (same id, or same sender and time under an id Outlook has since changed) is kept."""
     done = conn.execute("SELECT v FROM meta WHERE k='threads_complete'").fetchone()
@@ -272,7 +272,7 @@ def fetch_github(conn, acct, owner_login="globalcaos"):
 
 # ─── Slack and ClawHub radar lanes (2026-10-22, the architect: "Slack and Clawhub should be available for you anytime") ─────
 
-SLACK_ME = os.environ.get("ZEN_SLACK_ME", "")  # the architect in The Frontier (Matthew Berman's community); the token is read-only, user scopes
+SLACK_ME = "U0C887M8SBU"  # the architect in The Frontier (Matthew Berman's community); the token is read-only, user scopes
 
 
 def _slack_token():

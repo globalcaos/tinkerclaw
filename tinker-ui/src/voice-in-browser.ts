@@ -158,8 +158,26 @@ async function playMetallic(b64: string): Promise<void> {
   });
 }
 
-/** Speaks `text` as Jarvis with the phone's GBD voice; false when not in the app or GBD is not there (play the wav). */
-export function speakOnPhone(text: string | null): boolean {
+// Native speak() has no end callback: about 15 characters a second, plus a margin.
+function speechMs(text: string): number {
+  return 1500 + (text.length / 15) * 1000;
+}
+
+/** Plays a wav and resolves when it has finished (or failed), so the next line waits for it. */
+export function playAudioToEnd(url: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const a = new Audio(url);
+    a.onended = () => resolve();
+    a.onerror = () => resolve();
+    a.play().catch(() => resolve());
+  });
+}
+
+/**
+ * Speaks `text` as Jarvis with the phone's GBD voice. Resolves when the line has been spoken; false when not in
+ * the app, GBD is not there, or the Pi sent no text (a non-English line: play the wav, which has the right voice).
+ */
+export function speakOnPhone(text: string | null): Promise<void> | false {
   const n = nativeTts();
   if (!n || !text) return false;
   if (gbdName === undefined) {
@@ -168,20 +186,27 @@ export function speakOnPhone(text: string | null): boolean {
   }
   if (!gbdName) return false;
   const id = `jarvis-${Date.now()}`;
+  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   if (!n.synth) {
     n.speak?.(id, text, String(SPEED), `voice:${gbdName}`); // an app without synth: plain GBD, faster
-    return true;
+    return wait(speechMs(text));
   }
-  pending.set(id, (b64) => {
-    const fallback = () => n.speak?.(id, text, String(SPEED), `voice:${gbdName}`);
-    if (!b64) return fallback();
-    playMetallic(b64).catch((err) => {
-      console.error("[voice-in-browser] metallic playback failed", err);
-      fallback();
+  return new Promise<void>((resolve) => {
+    pending.set(id, (b64) => {
+      const fallback = () => {
+        n.speak?.(id, text, String(SPEED), `voice:${gbdName}`);
+        void wait(speechMs(text)).then(resolve);
+      };
+      if (!b64) return fallback();
+      playMetallic(b64)
+        .then(resolve)
+        .catch((err) => {
+          console.error("[voice-in-browser] metallic playback failed", err);
+          fallback();
+        });
     });
+    n.synth?.(id, text, PHONE_RATE.toFixed(2), `voice:${gbdName}`);
   });
-  n.synth(id, text, PHONE_RATE.toFixed(2), `voice:${gbdName}`);
-  return true;
 }
 
 // FORK 2026-10-23 (the architect: "when I lock the screen I still want the vibration and your voice"). While
@@ -201,11 +226,13 @@ export function startVoicePolling(opts: {
   base: string;
   fetchImpl?: VoiceFetch;
   /** text = the line's words when the server has them (2026-10-22, the phone app speaks them). */
-  play?: (url: string, text: string | null) => void;
+  // 2026-10-27 (the architect: "two voice triggers can speak at the same time"): a play that returns a promise is
+  // awaited before the next poll, so a new line waits for the one still speaking.
+  play?: (url: string, text: string | null) => unknown;
   intervalMs?: number;
 }): () => void {
   const fetchImpl = opts.fetchImpl ?? ((u: string) => fetch(u, { credentials: "same-origin" }));
-  const play = opts.play ?? ((u: string) => void new Audio(u).play().catch(() => undefined));
+  const play = opts.play ?? ((u: string) => playAudioToEnd(u));
   nativeTts()?.voices?.();
   let lastHeard: string | null = null;
   let primed = false;
@@ -224,7 +251,16 @@ export function startVoicePolling(opts: {
           const id = nextToPlay(latest, lastHeard);
           if (id) {
             lastHeard = id;
-            if (!handedOff) play(`${opts.base}/api/jarvis-voice/${id}`, body.text ?? null);
+            if (!handedOff) {
+              const done = play(`${opts.base}/api/jarvis-voice/${id}`, body.text ?? null);
+              if (done instanceof Promise) {
+                // Capped, so a player that never ends cannot silence every later line.
+                await Promise.race([
+                  done.catch(() => undefined),
+                  new Promise((r) => setTimeout(r, 120_000)),
+                ]);
+              }
+            }
           }
         }
       }

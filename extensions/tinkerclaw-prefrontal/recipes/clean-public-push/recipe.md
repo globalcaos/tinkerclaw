@@ -37,6 +37,7 @@ parallelism:
     - [2]
     - [3]
     - [4]
+    - [5]
 ---
 
 # clean-public-push
@@ -56,6 +57,10 @@ A repo that is N commits ahead of its public remote leaks PII through **history*
 ## Step 1 — identify PII files
 
 For each staged file, `git show :<f> | grep -P "{{piiRe}}"` → the sanitize list. (PII boundary: full-name byline + public handle ALLOWED; first-name narrative, host paths, family/contact names, location, business contacts, tokens, emails MUST be scrubbed.)
+
+- **The private list must exist before this step (2026-10-27).** `scripts/pii-pre-push.sh` only WARNS when `~/.config/tinkerclaw/pii-private.re` is missing, then checks generic tokens alone, so a host that never received the list would publish names, places and the employer without a sound. Run `test -s ~/.config/tinkerclaw/pii-private.re` first. The first publish from a newly migrated host found it missing and rebuilt it from the categories in `pii-boundary.md`. Keep `|` out of each line (the bible check splits the joined pattern on it and proves each plain piece fires) and keep `\b` away from addresses: URL-encoded (`%2F` before the digits) and regex-escaped forms slip past `\b`.
+- **Scan whole lines (2026-10-27).** Until develop `8af2ecb0dc2` the hook matched `^\+[^+].*(…)`, which spends each added line's first character on `[^+]`: a token at column 0 never matched, and any gate copied from that shape inherits the hole. Run the class scan with a tool that searches the whole added line.
+- **A denylist misses fixtures (2026-10-27).** Also run a roster pass: the phone book's full names, numbers and emails (`memory/people/_aliases.json`) against the added lines. It found a real contact's number, a third party's email, a street address and tailnet addresses in tests and app code that no pattern knew.
 
 ## Step 2 — sanitize (deterministic transform)
 
@@ -80,10 +85,18 @@ Stage the sanitized files by name, `git -C /tmp/clean-pub diff --name-only -z | 
 
 - **2026-10-06, three refused pushes in one publish.** Two were failures a `{{verifyCmd}}` run on the cut BEFORE the push would have shown: a new `scripts/**/*.test.mjs` with no `node --test` verify line in any optic, and the capability ratchet rising by exactly the new UI panel modules (set the cap to the measured result with a dated note naming them, as the cap's comment says). The third: the publish worktree was recreated without its `node_modules` link, so the hook's plugin-SDK check could not load `typescript`. Re-link on every recreate. When a gate failure also fails with `BIBLE_DIR` pointed at the published base, it is pre-existing: name it in the report and push with `BIBLE_GUARD=off`; do not fix other people's checks inside a publish.
 
+## Step 5 — bring main up to develop (when asked)
+
+- Fast-forward when `git merge-base --is-ancestor {{remote}}/main {{remote}}/{{branch}}`. Otherwise merge in a throwaway worktree at `{{remote}}/main`.
+- **The two lines share history only up to 2026-07-17 (found 2026-10-27).** The merge then has hundreds of add/add and content conflicts, and git silently auto-merges some files into a mix of old and new text (a README went back to old counts). To make main equal develop: take develop's side for every conflict (`git checkout --theirs`), take develop's version of every auto-merged file that still differs from develop, accept develop's deletions, and delete the main-only files develop deleted on purpose (`git log --diff-filter=D develop -- <file>` names the commit). Keep only main-only files develop never had, and list them in the report.
+- PII-gate the merge diff against `{{remote}}/main` AND the hook's push range, `git log -p --no-merges {{remote}}/main..<squash>`: it re-reads old public history and can trip on a line the current tree already fixed.
+- Normal push, never force; commit messages are the owner's, with no AI trailer.
+
 ## Don't-regress
 
 - **No force-push** of a shared branch — FF only. **Never `reset --hard` over live foreign WIP.**
 - The local branch will diverge from the squashed remote; reconcile ONLY after the WIP is committed/cleared by its owner.
 - History-clean is the point — a tip-only sanitize still leaks via `git show <old-commit>`.
 - Ensure the public remote's pre-push actually invokes the PII grep (`scripts/pii-pre-push.sh`); wire it (`core.hooksPath`) if missing — manual gating is the real guard, the hook is the backstop.
+- **Login shells need node (2026-10-27).** The bible runner runs each check with `bash -lc`. Where node lives only under nvm, `/etc/profile` resets PATH and every check fails with `node: command not found` (30 of 44 failures in one run). `~/.profile` must put nvm's default node on PATH; `bash -lc 'which node'` must print a path before Step 4.
 - **`core.bare` must read `false` when the run ends (2026-10-05).** The main checkout was found with `core.bare = true` in `{{repoRoot}}/.git/config` at 09:43 during a publish run, and every git command there failed with "this operation must be run in a work tree" for every session sharing it. Cause, pinned the same morning: the gates the pre-push hook runs inherited `GIT_DIR` (on a push from this throwaway worktree, its gitdir, which shares the main config), and a test suite's `git init` in a temp folder re-initialised the main repository as bare. The hook drops git's environment since develop `5aa6c826c21` (`test/git-hooks-pre-push.test.ts`), but a worktree cut from an older commit still runs its own old hook. Last step of every run, before cleanup: `git -C {{repoRoot}} config core.bare false && git -C {{repoRoot}} rev-parse --is-inside-work-tree` must print `true`.

@@ -456,6 +456,7 @@ import {
 import {
   setVoiceHandedOff,
   skipMissedVoiceLines,
+  playAudioToEnd,
   speakOnPhone,
   startVoicePolling,
 } from "./voice-in-browser.js";
@@ -714,10 +715,13 @@ import {
 import {
   bareModelTail,
   clientRunIsFresh,
+  type JobCensusSlice,
   liveRunSessionsByModel,
   liveSessionsForModel,
   resolveSessionRunState,
   sessionHasFreshClientRun,
+  sessionJobActivity,
+  type SessionJobActivity,
   transcriptWriterIsLive,
 } from "./run-state.js";
 // FORK 2026-09-29 (u14) — the chat follow latch's decision table: the owner's composer send
@@ -750,6 +754,18 @@ import {
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 import { detectAgentMessage, detectSystemNotice, stripRecallPack } from "./system-notice.js";
+import {
+  composeWindowTitle,
+  finalStampOf,
+  isUnread,
+  markSeen,
+  noteOwnFinal,
+  parseSeenMap,
+  serializeSeenMap,
+  TAB_SEEN_CHOICE,
+  type SeenMap,
+  type TitleBusy,
+} from "./tab-attention.js";
 import {
   SESSION_PANEL_ORDER_KEY,
   dropBeforeId,
@@ -1908,6 +1924,10 @@ function activityTick(): void {
   // FORK 2026-09-24 (prompt-queue.md U6) — unconditional like the three above: a stalled pre-model
   // wait changes nothing the fingerprint sees, so gating this behind a repaint would never ask.
   refreshPreModelReport();
+  // FORK 2026-10-27 — the chat in view absorbs a finished turn the moment its row says so, and the
+  // window title turns its spinner. Both cheap and text-only, so every tick.
+  refreshTabSeen();
+  refreshDocTitle();
   const fingerprint = activityFingerprint();
   const forced = activityTickCount % FULL_REPAINT_EVERY_TICKS === 0;
   if (fingerprint === lastActivityFingerprint && !forced) {
@@ -1935,9 +1955,13 @@ function activityTick(): void {
 function activityFingerprint(): string {
   const parts: string[] = [];
   for (const [tabId, info] of tabsRunningNow()) {
-    parts.push(`${tabId}:${info.pending ? "p" : "l"}:${info.provider ?? ""}:${info.model ?? ""}`);
+    parts.push(
+      `${tabId}:${info.job ? `j${info.job.count}:${info.job.label}` : info.pending ? "p" : "l"}:${info.provider ?? ""}:${info.model ?? ""}`,
+    );
   }
   parts.sort();
+  // FORK 2026-10-27 — the unread set is drawn by the tab strip, the sessions rows and the phone list.
+  parts.push(`u|${unreadTabIds().join(",")}`);
   // Run-set size and per-run phase/tool: makes a tool label or a RESTARTING badge appear within one
   // tick instead of waiting for the backstop. Both maps are small (one entry per open run).
   const runs: string[] = [];
@@ -3352,6 +3376,10 @@ function noteFractalSideChatEvent(p: any): void {
         endedAt: Date.now(),
         ...(typeof text === "string" && text.trim() ? { text } : {}),
       });
+      // FORK 2026-10-27 — the reflection answers in its chat: a chat not in view turns unread.
+      if (prev?.status !== "done") {
+        noteChatFinal(prev?.parentSessionKey);
+      }
       setTimeout(() => void loadFractalCard(parentRunId, true), FRACTAL_CARD_SETTLE_MS);
     } else if (p.state === "error" || p.state === "aborted") {
       const reason =
@@ -3366,6 +3394,9 @@ function noteFractalSideChatEvent(p: any): void {
         error: reason,
         endedAt: Date.now(),
       });
+      if (p.state === "error" && prev?.status !== "failed") {
+        noteChatFinal(prev?.parentSessionKey); // a failed card is a result too; a Stop is not
+      }
     }
   } catch (err) {
     console.error("[fractal-card] could not follow the reflection", err);
@@ -4324,6 +4355,7 @@ import {
   type IndicatorLayer,
   type LongjobJob,
   type LongjobRowDeps,
+  LONGJOB_PROCESS_COLOR,
   longjobDuration,
   longjobLayers,
   longjobWakeHeadline,
@@ -19716,85 +19748,49 @@ function reuseHtmlFrames(root: HTMLElement): void {
   }
 }
 
-/** FORK 2026-08-06 (the architect: the tab should SHOW that a detached longjob is working):
- *  the longjob progress page posts {__tinkerLongjob:1,...} on every poll. While the
- *  job runs, the active tab gets a pulsing golden dot and the window title a spinner
- *  frame + percentage; both clear on the terminal post. A detached download burns zero
- *  tokens by design, so the run lane (tab glow / thinking indicator) is correctly dark —
- *  this message lane is its own surface. Stale guard: if posts stop for 15s (iframe
- *  gone, page frozen) the surfaces clear rather than lying. */
-let longjobAnim: { pct: number | null; label: string; frame: number; lastAt: number } | null = null;
-const LONGJOB_FRAMES = ["◐", "◓", "◑", "◒"];
+// FORK 2026-10-27 — the window title has ONE writer, refreshDocTitle(), fed by the one activity clock
+// (activityTick) and by the window's own visibility and focus. It retires the 2026-08-06 path that
+// lived here: a longjob CARD frame posted {__tinkerLongjob:1} on each poll and this page turned a
+// spinner in the title and a golden dot on the ACTIVE tab only, for as long as that card was on
+// screen. The job census (pollLongjobs) now knows every chat's jobs whether or not a card is drawn,
+// so the tab strip, the sessions rows and the title all answer from it (run-state.ts, job lane).
 let baseDocTitle = document.title;
 /** FORK 2026-10-07 (the user: "the name on the browser tab should say Goku, and mine just Jarvis"). The tab
  *  title is the agent's name once agent.identity.get answers; index.html's product title only covers the boot. */
 function setAgentDocTitle(name: string): void {
   if (!name || baseDocTitle === name) return;
   baseDocTitle = name;
-  if (!longjobAnim) document.title = name;
+  refreshDocTitle();
 }
-function applyLongjobSurfaces(): void {
-  if (longjobAnim && Date.now() - longjobAnim.lastAt > 15_000) {
-    longjobAnim = null;
+
+/**
+ * The window title (tab-attention.ts composeWindowTitle): a turning spinner while the ACTIVE chat is
+ * busy, with ⚙ and the job's label when that busy state is a job; "(n)" in front for the unread chats
+ * while the window is in the background (hidden or not focused). Writes only on change.
+ */
+function refreshDocTitle(running = tabsRunningNow()): void {
+  if (typeof document === "undefined") {
+    return;
   }
-  document.title = longjobAnim
-    ? `${LONGJOB_FRAMES[longjobAnim.frame % LONGJOB_FRAMES.length]} ${
-        longjobAnim.pct == null ? "" : `${longjobAnim.pct}% `
-      }${longjobAnim.label} — ${baseDocTitle}`
-    : baseDocTitle;
-  const tab = document.querySelector(".tab-active");
-  if (!tab) return;
-  const dot = tab.querySelector(".tab-longjob-dot") as HTMLElement | null;
-  const pctEl = tab.querySelector(".tab-longjob-pct") as HTMLElement | null;
-  if (longjobAnim) {
-    if (!dot) {
-      const d = document.createElement("span");
-      d.className = "tab-longjob-dot";
-      tab.insertBefore(d, tab.firstChild);
-    }
-    // The percentage lives IN the tab element, not only in the OS window title —
-    // "tab title" is the tab the architect actually looks at (2026-08-06 clarification).
-    if (!pctEl) {
-      const p = document.createElement("span");
-      p.className = "tab-longjob-pct";
-      const title = tab.querySelector(".tab-title");
-      (title ?? tab).insertAdjacentElement("afterend", p);
-    }
-    const pctNow = tab.querySelector(".tab-longjob-pct") as HTMLElement;
-    pctNow.textContent = longjobAnim.pct == null ? "…" : `${longjobAnim.pct}%`;
-  } else if (dot) {
-    dot.remove();
-    pctEl?.remove();
-  } else if (pctEl) {
-    pctEl.remove();
-  }
-}
-if (typeof window !== "undefined" && !(window as any).__tinkerLongjobWired) {
-  (window as any).__tinkerLongjobWired = true;
-  const st = document.createElement("style");
-  st.textContent =
-    ".tab-longjob-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#c9a86a;margin-right:6px;vertical-align:middle;animation:longjobPulse 1.2s ease-in-out infinite}" +
-    ".tab-longjob-pct{color:#c9a86a;font-size:11px;margin-left:6px;font-variant-numeric:tabular-nums}" +
-    "@keyframes longjobPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}";
-  document.head.appendChild(st);
-  window.addEventListener("message", (ev) => {
-    const d = ev.data;
-    if (!d || d.__tinkerLongjob !== 1) {
-      return;
-    }
-    if (d.status === "done" || d.status === "failed") {
-      longjobAnim = null;
-    } else {
-      longjobAnim = {
-        pct: typeof d.pct === "number" ? d.pct : null,
-        label: typeof d.label === "string" ? d.label : "working",
-        frame: (longjobAnim?.frame ?? 0) + 1,
-        lastAt: Date.now(),
-      };
-    }
-    applyLongjobSurfaces();
+  const run = running.get(activeTabId);
+  const busy: TitleBusy = run?.job
+    ? { kind: "job", label: run.job.label, count: run.job.count }
+    : run
+      ? { kind: "model" }
+      : null;
+  const background =
+    document.visibilityState !== "visible" ||
+    (typeof document.hasFocus === "function" && !document.hasFocus());
+  const next = composeWindowTitle({
+    base: baseDocTitle,
+    busy,
+    frame: Date.now() / 1000,
+    unread: unreadTabIds().length,
+    background,
   });
-  setInterval(applyLongjobSurfaces, 5_000); // stale guard + title frame cycling
+  if (document.title !== next) {
+    document.title = next;
+  }
 }
 
 /** FORK 2026-08-04: build the attribute string for a linkified <code>, keeping
@@ -22126,6 +22122,9 @@ function renderMsg(
         title = lastSentence.length > 160 ? lastSentence.slice(0, 157).trim() + "…" : lastSentence;
         pendingToolNarration = null; // consumed — next tool_use gets a fresh narration
       }
+      // FORK 2026-10-27 — the thinking row names what the turn is doing: the last row drawn wins, a
+      // running one hands over its title, a finished one clears it (see liveToolTitle).
+      liveToolTitle = statusCls === "run" && sessionKey ? { key: sessionKey, title } : null;
       h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(title)}</span></div>`;
       if (exp) {
         // FORK (2026-04-24): expanded view = command first, then full stdout
@@ -22171,6 +22170,33 @@ function renderMsg(
 }
 
 // ─── Thinking Indicator ───
+
+/**
+ * FORK 2026-10-27 (the architect, 18:36: "I am now seeing only a thinking indicator that says working with a weird
+ * icon. It should instead show the main chat is waiting for the subagent to finish a particular task").
+ * The title of the LAST tool row the viewed chat drew while that call has no result yet (the purpose
+ * sentence written before the call, the same text the row shows), null once it finishes. Keyed to the
+ * chat it came from, so another tab can never borrow it. Bug B061.
+ */
+let liveToolTitle: { key: string; title: string } | null = null;
+
+function thinkingTask(): string {
+  if (!liveToolTitle || !sessionKey || !sessionKeyMatches(liveToolTitle.key, sessionKey)) {
+    return "";
+  }
+  return liveToolTitle.title;
+}
+
+/** The indicator's label: model, then what the turn is doing. With no named model and a running
+ *  call, the call alone (no empty-model icon, no bare "working"). */
+function thinkingLabelHtml(model: string, provider: string, name: string): string {
+  const task = thinkingTask();
+  if (!task) {
+    return `${modelIcon(model, provider)} ${esc(name)}`;
+  }
+  const who = model ? `${modelIcon(model, provider)} ${esc(name)} &middot; ` : "";
+  return `${who}<span class="thinking-task" title="${esc(task)}">&#8987; ${esc(task)}</span>`;
+}
 // FORK 2026-08-17 — `thinkingTickInterval` is gone with the second clock; the one clock's handle is
 // `activityClockInterval`, declared beside ACTIVITY_TICK_MS.
 
@@ -22340,7 +22366,7 @@ function renderThinkingIndicator(): string {
       const badge = restarting ? `<span class="restart-badge">RESTARTING</span>` : "";
       const row = `<div class="thinking-run" data-run-id="${esc(primaryRunId)}" data-provider="${esc(runProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots" style="--thinking-phase:${thinkingDotsPhase()}ms"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${modelIcon(runModel, runProvider)} ${esc(name)}${recipeLabel}${subBadge}</span>
+  <span class="thinking-model">${thinkingLabelHtml(runModel, runProvider, name)}${recipeLabel}${subBadge}</span>
   ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
@@ -22372,7 +22398,9 @@ function renderThinkingIndicator(): string {
       const color = resolveEegGlowColor({ model: stateModel, provider: stateProvider });
       const row = `<div class="thinking-run" data-provider="${esc(stateProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots" style="--thinking-phase:${thinkingDotsPhase()}ms"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${modelIcon(stateModel, stateProvider)} ${esc(
+  <span class="thinking-model">${thinkingLabelHtml(
+    stateModel,
+    stateProvider,
     (stateModel ? detailedModelLabel(stateModel) || modelName(stateModel) : "") || "working",
   )}</span>
   <span class="thinking-stop">Stop</span>
@@ -22462,10 +22490,22 @@ function renderThinkingIndicator(): string {
 // longjob workers' state.json files filtered by session) and draws them with longjob-rows.ts. The
 // poll repaints only the indicator node; when the job ends its row goes and the wake's quiet line
 // (renderUserBubble, "⏳ Longjob") is what stays in the transcript.
+//
+// FORK 2026-10-27 (the architect: a running background job shows as busy on every surface, like a thinking
+// model) — the page keeps a CENSUS of every chat's jobs, not only the viewed one's: one
+// `/api/longjob/list?all=1` for every chat's long jobs, and `ccBridge.backgroundTasks` for each open
+// tab's session. The viewed chat's rows are its share of the census; the tab strip, the sessions
+// rows and the window title ask run-state.ts `sessionJobActivity` of the same census (sessionJobNow).
+// Every 4 s, and every 16 s while the page is hidden: the window title must still stop spinning when
+// a job ends behind it.
 const LONGJOB_POLL_MS = 4000;
-let longjobJobs: LongjobJob[] = [];
-let longjobJobsSession = "";
+const LONGJOB_HIDDEN_POLL_EVERY = 4;
+let longjobCensus: { jobs: LongjobJob[]; fetchedAt: number } = { jobs: [], fetchedAt: 0 };
+/** The background tasks of each open tab's session, keyed by the tab's session key. */
+const backgroundCensus = new Map<string, { jobs: LongjobJob[]; fetchedAt: number }>();
 let longjobPollFailing = false;
+let longjobPollCount = 0;
+let longjobPollInFlight = false;
 
 function jobRowDeps(): LongjobRowDeps {
   return {
@@ -22477,15 +22517,17 @@ function jobRowDeps(): LongjobRowDeps {
   };
 }
 
-function longjobLayersNow(): IndicatorLayer[] {
-  if (
-    !sessionKey ||
-    longjobJobs.length === 0 ||
-    !sessionKeyMatches(longjobJobsSession, sessionKey)
-  ) {
+/** The viewed chat's share of a job list (a job names its chat in `session`). */
+function viewedJobs(jobs: readonly LongjobJob[]): LongjobJob[] {
+  if (!sessionKey) {
     return [];
   }
-  return longjobLayers(longjobJobs, Date.now(), jobRowDeps());
+  return jobs.filter((j) => typeof j?.session === "string" && sessionKeyMatches(j.session));
+}
+
+function longjobLayersNow(): IndicatorLayer[] {
+  const jobs = viewedJobs(longjobCensus.jobs);
+  return jobs.length === 0 ? [] : longjobLayers(jobs, Date.now(), jobRowDeps());
 }
 
 // FORK 2026-10-25 (the architect, 02:43: "while the job is being processed, there should always be a thinking
@@ -22496,19 +22538,32 @@ function longjobLayersNow(): IndicatorLayer[] {
 const BACKGROUND_TASKS_METHOD = "ccBridge.backgroundTasks";
 const BACKGROUND_TASKS_TIMEOUT_MS = 10_000;
 const UNKNOWN_METHOD_RE = /unknown method|no such method/i;
-let backgroundJobs: LongjobJob[] = [];
-let backgroundJobsSession = "";
 let backgroundPollFailing = false;
 
 function backgroundLayersNow(): IndicatorLayer[] {
-  if (
-    !sessionKey ||
-    backgroundJobs.length === 0 ||
-    !sessionKeyMatches(backgroundJobsSession, sessionKey)
-  ) {
-    return [];
+  const jobs = viewedJobs(backgroundCensus.get(sessionKey)?.jobs ?? []);
+  return jobs.length === 0 ? [] : longjobLayers(jobs, Date.now(), jobRowDeps());
+}
+
+/** Every job list the census holds, for run-state.ts sessionJobActivity. */
+function jobCensusSlices(): JobCensusSlice[] {
+  return [longjobCensus, ...backgroundCensus.values()];
+}
+
+/**
+ * THE question the tab strip, the sessions rows and the window title ask about jobs: is one running
+ * for this session? run-state.ts answers it, with the job lane's freshness bounds.
+ */
+function sessionJobNow(key: string | undefined): SessionJobActivity | null {
+  if (!key) {
+    return null;
   }
-  return longjobLayers(backgroundJobs, Date.now(), jobRowDeps());
+  return sessionJobActivity({
+    sessionKey: key,
+    census: jobCensusSlices(),
+    matches: (jobKey, refKey) => sessionKeyMatches(jobKey, refKey),
+    now: Date.now(),
+  });
 }
 
 /**
@@ -22585,33 +22640,79 @@ async function fetchLongjobList(session: string): Promise<LongjobJob[] | null> {
   }
 }
 
-async function pollLongjobs(): Promise<void> {
-  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+/**
+ * Every chat's running long jobs (`?all=1`). A tinker-prod-ui older than that answers 400 and gets
+ * asked for the viewed chat's list instead, so its rows keep working. null = unknown.
+ */
+async function fetchLongjobCensus(): Promise<LongjobJob[] | null> {
+  try {
+    const res = await fetch("/api/longjob/list?all=1", { cache: "no-store" });
+    if (res.status === 400) {
+      return sessionKey ? fetchLongjobList(sessionKey) : [];
+    }
+    if (res.status === 404) {
+      longjobPollFailing = false;
+      return [];
+    }
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const body = (await res.json()) as { jobs?: unknown };
+    longjobPollFailing = false;
+    return Array.isArray(body.jobs) ? (body.jobs as LongjobJob[]) : [];
+  } catch (err) {
+    if (!longjobPollFailing) {
+      console.error("[longjob-rows] job census fetch failed", err);
+    }
+    longjobPollFailing = true;
+    return null;
+  }
+}
+
+/** The session of every open tab, once each. */
+function openTabSessionKeys(): string[] {
+  return [...new Set(tabs.map((t) => t.sessionKey).filter((k): k is string => !!k))];
+}
+
+async function pollLongjobs(force = false): Promise<void> {
+  const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+  longjobPollCount++;
+  if (
+    longjobPollInFlight ||
+    (hidden && !force && longjobPollCount % LONGJOB_HIDDEN_POLL_EVERY !== 0)
+  ) {
     return;
   }
-  const asked = sessionKey;
-  if (!asked) {
-    return;
-  }
-  const [jobs, background] = await Promise.all([
-    fetchLongjobList(asked),
-    fetchBackgroundTasks(asked),
-  ]);
-  if (asked !== sessionKey) {
-    return; // the tab changed while the request was out; the next poll asks for the new one
-  }
-  // A list that did not answer keeps its last rows: a server hiccup is not a finished job.
-  const hadRows = longjobJobs.length > 0 || backgroundJobs.length > 0;
-  if (jobs !== null) {
-    longjobJobs = jobs;
-    longjobJobsSession = asked;
-  }
-  if (background !== null) {
-    backgroundJobs = background;
-    backgroundJobsSession = asked;
-  }
-  if (hadRows || longjobJobs.length > 0 || backgroundJobs.length > 0) {
-    repaintThinkingIndicator();
+  longjobPollInFlight = true;
+  try {
+    const keys = openTabSessionKeys();
+    const [jobs, ...background] = await Promise.all([
+      fetchLongjobCensus(),
+      ...keys.map((k) => fetchBackgroundTasks(k)),
+    ]);
+    const at = Date.now();
+    // A list that did not answer keeps its last rows: a server hiccup is not a finished job. Busy
+    // stops believing it after JOB_CENSUS_STALE_MS (run-state.ts), the rows keep it in amber.
+    const hadRows = longjobLayersNow().length > 0 || backgroundLayersNow().length > 0;
+    if (jobs !== null) {
+      longjobCensus = { jobs, fetchedAt: at };
+    }
+    keys.forEach((k, i) => {
+      const list = background[i];
+      if (list !== null && list !== undefined) {
+        backgroundCensus.set(k, { jobs: list, fetchedAt: at });
+      }
+    });
+    for (const k of [...backgroundCensus.keys()]) {
+      if (!keys.includes(k)) {
+        backgroundCensus.delete(k); // its tab closed
+      }
+    }
+    if (hadRows || longjobLayersNow().length > 0 || backgroundLayersNow().length > 0) {
+      repaintThinkingIndicator();
+    }
+  } finally {
+    longjobPollInFlight = false;
   }
 }
 
@@ -22622,7 +22723,7 @@ const longjobRowsWindow =
 if (longjobRowsWindow && !longjobRowsWindow.__tinkerLongjobRowsWired) {
   longjobRowsWindow.__tinkerLongjobRowsWired = true;
   setInterval(() => void pollLongjobs(), LONGJOB_POLL_MS);
-  document.addEventListener("visibilitychange", () => void pollLongjobs());
+  document.addEventListener("visibilitychange", () => void pollLongjobs(true));
 }
 
 /**
@@ -23494,8 +23595,16 @@ function updateSelect() {
 // provider string — glow identity needs the model id (openrouter vendors all
 // report provider "openrouter"), and the architect's rule is that "which model at which
 // effort is running" travels as one object.
-function tabsRunningNow(): Map<string, { provider?: string; model?: string; pending?: boolean }> {
-  const live = new Map<string, { provider?: string; model?: string; pending?: boolean }>();
+type TabActivity = {
+  provider?: string;
+  model?: string;
+  pending?: boolean;
+  /** FORK 2026-10-27 — the third state: no turn, but a job of this chat runs (run-state.ts job lane). */
+  job?: SessionJobActivity;
+};
+
+function tabsRunningNow(): Map<string, TabActivity> {
+  const live = new Map<string, TabActivity>();
   const rows = Array.isArray(sessions) ? (sessions as Array<Record<string, unknown>>) : [];
   for (const tab of tabs) {
     const key = tab.sessionKey;
@@ -23526,9 +23635,115 @@ function tabsRunningNow(): Map<string, { provider?: string; model?: string; pend
     const pending = tab.id === activeTabId ? viewedSessionPending() : sessionPending(key as string);
     if (pending) {
       live.set(tab.id, { pending: true });
+      continue;
+    }
+    // FORK 2026-10-27 (the architect: a background job shows as thinking everywhere) — last, so a turn
+    // outranks a job: while the chat thinks, its glow is the model's; the job's comes back after.
+    const job = sessionJobNow(key);
+    if (job) {
+      live.set(tab.id, { job });
     }
   }
   return live;
+}
+
+// ─── Unread chats (FORK 2026-10-27) ───
+// the architect: "When it finishes any turn, the tab should remain on a state that lets me think that there
+// is an unread result, which should disappear when I click on the tab to read it." The rule and its
+// stamps are tab-attention.ts; this binds them to the page: the session rows (the server's endedAt),
+// the open tabs, the active one, and the ui-state store that carries the stamps across reloads.
+let tabSeen: SeenMap = parseSeenMap(getChoice(TAB_SEEN_CHOICE, "{}"));
+
+function sessionRowFor(key: string): Record<string, unknown> | undefined {
+  const rows = Array.isArray(sessions) ? (sessions as Array<Record<string, unknown>>) : [];
+  return rows.find(
+    (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, key),
+  );
+}
+
+function storeTabSeen(): void {
+  const open = new Set(openTabSessionKeys());
+  setChoice(
+    TAB_SEEN_CHOICE,
+    serializeSeenMap(tabSeen, (k) => open.has(k)),
+    "{}",
+  );
+}
+
+/** Is the owner looking at the active chat: the chat view on screen, no Gantt chart over it, and
+ *  (unless `ignoreVisibility`, for the moment the window hides) a visible window. */
+function activeChatInView(ignoreVisibility = false): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  if (!ignoreVisibility && document.visibilityState !== "visible") {
+    return false;
+  }
+  if (ganttViewFor) {
+    return false;
+  }
+  const chatNav = document.querySelector('.nav-btn[data-tab="chat"]');
+  return !chatNav || chatNav.classList.contains("nav-active");
+}
+
+/**
+ * Seed every open tab never seen before (seen up to now: nothing older is news), and absorb what the
+ * chat in view shows. `stampNow`: the chat in view is seen up to this instant, for a tab switch or the
+ * window showing or hiding, so a row whose endedAt lands a moment later is not news either.
+ */
+function refreshTabSeen(opts: { stampNow?: boolean; hiding?: boolean } = {}): void {
+  const now = Date.now();
+  let changed = false;
+  const put = (key: string, rec: ReturnType<typeof markSeen>) => {
+    if (rec) {
+      tabSeen[key] = rec;
+      changed = true;
+    }
+  };
+  for (const key of openTabSessionKeys()) {
+    if (!tabSeen[key]) {
+      put(key, markSeen(undefined, finalStampOf(sessionRowFor(key), undefined), now));
+    }
+  }
+  const active = tabs.find((t) => t.id === activeTabId)?.sessionKey;
+  if (active && activeChatInView(opts.hiding === true)) {
+    const rec = tabSeen[active];
+    put(
+      active,
+      markSeen(rec, finalStampOf(sessionRowFor(active), rec), opts.stampNow ? now : undefined),
+    );
+  }
+  if (changed) {
+    storeTabSeen();
+  }
+}
+
+/** A turn of ANOTHER session finished and answers in this chat (the Fractal reflection). */
+function noteChatFinal(chatSessionKey: string | undefined): void {
+  const key = chatSessionKey
+    ? tabs.find((t) => t.sessionKey && sessionKeyMatches(t.sessionKey, chatSessionKey))?.sessionKey
+    : undefined;
+  if (!key) {
+    return;
+  }
+  const now = Date.now();
+  tabSeen[key] = noteOwnFinal(tabSeen[key], now, now);
+  storeTabSeen();
+  refreshTabSeen(); // the chat in view absorbs it at once
+}
+
+function tabIsUnread(tab: { sessionKey?: string }): boolean {
+  const key = tab.sessionKey;
+  if (!key) {
+    return false;
+  }
+  const rec = tabSeen[key];
+  return isUnread(finalStampOf(sessionRowFor(key), rec), rec);
+}
+
+/** The open tabs with a result the owner has not seen, in tab order. */
+function unreadTabIds(): string[] {
+  return tabs.filter((t) => tabIsUnread(t)).map((t) => t.id);
 }
 
 /** Signature of the current thinking set, so updateSessionsPanel can re-render the tab bar only
@@ -23599,10 +23814,12 @@ function syncTabActivityGlow() {
     // happened to change.
     .map(
       ([id, run]) =>
-        `${id}:${run.pending ? "pending" : ""}:${run.provider ?? ""}:${run.model ?? ""}`,
+        `${id}:${run.pending ? "pending" : ""}:${run.provider ?? ""}:${run.model ?? ""}:${run.job ? `${run.job.label}+${run.job.count}` : ""}`,
     )
     .sort()
-    .join(",");
+    .join(",")
+    // FORK 2026-10-27 — the unread markers are drawn by renderTabs too.
+    .concat(`|unread:${unreadTabIds().join(",")}`);
   if (sig !== lastTabRunSig) {
     lastTabRunSig = sig;
     renderTabs();
@@ -23652,12 +23869,24 @@ function renderTabs() {
     // centrally from the run object (model id carries the openrouter vendor).
     // FORK 2026-08-15: except in the pre-model window, where there is no model to take a colour
     // from. Use the pending pill's own #D97757 so the tab and the chat read as the same event.
+    // FORK 2026-10-27: a job glows in the job rows' own gold (longjob-rows.ts), so the tab, its row
+    // and the chat's job rows read as one event, and its title gains a ⚙ (below).
     const runColor = run?.pending
       ? "#D97757"
-      : resolveEegGlowColor({
-          model: run?.model ?? "",
-          provider: run?.provider ?? "",
-        });
+      : run?.job
+        ? LONGJOB_PROCESS_COLOR
+        : resolveEegGlowColor({
+            model: run?.model ?? "",
+            provider: run?.provider ?? "",
+          });
+    if (run?.job) {
+      classes.push("tab-job");
+    }
+    // FORK 2026-10-27 (the architect: a finished turn leaves the tab unread until clicked) — a calm dot.
+    const unread = tabIsUnread(tab);
+    if (unread) {
+      classes.push("tab-unread");
+    }
     const glowStyle = isRunning
       ? ` style="--glow-color:${runColor}80;--glow-bg:${runColor}18;--glow-bg2:${runColor}30"`
       : "";
@@ -23680,12 +23909,22 @@ function renderTabs() {
     // so no separate badge span is rendered. (Retired the `.tab-clone-badge` overlap approach.)
     // FORK 2026-10-25 — the chat Zen Mail hands its card prompts to wears the Zen Mail icon as its title.
     const zen = isZenTab(tab.id);
-    const hint = zen ? zenTabHint(tab.title) : tab.title;
+    const jobHint = run?.job
+      ? ` · ⚙ ${run.job.label}${run.job.count > 1 ? ` +${run.job.count - 1}` : ""}`
+      : "";
+    const hint =
+      (zen ? zenTabHint(tab.title) : tab.title) + jobHint + (unread ? " · new result" : "");
     const titleHtml = zen
       ? `<span class="tab-title tab-title-zen">${zenTitleHtml(tab.title, escapeHtml)}</span>`
       : `<span class="tab-title">${escapeHtml(tab.title)}</span>`;
+    const jobMark = run?.job
+      ? `<span class="tab-job-mark" aria-label="background job">⚙</span>`
+      : "";
+    const unreadMark = unread
+      ? `<span class="tab-unread-dot" aria-label="unread result"></span>`
+      : "";
     html += `<div class="${classes.join(" ")}"${glowStyle} data-tab-id="${tab.id}" data-hint="${escapeHtml(hint)}">
-      ${titleHtml}${closeBtn}
+      ${jobMark}${titleHtml}${unreadMark}${closeBtn}
     </div>`;
     const board = ganttByMaster.get(tab.id);
     if (board) {
@@ -23699,8 +23938,6 @@ function renderTabs() {
   }
   container.innerHTML = html;
   checkTabOverflow();
-  // FORK 2026-08-06: tab re-renders wipe the longjob dot; re-apply from state.
-  applyLongjobSurfaces();
   // FORK 2026-09-23: a re-render can move either end of a chain (reorder, open, close, rename).
   chainOverlay?.wake();
 
@@ -24347,8 +24584,11 @@ function applyTabSwitch(tab: Tab) {
   // FORK 2026-10-05 — going to another chat leaves the Gantt chart; renderTabs below redraws.
   closeGanttView({ render: false });
 
+  // FORK 2026-10-27 — the chat being left was read up to this instant; so is the one arrived at.
+  refreshTabSeen({ stampNow: true });
   activeTabId = tab.id;
   saveActiveTabId();
+  refreshTabSeen({ stampNow: true });
 
   if (tab.sessionKey) {
     sessionKey = tab.sessionKey;
@@ -28617,17 +28857,22 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   // Before this the row knew only `live`, so during the 21-36s pre-model window it stayed dark
   // while the chat showed a pill — one of the desyncs the architect reported on 2026-08-15.
   const rowPending = !liveInfo.live && isActive && viewedSessionPending();
-  const rowActive = liveInfo.live || rowPending;
-  const liveClass = rowActive ? " session-live" : "";
+  // FORK 2026-10-27 — the third state, after the two above: a job of this session runs. Same
+  // question the tab asks (sessionJobNow), same gold as its tab and its chat rows.
+  const rowJob = !liveInfo.live && !rowPending ? sessionJobNow(s.key) : null;
+  const rowActive = liveInfo.live || rowPending || !!rowJob;
+  const liveClass = rowActive ? ` session-live${rowJob ? " session-job" : ""}` : "";
   // FORK 2026-08-06: unified glow — the running model's EEG trace color. The
   // resolver carries the model id, so openrouter vendors glow by vendor.
   // Pending has no model yet, so it takes the pending pill's colour (see renderTabs).
   const liveColor = rowPending
     ? "#D97757"
-    : resolveEegGlowColor({
-        model: liveInfo.model ?? "",
-        provider: liveInfo.provider ?? "",
-      });
+    : rowJob
+      ? LONGJOB_PROCESS_COLOR
+      : resolveEegGlowColor({
+          model: liveInfo.model ?? "",
+          provider: liveInfo.provider ?? "",
+        });
   const liveStyle = rowActive
     ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
     : "";
@@ -28650,8 +28895,14 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   // `tab` is the very same lookup used for the label above, so the class can
   // never disagree with the title the row is showing.
   const openClass = tab ? " session-open" : "";
-  return `<div class="session-row${isActive ? " session-active" : ""}${openClass}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
-    <span class="session-label" data-hint="${esc(label)}">${esc(label)} ${channel}</span>
+  // FORK 2026-10-27 — the unread dot of the tab this row opens; a session with no tab has none.
+  const unread = !!tab && tabIsUnread(tab);
+  const unreadClass = unread ? " session-unread" : "";
+  const marks =
+    (rowJob ? `<span class="session-job-mark" aria-label="background job">⚙</span>` : "") +
+    (unread ? `<span class="session-unread-dot" aria-label="unread result"></span>` : "");
+  return `<div class="session-row${isActive ? " session-active" : ""}${openClass}${liveClass}${unreadClass}" data-session-key="${esc(s.key)}"${liveStyle}>
+    <span class="session-label" data-hint="${esc(label)}${rowJob ? ` · ⚙ ${esc(rowJob.label)}` : ""}">${marks}${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     ${deleteBtnHtml}
   </div>`;
@@ -28733,9 +28984,7 @@ function init() {
       base: "/tinker",
       play: (u, text) =>
         speakOnPhone(text) ||
-        void localHelperAvailable().then((ok) =>
-          ok ? playWithLocalHelper(u) : new Audio(u).play().catch(() => undefined),
-        ),
+        localHelperAvailable().then((ok) => (ok ? playWithLocalHelper(u) : playAudioToEnd(u))),
     });
   }
   restoreProviderErrors();
@@ -29011,6 +29260,10 @@ function init() {
     getActiveTabId: () => activeTabId,
     isZenTab,
     isRunning: (id) => tabsRunningNow().has(id),
+    isUnread: (id) => {
+      const tab = tabs.find((t) => t.id === id);
+      return !!tab && tabIsUnread(tab);
+    },
     switchToTab,
     closeTab,
     newTab: () => $("tab-add")?.click(),
@@ -29025,6 +29278,15 @@ function init() {
       void loadSessions();
     },
   });
+  // FORK 2026-10-27 — the window showing or hiding is a read of the chat in view (up to that instant),
+  // and focus decides whether the title carries the unread count.
+  document.addEventListener("visibilitychange", () => {
+    refreshTabSeen({ stampNow: true, hiding: document.visibilityState === "hidden" });
+    refreshDocTitle();
+    syncTabActivityGlow();
+  });
+  window.addEventListener("focus", () => refreshDocTitle());
+  window.addEventListener("blur", () => refreshDocTitle());
   watchTabStaleness(); // a page hidden a while holds its tab list back until it has re-read the file
   document.addEventListener("visibilitychange", () => void resyncTabsFromFile());
   window.addEventListener("focus", () => void resyncTabsFromFile());

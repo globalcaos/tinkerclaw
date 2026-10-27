@@ -83,7 +83,7 @@ describe("channel patterns (EN/ES/CA)", () => {
     expect(matchChannel(STAMP + text)).toBeTruthy();
   });
 
-  it.each(["do not show the diff, just merge", "Show me the chart", "Envia-ho a la Clara"])(
+  it.each(["do not show the diff, just merge", "Show me the chart", "Envia-ho a la Laia"])(
     "leaves %j alone",
     (text) => {
       expect(matchChannel(STAMP + text)).toBeUndefined();

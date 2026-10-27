@@ -38,7 +38,7 @@ class JarvisPairingTest {
     assertNull(parseJarvisPairLink("https://100.64.0.20:18794/door/pair?code=1").link)
     assertNull(parseJarvisPairLink("jarvis://other?door=100.64.0.20&device=a").link)
     assertNull(parseJarvisPairLink("").link)
-    assertNull(parseJarvisPairLink("jarvis://pair?door=http%3A%2F%2F100.64.0.20%3A18794").link)
+    assertNull(parseJarvisPairLink("jarvis://pair?door=http%3A%2F%2F100.64.0.11%3A18794").link)
   }
 
   @Test

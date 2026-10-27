@@ -112,7 +112,7 @@ lacks. Read the log again right before the merge (2026-10-09: two reflections fi
 two minutes apart, `222fa1a6e83`).
 
 A background reflection never restarts the gateway or pushes the page while the house is busy: a
-restart's drain freezes every chat for up to 10 minutes (2026-10-09: one lost the owner's alarm-company
+restart's drain freezes every chat for up to 10 minutes (2026-10-09: one lost the owner's Securitas
 request twice). The restart and rebuild scripts refuse you with exit 5 while a Tinker chat moved in
 the last 10 minutes. Then merge only, write "merged into develop; the next rebuild carries it", and
 never work around the refusal.

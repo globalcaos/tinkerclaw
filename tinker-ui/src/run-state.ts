@@ -83,6 +83,20 @@
 //   chat thinking indicator · tab-bar glow · sessions-panel row glow · models-panel count
 // (The models-panel count is per-MODEL, so it cannot show `pending`: no model has been chosen
 //  yet. That asymmetry is honest and irreducible — do not "fix" it by inventing a model.)
+//
+// FORK 2026-10-27 (the architect: "When a background job like this one is running, we should see a
+// thinking indicator in the tab title and other panels similar as when the model is thinking").
+// A THIRD STATE, `job`: a long job (longjob worker, `/api/longjob/list?all=1`) or a Claude Code
+// background task of the chat's worker (`ccBridge.backgroundTasks`) is running for the session.
+// The state set is now {live, pending, job}, in that order of precedence. `job` lights the tab,
+// the sessions row, the window title and the chat indicator (whose rows already showed the job),
+// and NOTHING that decides whether a prompt waits: a chat with a running job takes prompts as
+// usual, so `job` is never folded into `live` (sendWouldDefer and the queue read `live` only).
+// Its freshness bound is `jobIsFresh` below. Not in the models-panel count, and that is decided,
+// not forgotten: two of the three job kinds carry no model at all (a process, a background task),
+// so counting them would invent one, the trap the `pending` note above forbids; the third
+// (`agents`) names its models but runs outside the gateway's run set, so folding only it in
+// would make the count mean "gateway turns plus some jobs".
 
 /** A row as `sessions.list` returns it (only the fields liveness depends on). */
 export type SessionRow = {
@@ -612,6 +626,100 @@ export function liveCountForModel(
 ): number {
   const key = catalogKeyIn(counts, modelId);
   return key ? (counts.get(key) ?? 0) : 0;
+}
+
+/** A running job as the job lists carry it (longjob-rows.ts LongjobJob; only what busy needs). */
+export type JobEvidence = {
+  session?: string;
+  kind?: string;
+  label?: string;
+  id?: string;
+  status?: string;
+  startedAt?: number;
+  /** A longjob worker rewrites its state every `intervalMs`; a background task carries neither. */
+  updatedAt?: number;
+  intervalMs?: number | null;
+};
+
+/** One answer of one job list: the jobs it named and when it answered. */
+export type JobCensusSlice = { jobs: readonly JobEvidence[]; fetchedAt: number };
+
+/**
+ * How old a job list may be before it stops counting as evidence: a few poll intervals (the page
+ * asks every 4 s, 16 s while hidden). A list that stopped answering is not a running job.
+ */
+export const JOB_CENSUS_STALE_MS = 45_000;
+
+/**
+ * Is this job still worth believing? `running`, AND, for a longjob, a state write recent enough:
+ * the worker rewrites state.json every `intervalMs` while it lives, so a silent one is dead (killed
+ * unit, reboot) and must not hold a tab busy. Bound: RUN_STALE_MS, or six intervals when the job
+ * polls slower than that (the worker's own stall limit, longjob.mjs). A background task has no
+ * timestamp of its own: the bridge lists only live workers' tasks, so the list's age decides.
+ */
+export function jobIsFresh(job: JobEvidence | null | undefined, now: number): boolean {
+  if (!job || job.status !== "running") {
+    return false;
+  }
+  if (typeof job.updatedAt !== "number" || !Number.isFinite(job.updatedAt)) {
+    return true;
+  }
+  const interval =
+    typeof job.intervalMs === "number" && Number.isFinite(job.intervalMs) ? job.intervalMs : 0;
+  return now - job.updatedAt <= Math.max(RUN_STALE_MS, 6 * interval);
+}
+
+export type SessionJobActivity = {
+  /** The oldest running job's label (its id when it has none). */
+  label: string;
+  kind: string;
+  /** Running jobs of this session across every list. */
+  count: number;
+};
+
+/**
+ * THE JOB LANE: is a job running for this session? The one predicate the tab, the sessions row and
+ * the window title ask; the same membership predicate as every other lane (`matches`), each list
+ * believed only while it is fresh (JOB_CENSUS_STALE_MS) and each job only while `jobIsFresh`.
+ */
+export function sessionJobActivity(params: {
+  sessionKey: string;
+  census: readonly JobCensusSlice[];
+  matches: KeyMatcher;
+  now: number;
+}): SessionJobActivity | null {
+  const { sessionKey, census, matches, now } = params;
+  if (!sessionKey) {
+    return null;
+  }
+  const mine: JobEvidence[] = [];
+  const seen = new Set<string>();
+  for (const slice of census) {
+    if (!slice || now - slice.fetchedAt > JOB_CENSUS_STALE_MS) {
+      continue;
+    }
+    for (const job of slice.jobs) {
+      if (!job?.session || !matches(job.session, sessionKey) || !jobIsFresh(job, now)) {
+        continue;
+      }
+      // Two lists can name one job (a background slice per open tab, and two tabs on one session).
+      const id = `${job.kind ?? ""}:${job.id ?? ""}`;
+      if (job.id && seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      mine.push(job);
+    }
+  }
+  if (mine.length === 0) {
+    return null;
+  }
+  const oldest = mine.toSorted((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))[0];
+  return {
+    label: oldest.label || oldest.id || "job",
+    kind: oldest.kind || "process",
+    count: mine.length,
+  };
 }
 
 /**

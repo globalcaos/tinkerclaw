@@ -2400,6 +2400,19 @@ blockquote:has(> .bq-copy) {
 .thinking-model .model-provider-dot {
   flex-shrink: 0;
 }
+/* FORK 2026-10-27 (B061): what the turn is waiting on, one line, trimmed so Stop stays in reach. */
+.thinking-model {
+  min-width: 0;
+}
+.thinking-task {
+  min-width: 0;
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  color: var(--muted);
+}
 .thinking-elapsed {
   font-family: "SF Mono", monospace;
   font-size: 10px;
@@ -4105,6 +4118,19 @@ blockquote:has(> .bq-copy) {
       center;
   }
 }
+/* FORK 2026-10-27 — a session row's gear (a job runs) and unread dot sit before its label; the
+   dot's look is shared with the tab's (.tab-unread-dot). */
+.session-job-mark {
+  color: #c9a86a;
+  margin-right: 4px;
+}
+.session-unread-dot {
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.session-row.session-unread .session-label {
+  color: var(--text);
+}
 .session-row.session-live {
   /* FORK 2026-09-02 — was `border: none`, which collapsed the 1px the base row
      now reserves and made a glowing row jump 2px shorter than its neighbours. */
@@ -4828,6 +4854,32 @@ blockquote:has(> .bq-copy) {
     animation: none;
     background-position: center, center;
   }
+}
+
+/* FORK 2026-10-27 — JOB: no turn, but a background job of this chat runs. The SAME glow as
+   thinking (.tab-thinking, coloured in the job rows' gold by app.ts) plus a gear before the title,
+   so it reads as the same family and still says which kind of busy it is. */
+.tab-job-mark {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+  color: #c9a86a;
+}
+
+/* FORK 2026-10-27 — UNREAD: a turn finished here and the architect has not looked yet. Calm on purpose: a
+   still dot, no motion (motion is reserved for "working"), in a blue no glow uses, and the title
+   brought up to full text colour. Clears when the tab is opened in a visible window. */
+.tab.tab-unread .tab-title {
+  color: var(--text);
+}
+.tab-unread-dot,
+.session-unread-dot {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--blue, #5b8fc9);
 }
 
 /* RENAMING — an auto-name LLM call is writing this tab's title. Deliberately NOT a

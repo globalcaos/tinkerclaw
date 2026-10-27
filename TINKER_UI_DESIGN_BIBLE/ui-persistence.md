@@ -139,6 +139,7 @@ Ids are namespaced by prefix so one flat map per namespace cannot collide.
 | choice    | `cron:taxonomy` (JSON `{groups, membership}`)                                                | `{groups:[],membership:{}}`     |
 | collapsed | `cron:group:<groupId>` (incl. `__unsorted__`)                                                | expanded                        |
 | choice    | `chat:scroll:<tabId>` (JSON `{v:1, id, part, y}`: the transcript row a tab was left reading) | `""` = following the latest row |
+| choice    | `tab:seen` (JSON `{<sessionKey>: {s, f?}}`: when each tab was last seen, done-signals §2c)   | `{}` = no tab tracked yet       |
 
 **2026-10-02 — `chat:scroll:<tabId>` is where each tab's chat was LEFT** (the architect: "let's also pay attention at the point we leave it when we switch tabs, and when we restart gateway or restart the computer"). The design and the in-memory half live in `tinker-ui.md` §5.20 and `tinker-ui/src/chat-viewport.ts`; this row is only the durable half. Three decisions:
 

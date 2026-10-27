@@ -1,5 +1,5 @@
 // FORK 2026-10-21 (the architect: "When I click on a pdf link from the phone I want the capabilities we have on
-// desktop to work"). The pdf-review viewer (~/src/pdf-review: comments, highlights, read-aloud, Redo,
+// desktop to work"). The pdf-review viewer (apps/pdf-review: comments, highlights, read-aloud, Redo,
 // 🕘 Recent) is served under /pdf/ by tinker-prod-ui, so the phone reaches it through the phone door.
 // It opens in a full-screen layer over the chat instead of a page change, so the chat keeps its socket
 // and Back (window.__jarvisBack, through phone-mode) closes the layer.
