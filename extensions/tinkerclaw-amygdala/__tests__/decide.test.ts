@@ -586,7 +586,7 @@ describe("decide: the consult note", () => {
   });
 });
 
-// the architect 2026-10-03: "How is the personality amygdala going? I want it up and running." The rest stays in shadow.
+// 2026-10-03: the personality family of the amygdala goes live; the rest stays in shadow.
 describe("decide: one family enforced while the rest stays in shadow", () => {
   const personalityNote = fam("personality", ["danger-level"], () => ({
     response: note("you expected the tests to pass; they failed"),

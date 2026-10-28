@@ -214,8 +214,8 @@ export interface PlacedUsage {
 }
 
 /**
- * FORK 2026-10-22 (the architect: "I want to see the bubble about its use right where it is used, in between
- * the reasoning and the tool calls"). Each distinct kind+name still draws ONE chip per run, but it now
+ * FORK 2026-10-22: a usage bubble sits where the use happens, between the reasoning and the tool
+ * calls. Each distinct kind+name still draws ONE chip per run, but it now
  * sits above the FIRST tool call of the run that used it, not in the row under the prompt.
  *
  * `sources` are mark lists in any carrier shape (`collectUsage` merges them and upgrades a pathless

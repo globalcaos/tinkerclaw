@@ -175,9 +175,9 @@ describe("segment length = euro cost (the architect 2026-06-20: §1 grid)", () =
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// DECISIONS 2 + 3 (the architect 2026-10-01): "the trace has to indicate the cost in tokens of a particular
-// run, and the background grid tries to keep track of the total cost per tab. I sometimes see parts
-// of the graph that are empty, and yet the grid shows it has cost, it does not make sense."
+// DECISIONS 2 + 3 (2026-10-01): the trace shows the token cost of each run and the background grid
+// tracks the tab's total cost; empty stretches of graph that the grid still counted as spend made
+// no sense.
 //
 // The ledger is EXACT: the spend clock is fed eegSampleEuros, never the legibility floor. The floor
 // applies to the DRAWN length only. Because true subscription-amortised euros are tiny, the scale
@@ -259,7 +259,7 @@ describe("the € grid reads REAL euros of this tab (the architect 2026-10-01)",
 });
 
 describe("every euro of axis advance is covered by ink (the architect 2026-10-01)", () => {
-  // the architect: "I sometimes see parts of the graph that are empty, and yet the grid shows it has cost."
+  // Bug seen: empty stretches of graph the grid still counted as spend.
   // Free work (a tool call) buys no euros, so it takes no vertical space of its own — but it does
   // NOT pile up either, because the costed run it happens inside is accruing while it runs. The
   // tool branches spread across that run's extent in proportion to WHEN they ran, which is the
@@ -651,7 +651,7 @@ describe("eegCostWidthPx", () => {
     }
   });
 
-  // FORK 2026-08-12 (the architect: "I would like to keep the linear axis") — reverted from
+  // FORK 2026-08-12: keep the linear axis — reverted from
   // the log axis shipped the same morning. Assert the LAW against the constants,
   // never magic pixels: this exact test rotted twice by hardcoding a scale.
   // FORK 2026-08-13: Luna stopped being the unit when the ÷4.65 blanket was removed —
@@ -742,8 +742,7 @@ describe("eegCostWidthPx", () => {
     expect(cheap).toBeGreaterThan(glm);
   });
 
-  // FORK 2026-08-16 (the architect: "double check that the EEG thickness of the models are
-  // correct"). The ladder used to be a prose comment saying "do not hand-edit these,
+  // FORK 2026-08-16: re-check that every model's EEG thickness is correct. The ladder used to be a prose comment saying "do not hand-edit these,
   // print them" — and was itself a stale hand-edit, wrong on six of sixteen entries,
   // luna by 4.3× and gemini-3.5 by 4.6×. Documentation that restates a computed value
   // is a second source of truth; this test makes the first one enforce it.
@@ -820,8 +819,7 @@ describe("eegCostWidthPx", () => {
     expect(eegCostWidthPx("tool:local", "", "tool")).toBeLessThanOrEqual(ladder.at(-1)!.px);
   });
 
-  // FORK 2026-08-15 (the architect: "do not cap pixel width — the thickness comparison is the
-  // main objective"). The cap had turned six rows into one indistinguishable slab, so
+  // FORK 2026-08-15: no pixel-width cap, since comparing thickness is the main goal. The cap had turned six rows into one indistinguishable slab, so
   // a 3.3× price gap rendered as 0×. This guards the top of the range the way the
   // ratio test guards the middle: the dearest models must stay SEPARABLE and their
   // widths must stay PROPORTIONAL, however wide that gets.
@@ -855,17 +853,15 @@ describe("eegCostWidthPx", () => {
   });
 });
 
-// FORK 2026-08-28 (the architect: "in the model selector, the big spenders are capped and the
-// cheap ones are very thin. Turn those last ones only into log-scale thickness, which
-// will be also used in turn by the EEG"). The linear scale above stays — it owns the
+// FORK 2026-08-28: the model selector capped the big spenders and drew the cheap ones
+// very thin; the selector (and the EEG) move to a log-scale thickness. The linear scale above stays — it owns the
 // MODELS panel, whose row height grows to the stroke. These tests own the LOG scale,
 // which the model-selector chip and the EEG paper draw because both live in a fixed
 // box: the chip is a 26px-tall SVG, and 26px was a SILENT cap under linear.
 //
-// FORK 2026-08-28 #2 — the chip box is NO LONGER a constant. the architect: "are the trace
-// thickness in the model selector truncated in height? they should not be", and when
-// told they were not, "it was truncated before and, if you did not change anything in
-// this context, it still is". He was right: moving to log stopped the strokes
+// FORK 2026-08-28 #2 — the chip box is NO LONGER a constant. The report: the
+// model-selector thicknesses looked truncated in height, and the earlier answer that
+// they were not was wrong, since nothing in that path had changed. It was right: moving to log stopped the strokes
 // EXCEEDING 26 but left the top of the range saturating it (six models filling the box
 // as near-identical squares, each drawn 20px long and up to 21px thick). app.ts now
 // derives the height from the widest stroke it will draw
@@ -1110,8 +1106,7 @@ describe("eegProviderPaint", () => {
     expect(Object.keys(EEG_PROVIDER_COLORS).length).toBeGreaterThan(0);
   });
 
-  // FORK 2026-09-02 (the architect: "the color of the trace of fable 5.1 should be the one
-  // assigned to claude, the orange one"). A model reached THROUGH a router arrives
+  // FORK 2026-09-02: the Fable 5.1 trace should take the Claude orange. A model reached THROUGH a router arrives
   // with provider "openrouter" and its brand in the id's middle segment. The brand
   // branches used to test the provider string alone, so every one of these painted
   // the neutral gray. Regression-locked per vendor, because Fable was one symptom of
@@ -1154,8 +1149,8 @@ describe("eegProviderPaint", () => {
   });
 });
 
-// FORK 2026-09-02 (the architect: "the cost of Fable 5.1 is not correct ... claude models cost
-// us about 112 times less"). 2026-09-23 correction: MEASURED with list-priced cache
+// FORK 2026-09-02: the Fable 5.1 cost was wrong; on the subscription, Claude models cost
+// about 112 times less than list. 2026-09-23 correction: MEASURED with list-priced cache
 // reads, the Max 20× seat returns ~44× list at our 75% use (59× at 100%), not 112× — the
 // old blend priced cache reads ~10× over list. The two Fable 5.1 routes are the SAME model on different
 // bills, and the cost table must tell them apart by BILLING ROUTE (provider prefix),
@@ -1228,8 +1223,7 @@ describe("EegTraceStore basics", () => {
   });
 });
 
-// DECISION 1 (the architect 2026-10-01): "the toggle switch needs to go, and the EEG has to stay specific
-// for each tab." The all-scope overlay asked the vertical axis to mean two different quantities
+// DECISION 1 (2026-10-01): the toggle switch goes, and the EEG stays specific to each tab. The all-scope overlay asked the vertical axis to mean two different quantities
 // depending on a switch — one tab's spend, then the union across tabs — using the same euro glyphs,
 // and it moved every strand's position when flipped. The whole surface is gone: no taggedSamples,
 // no overlay option, no dim. The paper shows the viewed tab, its own subagents and its own tools.
@@ -1906,7 +1900,7 @@ describe("whitening only on REAL overlap + per-model lanes (the architect 2026-0
   });
 });
 
-// FORK 2026-07-28 (the architect "lines dancing laterally within Min"): a lane index must be
+// FORK 2026-07-28 (bug: lines danced sideways within Min): a lane index must be
 // EARNED by real temporal overlap. The old allocator gave every distinct group a
 // permanent lane numbered per RAW chosenLevel, so it spread strands that were merely
 // sequential and collided strands that were genuinely parallel — inverted on both axes.
@@ -2235,8 +2229,7 @@ describe("resolveEegGlowColor — glows wear the EEG trace color", () => {
   });
 });
 
-// FORK 2026-08-17 (the architect: "nor the parallelism done, which should show a few EEG traces side
-// by side"). The ×N gauge is the only non-hover affordance that reports how many strands ran
+// FORK 2026-08-17: parallel work should show several EEG traces side by side. The ×N gauge is the only non-hover affordance that reports how many strands ran
 // at once. It used to emit a label at every change in concurrency, coalescing only events at
 // the SAME INSTANT — so a real fan-out (ten legs spawned inside two minutes, on a paper that
 // spans days) stacked ten 9px labels inside ~3px of gutter and read as a smudge.

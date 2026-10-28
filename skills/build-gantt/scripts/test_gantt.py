@@ -4,7 +4,7 @@ Run: python3 skills/build-gantt/scripts/test_gantt.py
 
 The Gantt tab redraws every 15 s from the workflow ids in the plan, and the master writes those ids
 in only at its next wake. So for a whole turn the tab showed nothing of what the worker was doing
-(2026-10-05 20:31, the principal: "it should be automatically updating the real one, right?").
+(2026-10-05: the owner expected the real tab to update on its own).
 """
 import datetime as dt
 import json

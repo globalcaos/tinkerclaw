@@ -1,6 +1,6 @@
 /**
- * Amygdala inline bubbles (FORK 2026-10-15, the architect: "within the chat, as a separate pink comment, I want all performed
- * actions from Jev (not the ones he skips) right where he does it, within its context").
+ * Amygdala inline bubbles (FORK 2026-10-15): every action Jev performs (not the ones it skips) shows as a separate pink
+ * comment in the chat, at the point where it happened.
  *
  * Two producers feed the same pink bubble: the AEGIS pre-tool-use hook (real enforcement, rows spooled to
  * hook-decisions.jsonl and broadcast as `amygdala.hook`) and Jev (amygdala2, `renderAction` rows from amygdala-jev.ts).

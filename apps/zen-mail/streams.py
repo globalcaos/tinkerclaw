@@ -1,6 +1,5 @@
-"""The things besides mail that Jarvis can bring to Zen Mail, one stream per kind (the architect, 2026-10-16: "you can show me
-tasks that I have pinned, you can add tasks from tabs we have open that are not written as tasks anywhere, and you can
-be creative with the butler thing ... present a summary of those [crons] in the zen mail").
+"""The things besides mail that Jarvis can bring to Zen Mail, one stream per kind (2026-10-16: pinned
+tasks, tasks inferred from open tabs that are not written down anywhere, butler items, and a summary of the cron jobs).
 
 Each stream turns what it finds into CANDIDATES (a card that could be shown). Nothing here decides what the architect sees:
 dams.py releases candidates one by one, only from streams it has opened, and only when he is not busy. Reading is

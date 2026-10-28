@@ -1009,7 +1009,7 @@ class NodeRuntime(
     }
   }
 
-  // FORK 2026-10-22 (battery #3, the architect: "finish #3") — once the gateway holds our FCM token it can
+  // FORK 2026-10-22 (battery #3) — once the gateway holds our FCM token it can
   // wake us, so off screen the app drops its socket and foreground service IDLE_DROP_MS after the
   // last command instead of pinging every 30 s all day. A photo backup in progress keeps it up.
   // Without a registered token nothing changes.

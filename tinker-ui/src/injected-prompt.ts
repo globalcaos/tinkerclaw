@@ -1,5 +1,4 @@
-// FORK 2026-08-28 (the architect: "sometimes, upon what I can assume was the use of a recipe, the
-// whole text of the recipe was shown as if it was one of my prompts. This is a bug").
+// FORK 2026-08-28: a matched recipe's full text was drawn as if the owner had typed it.
 //
 // WHAT THIS IS. Several subsystems APPEND a block of instructions-to-the-model to the architect's
 // typed text before it is sent (the fractal doctrine, the morning briefing, a matched BROCA recipe).
@@ -104,8 +103,8 @@ const SKILL_BASE_DIR_RE = /^\s*Base directory for this skill:\s*(.+?)\s*$/m;
  * FORK 2026-09-02 — the third structural producer, and on Claude Code the only one that carries
  * the real path. After a `Skill` tool call the harness injects the skill's whole body as a
  * USER-role turn whose first line is `Base directory for this skill: <dir>`. Rendered naively
- * that turn paints as one of the architect's own bubbles (his 13:45 note: "I can see the recipe
- * itself, which is not correct"). It is machine-authored: fold it into the chip.
+ * that turn paints as one of the architect's own bubbles (seen 13:45: the recipe text was
+ * shown). It is machine-authored: fold it into the chip.
  *
  * Name: `<plugin>:<skill>` when the dir sits in a plugin cache
  * (`…/plugins/cache/<marketplace>/<plugin>/<version>/skills/<skill>`), else the dir's last segment.

@@ -179,7 +179,7 @@ export function handleCompactionEnd(
   const hasResult = evt.result != null;
   const wasAborted = Boolean(evt.aborted);
 
-  // FORK 2026-07-27 (the architect: "instrument the compaction predicate") — gate "pi-auto".
+  // FORK 2026-07-27: instrument the compaction predicate — gate "pi-auto".
   //
   // This is the FOURTH compaction decider and the only one that actually fires on this path:
   // pi's own AgentSession._checkCompaction. It stays live because applyPiAutoCompactionGuard
@@ -231,7 +231,7 @@ export function handleCompactionEnd(
     ctx.maybeResolveCompactionWait();
     clearStaleAssistantUsageOnSessionMessages(ctx);
   }
-  // FORK 2026-08-29 (the architect: the CONTEXT WINDOW panel's "tokens saved by eviction"). The saving
+  // FORK 2026-08-29 (the CONTEXT WINDOW panel's tokens-saved-by-eviction figure). The saving
   // is the one number that makes a compaction legible as a WIN rather than as an unexplained
   // pause, and it cannot be derived client-side: the UI never sees the pre-compaction transcript.
   // So the end event forwards the context size pi reports, as parts and never as a delta, so the

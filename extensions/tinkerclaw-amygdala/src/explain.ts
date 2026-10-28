@@ -1,9 +1,8 @@
 import { parseDrivers } from "./events.js";
 /**
- * The WOULD HAVE explainer (2026-10-05). the architect: "the 'would have' descriptions are a bit complicated for me to
- * understand ... I am not a machine, and the concatenated commands are too complex for me to process. Plus, everything
- * has a context. Could we for example make use of Grok to do the summarization and contextualization task? Could it
- * also propose a response for me to click?"
+ * The WOULD HAVE explainer (2026-10-05). The raw 'would have' descriptions were hard for a person to follow: chained
+ * commands are dense and each action lacks its context. A model (Grok) summarises and contextualises each one and
+ * proposes a one-click response.
  *
  * After a decision that changes something (or would have, in shadow), a second model reads the step in its context:
  * the owner's request, the agent's previous steps and what it wrote before each, Jev's answers in words and its stored

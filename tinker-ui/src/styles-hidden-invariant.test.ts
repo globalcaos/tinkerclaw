@@ -1,5 +1,5 @@
 /**
- * FORK 2026-08-24 (the architect: "The collapse-expand mechanism does not work") — THE SAME CSS TRAP,
+ * FORK 2026-08-24: collapse-expand did not work — THE SAME CSS TRAP,
  * THREE TIMES.
  *
  * A class rule that sets `display` OUTRANKS the user agent's `[hidden] { display: none }`. So any
@@ -76,7 +76,7 @@ describe("a hidden-toggled container must defeat its own display rule", () => {
   }
 });
 
-// FORK 2026-10-20 (the architect: "remove the redundant plane and config icons"): the sixth sighting.
+// FORK 2026-10-20: remove the redundant plane and config icons. The sixth sighting.
 // #phone-trip-btn / #phone-settings-btn carried `hidden` and stayed on screen because
 // `.phone-hbtn` sets `display`. Per-class lines above only cover classes someone already listed,
 // so the column fix is one global rule that no class `display` can outrank.

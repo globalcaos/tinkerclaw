@@ -263,10 +263,10 @@ export function queueEmbeddedPiMessage(
   // returned false, agent-runner fell through to enqueue-followup, and the user
   // got the answer as a SEPARATE turn after the current one finished.
   //
-  // the architect, 2026-09-06: "When I inject a prompt while Jarvis is thinking, it
-  // should do like Claude Code does, wait until the last LLM call finishes and
-  // inject the added request in the ongoing context. Prompts should not wait
-  // until the whole answer is finished and then answer out of the blue."
+  // 2026-09-06: a prompt injected while the agent is thinking behaves as in
+  // Claude Code: wait for the current LLM call to finish, then add the request
+  // to the ongoing context, instead of waiting for the whole answer and
+  // replying out of the blue.
   //
   // Presence in ACTIVE_EMBEDDED_RUNS is the liveness signal that actually
   // matters, and it is already checked above. Dropping the streaming test cannot

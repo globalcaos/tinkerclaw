@@ -1,12 +1,12 @@
 // Correction capture (J-series plan 2026-10-09, Phase 1.3; gap census C3-C9).
 //
 // WHAT THIS IS FOR. The owner's corrections are the best labels this system will ever get, and until now they stayed
-// text: `enh_pins` held 0 rows while he said "you have a skill for this" at least eight times, and the repeated rules
+// text: `enh_pins` held 0 rows while the same "there is already a skill for this" correction came up at least eight times, and the repeated rules
 // (don't ask, simpler, reply language, purple line, keep going) were counted by hand in a census. This module reads
 // ONLY his words in a prompt (`ownerWords`: no stamp, no sender block, no doctrine, no agent prompt) and records:
-//   - an `enh_pins` row when he names a skill, recipe or plugin that exists. A corrective naming ("did you forget we
-//     have a youtube skill?") pins the PREVIOUS task of the chat, the one that should have used it, `by: "correction"`.
-//     A plain instruction ("use the linkedin skill to search") pins the current task, `by: "named"`.
+//   - an `enh_pins` row when he names a skill, recipe or plugin that exists. A corrective naming ("you forgot that we
+//     have a weather skill") pins the PREVIOUS task of the chat, the one that should have used it, `by: "correction"`.
+//     A plain instruction ("use the weather skill for the forecast") pins the current task, `by: "named"`.
 //   - one `j.correction` row per repeated-rule class the prompt carries, label = the class, `via` = rule or jev.
 //
 // RULES FIRST, JEV FOR THE AMBIGUOUS. The patterns below come from his own prompts (Tinker transcripts 07-01 → 10-10,
@@ -15,7 +15,7 @@
 // background, through Thalamus's own client and privacy gate; nothing waits on it. Jev never writes a pin: a pin needs
 // a card he named, and naming is a rule.
 //
-// NEVER GUESSES A CARD. "you have a skill for this" with no name, or a name two cards share ("amazon"), writes the
+// NEVER GUESSES A CARD. A correction that names no card, or a name two cards share ("amazon"), writes the
 // `j.correction` row with n1 = 0 and no pin: a wrong card in `enh_pins` would teach the ranker the wrong lesson.
 //
 // HARNESS = CODE. No learner runs here; it only records. Nothing it does can break a prompt. The learner is the nightly
@@ -48,36 +48,36 @@ export const CORRECTION_JEV_MIN_PROB = 0.6;
 
 /** He says the enhancement, login or tool already exists, or that the agent skipped it. Points at the previous task. */
 const USE_EXISTING_CORRECTIVE: readonly RegExp[] = [
-  // "you have a gmail skill", "you have the login and passwords", "we have a skill that overcomes", "you have the root password"
+  // "you have a calendar skill", "you have the notes plugin", "we have a recipe that handles this", "you've got the deploy recipe"
   /\b(?:you|we)(?:'ve| have| already have)(?: got)? (?:a|an|the|your|our)\b(?: [\w-]+){0,3}? (?:skills?|recipes?|plugins?|logins?|passwords?|root password)\b/,
-  // "Did you forget we have a youtube skill?"
+  // "you forgot that we have a weather skill"
   /\bforg[eo]t (?:that )?(?:we|you) (?:have|had)\b/,
-  // "Remember we have a skill …", "Remember we have a recipe we developed for work commits". Not "Remember we have
-  // rules about hard thresholds" or "Remember we have fractal": a reminder of a rule or a resource is not a card.
+  // "Remember we have a skill …", "Remember, we have a recipe for release notes". Not "Remember we have
+  // rules about naming" or "Remember we have a backup": a reminder of a rule or a resource is not a card.
   /\bremember,? (?:that )?(?:we|you) (?:have|had|used) (?:a |an |the |our |your )?(?:[\w-]+ ){0,3}?(?:skills?|recipes?|plugins?|logins?|passwords?)\b/,
-  // "Nope, you are not following the right script or recipe. Remember the one you used last time"
+  // "That is not the right recipe. Remember the one you used for the last report"
   /\bremember the one you used\b/,
-  // "You should have a skill to restart the gateway"
+  // "you should have a recipe for this by now"
   /\bshould (?:already )?have (?:a|an|the) (?:[\w-]+ ){0,3}(?:skill|recipe|plugin)\b/,
-  // "you failed to use the right recipe", "you forgot to inject in it napkin diagrams as our recipe calls for"
+  // "you failed to apply the style recipe", "you forgot to run the spell check as our recipe says"
   /\b(?:failed|forgot) to (?:use|apply|follow|inject|run)\b/,
-  // "you are not following the right script or recipe"
+  // "you are not using the right skill"
   /\bnot (?:following|using) the right (?:script|recipe|skill)\b/,
   /\bas (?:our|the|your) (?:[\w-]+ )?recipe (?:calls for|says)\b/,
   /\bthere(?:'s| is) (?:already )?(?:a|an) (?:[\w-]+ ){0,3}(?:skill|recipe) for (?:this|that)\b/,
   /\bwhy (?:didn'?t|did not|don'?t) you use\b/,
-  // Catalan: "El skill sharepoint-download permet descarregar els arxius, collons! Fes-lo servir"
+  // Catalan: "Tens un skill per baixar arxius. Fes-lo servir"
   /\bfes-(?:lo|la|ho) servir\b/,
 ];
 
 const DONT_ASK: readonly RegExp[] = [
-  // "Make it work, don't ask me to run commands, fix it", "configure it, don't ask me for its address". Not "you did well
-  // deducing that I don't ask anything twice".
+  // "Just make it work, don't ask me to run anything", "set it up, don't ask me for the path". Not "you did well
+  // noticing that I don't ask anything twice".
   /\b(?:don'?t|do not) ask (?:me|for (?:permission|confirmation)|again)\b/,
   /\bstop asking\b/,
-  // "why do you even ask?"
+  // "why would you even ask?"
   /\bwhy (?:do|did|would) you (?:even )?ask\b/,
-  // "ok, do it yourself, you have the tab", "Do the sudo thing in the pi yourself", "Can you do it yourself?". The verb
+  // "ok, do it yourself, you have access", "run the install yourself", "can you do it yourself?". The verb
   // opens a clause: "ideas on how to do it yourself" and "take its input and do it yourself" are plain instructions.
   /(?:^|[.,;:!?]\s*)(?:(?:ok|okay|so|then|now|just|please)\s*,?\s*)*(?:can you\s+)?(?:do|run|fix|add) (?:it|that|this|the [^,.?!]{1,40}?) yourself\b/,
   /\bdon'?t make me\b/,
@@ -89,60 +89,60 @@ const DONT_ASK: readonly RegExp[] = [
 
 // The explanation, not the thing: "simplify the panel" and "a simpler architecture" are design asks, not this class.
 const SIMPLER: readonly RegExp[] = [
-  // "Simplify your explanation for me, will you?"
+  // "please simplify the answer a bit"
   /\bsimplify (?:your |the |this |that |my )?(?:explanation|answer|reply|text|wording|language)\b/,
   /\b(?:explain|say|put|write|word) (?:it |this |that )?(?:simpler|plainer|more simply|more plainly)\b/,
   /\bplainer\b/,
   /\bin plain (?:english|words|terms|language)\b/,
-  // "bring it down to human terms", "Put it in human terms"
+  // "say it in human terms", "Put it in human terms"
   /\bhuman terms\b/,
-  // "Explain it as if I was a grandma without computer knowledge" (not "Baba means grandma in Russian")
+  // "explain it like i am a grandma" (not "my grandma lives abroad")
   /\b(?:as if|like) (?:i (?:was|were|am) )?(?:a |my )?grandma\b/,
-  // "No clue, I don't understand anything here", "When I open a prompt from Jev, I don't understand it". Not "I don't
-  // understand how SOL could cost more" or "I don't understand the difference between …": those are questions.
+  // "sorry, i don't understand a word", "read the summary twice and i don't understand it". Not "i don't
+  // understand how the cache works" or "i don't understand the difference between …": those are questions.
   /\bi (?:don'?t|do not) understand (?:it|anything|this|that|a thing|a word)\b/,
-  // "Your one-line is too complex", "The title is way too complicated", "a bit complicated for me to understand". Not
-  // "the 'expression' field is redundant and too complicated, remove it": a field is design, not an explanation.
+  // "The summary is too technical", "The reply is way too complicated", "a bit technical for me". Not
+  // "the config field is too complicated, drop it": a field is design, not an explanation.
   /\b(?:explanation|answer|reply|title|text|wording|one-line|one-liner|command|description|summary)s? (?:is|are|was|were|seems?) (?:way |a bit |far |much |still )?too (?:complex|complicated|technical|convoluted)\b/,
   /\b(?:complex|complicated|technical) for me\b/,
-  // "Expain better the invariant gate question"
+  // "Expain better the second step" (the typo is accepted)
   /\bexp(?:l)?ain (?:(?:it|this|that|me) )?better\b/,
 ];
 
 const REPLY_LANGUAGE: readonly RegExp[] = [
-  // "The rule is that if I speak in one language, you respond in the same one."
+  // "please reply in the same language i write in"
   /\b(?:respond|reply|answer|speak|write)\b[^.?!]{0,30}\bsame (?:one|language)\b/,
-  // "Why did you switch language to Spanish?", "Why did you switch to Spanish all of a sudden?"
+  // "why did you switch language?", "why is this in catalan all of a sudden?"
   /\bwhy did you switch\b[^.?!]{0,20}\b(?:language|spanish|catalan|english)\b/,
   /\b(?:spanish|catalan|english) all of a sudden\b/,
-  // "let's switch to English please"
+  // "switch back to English, please"
   /\bswitch (?:back )?to english\b/,
   /\bwrong language\b/,
   /\bentirely in english\b/,
 ];
 
 const PURPLE_LINE: readonly RegExp[] = [
-  // "I haven't seen the purple text in a long while", "Your humor will only go in the purple text"
+  // "haven't seen the purple line lately", "keep the jokes in the purple text only"
   /\bpurple (?:text|line)\b/,
   /\bspoken line\b/,
   /\byou (?:didn'?t|did not|stopped) (?:speak|talking)\b/,
 ];
 
-/** "are you stuck?", "you seem to have gotten stuck", "I cannot see an answer yet", "something interrupted your thinking" */
+/** "did you get stuck?", "you seem to be stuck", "I can't see any progress", "something interrupted the run" */
 const STUCK: readonly RegExp[] = [
   /\b(?:are you|you(?:'re| are)?|you seem(?: to (?:be|have gotten))?|did you(?: get)?|you got)\s+stuck\b/,
   /\bi (?:cannot|can'?t|don'?t) see (?:an? |any )?(?:answer|reply|response|progress)\b/,
   /\bsomething interrupted\b/,
 ];
 
-/** A bare nudge: "keep going", "continue", "Good. Keep going", "keep going with opus". */
+/** A bare nudge: "keep going", "continue", "Good. Keep going", "continue with the tests". */
 const NUDGE = /^(?:keep going|continue|go on|carry on|segueix|continua|sigue)\b/;
 const NUDGE_LEAD = /^(?:(?:ok|okay|great|good|yes|so|then|dude)[,.!]?\s+)+/;
 const NUDGE_MAX_EXTRA_WORDS = 4;
 
 /**
- * A plain instruction to use one: "Use your amazon skill to search …", "utilitza el skill sharepoint-download". Without
- * it, a name he says ("Let's create a linkedin skill", "Improve the 365 copilot skill") is about building the card, and
+ * A plain instruction to use one: "Use your weather skill for this …", "utilitza el skill de traducció". Without
+ * it, a name he says ("create a weather skill", "improve the calendar skill") is about building the card, and
  * pins nothing.
  */
 const USE_DIRECTIVE =
@@ -267,7 +267,7 @@ export function resolveCard(
     return undefined;
   }
   // "you have a gmail skill" is `gog`, whose purpose says Gmail. Only in a correction (on the corpus a plain instruction
-  // matched "broca recipe" to the wrong recipe this way), only a single word of four letters or more, found in the
+  // matched a recipe to the wrong card this way), only a single word of four letters or more, found in the
   // purpose of exactly one card of the kind he said.
   if (!o.byPurpose || kind === undefined || parts.length !== 1 || p.length < 4) {
     return undefined;
@@ -304,13 +304,13 @@ export function namedCards(
     }
     add(one, kind);
   }
-  // "skill sharepoint-download", "el skill de linkedin", "the recipe called orbis-coding"
+  // "skill sharepoint-download", "el skill de linkedin", "the recipe called release-notes"
   for (const m of s.matchAll(
     /\b(skills?|recipes?|recepta|plugins?)\s+(?:de\s+|called\s+|named\s+)?([a-z0-9][\w-]*)/g,
   )) {
     add(m[2], KIND_WORD[m[1]]);
   }
-  // A bare hyphenated name: "sharepoint-download", "torrent-scout".
+  // A bare hyphenated name: "sharepoint-download", "weather-report".
   for (const m of s.matchAll(/\b[a-z0-9]+(?:-[a-z0-9]+)+\b/g)) {
     const exact = cards.filter((c) => c.status !== "retired" && c.name.toLowerCase() === m[0]);
     if (exact.length === 1) {

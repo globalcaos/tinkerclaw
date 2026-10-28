@@ -1,4 +1,4 @@
-// FORK 2026-09-23 (the architect: "set conversation slave") — the chain you see between a master tab
+// FORK 2026-09-23 (the set-conversation-slave action) — the chain you see between a master tab
 // and its slave. A fixed, click-through canvas over the whole window. The animation loop runs
 // only while something moves (pick mode, an anchor that shifted, a rope still swinging) and
 // stops once every rope is at rest — a frozen chain costs nothing.
@@ -151,8 +151,7 @@ export function createChainOverlay(host: ChainOverlayHost) {
     if (active) wake();
   }
 
-  // the architect 2026-09-23: "nearly transparent on mouseover, in case I need to read what is
-  // underneath". The canvas is click-through, so :hover never fires — hit-test the ropes.
+  // 2026-09-23: nearly transparent on mouseover, so what lies underneath stays readable. The canvas is click-through, so :hover never fires — hit-test the ropes.
   function nearChain(x: number, y: number): boolean {
     for (const { rope } of ropes.values()) {
       for (let i = 0; i < rope.length - 1; i++) {

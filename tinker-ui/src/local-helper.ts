@@ -1,5 +1,5 @@
-// FORK 2026-10-15 (the architect: "I would like for example for the browser relay to call the right local
-// app to open it"; the voice too, "through the browser plugin"). When the gateway runs on another
+// FORK 2026-10-15: the browser relay opens files with the right local app, and plays the voice
+// locally too. When the gateway runs on another
 // machine, the page asks the Browser Relay plugin (content script tinker-bridge.js), which asks the
 // local helper on THIS machine (native-host/tinkerclaw_local.py) to open a file with its own app or
 // play a spoken line on this speaker. Without the plugin or the helper every call returns null and

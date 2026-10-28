@@ -50,7 +50,7 @@ describe("listResetArchives", () => {
   });
 });
 
-// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — Main's
+// FORK 2026-10-03 (some tabs still showed erased history) — Main's
 // `/new` at 2026-10-02 12:12 moved it to a NEW transcript path, so its earlier resets sat beside a
 // path nothing named any more. Each session's trajectory names its key and transcript, and that is
 // how a tab's every earlier transcript is found: resets, the left file itself, repair backups

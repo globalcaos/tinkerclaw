@@ -22,7 +22,7 @@ TENANT = "f00f60b1-b967-4c0b-91ce-eb200dab0604"
 
 def renew_outlook():
     """Renew the Outlook sign-in from the shared Teams tab, the way skill outlook-hack § Renew the token does it.
-    the architect, 2026-10-21 21:51: "the only reason the teams tab is open and shared is for you to use it without asking".
+    2026-10-21: the shared Teams tab exists so the agent can use it without asking.
     The token goes from one process to the other through a pipe and is never printed or kept here."""
     import subprocess
     try:

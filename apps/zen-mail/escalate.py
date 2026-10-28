@@ -1,6 +1,6 @@
-"""Urgency that grows by itself, and a voice when it must (the architect, 2026-10-22 14:06: "the RobotVendor issue where they
-were insisting ... was important to respond fast and should have gained more importance, and then you should have
-pinged me out loud if the issue was not resolved soon").
+"""Urgency that grows by itself, and a voice when it must (2026-10-22: a thread where the
+sender kept insisting needed a fast reply; it should have grown in importance on its own, and a still-unresolved
+one should trigger a spoken alert).
 
 Triage scores a topic when its mail changes; nothing re-scored it while it sat. This step runs on every sync, needs no
 model, and for each open topic that wants something from the owner works out how much the waiting itself has added:

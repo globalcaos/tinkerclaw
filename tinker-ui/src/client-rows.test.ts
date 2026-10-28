@@ -30,7 +30,7 @@ afterEach(() => {
 /**
  * FORK 2026-08-24 — the split-key bug, in the exact shape it happened.
  *
- * The architect: "One with a fresh window only shows 'sending', nothing else."
+ * Symptom: a turn sent from a fresh window showed only 'sending', nothing else.
  *
  * A new tab mints `tinker:abc` and sends under it; the gateway answers with
  * `agent:main:tinker:abc` and the tab rebinds MID-TURN. So `sending` — written the instant

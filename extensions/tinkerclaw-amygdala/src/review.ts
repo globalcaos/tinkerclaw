@@ -1,7 +1,6 @@
 /**
- * The usefulness review (2026-10-06). the architect: "set up an automated Grok feedback on whether the Jev injections would have
- * been useful, and run them in the background so they do not interfere with my regular work. With that you will have the
- * necessary feedback to either adapt Jev's prompts or to dismiss a particular injection as too noisy or useless."
+ * The usefulness review (2026-10-06): an automated background Grok review of whether each Jev injection was useful, so
+ * Jev's prompts can be tuned and noisy injections dropped, without getting in the way of regular work.
  *
  * When a turn ends, every flag Jev raised in it (a note, a proof check, a hold, a question, a send-back) is judged once by
  * a second model that sees what the agent did AFTER the flag and the reply it ended with. The verdict (useful, harmless,
@@ -10,8 +9,7 @@
  * injection off stays a decision, taken from this evidence. Same background queue, redaction and ladder as the explainer;
  * a daily cap bounds the cost.
  *
- * The pass review (2026-10-15). the architect: "grok should keep evaluating every action taken or not taken for a feedback of
- * whether amygdala's action is correct." The checks Jev let pass are judged too, but as ONE call per turn (2,761 passes
+ * The pass review (2026-10-15): Grok also judges every action taken or not taken, to check amygdala's call. The checks Jev let pass are judged too, but as ONE call per turn (2,761 passes
  * by 2026-10-15; a call each is too many): the turn's passed steps, numbered, each with Jev's answers, plus everything
  * the agent ran and how the turn ended. Per step the judge says `fine` or `missed` (Jev should have flagged it). The rows
  * go into the same `reviews` table with kind `pass`, and `reviewReport` counts them per rule as `fine` / `missed`. Own

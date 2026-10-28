@@ -1,6 +1,5 @@
-// FORK 2026-08-24 (the architect: "when a tinkerclaw tab/session is unfocused, it sometimes does
-// not show its thinking indicator, and it also disappears from the SESSIONS panel" — reported
-// against a NEW context while an older session, NeuroCoin, kept working).
+// FORK 2026-08-24: an unfocused tab sometimes lost its thinking indicator and dropped out of the
+// SESSIONS panel — seen on a NEW context while an older session kept working.
 //
 // THE LAST STALE INPUT. The three previous passes each fixed a different half of this same report:
 //   run-state.ts             gave the four surfaces ONE PREDICATE

@@ -297,7 +297,7 @@ describe("prompt files in the feed (panel open-to-edit, 2026-09-30)", () => {
     store.close();
   });
 
-  // the architect 2026-10-01: "they should be classified into families, like the paper".
+  // 2026-10-01: classify them into families, as the paper does.
   it("rows come by family in the paper's order, prompts in each family's order, with the paper's label", () => {
     const store = new AmygdalaStore(":memory:");
     const book = new QuestionBook({ seedDir: join(EXT, "questions") });

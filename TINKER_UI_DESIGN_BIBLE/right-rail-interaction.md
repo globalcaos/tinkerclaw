@@ -23,8 +23,7 @@ verify:
 
 # Right-rail interaction model
 
-> Written 2026-07-26 after the architect reported six symptoms at once ("there are a lot of bugs
-> here"). A forensic sweep found **26 defects**. Nearly all of them are the _same_
+> Written 2026-07-26 after six symptoms were reported at once. A forensic sweep found **26 defects**. Nearly all of them are the _same_
 > invariant violated in a different panel. This file is the model those invariants come
 > from, so the next panel is built right instead of debugged later.
 
@@ -200,7 +199,7 @@ number means, where it comes from, what the bar may draw, principles P1–P12 �
 
 **Where it lives:** not its own `.rpanel` (until 2026-08-06 it was, below AMYGDALA) — a **static
 `.model-group` (`data-section="cache"`, `id="cache-panel"`) inside `#models-panel`**. Since
-2026-08-29 (the architect: _"move the context window up over thalamus, under thinking"_) the rail
+2026-08-29 (context window moved up, above THALAMUS and under THINKING) the rail
 reads the groups `updateBudgetPanel()` generates inside `#budget-panel` (SMART MODELS → MORE MODELS
 → THINKING) → CONTEXT WINDOW → THALAMUS → EEG. The label changed from CONTEXT CACHE on 2026-08-28;
 every identifier kept `cache`. Static and outside `#budget-panel` for the same load-bearing reason

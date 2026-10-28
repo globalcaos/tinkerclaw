@@ -238,8 +238,8 @@ function readRequestBody(req, maxBytes) {
   });
 }
 
-// FORK 2026-09-10 (the architect: "upon restart, in the production tinker ui, the tabs open before
-// turning off don't appear open"). A request with NO seat lands on the OWNER DESK — the
+// FORK 2026-09-10: after a restart, the production Tinker UI must reopen the tabs that were
+// open before shutdown. A request with NO seat lands on the OWNER DESK — the
 // single-operator file this laptop has always used (LEGACY_STATE_FILE) — unless the process
 // runs in hive mode (TINKER_REQUIRE_SEAT=1), where the plan's "missing seat → 400, never the
 // shared file" rule applies. The 12:22 hivemind draft made that 400 unconditional on a machine
@@ -376,8 +376,8 @@ async function handleOpenFile(req, res) {
   return true;
 }
 
-// FORK 2026-10-05 (the architect: "a dedicated tab to visualize [the gantt] … between master and slave …
-// attached to the master … connected in real time to the ongoing process"). A chain master gets
+// FORK 2026-10-05: a dedicated Gantt tab, between master and slave, attached to the master and
+// updated live from the running process. A chain master gets
 // its plan registered by skill build-gantt (`gantt.py render` from a Tinker chat, or `attach`) in
 // ~/.openclaw/data/gantt-boards.json. The tab bar reads /api/gantt/boards; the Gantt tab's iframe
 // loads /api/gantt/view, which fetches /api/gantt/chart again every 15 s, and its drawer asks
@@ -434,9 +434,8 @@ function ganttRender(plan, mode) {
   return promise;
 }
 
-// FORK 2026-10-05 (the architect: "a little section where I can see the available machines for this
-// project … if we have a healthy connection to them … the resources used by us, the available in
-// the machine, and its current load"). machines.py probes the plan's "machines" over ssh; the page
+// FORK 2026-10-05: a small section listing the plan's machines, whether each connection is
+// healthy, the resources we use, what the machine has free, and its load. machines.py probes the plan's "machines" over ssh; the page
 // asks every 15 s, and only while the Gantt tab is open, so nothing polls the lab when nobody looks.
 const GANTT_MACHINES_PY = path.join(ROOT, "skills", "build-gantt", "scripts", "machines.py");
 const GANTT_MACHINES_MS = 10_000;
@@ -542,7 +541,7 @@ async function handleGantt(sub, url, req, res) {
   json(res, 404, { error: "Unknown gantt route" });
 }
 
-// FORK 2026-09-30 (the architect: "deploy them hot, from now on") — a deploy is live only when open pages
+// FORK 2026-09-30: hot deploys — a deploy is live only when open pages
 // run it, and when this server runs its own new code too.
 //   - servedBundle(): the Tinker bundle dist/index.html names now (/api/ui-build).
 //   - SERVER_SOURCE_HASH: this file as it was loaded. After a rebuild that succeeds, a different
@@ -561,8 +560,8 @@ function servedBundle() {
   }
 }
 
-// FORK 2026-09-30 (the architect: "bake a refresh into the skill whenever a front-end feature changes so I
-// can see it without having to refresh manually"). Every open page holds an event stream here
+// FORK 2026-09-30: a front-end rebuild refreshes open pages by itself, with no manual reload.
+// Every open page holds an event stream here
 // (/api/ui-events?have=<the bundle it runs>). The moment dist/index.html names another bundle, each
 // page is told and reloads through its own safety rules (never mid-reply, never mid-typing). The
 // streams also say which build each open page runs, so the skill can confirm a change is on his
@@ -794,7 +793,7 @@ function startRebuild(kind, opts = {}) {
     const what = running === "be" ? "full rebuild + restart" : "frontend rebuild";
     return { ok: false, status: "running", running, error: `A ${what} is already running` };
   }
-  // FORK 2026-09-30 (the architect: "wire both buttons so that an agent can find them as a skill"): the
+  // FORK 2026-09-30: both rebuild buttons are also reachable by an agent as a skill: the
   // page and the agent skill `tinker-rebuild` start the same job here, so a run either one starts
   // shows on the buttons. `by` says which; only the page's click skips the restart-loop guard.
   const by = opts.by === "page" ? "page" : "agent";
@@ -1131,8 +1130,8 @@ async function handleFreezeThaw(action, req, res) {
   return true;
 }
 
-// FORK 2026-09-26 (the architect: "add a bug icon button, which should log that this particular prompt
-// feature did not work correctly ... whatever we need to find the bug"). The 🐛 on a LOST prompt
+// FORK 2026-09-26: a bug button on a prompt that misbehaved logs whatever is needed to find the
+// bug. The 🐛 on a LOST prompt
 // posts the page's half of the evidence (tinker-ui/src/prompt-bug-report.ts). This adds the half
 // only this machine can see — the gateway journal lines naming the prompt's key, the journal around
 // its ack, and the transcript lines holding its key or text — and writes one JSON file per click.
@@ -1430,8 +1429,7 @@ function proxyToGateway(req, res, rewritePath) {
   req.pipe(pReq);
 }
 
-// FORK 2026-10-21 (the architect: "when I click on a pdf link from the phone I want the capabilities we have
-// on desktop to work"). The pdf-review viewer (apps/pdf-review, loopback :18820) under /pdf/, so the
+// FORK 2026-10-21: a PDF link opened from the phone gets the same review tools as on desktop. The pdf-review viewer (apps/pdf-review, loopback :18820) under /pdf/, so the
 // phone reaches it through the phone door like the rest of Tinker: same device token, same origin.
 // The viewer finds its own base from its URL (viewer/web/base.js), so no path inside it is rewritten.
 const PDF_REVIEW_PORT = Number(process.env.PDF_REVIEW_PORT || 18820);
@@ -1461,8 +1459,7 @@ function proxyToPdfReview(req, res, url) {
   req.pipe(pReq);
 }
 
-// FORK 2026-10-21 (the architect: "Same as how we've added the pdf reader into the phone app, I want you to do the
-// same with the zen mail"). Zen Mail (apps/zen-mail, loopback :18804) under /zen/, reached through the phone
+// FORK 2026-10-21: serve Zen Mail through the phone app the same way as the PDF reader. Zen Mail (apps/zen-mail, loopback :18804) under /zen/, reached through the phone
 // door like /pdf/. Its page finds its own base from its URL. It answers button presses only from its own
 // origin, so the Origin header is rewritten to it: the door and Tinker have already admitted the caller.
 const ZEN_MAIL_PORT = Number(process.env.ZEN_MAIL_PORT || 18804);
@@ -1564,7 +1561,7 @@ const server = http.createServer((req, res) => {
     void handleLongjobList(url, res);
     return;
   }
-  // FORK 2026-10-21 (the architect, on his phone: "The progress bar says progress server not reachable"). A
+  // FORK 2026-10-21: on a phone the progress bar reported its server as unreachable. A
   // longjob card polled http://127.0.0.1:18931, which only works on the machine running the job. The
   // card now polls this page's own server, so it works wherever Tinker is open. Read-only, one JSON
   // file per job id; the id is validated before it touches a path. CORS: the card is a sandboxed
@@ -1601,7 +1598,7 @@ const server = http.createServer((req, res) => {
     void handleGantt(pathname.slice("/api/gantt/".length), url, req, res);
     return;
   }
-  // FORK 2026-09-30 (the architect: "make code changes and deploy them hot, from now on"): what this server
+  // FORK 2026-09-30: hot deploys: what this server
   // serves NOW. Every open page compares it with the bundle it runs and reloads onto a new one.
   if (pathname === "/api/ui-build") {
     json(res, 200, {

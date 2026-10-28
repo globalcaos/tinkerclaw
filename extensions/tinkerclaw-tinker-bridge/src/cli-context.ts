@@ -1,6 +1,6 @@
 /**
- * FORK 2026-10-02 (owner: "I see some sent information is unitemised, why is that? Can you fix it
- * and assign it a bucket?") — what each claude CLI call's prompt is made of, read from the CLI's
+ * FORK 2026-10-02 (part of each sent prompt showed as unitemised and needed a bucket) — what each
+ * claude CLI call's prompt is made of, read from the CLI's
  * own transcript.
  *
  * WHY. The CONTEXT WINDOW panel's call timeline stacks every call's billed prompt by bucket and

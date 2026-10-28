@@ -2,8 +2,8 @@
 //
 // THE COOLING STORE — which supplies hit a limit, and until when.
 //
-// FORK 2026-10-02 (the architect, full deploy): "Limits cool their supply until the reset time the error gives, or
-// 30 minutes; the next turn goes to the best supply still open; the state survives a restart."
+// FORK 2026-10-02 (full deploy): a limit cools its supply until the reset time the error gives, or
+// 30 minutes; the next turn goes to the best supply still open; the state survives a restart.
 //
 // WHY IT EXISTS. The planner has had a `cooling` veto since the v2 design (thalamus-feasibility.ts,
 // `supply-cooling`), and the failover path recognises a limit and reads its reset time

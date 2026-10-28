@@ -241,7 +241,7 @@ describe("readTurnPhaseEvent: the plugin breakdown", () => {
 // ─── stage ownership ─────────────────────────────────────────────────────────
 
 /**
- * FORK 2026-08-24 — the architect: "'Total Recall' is still not itemized".
+ * FORK 2026-08-24 — 'Total Recall' was still not itemised.
  *
  * Total Recall emits two stages of its own, but every stage was being attached to the
  * client-measured "preparing context" bracket, so the largest plugin on the pre-model path was

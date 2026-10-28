@@ -22,7 +22,7 @@ export type WorkEntry = {
 export type RunState = {
   runId: string;
   sessionKey?: string;
-  /** What the run is trying to do, in the user's words, clipped: the digest reader's brief. Kept in memory only. */
+  /** What the run is trying to do, as the user phrased it, clipped: the digest reader's brief. Kept in memory only. */
   aim?: string;
   /** The `routeCall` parameters of the run's latest call. */
   base?: RouteCallParams;

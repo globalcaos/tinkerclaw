@@ -2,10 +2,10 @@
  * FORK 2026-09-08 — a client row is anchored to the PROMPT it was measured under, not to an
  * ordinal.
  *
- * THE BUG (the architect, clawhub tab, 2026-09-08 07:2x): "In the chat I see multiple TURN TIMING, which
- * indicates the amount of parallelism initiated, except it is a bug to see it so many times."
+ * THE BUG (2026-09-08): the chat showed TURN TIMING many times, once per parallel branch, which
+ * is a bug.
  * The DOM snapshot of that tab held 25 timing blocks: SEVEN complete four-stage blocks stacked under
- * one prompt ("You can do the 11 in parallel"), seven more ABOVE the first prompt, and none at all
+ * one prompt (a request to run 11 tasks in parallel), seven more ABOVE the first prompt, and none at all
  * under prompts 3 through 31. The gateway had run exactly one turn for that prompt.
  *
  * WHY: `turnAnchorOf` returns "how many user messages precede this row" and the store kept only
@@ -90,11 +90,20 @@ describe("describeTurnAnchor — what is captured when a row is born", () => {
 describe("resolveTurnAnchor — the prompt wins, then time, then the ordinal", () => {
   it("finds the prompt even when the served copy carries the injected prefix and suffix", () => {
     const server = [
-      user("[Tue 2026-09-08 07:05 GMT+2] Ok, ship the 11. At the same time, fix it  ---  **After your reply**", 100),
+      user(
+        "[Tue 2026-09-08 07:05 GMT+2] Ok, ship the 11. At the same time, fix it  ---  **After your reply**",
+        100,
+      ),
       assistant("a1"),
       user("next", 200),
     ];
-    expect(resolveTurnAnchor(server, { turn: 9, at: 150, prompt: "Ok, ship the 11. At the same time, fix it" })).toBe(1);
+    expect(
+      resolveTurnAnchor(server, {
+        turn: 9,
+        at: 150,
+        prompt: "Ok, ship the 11. At the same time, fix it",
+      }),
+    ).toBe(1);
   });
 
   it("disambiguates identical prompts ('keep going' × 3) by the row's time", () => {
@@ -119,7 +128,13 @@ describe("resolveTurnAnchor — the prompt wins, then time, then the ordinal", (
   });
 
   it("with no prompt on file and an ordinal that no longer fits, counts prompts by time", () => {
-    const server = [user("u1", 100), assistant("a1"), user("u2", 300), assistant("a2"), user("u3", 500)];
+    const server = [
+      user("u1", 100),
+      assistant("a1"),
+      user("u2", 300),
+      assistant("a2"),
+      user("u3", 500),
+    ];
     // ordinal 44 came from a much longer local list; the row was measured between u2 and u3
     expect(resolveTurnAnchor(server, { turn: 44, at: 320 })).toBe(2);
     // and one measured before anything was ever asked is turn 0

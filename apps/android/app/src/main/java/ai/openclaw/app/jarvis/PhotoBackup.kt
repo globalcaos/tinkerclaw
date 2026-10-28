@@ -42,14 +42,14 @@ import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 /**
- * Backs the phone's pictures up to the Pi's disk through the door (2026-10-21, the architect: "a cron inside
- * the phone app to back up all my phone pictures"). The door keeps them under
+ * Backs the phone's pictures up to the Pi's disk through the door (2026-10-21: a nightly job
+ * inside the phone app). The door keeps them under
  * ~/Pictures/phone-backup/<device id>/<the phone's own folder>/<file name> on the Pi.
  *
  * Schedule: every night at 02:00 phone time it uploads for at most an hour, newest pictures first,
  * until the Pi holds them all; after a run that leaves nothing behind it waits a week, and any run
- * that ends with pictures left drops back to nightly. Any network: the architect has a flat-rate data plan
- * (2026-10-21 22:31, "no need to wait for wifi").
+ * that ends with pictures left drops back to nightly. Any network: the owner asked
+ * (2026-10-21) not to wait for wifi.
  * What is already on the Pi comes from /door/backup/manifest (path + size), so a run that is cut
  * off loses nothing and a picture is never sent twice.
  *

@@ -28,6 +28,11 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# FORK 2026-10-28 — no owner quotes in a public repo (CLAUDE.md § "Never paste the owner's words").
+if ! git diff --cached -U0 --no-color | bash "$ROOT_DIR/scripts/owner-quote-check.sh"; then
+  exit 1
+fi
+
 # FORK 2026-10-02 — bug-log.md entries kept landing with failure-class chips that the taxonomy table does not
 # define (4 on 2026-10-01, 2 on 2026-10-02), caught only by the slow bible:invariants run. Check it here.
 for file in "${files[@]}"; do

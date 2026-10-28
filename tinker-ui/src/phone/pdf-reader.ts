@@ -1,5 +1,4 @@
-// FORK 2026-10-21 (the architect: "When I click on a pdf link from the phone I want the capabilities we have on
-// desktop to work"). The pdf-review viewer (apps/pdf-review: comments, highlights, read-aloud, Redo,
+// FORK 2026-10-21: a PDF link opened on the phone gets the same capabilities as on desktop. The pdf-review viewer (apps/pdf-review: comments, highlights, read-aloud, Redo,
 // 🕘 Recent) is served under /pdf/ by tinker-prod-ui, so the phone reaches it through the phone door.
 // It opens in a full-screen layer over the chat instead of a page change, so the chat keeps its socket
 // and Back (window.__jarvisBack, through phone-mode) closes the layer.
@@ -56,8 +55,8 @@ export function closePdfReader(doc: Document = document): boolean {
 }
 
 /** Show the viewer over the chat at `url`; replaces a layer already open. Zen Mail (/zen/, 2026-10-21)
- *  reuses the same layer. No bar, title or ✕ (the architect, 2026-10-25: "We don't even need the close button
- *  since the phone's default back button works already"): Back closes it through window.__jarvisBack,
+ *  reuses the same layer. No bar, title or ✕ (2026-10-25: no close button is needed, the phone's
+ *  own back button already does it): Back closes it through window.__jarvisBack,
  *  Escape on a narrow desktop window; `title` only names the frame for screen readers. */
 export function showPdfReader(
   url: string,
@@ -87,8 +86,8 @@ export async function openPdfReader(
   showPdfReader(pdfViewerUrl(where), doc);
 }
 
-/** FORK 2026-10-28 (the architect: "When I put a comment marker, I want to be able to input a voice note that
- *  goes into the text box ... press and hold on the lock button"). The side-key hold already ends in
+/** FORK 2026-10-28 (a comment marker accepts a voice note dictated into its text
+ *  box by holding the side key). The side-key hold already ends in
  *  window.__jarvisAssist(text); while a PDF comment box is open in the reader layer, the words go into
  *  that box (the viewer's window.__pdfDictate, apps/pdf-review tools.js) instead of the chat.
  *  true = the viewer took them; false = no layer, no open comment box, or a frame from elsewhere. */

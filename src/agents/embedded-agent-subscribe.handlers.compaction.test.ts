@@ -174,7 +174,7 @@ describe("handleCompactionEnd", () => {
   });
 });
 
-// FORK 2026-07-27 (the architect: "instrument the compaction predicate") — gate "pi-auto".
+// FORK 2026-07-27: instrument the compaction predicate — gate "pi-auto".
 // The fourth compaction decider is pi's own AgentSession._checkCompaction, and it is the one
 // that actually fires. The numbers MUST come from `compaction_end` (pi's own `reason` +
 // `result.tokensBefore`); reconstructing them at `compaction_start` yields tokens=0 because pi

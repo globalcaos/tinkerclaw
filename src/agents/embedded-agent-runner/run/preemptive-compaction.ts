@@ -139,7 +139,7 @@ export function shouldPreemptivelyCompactBeforePrompt(params: {
       route = "compact_then_truncate";
     }
   }
-  // FORK 2026-07-27 (the architect: "instrument the compaction predicate") — this decider uses a
+  // FORK 2026-07-27 (instrument the compaction predicate) — this decider uses a
   // char estimate over the REAL messages PLUS the system prompt and the tool schemas, so
   // unlike the memory-flush gate it should track live context. Logging it is how we tell
   // the two apart on a live turn: if THIS one fires at ~5% of the window the estimator is

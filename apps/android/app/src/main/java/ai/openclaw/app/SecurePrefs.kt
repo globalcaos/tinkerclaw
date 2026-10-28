@@ -77,7 +77,7 @@ class SecurePrefs(
     MutableStateFlow(plainPrefs.getBoolean("location.preciseEnabled", true))
   val locationPreciseEnabled: StateFlow<Boolean> = _locationPreciseEnabled
 
-  // FORK 2026-10-22 (the architect: "let the screen turn off if I'm not using it") — new key so phones that
+  // FORK 2026-10-22: let the screen turn off when the app is idle — new key so phones that
   // saved the old default (true) start fresh at off too.
   private val _preventSleep = MutableStateFlow(plainPrefs.getBoolean("screen.preventSleep.v2", false))
   val preventSleep: StateFlow<Boolean> = _preventSleep

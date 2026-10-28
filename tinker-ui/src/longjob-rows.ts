@@ -331,7 +331,7 @@ export function renderLongjobRows(jobs: LongjobJob[], now: number, deps: Longjob
     .join("\n");
 }
 
-/** the architect: "past 4 layers, keep the indent at 4". */
+/** Past 4 layers, the indent stays at 4. */
 export const INDICATOR_MAX_DEPTH = 4;
 
 /**

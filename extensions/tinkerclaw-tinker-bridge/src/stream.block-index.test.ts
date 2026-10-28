@@ -6,8 +6,8 @@ import {
   keysForAssistantFrame,
 } from "./stream.js";
 
-// FORK 2026-08-28 (the architect: "There seems to be a disconnect between what Jarvis
-// answers and what is visible in the chat"). Two defects, both measured over one
+// FORK 2026-08-28: what the agent answered and what the chat showed did not
+// match. Two defects, both measured over one
 // 5-hour journald window (35,186 lines).
 //
 // DEFECT 1 — the two ingest paths keyed the SAME text block differently:

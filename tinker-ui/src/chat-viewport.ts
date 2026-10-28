@@ -1,7 +1,5 @@
-// FORK 2026-10-02 (the architect: "When I switch tabs, particularly when I go back to the OrbisVision tab,
-// the first thing I see is in the middle of the conversation, and I have to scroll down … let's also
-// pay attention at the point we leave it when we switch tabs, and when we restart gateway or restart
-// the computer.")
+// FORK 2026-10-02: returning to a tab landed mid-conversation and needed a manual scroll down. The
+// scroll position must also survive tab switches, gateway restarts and machine restarts.
 //
 // THE VIEWPORT MEMORY OF A TAB. The chat has one `#messages` pane shared by every tab, and until this
 // module the follow latch (`chatFollow`, scroll-follow.ts) and the scroll offset were properties of

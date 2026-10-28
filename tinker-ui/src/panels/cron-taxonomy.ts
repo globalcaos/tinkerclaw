@@ -1,6 +1,5 @@
-// FORK 2026-08-19 (the architect: "I still would like to move cron collapsed cards
-// around, and similarly as with the tasks, I would like to filter them and be
-// able to classify them in groups and subgroups").
+// FORK 2026-08-19: collapsed cron cards can be moved, filtered and grouped into
+// groups and subgroups, as tasks already are.
 //
 // THE ROOM, NOT THE FINDINGS. Card order already lives in ui-state
 // (`cron:cardOrder`) because no cron ever reads how the architect arranged the cards.

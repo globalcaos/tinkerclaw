@@ -190,3 +190,13 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 - Connection/provider additions: update all UI surfaces + docs + status/config forms.
 - Provider tool schemas: prefer flat string enum helpers over `Type.Union([Type.Literal(...)])`; some providers reject `anyOf`. Not a repo-wide protocol/schema ban.
 - External messaging: no token-delta channel messages. Follow `docs/concepts/streaming.md`; preview/block streaming uses edits/chunks and preserves final/fallback delivery.
+
+## Never paste the owner's words into the repo (2026-10-28)
+
+This repo is public. Comments, commit messages, bug-log entries and test fixtures describe the NEED in
+neutral words; they never quote the owner's prompts, not even with the name swapped for "the architect".
+The sanitizer only replaces names and numbers, so a pasted prompt ships its content as is: by
+2026-10-28, 1,352 quoted lines in 399 public files carried his bank, a root password's existence, a
+shared Teams tab and his contact-list access. Write `// FORK <date>: wake the phone app via FCM`, not
+`// FORK <date> (the architect: "Firebase is up, can you now wake up the phone app?")`. Test data is
+invented, never copied from his memory, chats or purchases.

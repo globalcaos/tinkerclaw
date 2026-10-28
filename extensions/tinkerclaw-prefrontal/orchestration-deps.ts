@@ -302,8 +302,8 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
     // FORK 2026-09-30 (THALAMUS v4 E3): `model: "auto"` asks the registered resolver for this unit's model. With none
     // registered, or one that offers nothing usable, "auto" is exactly an omitted model: the default leaf model. The
     // billing guard still has the last word on whatever comes back.
-    // FORK 2026-10-03: a unit with no model is Thalamus's too when it owns the `orchestrate-default` site (the architect: "Make
-    // sure Thalamus is owner of all those model choices when it is working"), unless the caller configured its own
+    // FORK 2026-10-03: a unit with no model is Thalamus's too when it owns the `orchestrate-default` site (Thalamus
+    // owns all those model choices while it is working), unless the caller configured its own
     // default leaf model. The resolver decides by site whether to act; an empty answer keeps the default leaf model.
     const auto = agentOpts?.model === "auto";
     const omitted = !agentOpts?.model && !opts.leafModel;

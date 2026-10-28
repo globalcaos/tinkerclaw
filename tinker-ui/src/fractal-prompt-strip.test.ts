@@ -7,8 +7,7 @@ import {
   stripInjectedFractalDoctrine,
 } from "./fractal-prompt-strip.js";
 
-// FORK 2026-09-07 (the architect: "The clawhub tab just showed me a nonesense-bubble as if I was
-// prompting in strange html").
+// FORK 2026-09-07: a tab showed a nonsense bubble, as if the user had sent raw markup.
 //
 // He typed `keep going` — 11 characters. The stored user turn was 22,548, because the reflection
 // doctrine is APPENDED to every prompt. app.ts hides a fractal prompt only when the text contains

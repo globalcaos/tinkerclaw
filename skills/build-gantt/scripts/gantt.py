@@ -910,9 +910,9 @@ read();apply();chips();stamp();setInterval(refresh,EVERY);document.addEventListe
 """
 
 
-# The machines panel (2026-10-05, the principal: "a little section where I can see the available machines for
-# this project … in real time if we have a healthy connection to them … the resources used by us, the
-# available in the machine, and its current load"). It reads /api/gantt/machines (machines.py) and
+# The machines panel (2026-10-05, requested: a small section listing the machines for
+# this project, live connection health, the resources this project uses, what each machine has free, and its
+# current load). It reads /api/gantt/machines (machines.py) and
 # stays hidden when the plan names no machine but this one. Not %-formatted, unlike LIVE_JS.
 MACHINES_CSS = """
 #mchip{margin-left:auto;font-size:11.5px;color:#efe4d0;background:#2e2318;border:1px solid #199e70;border-radius:10px;

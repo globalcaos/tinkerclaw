@@ -155,8 +155,8 @@ export function fractalCheckHtml(check: FractalCheck, esc: (text: string) => str
 }
 
 /**
- * FORK 2026-10-10 (the owner: "The 1-line collapsed form needs to explain what file has changed (since file changes mean
- * something remains after the turn). If nothing is changed, just say nothing to report"). From the bridge's measured
+ * FORK 2026-10-10: the one-line collapsed form names the files that changed (a changed file is what outlasts the
+ * turn), or says nothing to report when none did. From the bridge's measured
  * writes and commits, never from the reflection's own words: "changed a.md, b.ts +2 · commit abc1234", or
  * "nothing to report" when the run left nothing on disk. Null until the check arrives.
  */

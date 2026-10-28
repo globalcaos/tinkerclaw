@@ -9,7 +9,7 @@
 //   - enhancements: which shown card did not fit the task (a false positive), and which tool the agent used off the
 //     list should have been on it (a false negative)? Rows go to `enh_reviews`.
 //
-// RECORDS ONLY. Thalamus does not learn online (owner, 2026-10-09: "improve it by iterations, but offline"); these rows
+// RECORDS ONLY. Thalamus does not learn online (2026-10-09 decision: it improves by iterations, offline); these rows
 // are the evidence for those iterations and change no route, card or list. Same pattern and ladder as the amygdala's
 // reviewer (`extensions/tinkerclaw-amygdala/src/review.ts`): one call at a time in the background, a hard time limit per
 // rung, a daily cap per kind, every free text redacted, Jev not used. A run from a private source is never sent.

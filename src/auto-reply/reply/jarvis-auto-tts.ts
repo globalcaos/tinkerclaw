@@ -3,8 +3,8 @@
  *
  * NOT WIRED (checked 2026-10-22): nothing imports this file. It was removed from buildReplyPayloads
  * on 2026-02-23 (f4f6f23c05a "voice: remove auto-TTS hook — direct exec preferred"), so a reply whose
- * agent forgets `jarvis "..."` is silent (2026-10-22 13:42, the architect: "I did not hear this last
- * message"). The text below describes the old design, not what runs today.
+ * agent forgets `jarvis "..."` is silent (2026-10-22: a reply went
+ * unheard). The text below describes the old design, not what runs today.
  *
  * Programmatic voice guarantee. Runs BEFORE reply delivery in buildReplyPayloads.
  *

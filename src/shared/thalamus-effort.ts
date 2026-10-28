@@ -1,8 +1,7 @@
 // THALAMUS — the TASK chooses the EFFORT (FORK 2026-10-09).
 //
-// WHY. The owner, 2026-10-09: "Auto is supposed to mean that Thalamus should take over deciding which
-// effort is best for each task. A complex coding task would need ultracode, whereas a hello would only
-// need low." Until this module an Auto turn ran at the effort the dial's stop suggested — smart =
+// WHY (2026-10-09). Auto should mean Thalamus decides the effort per task: a complex coding task
+// gets the top effort, a greeting gets low. Until this module an Auto turn ran at the effort the dial's stop suggested — smart =
 // Opus @max — whatever the prompt said, so a ten-character "hello" ran at max. The dial and the domain
 // still choose the MODEL (src/shared/thalamus-plan.ts, unchanged); this module reads the task and
 // chooses the EFFORT, never above the stop's suggestion.

@@ -25,10 +25,21 @@ testedHarnesses: ["Claude Code"]
 authoredBy: "jarvis-on-the-fly"
 params:
   top: { type: "number", default: 14, description: "How many films to show (selected by trend)." }
-  exclude: { type: "string", default: "Horror", description: "Comma list of genres to drop. Operator preference lives here, not in code." }
+  exclude:
+    {
+      type: "string",
+      default: "Horror",
+      description: "Comma list of genres to drop. Operator preference lives here, not in code.",
+    }
   min_rating: { type: "number", default: 6.0, description: "Live IMDb rating floor." }
-  min_votes: { type: "number", default: 1000, description: "Credibility floor — a 9.2 from 40 voters is the director's family." }
-  country: { type: "string", default: "ES", description: "JustWatch country for streaming availability." }
+  min_votes:
+    {
+      type: "number",
+      default: 1000,
+      description: "Credibility floor — a 9.2 from 40 voters is the director's family.",
+    }
+  country:
+    { type: "string", default: "ES", description: "JustWatch country for streaming availability." }
 ---
 
 # Movie radar
@@ -46,6 +57,7 @@ and prints the census lines to stderr (torrent titles · watchable · cam-only �
 overlap with the IMDb list).
 
 ### Cross mode — two independent signals
+
 - **Torrent (unbiased demand):** `apibay.org/precompiled/data_top100_207.json` (HD movies, current
   top-100 by live seeders) + `data_top100_48h_207.json` (last 48 h). Seeders are **summed per IMDb
   id** across releases; titles whose every release is a cinema recording (CAM/TS/TELESYNC/"HQ Pre"…)
@@ -106,8 +118,8 @@ overlap with the IMDb list).
   7.2 / 7.1 / 6.8 on **6.7k / 3.5k / 38k votes** against a grid median of **34.6k** — two of them
   would have displaced films ten times more people had watched. The vote gate (median × 0.33) is
   what makes "good enough" mean good enough for THIS grid.
-- **A film already on disk is not a recommendation (2026-09-20, operator: "skip the two that are
-  already downloaded").** Hence the `--have` folder scan. Drop BEFORE the cut, never after, or the
+- **A film already on disk is not a recommendation (2026-09-20: the operator asked to
+  skip films already downloaded).** Hence the `--have` folder scan. Drop BEFORE the cut, never after, or the
   grid silently shrinks to 12.
 - **Reshared classics only show in the 48 h window** (Masters of the Universe 1987 — #2 by 48 h
   seeders, invisible in the cumulative top-100). Keep the 48 h list as its own section.

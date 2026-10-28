@@ -277,7 +277,7 @@ describe("Fractal waits for the end of the task", () => {
   });
 });
 
-describe("Fractal waits for background tasks too (the architect 2026-10-25 02:43)", () => {
+describe("Fractal waits for background tasks too (2026-10-25)", () => {
   it("a live background task holds the reflection; its bg-turn wake ends the task: ONE fire", async () => {
     const { h, deferrer } = harness();
     h.background = [bgTask()];

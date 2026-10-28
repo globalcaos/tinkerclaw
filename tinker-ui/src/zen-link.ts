@@ -1,5 +1,5 @@
-// FORK 2026-10-25 (the architect: "This chat should be linked to zen mail. In fact its icon should replace
-// the tab's title and all zen mail requests show here, along with its reasoning"). Zen Mail hands
+// FORK 2026-10-25: link this chat to Zen Mail; its icon replaces the tab title, and every Zen Mail
+// request shows here with its reasoning. Zen Mail hands
 // every prompt typed on a card to ONE chat: `main_session` in ~/.local/share/zen-mail/settings.json
 // (apps/zen-mail/server.py _to_main_chat). That file stays the only record of the link; the page
 // reads it through tinker-prod-ui's /zen/ proxy (GET /zen/api/link) and draws the Zen Mail icon in

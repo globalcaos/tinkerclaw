@@ -1,5 +1,5 @@
-// FORK 2026-08-24 (the architect: the post-restart wake-up "should be clearly identified as coming
-// from an automated system and be encased in blue").
+// FORK 2026-08-24: the post-restart wake-up is clearly marked as coming from an automated system,
+// in a blue frame.
 //
 // WHAT THIS IS. After a gateway restart, `recoverRestartAbortedMainSessions`
 // (src/agents/main-session-restart-recovery.ts, boot+5s) re-dispatches every session that was
@@ -35,7 +35,7 @@ export type SystemNotice = {
   headline: string;
   /** Everything after the first line — the protocol addressed to the model. May be empty. */
   detail: string;
-  /** Who put it in the chat, shown on the badge (the architect 2026-10-03: "with the identity of the agent"). */
+  /** Who put it in the chat, shown on the badge (2026-10-03: it names the agent). */
   who: string;
   /** Thalamus's enhancement advice that rode in front of it, when there was one. */
   advice?: string;

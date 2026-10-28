@@ -33,11 +33,9 @@ created: "2026-10-10"
 
 **What it is for.** A diagram is read at the size it prints, not at the size it was drawn. A builder that
 scales every figure to fit the column makes two kinds of unreadable figure, and both looked fine on screen.
-**Derived from.** The owner's review of two 78- and 144-page technical books (2026-10-10): _"Some of them are
-too small and narrow, and could use a full-width expansion so that the letters can actually be read. Other
-diagrams are too wide and crammed into the horizontal space they can only be seen with very small font, not
-readable. So either make the font a bit bigger or make the diagram wrap around like a snake, thus being able
-to make use of all the page intelligently."_
+**Derived from.** A review of two 78- and 144-page technical books (2026-10-10): some diagrams were too small
+and narrow and needed full width to be legible; others were too wide, squeezed into the column until the font
+was unreadable, and needed either a bigger font or a layout that wraps back and forth to use the whole page.
 **What would change it.** A measured run that shows a threshold below is wrong for a given paper size or
 reader, or a builder that does the fitting by itself.
 **Status.** First written 2026-10-10; first run recorded below (2026-10-10). Until more runs are recorded under

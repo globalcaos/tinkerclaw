@@ -25,7 +25,7 @@ One table the owner reads at a glance: each row an item, each column a measure d
 
 ## When to Use
 
-- "Make a pretty table", "as graphic as possible", "with the description on mouseover", "colour-coded by subject".
+- A request for a table that is visual rather than prose, with descriptions on mouseover and rows colour-coded by subject.
 - A status report over 8 or more items with 4 or more measures each.
 
 Not for a short side-by-side of a few options: the `visual-tables` skill draws those inline. Not for WhatsApp, SMS or voice: the `html-render` fence only renders in the Tinker chat.

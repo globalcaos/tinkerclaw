@@ -508,7 +508,7 @@ describe("readSessionMessages", () => {
     expect(typeof marker.timestamp).toBe("number");
   });
 
-  // FORK 2026-09-07 (the architect: "I clicked compact ... nothing seem to have happened") — an
+  // FORK 2026-09-07 (Compact was clicked and nothing seemed to happen) — an
   // ENGRAM-mode compaction writes a POINTER MANIFEST, not an LLM summary, and its record has a
   // shape neither branch of this mapper read: `details.tokensEvicted` carries the saving, and
   // there is NO `tokensAfter` at all. The chat banner needs before+after to draw "x → y", so it
@@ -552,8 +552,8 @@ describe("readSessionMessages", () => {
     expect(marker.__openclaw?.tokensAfter).toBeUndefined();
   });
 
-  // FORK 2026-09-07 (the architect: "I can see a message like it was me prompting it but with some
-  // strange html code") — OpenClaw injects runtime events (a finished subagent, a cron result)
+  // FORK 2026-09-07 (a message rendered as if the user had sent it, full of odd markup)
+  // — OpenClaw injects runtime events (a finished subagent, a cron result)
   // into the conversation as a role:"user" message wrapped in
   // <<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> … <<<END_OPENCLAW_INTERNAL_CONTEXT>>>. The LIVE stream
   // hides it — live-chat-projector.ts:53 calls stripInternalRuntimeContext — but this reader,

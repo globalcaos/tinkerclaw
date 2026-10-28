@@ -306,10 +306,10 @@ describe("reconcileWithHistory", () => {
     expect(r.delivered.map((x) => x.id)).toEqual(["a"]);
   });
 
-  // REGRESSION 2026-08-16 (the architect: "I am still missing prompts"). Confirmation by text prefix used
+  // REGRESSION 2026-08-16: prompts were still going missing. Confirmation by text prefix used
   // to search the WHOLE transcript with no notion of time, so re-sending a prompt you had sent
   // before was instantly "confirmed" by the OLD copy: dropped from the outbox, un-flagged, and
-  // then deleted from the transcript by the next loadChat. the architect demonstrably resends identical
+  // then deleted from the transcript by the next loadChat. The owner demonstrably resends identical
   // text (the same "executive summary" prompt went in at 23:56 and again at 00:11), so this was
   // not a corner case — the safety net was deleting the very prompts it existed to protect.
   it("does NOT let an OLD identical turn confirm a freshly typed prompt", () => {

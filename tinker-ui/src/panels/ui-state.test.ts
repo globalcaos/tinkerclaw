@@ -969,9 +969,7 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
     });
   });
 
-  // FORK 2026-08-16 (the architect: "when I close the browser and restart it, the tinker ui tabs
-  // that I had opened are not anymore. Make them reopen as if I just refreshed the
-  // page"). The tab list was the one piece of UI chrome still living ONLY in
+  // FORK 2026-08-16: tabs must reopen after a browser restart as after a refresh. The tab list was the one piece of UI chrome still living ONLY in
   // localStorage, so it was the one piece a clean browser exit destroyed. `tab:active`
   // was already durable, which is why the UI came back pointing at a tab that no longer
   // existed and settled on a lone "🏠 Main".
@@ -1332,9 +1330,8 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
     });
   });
 
-  // FORK 2026-09-24 (the architect: "I have been deleting the SharePoint tab many times, and every time I
-  // restart the machine, it appears again, and the tab I leave open all the time goes back to being
-  // closed"). Every mirror was `keepalive: true` and nothing read the response. Chrome charges a
+  // FORK 2026-09-24: a closed tab came back and an open one closed after every machine restart.
+  // Every mirror was `keepalive: true` and nothing read the response. Chrome charges a
   // keepalive body against a 64 KB per-page budget until its response is consumed, so the budget
   // never came back: the 10th mirror of every page failed inside the browser, and so did every one
   // after it, while the UI looked normal. Measured headless against a private prod-ui: 9 landed,
@@ -1469,8 +1466,7 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
     });
   });
 
-  // FORK 2026-09-16 (the architect: "I just restarted the computer and Jarvis does not have the tabs
-  // open the same way they were when I turned it off"). A page whose BOOT hydrate failed —
+  // FORK 2026-09-16: tabs did not come back as they were after a machine restart. A page whose BOOT hydrate failed —
   // the gateway mid-restart, or the 1500ms timeout on a cold machine — stayed NON-DURABLE for
   // its whole life: the mirror gate held (correctly), but nothing ever re-read the file, so
   // every tab opened, closed or renamed for hours afterwards silently never reached disk, and

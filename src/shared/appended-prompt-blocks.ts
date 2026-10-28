@@ -24,7 +24,7 @@ export const CHAT_ROW_CONTRACT_RE = /\n\s*<!-- TINKERCLAW chat-row contract -->/
  * FORK 2026-10-10 — blocks the tinker-bridge puts IN FRONT of the owner's words in the CLI's copy of a
  * prompt: the per-turn `<turn_context>` (turn-context.ts, since 5bc62f2b020) and the Fractal result of
  * the reverted 2026-10-10 inject (`[Background Fractal reflection …]` … `---`, still in that day's CLI
- * transcripts). The owner: "Fractal keeps spitting these big green nonsense" — an imported CLI prompt
+ * transcripts). Symptom: large stray green bubbles of Fractal text — an imported CLI prompt
  * carrying them no longer matched his typed one and drew as a second, 12 KB green bubble.
  */
 export const LEADING_PROMPT_BLOCKS: readonly RegExp[] = [

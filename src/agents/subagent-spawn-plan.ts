@@ -53,7 +53,7 @@ export function resolveSubagentModelAndThinkingPlan(params: {
   task?: string;
   label?: string;
 }) {
-  // FORK 2026-10-03 (the architect: "Make sure Thalamus is owner of all those model choices when it is working"). A spawn that
+  // FORK 2026-10-03: while Thalamus is working, it owns all those model choices. A spawn that
   // names no model is priced by Thalamus when it owns the `subagent` site; the configured default stays the fallback.
   // A model named on purpose is never replaced: the spawn's own, or one configured for sub-agents or for the target
   // agent. With no resolver, or one in shadow, this is exactly the old path.

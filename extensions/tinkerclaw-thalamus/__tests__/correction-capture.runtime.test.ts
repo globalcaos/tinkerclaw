@@ -118,7 +118,7 @@ const prompt = (runId: string, text: string, sessionKey = TAB) => ({
 const corrections = () => emitted.rows.filter((r) => r.name === "j.correction");
 
 describe("the owner's correction, through the runtime", () => {
-  it("'Did you forget we have a youtube skill?' pins the skill on the task before it, and rows use_existing", async () => {
+  it("'Wait, you forgot that we have a youtube skill.' pins the skill on the task before it, and rows use_existing", async () => {
     const t = await make();
     earlierTask(t.store, "run-older", NOW - 600_000);
     earlierTask(t.store, "run-download", NOW - 60_000);
@@ -129,7 +129,7 @@ describe("the owner's correction, through the runtime", () => {
       .prepare(
         prompt(
           "run-now",
-          `[Thu 2026-09-03 09:57 GMT+2] Did you forget we have a youtube skill?${DOCTRINE}`,
+          `[Thu 2026-09-03 09:57 GMT+2] Wait, you forgot that we have a youtube skill.${DOCTRINE}`,
         ),
       );
 
@@ -149,19 +149,19 @@ describe("the owner's correction, through the runtime", () => {
       .prepare(
         prompt(
           "run-now",
-          "[Sun 2026-08-30 16:16 GMT+2] I don't need to share any tab, you have a gmail skill",
+          "[Sun 2026-08-30 16:16 GMT+2] No need for the browser, you have a gmail skill",
         ),
       );
     expect(t.store.listPins()).toMatchObject([{ taskId: "run-draft", cardId: "skill:gog" }]);
   });
 
-  it("'ok, do it yourself, you have the tab' rows dont_ask and pins nothing", async () => {
+  it("'ok, do it yourself, you have access' rows dont_ask and pins nothing", async () => {
     const t = await make();
     earlierTask(t.store, "run-ask", NOW - 60_000);
     await t.rt
       .shortlist()!
       .prepare(
-        prompt("run-now", "[Sat 2026-10-10 09:21 GMT+2] ok, do it yourself, you have the tab"),
+        prompt("run-now", "[Sat 2026-10-10 09:21 GMT+2] ok, do it yourself, you have access"),
       );
     expect(t.store.listPins()).toEqual([]);
     expect(corrections().map((r) => r.record.label)).toEqual(["dont_ask"]);
@@ -175,7 +175,7 @@ describe("the owner's correction, through the runtime", () => {
       .prepare(
         prompt(
           "run-now",
-          "[Sat 2026-10-10 11:31 GMT+2] [Subagent Context] He said: Did you forget we have a youtube skill? keep going",
+          "[Sat 2026-10-10 11:31 GMT+2] [Subagent Context] He said: Wait, you forgot that we have a youtube skill. keep going",
         ),
       );
     expect(t.store.listPins()).toEqual([]);

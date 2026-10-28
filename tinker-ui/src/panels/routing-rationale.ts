@@ -16,8 +16,7 @@
 // Pure render model (no DOM deps, returns an HTML string) — same shape as the other panels/
 // modules, so every sentence is unit-testable without a browser.
 //
-// FORK 2026-09-03 (the architect, ask 4: "clear visibility on how Thalamus is doing things by looking
-// at the Thalamus panel"): FOUR more blocks sit ABOVE those three — SUPPLIES, WHY THIS,
+// FORK 2026-09-03 (ask 4): the Thalamus panel should show clearly how Thalamus decides. FOUR more blocks sit ABOVE those three — SUPPLIES, WHY THIS,
 // IF IT FAILS, BALLISTIC — from the THALAMUS v2 design (jarvis-icu
 // docs/superpowers/specs/2026-09-03-thalamus-v2-design.md §6). They are driven by OPTIONAL
 // fields, so a gateway that has not been taught to send them yet gets byte-identically the
@@ -245,8 +244,7 @@ export function biasStop(idx?: number) {
 /** The fast↔smart slider, rendered directly under the ORCA title. Deliberately the SAME
  *  markup/classes as the EFFORT slider so the two read as siblings (the architect's request).
  *
- *  FORK 2026-08-29 (the architect): "the thalamus panel slider should then become usable, otherwise
- *  the circle should not be there at all." The dial only means something while the MODEL
+ *  FORK 2026-08-29: the Thalamus slider must either work or not be drawn. The dial only means something while the MODEL
  *  slider is on Auto — pin a model and THALAMUS is out of the loop, so the dial drives
  *  nothing. When it is inert the input is `disabled` (so it cannot be dragged, and the
  *  delegated `input`/`change` listeners in app.ts never fire, which also means no stray
@@ -303,8 +301,7 @@ function renderBiasStops(activeIdx: number): string {
 
 // Each section states the CHOICE and its WHY — nothing about the standing rule that
 // produced it. The policy is fixed, lives in orca-policy.md, and is one click away at the
-// foot of the card (the architect 2026-07-25: "should not explain the policy behind it all, which
-// is fixed"). Keeping the rule out of here is what makes a badly-routed job visible: the
+// foot of the card (2026-07-25: the card does not restate the fixed policy). Keeping the rule out of here is what makes a badly-routed job visible: the
 // line is short enough that a wrong domain or a wrong model jumps out.
 
 /** MODEL — the choice and why it is in force. Pinned ⇒ state it and stop. */
@@ -386,7 +383,7 @@ export function fanOutLine(s: RoutingSignals): string {
   if (routes.length === 0) {
     return cap;
   }
-  // ONE LINE, always (the architect 2026-07-29: "Fan-out should only be one line"). A <ul> of one
+  // ONE LINE, always (2026-07-29: a fan-out takes one line). A <ul> of one
   // <li> per route grew the card without bound on a fan-out, and the `why` note I added
   // earlier today made every route two lines — the opposite of what this card is for.
   //
@@ -408,8 +405,8 @@ export function fanOutLine(s: RoutingSignals): string {
   );
 }
 
-/** The footer link. the architect 2026-07-26: "swap the 'why these rules?' button with a link to the
- *  actual md, which should open the orca-policy.md". Uses the app's `.fs-link` convention (a
+/** The footer link (2026-07-26): the old 'why these rules?' button became a link that opens
+ *  orca-policy.md. Uses the app's `.fs-link` convention (a
  *  globally delegated click → `config.openExternalFile`), so it opens the REAL file in the
  *  system viewer — the same file orca-policy-drift.test.ts pins against the running code.
  *  A link, not an in-panel copy, means there is no second rendering of the rules to drift. */

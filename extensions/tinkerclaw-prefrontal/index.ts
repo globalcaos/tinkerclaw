@@ -107,7 +107,7 @@ const PLUGIN_ID = "tinkerclaw-prefrontal";
 // FORK 2026-07-25 (the architect): the ORCA routing policy. Resolved from THIS module's location so
 // the UI never hardcodes a host path; the panel's footer link opens it in the system viewer.
 //
-// FIX 2026-07-27 (the architect: "the final link does not open the foundation md"): the link was dead
+// FIX 2026-07-27 (the final link did not open the foundation md): the link was dead
 // from the day it shipped. `import.meta.url` points into the BUILT plugin
 // (dist/extensions/tinkerclaw-prefrontal/) and the build copies openclaw.plugin.json but NOT
 // .md assets, so this named a file that has never existed. config.openExternalFile does not
@@ -1265,9 +1265,8 @@ export default function register(api: OpenClawPluginApi) {
           // FORK 2026-05-31: structured provenance so the panel can name the recipe
           // + confidence in its always-visible summary (previously confidence lived
           // ONLY in the prose "(conf high)" suffix, invisible to the renderer).
-          // FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see
-          // a particular message in the chat, just a short reminder that we are using it with a
-          // link to its md"). The trail event was already the moment a recipe becomes ACTIVE, but
+          // FORK 2026-08-28: each time a broca recipe is used, a short chat reminder names it and
+          // links its md. The trail event was already the moment a recipe becomes ACTIVE, but
           // it named the recipe only by slug — no title to read, no path to open. `recipeTitle` and
           // `recipePath` come straight off the matched index entry (which resolves the absolute
           // .md path anyway for lazy step parsing), so the chat can render a one-line notice with

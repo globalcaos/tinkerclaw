@@ -107,8 +107,8 @@ export type CallSendEvent = CallEventCommon & {
 };
 
 /**
- * FORK 2026-10-02 (owner: "I see some sent information is unitemised, why is that? Can you fix it
- * and assign it a bucket?") — the buckets one call's prompt is itemised into. They ARE the call
+ * FORK 2026-10-02 (the owner reported unitemised prompt content and asked for every part to get a
+ * bucket) — the buckets one call's prompt is itemised into. They ARE the call
  * timeline's top-lane keys (tinker-ui panels/call-timeline.ts TOP_LANE_KEYS, derived from
  * SEGMENT_COLORS), in the same P3 order, moral code first; the UI reads only these keys.
  */

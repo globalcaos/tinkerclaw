@@ -18,7 +18,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * FORK 2026-10-22 (the architect 13:28: "Build the capability of being able to reach me anytime by voice").
+ * FORK 2026-10-22: the agent can reach the owner by voice at any time.
  * Node command jarvis.say {text}: Jarvis speaks on the phone even with the app closed (the gateway's
  * Firebase wake brings the node back, then retries the invoke). Same voice as in the app: GBD,
  * faster, intonation widened, the singing fork and the metallic chain (JarvisVoiceFx), pitch dropped

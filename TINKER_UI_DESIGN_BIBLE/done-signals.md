@@ -227,8 +227,8 @@ Authority tiers — when two signals disagree, the **lower tier number wins**.
 
 ## 2c. Unread — a finished turn the owner has not seen (FORK 2026-10-27)
 
-The owner, 2026-10-27: _"When it finishes any turn, the tab should remain on a state that lets me think
-that there is an unread result, which should disappear when I click on the tab to read it."_
+The need (2026-10-27): a tab whose turn finished while the owner was elsewhere should show that an
+unread result waits, and the mark should clear when he opens the tab.
 
 Unread is not a new done signal. It is a READING of the done signals above, per chat, against one
 more fact: when the owner last looked. tab-attention.ts holds the rule; app.ts binds it.

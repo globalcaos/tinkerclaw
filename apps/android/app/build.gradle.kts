@@ -208,7 +208,7 @@ android {
       if (hasAndroidReleaseSigning) {
         signingConfig = signingConfigs.getByName("release")
       }
-      // 2026-10-22 (the architect: "make next build faster"): R8 shrinking is the slowest step on the Pi;
+      // 2026-10-22 (speed up the next build): R8 shrinking is the slowest step on the Pi;
       // quick test builds pass -PjarvisQuick to skip it (jarvis-pi-publish does only with JARVIS_QUICK=1).
       val full = !project.hasProperty("jarvisQuick")
       isMinifyEnabled = full

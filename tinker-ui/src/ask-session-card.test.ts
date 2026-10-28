@@ -8,8 +8,8 @@ import {
   type AskCardDeps,
 } from "./ask-session-card.js";
 
-// FORK 2026-10-21 — the purple ask-session card (the architect: "a purple box … the question asked, which session was
-// awakened, and what the answer was"; expanded: "all the thinking and tool calls of the other session").
+// FORK 2026-10-21 — the purple ask-session card: a purple box with the question asked, the session it woke and the
+// answer; expanded, all the thinking and tool calls of that other session.
 
 const S = "~/src/tinkerclaw/skills/ask-session/scripts/sessions.py";
 const SID = "4e4c3737-d158-46a5-a7e8-d54e915a48d2";

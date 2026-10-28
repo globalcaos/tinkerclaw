@@ -1,4 +1,4 @@
-// FORK 2026-07-27 (the architect: "instrument the compaction predicate and confirm the root cause")
+// FORK 2026-07-27: instrument the compaction predicate and confirm the root cause.
 //
 // WHY THIS EXISTS. Compaction was measured firing at a median 5.53% of the 1M window while
 // the nominal threshold is ~98%, and 78% of compactions hang for 9 minutes and are then

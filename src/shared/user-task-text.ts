@@ -1,7 +1,7 @@
 // FORK 2026-10-09 — the user's own words, with the gateway's injected trailer removed.
 //
-// Lifted from src/agents/effort-allocator.ts (FORK 2026-07-26, "when I move the effort level it
-// magically hops to high"): the Tinker UI appends a fixed ~3,369-character FRACTAL reflection
+// Lifted from src/agents/effort-allocator.ts (FORK 2026-07-26: the effort level
+// jumped to high on its own): the Tinker UI appends a fixed ~3,369-character FRACTAL reflection
 // instruction to every message, so anything that measures a prompt — the allocator's size
 // buckets, the local task read behind THALAMUS's task effort (src/shared/thalamus-effort.ts) —
 // must first cut the envelope off. One copy, pure and browser-safe, so the two readers of

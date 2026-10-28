@@ -1278,7 +1278,7 @@ export function buildOversizedHistoryPlaceholder(message?: unknown): Record<stri
   };
 }
 
-// FORK 2026-08-25 (the architect: "the intermediate thinking gets deleted in the chat") — a message goes
+// FORK 2026-08-25: intermediate narration vanished from the chat — a message goes
 // over the cap because of ONE fat block: a screenshot's base64, or a tool_result carrying a whole
 // file. The prose in the same message is a few hundred bytes and is innocent, but the whole-message
 // placeholder threw it away with the image, so the narration the user had already READ came back

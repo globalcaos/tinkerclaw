@@ -27,9 +27,8 @@ export function stripCronKindPrefix(text: string): string {
  * stable) — never tonight's report headline. Findings live in the items.
  *
  * 2026-08-22: an earlier cut inverted these slots (headline left, name
- * right). the architect: "the name of the cron on the left … beginning of summary
- * on the right … not a summary of the issues found, but a summary of what
- * the actual prompt of the cron is asking it to do."
+ * right). Wanted: the cron name on the left and, on the right, the start of a
+ * summary of what the cron's prompt asks it to do, not of the issues found.
  */
 export function cronCardChrome(job: { name: string; description?: string }): {
   name: string;

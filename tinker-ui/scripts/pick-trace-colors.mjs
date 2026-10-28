@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // tinker-ui/scripts/pick-trace-colors.mjs
-// FORK 2026-08-04 (the architect): "use a montecarlo random sampling of the 3D space
-// populated by the already taken colors and sequentially choose one whose
-// distance to all the previous points is maximal."
+// FORK 2026-08-04: Monte Carlo sampling of the 3D colour space already
+// populated by taken colours, picking each next colour at maximal distance
+// from all previous ones.
 //
 // Greedy farthest-point sampling for EEG trace colours. The problem it solves:
 // Kimi (#1783FF), GLM (#3859FF), DeepSeek (#4D6BFE) and Qwen (#6336E7) are ALL

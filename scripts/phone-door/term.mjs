@@ -1,6 +1,6 @@
 /**
- * term.mjs: a terminal on the Pi, served by the phone door (the architect, 2026-10-20: "a terminal on the pi
- * … to access claude code and repair jarvispi when it hangs").
+ * term.mjs: a terminal on the Pi, served by the phone door (2026-10-20: a way in to run Claude Code and
+ * repair the machine when it hangs).
  *
  * WHY HERE: the door is its own small service. When the gateway or the Tinker page server hangs, the
  * door still answers, so the terminal still opens. It reuses the door's device-token auth (cookie or

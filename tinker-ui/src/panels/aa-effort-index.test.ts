@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AA_EFFORT_INDEX, aaFamilyOf, aaNamedEfforts, aaScoreAt } from "./aa-effort-index.js";
 
-// FORK 2026-09-02 (the architect: "there are still models that look like a horizontal line").
+// FORK 2026-09-02 (bug: some models still drew as a flat horizontal line).
 // A flat constellation means the model has a vendor effort ladder but ≤1 AA-measured
 // rung. The audit that turn found most of those are genuinely unmeasured — AA runs a
 // full effort ladder only for selected flagship models — but TWO were flat because our

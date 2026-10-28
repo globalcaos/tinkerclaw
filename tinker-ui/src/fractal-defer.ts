@@ -23,7 +23,7 @@
  * another lane, the page was closed) is replaced by a grace period once the chat is idle. A missed
  * reflection costs more than a late one.
  *
- * 2026-10-25 (the architect, 02:43: "Fractal should only come at the end of the task"): a Claude Code
+ * 2026-10-25 (Fractal comes only once the task is over): a Claude Code
  * background task (Bash in the background, a Workflow, a Task, a Monitor) outlives its turn too, and
  * its end wakes the chat on its own (the bridge's `bg-turn-…` run). The gateway lists each chat's
  * live ones (`ccBridge.backgroundTasks`) and they hold the reflection exactly like long jobs: the

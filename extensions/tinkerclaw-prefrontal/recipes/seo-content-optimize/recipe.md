@@ -159,4 +159,4 @@ the top-3 changes the operator should approve first.
 - Optimized content did not match brand voice. Fixed with a calibration step
   using on-brand content as style references (here: {{context_file}}).
 - v1.0 distilled 2026-06-13 from Journey kit matt-clawd/seo-content-optimizer.
-- **2026-10-13, post 631 (token cost):** published straight from a chat thread. The owner: "a bit sloppy. You mention Ireland like it belongs there, instead of making a good cross-country average. You just posted the information talked about, did not dig deeper anywhere ... what the fuck is H200 and where do I rent it from? The figures is what a person sees first, and what should not need any context." Fix: the figures-and-depth gate in step 3.
+- **2026-10-13, post 631 (token cost):** published straight from a chat thread. Review found it shallow: a single country was cited as if it were representative instead of a cross-country average, the post restated the thread without digging deeper, a hardware name went unexplained (what it is, where to rent it), and the figures, the first thing a reader sees, needed outside context to make sense. Fix: the figures-and-depth gate in step 3.

@@ -1,7 +1,6 @@
 /**
- * FORK 2026-09-08 (the architect, work tab: "I have Auto model selected, and I see a Sol thinking
- * indicator. It is not only wrong because opus is available, but also because Sol has reached a
- * token limit").
+ * FORK 2026-09-08 (bug on a work tab: with Auto selected, a Sol thinking indicator showed, wrong
+ * both because Opus was available and because Sol had hit its token limit).
  *
  * THE RACE. Pressing Auto in the Tinker picker fires a fire-and-forget `sessions.patch{model:null}`
  * to clear the pin stored by an earlier `/model openai-codex/gpt-5.6-sol`. On 2026-09-08 that patch

@@ -202,9 +202,9 @@ describe("buildChatUnits", () => {
     );
   });
 
-  // FORK 2026-10-02 (the architect: "when we expand anything, it should not compact automatically as it
-  // used to do when new messages appear at the bottom") — the turn-end fold must not swallow a row
-  // he opened while the turn ran.
+  // FORK 2026-10-02: anything expanded stays expanded when new messages arrive at the bottom
+  // — the turn-end fold must not swallow a row
+  // the reader opened while the turn ran.
   it("asks once, as a group forms, whether it opens — and hands the hook the members' markup", () => {
     const asked: Array<[string, string]> = [];
     const units = buildChatUnits(
@@ -254,10 +254,8 @@ describe("buildChatUnits", () => {
     ]);
   });
 
-  // FORK 2026-10-05 (the architect: "the 'TURN TIMING' box disappears after a while, not being visible when
-  // the answer appears, it should stay exactly where it was. The chat should work like a very long
-  // paper, when something is written here it stays, it might expand and contract, but never
-  // disappear"). Measured on the live page the same day: 59 of 64 blocks sat in a hidden group.
+  // FORK 2026-10-05: the 'TURN TIMING' box vanished once the answer appeared; it must stay where it
+  // was. The chat is a long paper: what is written stays, may expand or contract, never disappears. Measured on the live page the same day: 59 of 64 blocks sat in a hidden group.
   const timing = (uid: string, extra: Row = {}): Row => ({
     role: "assistant",
     _uid: uid,
@@ -395,8 +393,8 @@ describe("buildChatUnits — the answering model's rail", () => {
     expect(html(after, "rail-end:u:a8")).toBe(html(before, "rail-end:u:a8"));
   });
 
-  // FORK 2026-10-06 (the architect: "I still see the line next to 'TURN TIMING', which does not make sense
-  // because this part does not use any agent to be computed"). The block is the browser's and the
+  // FORK 2026-10-06: the agent line next to 'TURN TIMING' made no sense, since no agent computes
+  // that part. The block is the browser's and the
   // gateway's measurement of the turn, like the prompt it sits under: the model wrote none of it.
   const timingRow = (uid: string): Row => ({
     role: "assistant",

@@ -1229,7 +1229,7 @@ export function querySessionTree(
   if (!root) {
     return querySessionEvents(sessionKey, limit);
   }
-  // FORK 2026-10-05 (the architect: "it cannot be missing from the chat or from the EEG") — the session's
+  // FORK 2026-10-05 (a turn must never be missing from the chat or the EEG) — the session's
   // own rows and its subagent family no longer share one LIMIT. Every tab shares the root
   // (`agent:main`), so the newest 500 rows of "this session OR any subagent" were mostly other tabs'
   // fan-outs: Main had 1,391 rows of its own and 34 of them came back, and a tab with no row of its

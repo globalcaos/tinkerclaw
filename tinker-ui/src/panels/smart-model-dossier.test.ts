@@ -406,7 +406,7 @@ describe("CN supplier × model matrix", () => {
     expect(bolds).toBeGreaterThanOrEqual(priced.length);
   });
 
-  // 2026-10-02 (the architect's bank blocked OpenRouter): the "without OpenRouter" column.
+  // 2026-10-02 (OpenRouter became unavailable as a paid route): the "without OpenRouter" column.
   it("gives every row a without-OpenRouter cell naming the cheapest direct seller", () => {
     const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
     const body = html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));
@@ -426,7 +426,7 @@ describe("CN supplier × model matrix", () => {
     expect(Object.values(CN_PROVIDER_PRICES.models).some((m) => m.direct?.cheapest)).toBe(true);
   });
 
-  // 2026-10-02 (the architect: "lacks nice logos for every model, make it all prettier").
+  // 2026-10-02: every model gets a proper logo and a cleaner look.
   it("names each row the way a person says it, and draws the lab's mark when given one", () => {
     expect(cnPrettyName("z-ai/glm-5.3")).toBe("GLM 5.3");
     expect(cnPrettyName("xiaomi/mimo-v2.6-pro")).toBe("MiMo V2.6 Pro");
@@ -662,8 +662,8 @@ describe("CN supplier × model matrix", () => {
   });
 });
 
-// FORK 2026-09-02 (the architect): "mark in the dossier table the best at each category, and
-// make sure Thalamus routes intelligently depending on the task at hand". Every
+// FORK 2026-09-02: the dossier table marks the best model per category, and Thalamus
+// routes by the task at hand. Every
 // expectation is COMPUTED from domainStrengthFor / thalamusRoutesByDomain, never a
 // literal winner — the Epoch table is regenerated daily and a pinned name would rot.
 describe("smart-model dossier — best per column + THALAMUS routes", () => {
@@ -833,10 +833,9 @@ describe("smart-model dossier — topic maps awaiting a rule", () => {
   });
 });
 
-// FORK 2026-10-02 (the architect): "the capability table is hard to read at a glance. Make the
-// rankings more visible ... which one is first, second, third ... maybe stop at 5th?" and
-// "for the chinese models table add the intelligence index for each of them next to the
-// title, like the other two tables". Expectations are COMPUTED from scColumnOrder and the
+// FORK 2026-10-02: the capability table shows places 1 to 5 per column so rankings read at a
+// glance, and the Chinese-models table shows each model's intelligence index next to the
+// title, as the other two tables do. Expectations are COMPUTED from scColumnOrder and the
 // generated tables, never a pinned winner: the Epoch data is regenerated daily.
 describe("smart-model dossier — places 1–5 per column, AA index on the CN table", () => {
   const rows = [

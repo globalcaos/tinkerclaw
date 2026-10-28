@@ -43,8 +43,8 @@ when you do. This is the reference card `write-paper` and `revise-paper` assume 
 - **A secret paper never goes in `Papers/`.** The publish and staleness workflows (`revise-publish-jseries`,
   `papers-staleness-audit`, `audit-paper-posts`) scan that folder, so a paper filed there can be revised and summarised
   for the public site. Company research the principal keeps secret lives in that product's own private repo
-  (OrbisVision: GitLab orbisvision-vms, `documentation/vms/research/<slug>/`; principal 2026-10-03: "the paper should
-  live in the OrbisVision gitlab"). A staging folder under `~/Documents/ORBIS/` is fine while drafting, never the home.
+  (its research folder, e.g. `documentation/<product>/research/<slug>/`; set 2026-10-03). A private staging folder
+  outside `Papers/` is fine while drafting, never the home.
 - The **canonical current manuscript** is usually the **undated `<slug>.md`** — not the highest-dated
   filename. Confirm by comparing version headers/footers across candidates; ignore supporting files
   (`*-review*`, `*-critique*`, `*-references*`, `sota-*`).
@@ -77,7 +77,7 @@ when you do. This is the reference card `write-paper` and `revise-paper` assume 
 - **Not every edit is a version.** A small change the principal asks for between rounds (a cut, a sentence,
   a wording) goes into the current version in place: add it to that version's build step so a rebuild keeps
   it, recompile the same files, no bump and no new file. Bump for a revision round or a change of substance
-  (principal, 2026-09-29, on a two-sentence abstract cut: "No need to create a new version for that change").
+  (set 2026-09-29: a two-sentence abstract cut did not warrant a new version).
 - **Follow the paper's own file convention — check the folder first:**
   - **In-place** (e.g. J10/`corporate-swarm.md`): edit the one manuscript, bump the footer line, let git
     commits carry history. No separate `-vN` file.
@@ -100,11 +100,11 @@ example has stopped reading the paper.
   it. A public incident everyone remembers makes the point, cuts across vendors instead of accusing one, and can
   be cited. Cite the PRIMARY source and state only what it says: the disclosure does not name the refusing
   models, so the paper does not either, even though the press does. Before using a case the principal recalls,
-  check it: he remembered this one as "to prevent the hack"; the record says forensics after the break-in.
-- **Do not use Catalan (or Spanish) as the stand-in "other language."** Too close to home for the
-  principal — it reads as being about him. Pick a language that is plainly an example: Swahili, Finnish,
+  check it against the record: this one was first recalled as prevention, but the record says forensics after the break-in.
+- **Do not use a language close to the principal's home as the stand-in "other language."** It reads as
+  being about him. Pick a language that is plainly an example: Swahili, Finnish,
   Tagalog. A distant language is also funnier, which helps.
-- **A swapped example can change what is TRUE.** Catalan → Swahili turned "a good writer in that language
+- **A swapped example can change what is TRUE.** Swapping in Swahili turned "a good writer in that language
   and no great depth, so a cheaper model does the job" into a false claim: for a low-resource language the
   deciding axis is coverage, not depth. Re-read the sentences around any example you swap and fix the ones
   that only held for the old one.
@@ -113,8 +113,8 @@ example has stopped reading the paper.
 
 ### 5. A J-series paper is the design for the next coding iteration
 
-**The principal, 2026-09-30 06:22, rewriting J19 into v4.0:** "I don't care what we do today, nobody cares. The
-J-series papers are the design principles for the next coding iteration." So a J-series paper describes the best
+**The rule, set 2026-09-30 while J19 was rewritten into v4.0:** what runs today does not matter to the reader; a
+J-series paper is the design principles for the next coding iteration. So a J-series paper describes the best
 version of the system we could build, and it is written to be built from.
 
 - **No status report.** No "what runs today" table, no counts from our own logs, no "not yet wired", no names of
@@ -161,17 +161,17 @@ version of the system we could build, and it is written to be built from.
 - **Wrong "latest" file:** revised a dated sibling instead of the undated canonical `<slug>.md` that carried a higher version. Compare headers before choosing.
 
 - **Flashpoint and home language as examples (J19 v3.7, 2026-09-30):** the abstract illustrated topic policy
-  with Tiananmen Square and the four-request scene used a letter in Catalan. The principal asked for both to
+  with Tiananmen Square and the four-request scene used a letter in a language close to home. The principal asked for both to
   go — the first could offend people we would rather not offend, the second hits too close to home. Swapping
   the language also broke the sentence that justified a cheaper model. The vague replacement then lasted one
   version: he asked for a known, real case instead (v3.8). See convention 4.
 - **Status report instead of a design (J19 v3.x, rewritten as v4.0 on 2026-09-30):** twelve pages about what the
-  current router logged, what was wired and what was not. The principal: "nobody cares" what runs today; the
-  paper is the design the next iteration is built from. See convention 5.
+  current router logged, what was wired and what was not. The principal set the rule that what runs today does
+  not matter to the reader; the paper is the design the next iteration is built from. See convention 5.
 - **Two folders, one number (J19, found 2026-09-29):** the Thalamus supply-axis revision (2026-09-03) went into
   `J19_maestro/`, a folder whose notes said SUPERSEDED, while the registry's J19 was `J19_orchestration/`. Nothing in
   this recipe looked above the folder, so the split surfaced only in a series-wide snapshot 26 days later. Step 0
   now lists every folder that carries the number. **Second cost (2026-09-30):** the review loop then built v3.0–v3.5
   in `J19_orchestration/`, the registry's folder; the principal opened `J19_maestro/`, saw v0.2 as the latest, and
-  merged both into `J19_maestro/` ("here is where all the J19 files should go"). The registry is not the
+  merged both into `J19_maestro/` as the home for every J19 file. The registry is not the
   principal's folder: when two folders carry the number, ask him which one is home before the first write.

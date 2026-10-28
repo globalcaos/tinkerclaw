@@ -1,6 +1,5 @@
 /**
- * FORK 2026-10-15 (the architect: "little brain icons in the call timeline panel on the turn it
- * intervened"). The ctx-timeline draws one 🧠 per column that holds an Amygdala bubble, on the
+ * FORK 2026-10-15: a small brain icon in the call timeline on the turn Amygdala intervened. The ctx-timeline draws one 🧠 per column that holds an Amygdala bubble, on the
  * column of the LLM call that issued the tool call. Held here:
  *   - no `amy` option → no mark, no behaviour change;
  *   - a mark lands on the column that lists its tool call id; else on the last column sent at or

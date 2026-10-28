@@ -1,5 +1,4 @@
-// FORK 2026-08-05 (the architect: "messages appear out of chronological order, some old messages get
-// rewritten, others disappear"). Pure (DOM-free, global-free) message IDENTITY and ORDER, extracted
+// FORK 2026-08-05: messages showed out of order, some old ones rewritten, others gone. Pure (DOM-free, global-free) message IDENTITY and ORDER, extracted
 // so the rule is unit-testable — app.ts is a ~20k-line browser entry that cannot carry a test.
 //
 // ── THE DEFECT, IN ONE SENTENCE ────────────────────────────────────────────────────────────────
@@ -753,8 +752,7 @@ export function turnAnchorOf(list: unknown[], m: unknown): number {
 
 // --- turn anchors that survive a reshaped transcript -----------------------------------------
 //
-// FORK 2026-09-08 (the architect, clawhub tab: "I see multiple TURN TIMING ... it is a bug to see it so
-// many times"). The DOM snapshot held 25 timing blocks: seven complete ones stacked under ONE prompt,
+// FORK 2026-09-08: one tab showed the TURN TIMING block many times over. The DOM snapshot held 25 timing blocks: seven complete ones stacked under ONE prompt,
 // seven above the first prompt, none under prompts 3-31. The gateway had run one turn for that
 // prompt. Every block was real — a measurement from an earlier turn — and every one was in the wrong
 // place, because the store kept only the ORDINAL and `reinsertByTurnAnchor` counted that ordinal

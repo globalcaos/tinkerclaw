@@ -95,3 +95,5 @@
 .amy-jvote.amy-jreply{white-space:normal;max-width:100%;padding:3px 9px;font-size:11.5px;line-height:1.35}
 .amy-jvote.amy-jreply.amy-jrec{border-style:dashed;border-color:#d45bb6}
 .amy-jvote.amy-jreply.amy-jrec.amy-voted,.amy-jvote.amy-jreply.amy-voted{border-style:solid;border-color:#1E1E1E}
+.amy-jx-verdict{margin-top:3px;font-size:12px;line-height:1.4;color:#1e1e1ecc}
+.amy-jx-verdict .amy-mt{color:#1e1e1e99;margin-right:6px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase}

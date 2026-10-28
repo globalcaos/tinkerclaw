@@ -630,7 +630,7 @@ body.phone .phone-sheet-tool svg {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* 2026-10-25 (the architect: "same thickness of line, a bit thinner"): every path draws the same screen width. */
+/* 2026-10-25 (one line thickness everywhere, a bit thinner): every path draws the same screen width. */
 body.phone .phone-sheet-tool svg * {
   vector-effect: non-scaling-stroke;
 }

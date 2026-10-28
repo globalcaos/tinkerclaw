@@ -19,8 +19,8 @@ import {
 } from "./thalamus-frontier.js";
 import { tokensPerTaskFor } from "./tokens-per-task.js";
 
-// FORK 2026-09-02 (the architect): "They are supposed to be picked as up-left as possible,
-// basically defining the top-left outline." These tests pin the three properties the
+// FORK 2026-09-02: picks sit as far up-left as possible, on the top-left outline.
+// These tests pin the three properties the
 // envelope and the router now share: the frontier is a monotone top-left outline, the
 // BIAS dial walks along it, and a task domain can only move the pick to a model with a
 // MEASURED advantage.
@@ -159,7 +159,7 @@ describe("thalamusRoute — the Fugu step: a domain moves the pick only on measu
   });
 });
 
-// the architect, 2026-10-01: "Make the smart bias the default, and have it use the best model for every decision."
+// 2026-10-01: the smart bias is the default and uses the best model for every decision.
 describe("the smart stop — the default, and the best model for each decision", () => {
   const SMART_BOARD: FrontierRung[] = [
     rung(THALAMUS_ANCHOR_KEY, "max", 50, 1.0),
@@ -364,7 +364,7 @@ describe("frontierRungsFor — one route becomes its rungs on the shared tables"
   });
 });
 
-// the architect, 2026-10-02 (full deploy): "his picks are suggestions" — a prior of 10 % of the suggestion's own score.
+// 2026-10-02 (full deploy): the owner's picks are suggestions — a prior of 10 % of the suggestion's own score.
 describe("thalamusRoute — a suggestion is a prior, not a pin", () => {
   const BOARD2: FrontierRung[] = [
     rung("claude-code/opus", "max", 63, 3.0),

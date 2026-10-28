@@ -110,7 +110,7 @@ describe("before_prompt_build delivery", () => {
   });
 
   it("Claude out of tokens: the fallback attempt of the SAME turn gets the pack from TinkerClaw", async () => {
-    // The architect, 2026-09-23: "what will happen if I run out of claude tokens?" The hook runs
+    // 2026-09-23: what happens when the Claude quota runs out mid-turn? The hook runs
     // per model attempt with that attempt's provider, over the gateway's own session messages —
     // which never carry the pack on a Claude-driven session (Claude received it on its side).
     const hook = setup();

@@ -95,7 +95,7 @@ const COLD_START_WAIT_MS = 10_000;
 /**
  * Wall-clock ceiling for ANY upstream quota fetch in this file.
  *
- * FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+ * FORK 2026-09-03: the token budget panel did not load correctly.
  * node's `fetch` has NO default timeout, and two fetches here shipped without one. Every
  * quota fetch in this file runs inside `refreshUsageSnapshot()`'s single shared in-flight
  * promise, so one unbounded socket does not degrade one provider's row — it wedges the
@@ -731,7 +731,7 @@ async function fetchCopilotQuota(
         "X-Github-Api-Version": "2025-04-01",
         Accept: "application/json",
       },
-      // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+      // FORK 2026-09-03: the token budget panel did not load correctly.
       // This fetch carried NO timeout, and node's fetch has no default one — a socket that
       // opens and never answers hangs for ever. It runs inside refreshUsageSnapshot()'s
       // shared in-flight promise, so hanging here wedged that promise permanently: every
@@ -796,7 +796,7 @@ async function fetchCopilotQuota(
   }
 }
 
-// ─── xAI quota (the architect 2026-07-27: "figure out a way to find quota info for XAI") ───
+// ─── xAI quota (2026-07-27: find a source for xAI quota info) ───
 // SUPERSEDED 2026-07-30. The original implementation read the quota off
 // `x-ratelimit-*` response headers from a 1-token probe. Those headers are a
 // STATIC CEILING, not a counter: measured over five consecutive calls they sat at
@@ -1037,7 +1037,7 @@ export default function register(api: OpenClawPluginApi) {
     // Collapse overlapping refreshes (a timer tick landing on top of an RPC) onto one poll.
     if (refreshInFlight) return refreshInFlight;
     const run = (async (): Promise<RefreshResult | null> => {
-      // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+      // FORK 2026-09-03: the token budget panel did not load correctly.
       //
       // THE SHARED PROMISE MUST ALWAYS SETTLE. `refreshInFlight` is the memo every caller
       // waits on, and it is cleared only in the `finally` below — i.e. only when this async
@@ -1159,7 +1159,7 @@ export default function register(api: OpenClawPluginApi) {
       // the fix for "non-Anthropic quota only exists while a browser is open": both paths read
       // one poll.
       //
-      // FORK 2026-09-03 (the architect: "I cannot see the budget graphs") — but it used to `await` that
+      // FORK 2026-09-03: the budget graphs did not show — but it used to `await` that
       // refresh, which put a live multi-provider network fan-out ON THE RPC'S RESPONSE PATH. The
       // browser gives every RPC 60s (REQ_TIMEOUT_MS); a refresh routinely takes longer, so
       // `budget.usage` rejected, `budgetUsageData` stayed null, and every consumer of it — the
@@ -1367,8 +1367,8 @@ export default function register(api: OpenClawPluginApi) {
             utilization_pct: limitReq ? ((limitReq - remainReq) / limitReq) * 100 : 0,
             requests: { used: limitReq - remainReq, limit: limitReq, remaining: remainReq },
             tokens: { used: limitTok - remainTok, limit: limitTok, remaining: remainTok },
-            // FORK 2026-07-31 (the architect: "for sol-terra-luna, I am missing the reset
-            // time"). This rebuilds the window rather than spreading it, so every
+            // FORK 2026-07-31: the sol-terra-luna row lacked its reset
+            // time. This rebuilds the window rather than spreading it, so every
             // field not named here was silently dropped — including `resets_at`,
             // which the source file has carried all along
             // (memory/chatgpt-usage.json → models.Weekly.resets_at). The panel was

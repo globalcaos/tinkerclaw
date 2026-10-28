@@ -189,7 +189,7 @@ function grantAlreadyUsed(code) {
 
 /** True when the owner granted exactly this command once; records the use. */
 /**
- * Deletion intent (the architect, 2026-10-13): "help me liberate some disk space" is a request for
+ * Deletion intent (2026-10-13): a request to free some disk space is a request for
  * help, not an instruction to delete. A delete rule passes only when the owner's latest typed
  * message (same owner-only reading as the grant) asks for deletion in his own words.
  */
@@ -204,8 +204,8 @@ async function ownerAskedToDelete(transcriptPath, command) {
 }
 
 /**
- * Secret intent (the architect, 2026-10-13 21:13: "Jev should do the same with accessing the passwords as
- * with deleting stuff ... only allowed by express phrasing"). Reading or using a stored password
+ * Secret intent (2026-10-13): stored secrets get the same rule as deletion, allowed only when
+ * the prompt asks for them explicitly. Reading or using a stored password
  * passes only when the owner's latest typed message asks for it in his own words and Jev agrees;
  * otherwise the one-time code. Same negation and question filters as deletion.
  */
@@ -222,12 +222,12 @@ async function ownerAskedForSecret(transcriptPath, command) {
 }
 
 /**
- * Jev check (the architect, 2026-10-13: "the Jev prompt should be something like 'Verify if this prompt
- * specifically asks for a deletion to be performed'"). The keyword filter alone misreads prompts;
+ * Jev check (2026-10-13): Jev is asked whether the prompt specifically requests a deletion.
+ * The keyword filter alone misreads prompts;
  * Jev reads the owner's message against the exact command. Fails closed: no token, timeout or
  * any error → 0, and the deny's one-time code stays the way through.
- * Measured 2026-10-13 (jev-latest, 2 runs): explicit "Delete the 12 old Timeshift snapshots."
- * 0.84–0.91, Catalan "Esborra la cache de pip" 0.96; "clean timeshift enough (old files)" 0.64–0.66,
+ * Measured 2026-10-13 (jev-latest, 2 runs): an explicit delete request
+ * 0.84–0.91, an explicit one in another language 0.96; a vague clean-up request 0.64–0.66,
  * the quoted word 'delete' 0.30–0.51, negated 0.06–0.08, same message with another command 0.06–0.09.
  * Jev does NOT bind the target reliably (a broader worktree removal still scored 0.97), so this
  * gates the intent only.
@@ -285,7 +285,7 @@ async function jevScore(words, command, question, instructions) {
 
 /**
  * A delete word counts only when its own sentence does not negate it shortly before:
- * "I never instructed you directly to delete anything" (the architect, 2026-10-13) is a refusal,
+ * an invented example, "never told you to delete those files", is a refusal,
  * and a bare keyword match had read it as permission on the first live test.
  */
 const NEGATION_RE =
@@ -309,8 +309,7 @@ function hasUnnegatedIntent(words, intentRe) {
 
 /**
  * True when the command loads ~/.openclaw/.env only to call read-only Slack Web API methods
- * (the architect 2026-10-15: "refine the safety hook so it does not block you from obvious innocuous
- * interactions"; the read-only Frontier token was blocked on conversations.replies). Every URL
+ * (2026-10-15: the safety hook must not block plainly harmless calls; the read-only Frontier token was blocked on conversations.replies). Every URL
  * must be a listed read method; anything that posts, sends data, or prints the key or the file
  * is still blocked. Only .env counts: *.secret files and ~/.config/jarvis stay gated.
  */
@@ -391,8 +390,7 @@ function readStdin() {
 }
 
 /**
- * FORK 2026-10-15 (the architect: "all performed actions ... right where he does it, within its
- * context"): every spooled row names the tool call (toolUseId == the Claude tool_use id the
+ * FORK 2026-10-15 (each of Jev's actions is shown in place, inside its own context): every spooled row names the tool call (toolUseId == the Claude tool_use id the
  * chat's tool row carries) and the session, so the UI can hang a bubble on the exact call.
  * Set once per run from the hook payload (this script is one process per call, see the
  * process.exit at the end); null when claude-cli did not send them.

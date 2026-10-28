@@ -4,8 +4,7 @@ Goku chat (sv2/docs/books/usecases/src/test-sheet.md, section 1), so this is whe
 
 Usage: python3 -I goku_notes.py "<word>" ["<word>" ...] [--days 30] [--max 40]
 Prints one line per message (what a colleague typed, or Goku's visible reply) holding every word, newest first.
-Added 2026-10-22 (the architect: "The SV2 tests should be in the git and in the OrbisVision server, which you can use to get
-more data")."""
+Added 2026-10-22: keep the SV2 tests in git and on the project server, as a further data source."""
 import argparse
 import json
 import shlex

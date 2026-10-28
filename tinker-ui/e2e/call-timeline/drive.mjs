@@ -1,7 +1,7 @@
 /**
  * Drives the built tinker-ui against mock-gateway.mjs (same folder) through the CALL TIMELINE's "the last run stays on
- * screen" contract (context-window-panel.md §5.3, FORK 2026-10-02 — the owner: "The CALL TIMELINE panel sometimes stays
- * empty, it should always show the last run instead"), in a real browser, reading what the canvas actually painted.
+ * screen" contract (context-window-panel.md §5.3, FORK 2026-10-02: the panel sometimes stayed
+ * empty and must always show the last run), in a real browser, reading what the canvas actually painted.
  *
  *   1. A run streamed live is drawn (both builds: the harness's own sanity check).
  *   2. While the next prompt is being prepared, the last run stays drawn and the title names the new prompt.

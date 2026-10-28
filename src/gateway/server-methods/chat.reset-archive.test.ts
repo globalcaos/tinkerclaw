@@ -11,7 +11,7 @@ import { __resetTranscriptReadCacheForTest } from "../session-utils.fs.js";
 import { chatHandlers } from "./chat.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 
-// FORK 2026-10-02 (the architect: "The parallel worker's chat history seems to not be loading") — a session
+// FORK 2026-10-02: a parallel worker's chat history did not load — a session
 // reset before every turn keeps its transcript path; each reset renames what it held to
 // `<path>.reset.<time>`. `chat.history {resetArchiveBefore: T}` serves the newest archive reset before T,
 // imports included, through the real handler and store (the chat.cursor.test.ts harness).
@@ -373,7 +373,7 @@ describe("chat.history resetArchiveBefore", () => {
     expect(seen[0]).toBe("second-turn?");
   });
 
-  // FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — Main's
+  // FORK 2026-10-03: some tabs still showed erased history — Main's
   // `/new` moved it to a new transcript path; its resets sat beside the old one, served by nothing.
   // The old session's trajectory names the key, and that is how the archive is found.
   it("pages into the resets of a transcript the session left, found by its trajectory", async () => {

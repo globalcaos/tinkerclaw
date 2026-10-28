@@ -8,8 +8,8 @@
 // A test that spelled the expected rungs out would pass forever while the router
 // moved underneath it, which is the exact failure the envelope was built to reveal.
 //
-// REDRAWN 2026-09-02/03 (the architect: "picked as up-left as possible, basically defining
-// the top-left outline … use the graph in €/task"). The ring now marks a FRONTIER
+// REDRAWN 2026-09-02/03: picks sit as far up-left as possible, on the top-left outline,
+// in the €/task graph. The ring now marks a FRONTIER
 // RUNG, not a considered model; the path is the frontier in task-cost order.
 //
 // WHAT THE 2026-09-05 RESCALE TAUGHT. Artificial Analysis rebased the Intelligence

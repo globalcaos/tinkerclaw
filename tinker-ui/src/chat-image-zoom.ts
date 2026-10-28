@@ -1,6 +1,6 @@
 /**
- * Zoom controls for large images in the chat (the architect, 2026-10-13: "when you put images so big like
- * this, they should have a zoom in-out control at the bottom-left, so I can actually see them").
+ * Zoom controls for large images in the chat (2026-10-13): big images get a zoom in-out control at the
+ * bottom-left so they can be read.
  *
  * Every chat image at least MIN_NATURAL_WIDTH px wide, drawn at least MIN_SHOWN_WIDTH px, gets a bar at
  * its bottom-left (smaller thumbnails open the full-screen viewer on click instead):

@@ -167,7 +167,7 @@ document.querySelectorAll("g[data-sha]").forEach(g => g.addEventListener("mousee
 
 def shrink(src, dst, factor):
     """Chat clients draw images at their full pixel size, so the inline copy is
-    1/factor of the full PNG (the owner, 2026-09-25: "way too big ... show it at 1/3")."""
+    1/factor of the full PNG (2026-09-25: full size was far too big, so show it at 1/3)."""
     try:
         from PIL import Image
     except ImportError:

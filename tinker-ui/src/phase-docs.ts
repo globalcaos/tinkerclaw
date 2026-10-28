@@ -1,6 +1,5 @@
-// FORK 2026-08-16 (the architect: "whenever I click on any of those elapsed time messages, I want it to
-// show a popup with the explanation of what it really means, with references to the papers and
-// links to them too").
+// FORK 2026-08-16: clicking an elapsed-time message opens a popup explaining what it means, with
+// references and links to the papers.
 //
 // The timing rows answer "how long"; this answers "what was it actually doing, and what does a
 // big number here mean". Kept as pure data + a lookup so it is unit-testable — app.ts is a
@@ -15,12 +14,12 @@
 // sequence implies. Three links would have pointed at the wrong paper. Do not add an entry here
 // from a remembered id; fetch it.
 //
-// FORK 2026-08-16 (the architect: "read J1. The paper links should go to thetinkerzone.com").
+// FORK 2026-08-16: base the text on J1; paper links point to thetinkerzone.com.
 //   - J1 / TOTAL RECALL is now present. Its permalink was confirmed twice over — via the
 //     sitemap and via post id 171 — after the first sweep was cut short by rate-limiting.
 //   - EVERY reference now points at thetinkerzone.com. The two arXiv links that stood in for
 //     the retrieval and long-context background (Lewis et al. 2020; Beltagy et al. 2020) are
-//     gone: those ideas are covered by J1 and by Budget Prompting in the architect's own words,
+//     gone: those ideas are covered by J1 and by the Budget Prompting paper,
 //     and this popup is about THIS system. The host allowlist in the test enforces it.
 //
 // The claims quoted from J1 below are its own measured results (§9.2, §9.3, §9.4), not
@@ -37,8 +36,8 @@ export type PhaseRef = {
 };
 
 /**
- * FORK 2026-08-22 (the architect: "I want it to be framed as what the profit is ... for me and for a
- * newcomer that just cloned our repo").
+ * FORK 2026-08-22: frame it as the benefit, both for the owner and for a newcomer who just
+ * cloned the repo.
  *
  * Every stage below costs the architect seconds of his life. A popup that only says WHAT a
  * stage does is an excuse; the question it has to answer is WHAT THOSE SECONDS BUY, and

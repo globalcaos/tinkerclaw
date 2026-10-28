@@ -1,7 +1,7 @@
 /**
  * Hive door — the people table (tokens.json, mode 0600). Each row keeps the token's sha256, which the door
- * checks, and, since 2026-10-07, the token itself, so an admin can copy it again (the user: "another [button]
- * to copy their token"). Rows made before then hold only the hash until `door-tokens.mjs remember` fills it in.
+ * checks, and, since 2026-10-07, the token itself, so an admin can copy it again (a request for a
+ * button that copies a person's token). Rows made before then hold only the hash until `door-tokens.mjs remember` fills it in.
  *
  * A row is one person: { tokenId, operatorId, displayName, seatId, hash, status, admin, createdAt,
  * rotatedAt?, revokedAt?, deletedAt?, lastLoginAt?, token? }. status is "active" (can log in), "revoked"

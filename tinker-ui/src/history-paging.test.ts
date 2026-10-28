@@ -847,8 +847,7 @@ describe("turn numbering on a partial page (R36)", () => {
   });
 });
 
-// FORK 2026-10-02 (the architect: "When switching from Orbisvision to its slave, parallel worker, the chat
-// history does not load at all") — after a reload, a tab whose session never stops running held
+// FORK 2026-10-02: a busy worker tab showed no history after switching to it. After a reload, a tab whose session never stops running held
 // only the live bubbles it had watched since: the tail merge waits for a quiet session (a fresh
 // write would drop the live bubble) and the background prefetch skipped any page with rows. The
 // history is now written AROUND those rows by time, never replacing them.
@@ -986,7 +985,7 @@ describe("app.ts: a tab holding only live rows still gets its history", () => {
   });
 });
 
-// FORK 2026-10-02 (the architect: "The parallel worker's chat history seems to not be loading") — a session
+// FORK 2026-10-02: the parallel worker's history did not load. A session
 // reset every turn: chat.history {resetArchiveBefore: T} serves the newest archive reset before T,
 // and the page writes it above what it holds, under a "session reset" divider.
 describe("reset archives — paging past the start of the live transcript", () => {
@@ -1053,7 +1052,7 @@ describe("reset archives — paging past the start of the live transcript", () =
     expect(archiveOf({ messages: [], archive: { resetAt: "x", olderCount: 1 } })).toBeNull();
   });
 
-  // FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — the
+  // FORK 2026-10-03: some tabs still showed erased history. The
   // gateway now pages every earlier transcript of a tab, copies included; the page names the
   // oldest row it holds, and only older rows come back.
   it("names the oldest row the page holds when it starts an archive, and keeps that floor while reading it", () => {
@@ -1111,8 +1110,7 @@ describe("reset archives — paging past the start of the live transcript", () =
     expect(resetDividerRow(T0, "copy")._resetKind).toBe("copy");
   });
 
-  // FORK 2026-10-03 (the architect, 4th report: "In the 'Parallel worker' tab I still cannot see its full
-  // history") — a tab in the background never receives its session's live turns, and the worker's
+  // FORK 2026-10-03 (4th report): the parallel worker tab still lacked its full history. A tab in the background never receives its session's live turns, and the worker's
   // session is reset before every turn, so the turns that ran while he was in another tab exist only
   // in archives, BETWEEN the rows the page kept and the turn it shows now.
   it("an archive of turns that ran while the tab was away goes between the rows around it, by time", () => {
@@ -1257,7 +1255,7 @@ describe("reset archives — paging past the start of the live transcript", () =
 });
 
 describe("/clear is a floor for reset-archive paging (2026-10-18)", () => {
-  // the architect: "when I type /clear the chat does not reset". Main keeps its key across /clear, so the
+  // Typing /clear did not reset the chat. Main keeps its key across /clear, so the
   // empty pane, already at the top, paged the cleared turns and weeks more straight back in.
   const CLEAR = T0 + 600_000;
   const row = (id: string, at: number | undefined) => ({

@@ -55,5 +55,5 @@ Each source is asked at most once per flight per ~10 min (cache in `provider-cac
 - No duplicates across groups. Ticks and fold state live on the phone (localStorage `trip-check:`/`trip-fold:`,
   keyed by text and group), so renaming an item drops its tick.
 - Alerts about a flight in the plan are not drawn as cards; its status chip already shows them.
-  the architect 2026-10-20: "It does not make sense that I have a checklist for checking in online for the return trip at the beginning."
-- No "Next up" section (the architect 2026-10-20 07:14: "I have a next up that distracts me, no need"); the header countdown keeps its first paint.
+  (2026-10-20: a return-leg online check-in checklist does not belong at the start of the trip.)
+- No "Next up" section (2026-10-20: it distracted more than it helped); the header countdown keeps its first paint.

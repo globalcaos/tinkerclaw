@@ -180,7 +180,7 @@ describe("resolveSessionRunState — precedence", () => {
   });
 
   it("THE REGRESSION: a stale end stamp must not veto a NEWER turn", () => {
-    // the architect: "chat thinking indicators but no tab nor sessions highlighting". The end stamp is
+    // Report: the chat showed thinking but neither tab nor session list highlighted. The end stamp is
     // never cleared and rowsFetchedAt only moves on loadSessions(), so every later server claim
     // was vetoed and non-viewed tabs went dark. A row whose run began after that end stands.
     const state = resolveSessionRunState({
@@ -231,7 +231,7 @@ describe("terminal status vs a client that is still streaming", () => {
   const key = "agent:main:tinker:abc";
 
   it("THE REGRESSION: a stale 'done' snapshot must not silence a live stream", () => {
-    // the architect: "no thinking indicator in the chat but yet the llm is spitting out responses".
+    // Report: no thinking indicator in the chat while the model was still streaming output.
     // The snapshot says done, but this client received a delta AFTER that snapshot was taken.
     const state = resolveSessionRunState({
       sessionKey: key,
@@ -575,7 +575,7 @@ describe("bareModelTail / liveCountForModel", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FORK 2026-08-04 (the architect: "one model running lights up the same model under another provider").
+// FORK 2026-08-04: one running model lit up the same model under another provider.
 // The models panel renders one row PER PROVIDER, so a bare-tail count key is not a model — it is a
 // column of twins. These pin the qualification down, INCLUDING the residue it deliberately keeps:
 // the provider-less case is asserted so the day someone deletes the fallback they see exactly what
@@ -679,8 +679,8 @@ describe("modelCountKey — provider-qualified live counts", () => {
 });
 
 describe("resolveSessionRunState — run-set branch honours the Stop stamp (2026-08-06)", () => {
-  // the architect: "qwen 3.8 is thinking and no matter how many times I click on stop, it keeps showing
-  // the thinking progress bar". Recurrence of the 2026-08-05 Grok report — that fix only covered
+  // Report: a model kept showing the thinking progress bar no matter how often stop was
+  // clicked. Recurrence of the 2026-08-05 Grok report — that fix only covered
   // the legacy branches; the run-set branch returned before any end-stamp was consulted.
   const key = "agent:main:tinker:abc";
   const FETCH = NOW - 5_000;
@@ -964,8 +964,7 @@ describe("sessionHasFreshClientRun", () => {
 });
 
 // FORK 2026-09-04 — the frozen-transcript veto.
-// "I see my last prompt in the Smart x cost tab is also missing, as if I went back in time and the
-// prompt never happened." loadChat refused to merge server history while `streamRunId !== null`,
+// Symptom: the last prompt vanished from a tab's transcript, as if it had never been sent. loadChat refused to merge server history while `streamRunId !== null`,
 // and that cursor is cleared only by a terminal event — so a run that died without one froze the
 // tab permanently and every later prompt, though accepted and answered on the server, never showed.
 describe("transcriptWriterIsLive", () => {

@@ -31,7 +31,7 @@ Does the reply finish the work the user asked for? Pick the option that matches 
 
 ## Why `false-blocker` exists
 
-2026-10-24: asked to summarise a WhatsApp group he had just joined, the agent twice replied that the shared history was encrypted and unreadable. The old check only said "leaves your question open" and "say plainly what blocks it"; the reply already named a blocker, so the nudge pointed nowhere, and the reviewer filed both flags as noise. the architect: "You should be able to see the past messages same as me." The way through was to read how WhatsApp Web itself opens the bundle. The fact that the user's own device does the thing is the strongest evidence that it can be done, and the nudge has to say so.
+2026-10-24: asked to summarise a WhatsApp group he had just joined, the agent twice replied that the shared history was encrypted and unreadable. The old check only said "leaves your question open" and "say plainly what blocks it"; the reply already named a blocker, so the nudge pointed nowhere, and the reviewer filed both flags as noise. The owner could see the past messages, so the agent should too. The way through was to read how WhatsApp Web itself opens the bundle. The fact that the user's own device does the thing is the strongest evidence that it can be done, and the nudge has to say so.
 
 ## Settings
 

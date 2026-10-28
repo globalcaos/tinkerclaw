@@ -1,5 +1,5 @@
 /**
- * FORK 2026-10-21 — `askSession.slice` (the architect: "a particular way to see that the ask skill is being used").
+ * FORK 2026-10-21 — `askSession.slice` (a visible sign that the ask skill is in use).
  *
  * The ask-session skill wakes a past Claude Code session in place, so its whole exchange is the byte
  * range it appended to that session's transcript; `sessions.py ask` prints the range. The Tinker UI's

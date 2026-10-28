@@ -101,7 +101,7 @@ export const AEGIS_RULES: AegisRule[] = [
     scope: "exec",
   },
   {
-    // the architect, 2026-10-13: "help me liberate some disk space" was answered by purging the pip and
+    // 2026-10-13: a request for help freeing disk space was answered by purging the pip and
     // npm caches and force-removing 8 deploy worktrees (~41 GB), none of which he asked to
     // delete. Asking for help is not an instruction to delete: deletion needs his explicit
     // words. ownerIntent:"delete" makes the hook check them (see the field doc above).
@@ -114,9 +114,8 @@ export const AEGIS_RULES: AegisRule[] = [
     ownerIntent: "delete",
   },
   {
-    // the architect, 2026-10-13 21:13: "Jev should do the same with accessing the passwords as with
-    // deleting stuff, it should be enforced by the amygdala, and only allowed by express
-    // phrasing." Reading or using a stored password, key file or .env needs his own words,
+    // 2026-10-13: password access gets the same treatment as deletion, enforced by the
+    // amygdala and allowed only on explicit wording. Reading or using a stored password, key file or .env needs his own words,
     // checked by the hook exactly like a deletion (ownerIntent:"secret"). SSH keys used by
     // ssh -i are not in scope: they authenticate, nobody reads them.
     pattern:

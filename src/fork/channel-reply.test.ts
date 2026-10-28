@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { buildEmbeddedRunPayloads } from "../agents/embedded-agent-runner/run/payloads.js";
 import { readChannelReplyStamp, resolveChannelReplyTexts } from "./channel-reply.js";
 
-// FORK 2026-10-02 (channel-reply). The 15:46 turn in the WhatsApp group "I've got special
-// powers": the bridge's final message, as stored in the transcript (one thinking part, one
-// 1004-char text part), plus the stamp the bridge now puts on it for a WhatsApp run.
+// FORK 2026-10-02 (channel-reply). The 15:46 turn in a WhatsApp group
+//: the bridge's final message, as stored in the transcript (one thinking part, one
+// 991-char text part), plus the stamp the bridge now puts on it for a WhatsApp run.
 const NARRATION =
   "Reading the gifgrep skill instructions to find a mic-drop GIF the right way." +
   'Searching Tenor/Giphy for "mic drop" GIFs to pick one for the group.' +
@@ -16,7 +16,7 @@ const NARRATION =
   "Only type stubs matched; looking inside the WhatsApp extension for what it does with a `.gif` or `gifPlayback` on send." +
   "Looking at the extracted frame to confirm it really is the Obama mic drop before it goes to the group." +
   'Right clip: Obama, "Obama out", 2.9 s. Loading the message tool so I can send it as an auto-looping GIF.' +
-  `Sending the mic-drop clip to the "I've got special powers" group as an auto-looping GIF, with no caption.`;
+  `Sending the mic-drop clip to the "Test Group" group as an auto-looping GIF, with no caption.`;
 const TEXT = `${NARRATION}NO_REPLY`;
 
 function bridgeMessage(text: string, channelReply?: unknown): AssistantMessage {
@@ -53,7 +53,7 @@ function deliveredPayloads(message: AssistantMessage) {
     assistantTexts,
     toolMetas: [],
     lastAssistant: message,
-    sessionKey: "agent:main:whatsapp:group:120363050081077836@g.us",
+    sessionKey: "agent:main:whatsapp:group:120363000000000001@g.us",
     inlineToolResultsAllowed: false,
     verboseLevel: "off",
     reasoningLevel: "off",
@@ -67,10 +67,8 @@ function textOf(message: AssistantMessage): string {
 
 describe("channel reply: the 15:46 mic-drop turn", () => {
   it("delivers nothing when the bridge stamped the turn silent", () => {
-    expect(TEXT).toHaveLength(1004);
-    expect(deliveredPayloads(bridgeMessage(TEXT, { kind: "silent", textLength: 1004 }))).toEqual(
-      [],
-    );
+    expect(TEXT).toHaveLength(991);
+    expect(deliveredPayloads(bridgeMessage(TEXT, { kind: "silent", textLength: 991 }))).toEqual([]);
   });
 
   it("is the narration leak without the stamp (what the group received)", () => {
@@ -81,7 +79,7 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
 
   it("delivers only the answer when the bridge stamped a final segment", () => {
     const narration =
-      "Running the draft reply to Luís through the `human-voice` checker and noting what this group is like in its chat-profile notes file.";
+      "Running the draft reply to Alex through the `human-voice` checker and noting what this group is like in its chat-profile notes file.";
     const answer = "Imposible, güey, no tengo boca, lo mío es soltar micrófonos 🎤";
     const text = `${narration}${answer}`;
     const payloads = deliveredPayloads(

@@ -1,10 +1,9 @@
 /**
  * Never route a model through a reseller when we hold a DIRECT subscription with its vendor.
  *
- * FORK 2026-09-02 (the architect): "No claude models should ever route through openrouter,
- * since we have a 20x subscription that makes it way cheaper ... make sure no models are
- * routed through openrouter if we have a direct subscription (which includes gemini, gpt,
- * grok and claude)."
+ * FORK 2026-09-02: no Claude model routes through OpenRouter, since the 20x subscription is far
+ * cheaper, and no model at all goes through OpenRouter when a direct subscription covers it
+ * (Gemini, GPT, Grok and Claude).
  *
  * WHY THIS IS A PREDICATE AND NOT A DELETION. The obvious reading of that instruction is
  * "remove the offending rows", and the rows were removed. But a deleted row does not stop a

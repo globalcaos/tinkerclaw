@@ -128,7 +128,7 @@ A clean `pdflatex` log proves nothing about how the PDF _looks_. The defect that
 
 ## Failures Overcome
 
-- **No references, no figures (2026-10-03).** The temporal-network paper reached the PDF with one D2 drawing, since Step 2 only lists figures the draft already references. the architect: "Great work on the paper, but you forgot to inject in it napkin diagrams as our recipe calls for." Step 2 now sends a figureless draft to paper-figures. That first fix (`6f89f988559`) still fired only on a draft with no conceptual figure, and this paper had one D2 drawing of design B, so it would have passed again. the architect then asked whether Fractal had caught the gap; it had not. Step 2 now builds a per-section coverage list on every run (1 figure across 13 sections flags; the shipped version has 7).
+- **No references, no figures (2026-10-03).** The temporal-network paper reached the PDF with one D2 drawing, since Step 2 only lists figures the draft already references. The recipe calls for napkin diagrams and none had been added. Step 2 now sends a figureless draft to paper-figures. That first fix (`6f89f988559`) still fired only on a draft with no conceptual figure, and this paper had one D2 drawing of design B, so it would have passed again. the architect then asked whether Fractal had caught the gap; it had not. Step 2 now builds a per-section coverage list on every run (1 figure across 13 sections flags; the shipped version has 7).
 
 - **A forced page break goes stale on the next text edit (J11 v6.0 → v6.1, 2026-09-29):** a `\clearpage` that
   kept '5.6 One vocabulary' with its table in v6.0 became, after the introduction grew, one orphan line and a

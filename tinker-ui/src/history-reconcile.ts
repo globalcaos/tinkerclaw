@@ -1,7 +1,7 @@
 // Pure, DOM-free: reconcile a chat.history payload INTO the page without ever rewriting the page.
 //
-// FORK 2026-09-08 (the architect: "a plain 'use it as paper, write it and never go back' is more useful and
-// how a chat is supposed to behave … any funky dedup algorithm or similar should be gone").
+// FORK 2026-09-08: a chat behaves like paper, written once and never rewritten; no clever dedup
+// algorithm.
 //
 // THE DEFECT THIS REPLACES. loadChat used to do `messages = incoming` — throw the page away and
 // rebuild it from server history on every reconnect, tab switch and turn end (163 history serves

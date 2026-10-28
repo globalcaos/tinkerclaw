@@ -547,7 +547,7 @@ export function persistPreservedErrorPartial(params: PreservedErrorPartialParams
   }
 }
 
-// FORK 2026-08-05 (duprep — the "I see my answer twice" report): the chat delta payload carries
+// FORK 2026-08-05 (duprep — a report of the answer rendering twice): the chat delta payload carries
 // the SERVER-CUMULATIVE assistant buffer, and the client indexes into that one string with
 // integer cursors (tinker-ui/src/app.ts: the global `lastDeltaLen` plus a per-bubble
 // `_segmentStart`, sliced at app.ts:4460-4467 — its own comment says "deltaText is the

@@ -1,5 +1,5 @@
-// FORK 2026-08-23 (the architect: "the chat should be immutable, meaning that once something is written
-// it should not be erased ... make them stick (no disappearences allowed)").
+// FORK 2026-08-23: the chat is immutable; once something is written it is never erased, and
+// nothing disappears.
 //
 // WHY THE ROWS VANISHED, precisely.
 //
@@ -80,7 +80,7 @@ function readStore(): Store {
 /**
  * FORK 2026-08-24 — ONE session, TWO keys, and the rows split between them.
  *
- * The architect: "One with a fresh window only shows 'sending', nothing else."
+ * Report: a tab opened in a fresh window showed only the `sending` row and nothing after it.
  *
  * A new tab mints its own short key (`tinker:mt6w3ltz`) and sends under it. The gateway answers
  * with the canonical form (`agent:main:tinker:mt6w3ltz`) and the tab rebinds — MID-TURN. So the

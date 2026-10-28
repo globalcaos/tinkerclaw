@@ -247,8 +247,8 @@ describe("model window outline", () => {
     expect(html).not.toContain('cache-window-frame" style="width:20%;background');
   });
 
-  // FORK 2026-08-29 (the architect: "when I switch from opus to grok ... it should have gone white and
-  // shrunk to half, right?"). Both halves of that sentence, pinned.
+  // FORK 2026-08-29: switching from opus to grok should turn the bar light and halve it.
+  // Both halves pinned.
   it("paints xai the EEG light grey, never the invisible brand black", () => {
     const html = renderCachePanelHtml(
       sample({ provider: "xai", model: "grok-4.6", maxWindow: 500_000 }),
@@ -512,8 +512,8 @@ describe("THIS CALL / THIS SESSION stat panels", () => {
   });
 });
 
-// FORK 2026-09-30 (the architect: "this graph only is supposed to visualize the input tokens, not the
-// output ones ... add an extra number after 'this call', also purple").
+// FORK 2026-09-30: the graph shows input tokens only; output gets its own purple number
+// after THIS CALL.
 describe("output lives beside THIS CALL, in the output purple, and never on the bar", () => {
   /** The THIS CALL title row, from its opening tag to its close. */
   const callRow = (html: string): string =>

@@ -1968,8 +1968,8 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
-      // FORK 2026-07-30 (the architect: "Grok is firing without stop. I stop its thinking
-      // indicator and it starts again") — THE run ended with no reply, and every
+      // FORK 2026-07-30: a Grok run kept restarting after its thinking indicator
+      // was stopped — THE run ended with no reply, and every
       // retry/fallback above has already been exhausted (transient-HTTP retries
       // `continue` before reaching here). If we leave without a terminal status on
       // disk, `sessions.json` keeps `status:"running"` with no `endedAt`, and

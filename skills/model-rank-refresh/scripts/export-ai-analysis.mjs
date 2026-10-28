@@ -3,8 +3,8 @@
  * export-ai-analysis.mjs — turn the two LIVE Tinker panels into self-contained
  * interactive pages, so thetinkerzone.com can hold the ONLY copy of them.
  *
- * FORK 2026-09-04 (the architect): "I want the graph in the website to be the last
- * version ... only one copy, no duplicates, no maintenance hell." The panels are
+ * FORK 2026-09-04: the website graph must always be the latest version, kept as a
+ * single copy with no duplicates to maintain. The panels are
  * the RENDERER (they need live config, quota and the thalamus module); the
  * website is the ARTIFACT's only home. This script is the bridge.
  *
@@ -26,7 +26,7 @@ const { chromium } = require("playwright-core");
 // NOT /tmp. The 2026-09-04 run's chart.part.html/dossier.part.html were wiped from
 // /tmp/ai-analysis while the standalone previews survived, so the newest thing on
 // disk to LOOK at was three hours stale and 3 models short — which is exactly how a
-// "I cannot see the new model yet" report gets produced against a correct pipeline.
+// report that the new model is missing gets produced against a correct pipeline.
 const DEFAULT_OUT = path.join(os.homedir(), ".openclaw/workspace/artifacts/ai-analysis");
 const argOf = (f, d) => {
   const i = process.argv.indexOf(f);
@@ -165,7 +165,7 @@ if (!css.includes(".sc-card")) die("panel CSS not found in document.styleSheets"
 // The one asset the panels reference by relative path; inlined or it 404s.
 // 2026-09-23: read the ribbon from DISK. This fetched it from a second hardcoded :18790
 // (the Vite server retired 2026-09-10), failed silently, and shipped `/tinker/copilot-logo.svg`
-// to the website — a 404, so the M365 Copilot row the architect had just asked to re-icon showed a
+// to the website — a 404, so the M365 Copilot row that had just been re-iconed showed a
 // broken-image glyph. Missing file = die: an unbranded row is a visible defect, not a nicety.
 const COPILOT_SVG = path.join(REPO, "tinker-ui/public/copilot-logo.svg");
 if (!fs.existsSync(COPILOT_SVG)) die(`copilot logo missing at ${COPILOT_SVG}`);
@@ -233,8 +233,7 @@ const figures = await page.evaluate(() => {
 });
 
 // ── the €/MTOK <-> €/TASK switch, captured rather than dropped ──────────────
-// FORK 2026-09-04 (the architect: "The toggle switch per-token/per-task is missing, put it
-// again"). It was removed on 2026-09-04 because the -task DOT COORDINATES are
+// FORK 2026-09-04: restore the per-token/per-task toggle. It was removed on 2026-09-04 because the -task DOT COORDINATES are
 // computed live and only the -cost drawing was exported, so the control moved a
 // switch and nothing else — worse than absent.
 //
@@ -279,8 +278,8 @@ if (taskModeReady.dx < 20)
 if (taskModeReady.rules < 5)
   die(`only ${taskModeReady.rules} .sc-taskmode rules found — the class would do nothing`);
 // ── the LOG <-> LINEAR switch, captured as a SECOND DRAWING ───────────────────
-// FORK 2026-09-14 (the architect: "The toggle switch for linear-log horizontal axis is missing,
-// put it next to the token/job switch"). Unlike €/TASK this one is NOT a CSS class: the
+// FORK 2026-09-14: add a linear/log toggle for the horizontal axis, next to the
+// token/job switch. Unlike €/TASK this one is NOT a CSS class: the
 // panel's handler calls paint(), which re-renders the whole SVG through
 // renderSmartCostChart(..., { xScale }), because linear positions are not a transform of
 // log ones. So there IS a second drawing — the old note saying there was nothing to
@@ -358,8 +357,8 @@ if (linear.moved < Math.min(20, linear.dots / 2))
     `only ${linear.moved}/${linear.dots} dots moved between log and linear — the switch would do nothing`,
   );
 chartCostCard = linear.card;
-// 2026-09-23 (the architect: "useless bottom notes that should instead go in the main website as
-// normal text"). The THALAMUS caption at the foot of the drawing is already printed above
+// 2026-09-23: the bottom notes belong in the main page as normal text, not inside the
+// chart. The THALAMUS caption at the foot of the drawing is already printed above
 // the map by the publisher's FIGURES block, so it leaves the SVG and the canvas is cropped
 // to the lowest thing still drawn. MEASURED here, on the live drawing, rather than typed as
 // a constant: a future axis caption must never be clipped silently.
@@ -391,8 +390,7 @@ if (dossierMeta.rows < 5)
 if (figures.models < 20) die(`chart rendered only ${figures.models} models — refusing to publish`);
 
 // ── the site's own palette ──────────────────────────────────────────────────
-// FORK 2026-09-04 (the architect: "It does not need to have this dark aesthetics, it should
-// blend more with the website's style"). Read off thetinkerzone.com's served theme
+// FORK 2026-09-04: drop the dark look and blend with the website's own style. Read off thetinkerzone.com's served theme
 // (yith-wonder): base #FFFFFF, contrast #404040, primary #7A3921, secondary #B97040,
 // secondary-background #FDE5D0. The panels are drawn for a #120e0b paper, so this is
 // a TRANSLATION, not a theme switch — the chart itself has no light mode.
@@ -578,9 +576,8 @@ function prepare(cardHtml) {
 }
 
 // ── the shared fragment shell ───────────────────────────────────────────────
-// FORK 2026-09-04 (the architect: "I want both the graph and the chart completely native,
-// completely integrated, with no scrolling bars and using the full width of the
-// page"). Until today each panel shipped as a standalone HTML file that the post
+// FORK 2026-09-04: graph and chart fully native to the page, no scroll bars, full
+// page width. Until today each panel shipped as a standalone HTML file that the post
 // embedded in a fixed-height <iframe> — which is exactly where the scrollbars came
 // from, and why the figures sat in a dark box the theme could not reach. There is no
 // iframe now: this emits a FRAGMENT that goes straight into the post body.
@@ -618,8 +615,8 @@ const LAYOUT_CSS = `
 .tzai .tzai-switches { display: inline-flex; gap: 22px; align-items: center; flex-wrap: nowrap;
   flex: 0 0 auto; white-space: nowrap; }  /* side by side, never stacked (the head column squeezed it) */
 .tzai .sc-axisbar:empty { display: none; }
-/* THE MAP IS A BUTTON (the architect 2026-09-14: "The main graph should be a big button that, upon
-   pressing, should open a full screen popup"). Inline it is a preview you cannot fight
+/* THE MAP IS A BUTTON (2026-09-14: the main graph acts as a large button that opens a
+   full-screen popup). Inline it is a preview you cannot fight
    with — no wheel, no drag — and one click anywhere on it opens the popup. */
 .tzai-frame { position: relative; }
 .tzai-open { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0;
@@ -688,9 +685,8 @@ const LAYOUT_CSS = `
 .tzai-tip.on { opacity: 1; }
 @media (max-width: 900px) { .tzai-chart .tzai-stage { height: 74vh; } }
 /* ── FULL-PAGE POPUP ────────────────────────────────────────────────────────
-   the architect 2026-09-04: "The zoom does not work in the graph, because the mouse wheel
-   scrolls the page instead. Turn it into a full-page popup then, as we had it in
-   the tinkerclaw."  Reproduced first: on a scrollable page a wheel over the plot
+   2026-09-04: zoom failed because the mouse wheel scrolled the page instead; the
+   fix is a full-page popup, as in the TinkerClaw panel.  Reproduced first: on a scrollable page a wheel over the plot
    BOTH zooms and scrolls. preventDefault() is present and correct — but this SVG
    is ~1 MB (121 models x 4 efforts + labels + logos), so the main thread misses
    Chrome's wheel deadline and the compositor scrolls anyway. No amount of handler
@@ -701,9 +697,8 @@ const LAYOUT_CSS = `
 .tzai-fs { position: fixed !important; inset: 0 !important; width: auto !important;
   margin: 0 !important; z-index: 2147483000; background: #FFFDFB; display: none; }
 .tzai-fs.on { display: block; }
-/* 2026-09-23 (the architect: "only 50% in height ... some crap also at the top that does not let
-   me use the 100% height. Reset view icon is not necessary ... a close button with the
-   'ESC' note ... could just sit on the top-right"). No toolbar row any more: the drawing
+/* 2026-09-23: the maximized view used only half the height because of a top bar; drop
+   the reset-view icon and keep only a close button with an ESC hint at the top-right. No toolbar row any more: the drawing
    takes the whole viewport and the few controls FLOAT over it, the way a map's do. The
    title and subtitle stay on the page; the footnotes moved to the page text. */
 .tzai-fs-body { position: absolute; inset: 0; }
@@ -838,7 +833,7 @@ svgs().forEach(function(svg){
     svg.setAttribute('viewBox', vb.join(' '));
     // The panel's applyView: --sc-k = inverse zoom, which the captured CSS uses to
     // counter-scale rings, logos and labels so they keep their on-screen size while their
-    // positions spread (the architect 2026-09-17: "the size of the bubbles should remain constant").
+    // positions spread (2026-09-17: bubble size stays constant).
     svg.style.setProperty('--sc-k', String(vb[2] / vb0[2]));
     svg.classList.toggle('sc-zoomed', vb0[2] - 0.5 > vb[2]);
   }
@@ -858,8 +853,8 @@ svgs().forEach(function(svg){
   }, { passive: false });
   var drag = null;
   svg.addEventListener('pointerdown', function(e){
-    // A prepaid circle is a slider, not a grab handle for the map (the architect 2026-09-15:
-    // "I am unable to drag the circles right-left because the whole graph moves").
+    // A prepaid circle is a slider, not a grab handle for the map (2026-09-15: dragging a
+    // circle sideways moved the whole graph instead).
     var onDot = e.target.closest ? e.target.closest('[data-util-drag]') : null;
     if (onDot) return;
     drag = { x: e.clientX, y: e.clientY, vb: vb.slice() };
@@ -884,8 +879,8 @@ svgs().forEach(function(svg){
 // axes are affine, in cost (linear drawing) or in log10(cost) (log drawing). The home
 // utilisation is read back from the circle's own "75%" label, so SC_PLAN_UTIL is not
 // copied here. Snap-back, cursor and readout are the panel CSS already on the page.
-// 2026-09-24, the panel's plan WAYPOINTS ported (the architect 2026-09-23: "once I choose to start
-// dragging a circle, its row elements will also highlight"): grabbing a circle lights its
+// 2026-09-24, the panel's plan WAYPOINTS ported (2026-09-23: dragging a
+// circle also highlights its row elements): grabbing a circle lights its
 // row (plan triangles, API triangle, dashed bridge = .sc-wp-active), each triangle is a
 // sticky stop within SNAP_PX screen pixels, and on a stop the readout names the plan and
 // its monthly price. Stop x and label ride on the captured marks (data-wp-x/-hud).
@@ -1127,9 +1122,8 @@ const hoistStyles = (html) =>
     return "";
   });
 // ── the card's footnotes become page text; the drawing loses its caption ─────
-// 2026-09-23 (the architect: "the available real-estate ... once it is maximized, is only 50% in
-// height. There are some useless bottom notes that should instead go in the main website
-// as normal text"). The .sc-foot strip under the plot is lifted out whole and published as
+// 2026-09-23: the maximized view used only half the height, and the bottom notes belong
+// in the main page as normal text. The .sc-foot strip under the plot is lifted out whole and published as
 // "The fine print" below the page's own "How to read it" (NOTES marker, see
 // publish_ai_analysis.py); the THALAMUS caption inside the SVG is dropped because FIGURES
 // already prints it; the canvas is cropped to the measured bottom of what is left.

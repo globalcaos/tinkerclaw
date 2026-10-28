@@ -45,9 +45,8 @@ allows, else a documented fallback). Two enhancements over the original run:
    **departure airport**.
 2. **Completeness gate** — if any trip pillar is still TBD / unconfirmed /
    missing, DO NOT send a half-finished briefing. Send ONE short enquiry asking
-   what to do, and stop. (the architect, 2026-07-08: _"account for a trip where not all
-   the details are finalized… enquire what to do instead of spamming me with a
-   half-finished business plan."_)
+   what to do, and stop. (2026-07-08: a trip whose details are not final gets
+   one enquiry, never a half-finished briefing.)
 
 ## When to Use
 

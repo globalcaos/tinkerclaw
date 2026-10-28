@@ -11,7 +11,7 @@ watcher starts rebuilding his own edits again.
 
 The pdf-review server calls this when a PDF has a sibling SOURCE.md (same name) that is newer than the
 PDF, so the architect can edit the text himself and the open viewer reloads the rebuilt PDF (2026-10-16:
-"some edits I should just do, instead of burning tokens"). Images use file:// paths.
+small edits are cheaper done by hand than by the model). Images use file:// paths.
 """
 import importlib.util, re, subprocess, sys, tempfile
 from pathlib import Path
@@ -113,7 +113,7 @@ def main(src: str, out: str, keep_marks: bool = False) -> int:
 
 def register_for_chat(out: str) -> None:
     """A chat that builds a review PDF is its maker: register it, or the viewer hides Apply/Redo.
-    the architect 2026-10-27 16:58: "I cannot see the button to apply comments" (built with md2pdf alone).
+    2026-10-27: the Apply-comments button was missing on a PDF built with md2pdf alone.
     Runs `open-pdf --link`, which links the PDF into papers/open, records TC_SESSION_KEY and prints
     the viewer URL without opening a window. The server's own rebuilds have no session: no-op."""
     import os

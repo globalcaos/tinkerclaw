@@ -24,8 +24,8 @@ import { BIAS_STOPS } from "./routing-rationale.js";
 import { SC_THALAMUS, scThalamusRelCost } from "./smart-cost-chart.js";
 export { CN_PROVIDER_PRICES } from "./cn-provider-prices.generated.js";
 export type { CnProviderPrices } from "./cn-provider-prices.generated.js";
-// FORK 2026-08-06 (the architect): the SMART MODELS dossier — "all the smart models
-// against what they are best at", plus a per-topic CENSORSHIP grid: one column
+// FORK 2026-08-06 (the architect): the SMART MODELS dossier — every smart model
+// set against what it is best at, plus a per-topic CENSORSHIP grid: one column
 // per censored thing, one glyph per model, the detail on mouseover.
 //
 // CORRECTION 2026-08-06 (the architect caught it): the first version of this table put
@@ -70,9 +70,8 @@ export type { CnProviderPrices } from "./cn-provider-prices.generated.js";
 // ── FORK 2026-08-30 (the architect): the PSYCH axis, and why marking an opinion beats
 // ── withholding a column ────────────────────────────────────────────────────
 //
-// THE ARCHITECT: "I feel opus is better at programming while gpt is better at
-// psychology and writing emails, and yet those categories are not present in the
-// dossier popup panel." Right on both counts. PROGRAMMING had a column (CODE,
+// THE NEED: Opus seemed better at programming and GPT at psychology and writing
+// emails, yet the dossier popup panel had neither category. Both points held. PROGRAMMING had a column (CODE,
 // SWE-bench-anchored). EMAIL was buried inside WRITE without ever being named.
 // PSYCHOLOGY — reading people, emotional nuance, difficult conversations, advice
 // — had no column at all, so the routing question he asks most often was the one
@@ -136,8 +135,8 @@ export type { CnProviderPrices } from "./cn-provider-prices.generated.js";
 
 // ── FORK 2026-09-23 (the architect): GRANULARITY, INFLUENCE, LEGIBILITY ───────────────
 //
-// THE ARCHITECT: "the table that explains which model is best at what should be more
-// granular, more visual, and it finally influences Thalamus."
+// THE NEED: the which-model-is-best-at-what table should be more granular and visual,
+// and should feed Thalamus.
 //
 // Three asks, and the middle one is the load-bearing one. Before today a capability
 // column was an OPINION IN A GRID: eight of the eleven happened to share a name with a
@@ -600,8 +599,8 @@ const SC_SKILLS_AS_ADDED: SkillDef[] = [
     about:
       "Price per unit of work — ★ means cheapest tier. A high score here plus an adequate score elsewhere is what makes a fan-out affordable. Not a task domain, for the same reason as SPEED.",
   },
-  // ── 2026-10-02 VERTICALS (the architect: "research online what the different benchmarks on each
-  //    model indicate, and find more verticals"). Definitions and grades come from one
+  // ── 2026-10-02 VERTICALS (research what each model's benchmarks
+  //    indicate, and find more verticals). Definitions and grades come from one
   //    research pass per column; the cells live in SC_VERTICAL_CELLS below.
   {
     key: "shell",
@@ -707,7 +706,7 @@ export type SkillCell = {
   caveat?: string;
 };
 
-// ── MEASURED FACTS (FORK 2026-08-07, the architect: "put numbers to the mouseover") ──
+// ── MEASURED FACTS (FORK 2026-08-07: put numbers in the mouseover) ──
 // Grades are a judgement; these are figures with a source and a date, appended
 // to the tooltip of the subject they measure. Deliberately partial: CODE, COST,
 // LONG CTX and SPEED have published per-model numbers, so they get one. AGENTIC,
@@ -4852,8 +4851,8 @@ export function scRankBySkill(rows: DossierRow[], key: SkillKey): DossierRow[] {
   });
 }
 
-// ── THALAMUS ENVELOPE (FORK 2026-08-30, the architect: "use the same color and envelope
-// the model uses that thalamus is programmed to use in the dossier chart") ──
+// ── THALAMUS ENVELOPE (FORK 2026-08-30: the dossier uses the same
+// colour and envelope as the chart Thalamus routes from) ──
 //
 // ONE SOURCE, TWO PANELS. Membership is never a list written here: it is read off
 // the result of `thalamusCandidates` (src/shared/thalamus-candidates.ts), the same
@@ -4980,9 +4979,8 @@ function thalamusBadge(id: string, t: DossierThalamus | undefined): string {
   );
 }
 
-// ── BEST PER COLUMN · MEASURED LINE · THALAMUS ROUTES (FORK 2026-09-02, the architect:
-// "also mark in the dossier table the best at each category, and make sure Thalamus
-// routes intelligently depending on the task at hand") ──
+// ── BEST PER COLUMN · MEASURED LINE · THALAMUS ROUTES (FORK 2026-09-02: the dossier
+// marks the best per category and Thalamus routes by task) ──
 //
 // MEASURED BEATS JUDGED. Every column whose key is also a Thalamus TaskDomain now has
 // a second source beside the hand-written grade: DOMAIN_STRENGTH — the Epoch AI
@@ -5056,9 +5054,9 @@ export type DossierBest = {
   strength?: DomainStrength;
 };
 
-// ── PLACES 1–5 PER COLUMN (FORK 2026-10-02, the architect: "the capability table is hard to read
-// at a glance. Make the rankings more visible ... which one is first, second, third ...
-// maybe stop at 5th? ... a gradient from background color to whatever other color").
+// ── PLACES 1–5 PER COLUMN (FORK 2026-10-02: the capability table was hard
+// to read at a glance; show places 1 to 5 per column as a gradient from the background
+// colour).
 //
 // Before this, the cell wash followed the GRADE, and a four-step grade over 50 models put
 // gold on half the grid: "who is best at CAD" had one answer (a 6.5px "1") and no second
@@ -5256,9 +5254,8 @@ export function renderDossierTable(
   // Reference rows always follow the configured set, then sort with everything
   // else once the user clicks a subject header.
   const sorted = [...rows].sort((a, b) => idx(b) - idx(a)).concat(SC_REFERENCE_ROWS);
-  // TWO TABLES (the architect 2026-10-02: "The capacity matrix with who does what best and what is
-  // censored overflows on the right ... create two separate matrices, one for tasks and the
-  // other for censored stuff"). Same rows in the same order, one body per table: `body` is
+  // TWO TABLES (2026-10-02: the capability-plus-censorship matrix overflowed on the right, so
+  // it splits into a task table and a censorship table). Same rows in the same order, one body per table: `body` is
   // the capability table and carries data-index/data-ranks for sorting; `censBody` is the
   // refusal table and carries neither, so the exporter's row count and the page's sort
   // script (both read `.sd-table tr[data-index]`) see exactly what they saw before.
@@ -5743,8 +5740,8 @@ export function renderCnProviderMatrix(
     logoFor?: (id: string) => string | undefined;
     /**
      * The Artificial Analysis intelligence index for a row id, from the SAME lookup the
-     * two dossier tables use (the architect 2026-10-02: "add the intelligence index for each of
-     * them next to the title, like the other two tables"). The caller owns that lookup;
+     * two dossier tables use (2026-10-02: show each model's intelligence index next
+     * to the title, as the other two tables do). The caller owns that lookup;
      * without this option the column is not drawn at all, rather than drawn as dashes.
      */
     indexFor?: (id: string) => number | undefined;
@@ -5753,8 +5750,8 @@ export function renderCnProviderMatrix(
   const cols = cnMatrixColumns(data);
   const ids = Object.keys(data.models);
   const money = (v: number): string => (v >= 1 ? v.toFixed(2) : v.toFixed(4));
-  // WITHOUT OPENROUTER (the architect 2026-10-02, after his bank blocked OpenRouter as a merchant):
-  // "find the cheapest" among sellers he can pay directly. The prices come from each
+  // WITHOUT OPENROUTER (2026-10-02, once OpenRouter could no longer be paid): the cheapest
+  // among sellers that can be paid directly. The prices come from each
   // seller's OWN list (generator: DIRECT_SOURCES), never from its OpenRouter row — on the
   // day this was added Novita sold GLM-5.3 at half price through OpenRouter and full
   // price on its own API. Older generated data has no `direct` block: the cell says so.

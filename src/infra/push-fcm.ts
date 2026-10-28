@@ -1,4 +1,4 @@
-// FORK 2026-10-22 (the architect: "Firebase is up, can you now wake up the phone app when needed?")
+// FORK 2026-10-22: wake the sleeping phone app with a Firebase push when needed.
 // Wakes an Android node through Firebase Cloud Messaging, the way push-apns.ts wakes an iOS one.
 // A high-priority data message reaches an app Android has put to sleep; the app answers by
 // reconnecting its node socket. The server key is a Google service-account JSON named by

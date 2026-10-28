@@ -122,15 +122,14 @@ for, made concrete. Then, in order:
 4. **What it does for the reader, and where it stands** (2–3 sentences): the concrete benefits in the reader's own
    system, then one plain phrase on where the work stands, with "not yet" where there is no proof. A number goes
    in only when it IS the story; case counts, thresholds and caveats live in the body, where a reader who wants
-   them can check them. The how lives in the body, and the history of earlier attempts never goes in the abstract (principal, 29 Sep 2026: "the reader
-   does not give a fuck about our previous attempts, but what the digital amygdala can actually do for their
-   harness").
+   them can check them. The how lives in the body, and the history of earlier attempts never goes in the abstract (principal, 29 Sep 2026: readers care
+   about what the system can do for their own harness, not about earlier attempts).
 5. **Back to the vision** (1 sentence): what becomes possible if this holds.
 
 There is no word budget and no paragraph quota: the abstract is as long as the story needs and short enough to
 sit under the title on page 1 (compile-paper, blank first page). Test each sentence by what the reader loses
 without it; a sentence that is there to fill a slot of this list, meet a count or satisfy a reviewer's rigor
-axis fails the test. **Too much rigor is rigor mortis** (principal, 29 Sep 2026): precision serves the reader,
+axis fails the test. **Excess rigour buries the point** (principal, 29 Sep 2026): precision serves the reader,
 and it pays in the body, not in the doorway. The vision is one or two sentences, not a preamble: Widom's rule, "little if any background", still
 holds for everything after it. Wonder, not hype: no adjective does the work of evidence.
 
@@ -140,8 +139,8 @@ A paper never prints the text sent to a model: no prompt, no question "as sent",
 such text is built (what it asks about, its options, the habits behind its wording) and points to where the
 exact wording is kept, available on request. Examples of what a user sees or an agent says are fine. A wording
 in print freezes one version of a text that is meant to improve, and it reads as a recipe to copy instead of an
-idea to understand (principal, 29 Sep 2026: "I don't want to see, anywhere in the paper, literal prompts. I just
-want to see pointers, recommended ways to word things").
+idea to understand (principal, 29 Sep 2026: no literal prompts anywhere in a paper, only pointers and recommended
+ways to word things).
 
 ### Checks a reviewer can run
 
@@ -168,8 +167,8 @@ want to see pointers, recommended ways to word things").
   to what the case needs, and cite specialised work instead of replacing it (principal, 29 Sep 2026).
 - **The idea's story, not the author's diary.** "Do not recapitulate your personal journey of discovery"
   (Peyton Jones). In the principal's papers an earlier failed attempt does not appear at all: its lessons show
-  up as design choices, stated as such (principal, 29 Sep 2026: "do not mention things that did not work. We've
-  learned from it and this is why we are now proposing to use Jev instead"). Current limits of the proposed
+  up as design choices, stated as such (principal, 29 Sep 2026: leave out what did not work and present
+  its lessons as the reason for the current design). Current limits of the proposed
   design are not history and stay.
 - **One subject in one place, one word per concept** (Mensh & Kording, rule 4). Each paragraph opens with its
   context and closes with its conclusion; each figure title states what the figure shows.
@@ -358,12 +357,12 @@ Accept what improves the paper for a human reader. Reject with a stated reason (
 text, would add length without meaning, or would require inventing evidence). Defer what is real but
 out of scope as a `###` entry in `improvement_notes.md`. Keep the adjudication file next to the review.
 
-**The principal's own marks come first.** When the architect has read the PDF in the review viewer
+**The principal's own marks come first.** When the owner has read the PDF in the review viewer
 (`~/src/pdf-review`, page-by-page pdf.js at `http://127.0.0.1:18820/viewer/web/viewer.html?file=/papers/<name>.pdf`)
 and saved it, run `~/src/pdf-review/pdf-comments.py <the saved PDF, newest in ~/Downloads>`. Each line is page,
 kind, the quoted text and his note; find the passage in the source by the quote. His notes are accepted by default;
-reject one only with a reason he would accept, and say which. Added 2026-10-03, when the viewer was built:
-"I would like to be able to easily annotate the file so you can easily read the comments I made".
+reject one only with a reason he would accept, and say which. Added 2026-10-03, when the viewer was built so the principal can annotate a paper and the master
+can read his comments.
 
 ### 5. Revise (master)
 
@@ -386,8 +385,8 @@ last pages.
 **Every text change goes through skill `human-voice` before the rebuild**, reviewer notes and the principal's own
 edits alike (title, abstract, a replaced phrase): read its `SKILL.md`, then
 `voicecheck.py <title+abstract>.txt --mode doc` and the same on the body. Fix every HIGH; bold run-in heads and
-the qualifiers that mark evidence limits are document structure, so judge those MEDs, don't strip them. the architect,
-2026-09-30, after a retitle written without it: "did you use the humanization skill we developed?"
+the qualifiers that mark evidence limits are document structure, so judge those MEDs, don't strip them. Added
+2026-09-30, after a retitle written without it was caught in review.
 
 ### 6. Re-review
 
@@ -472,7 +471,7 @@ but the inputs line.
 ## Variant: series round (several papers, one system)
 
 When the principal asks to rewrite a GROUP of papers that describe one system (first run: the memory series J1, J14,
-J2, J5, 2026-10-12, "Papers should keep without overlap as much as possible"), write an `ownership.md` in a series
+J2, J5, 2026-10-12, with the request that the papers overlap as little as possible), write an `ownership.md` in a series
 folder (`~/Documents/AI_reports/Papers/_series-<name>/`) before any rewrite: one stage per paper, what each owns, what it
 leaves to the others, one shared vocabulary. Every rewrite reads it, a cross-paper critic checks overlap before Astra,
 and Astra gets one turn with all the packets so she can also score the series. The principal's round cap replaces the
@@ -554,8 +553,7 @@ openai-codex/gpt-6-astra` reported `modelApplied:true` and ran `claude-code/clau
   spawn path is not used for the slave any more; the slave is the chained tab, whose model is read
   from `sessions.list` in Step 0.
 - **Reviews the principal could not see (J11, 2026-09-28):** rounds 1 and 2 ran through `codex exec`,
-  off-channel. The principal: "I cannot see any blue message in your slave, you are doing something
-  wrong." Every round now goes into the slave tab with `converse.mjs`.
+  off-channel, so no review appeared as a blue message in the slave tab. Every round now goes into the slave tab with `converse.mjs`.
 - **Master waiting in-turn (J11, 2026-09-28):** round 3 was sent with `--wait 585` and the master sat
   on it for 3.7 minutes. The principal: the call ends after sending, and the slave wakes the master.
   Step 3 now arms `wake-on-finish.mjs` as a systemd unit and sends with `--no-wait`.
@@ -570,15 +568,15 @@ openai-codex/gpt-6-astra` reported `modelApplied:true` and ran `claude-code/clau
 - **Prior art swept from papers only while a competitor ships (NeuroCoin, 2026-09-14):** search for
   live products before scoring novelty.
 - **Thesis drift through rubric rounds (J11, 2026-09-29):** eight readability rounds each accepted
-  reasonable notes and together turned "distil the amygdala, build it beside the model with Jev" into "a
-  guard that demands evidence". The principal: "the paper got distorted from its original intention by
-  automatic updates." Every adjudication (Step 4) now checks each accepted note against the sealed intent;
+  reasonable notes and together turned the intended thesis (a distilled amygdala built beside the model
+  with Jev) into a guard that demands evidence. The principal noticed that the automatic rounds had moved the
+  paper away from its original intention. Every adjudication (Step 4) now checks each accepted note against the sealed intent;
   a note that moves the thesis is a DIRECTION item for the principal, never an edit the master applies.
 - **The notes queue became a log (J11, 2026-09-29):** v6.1, v6.2 and v6.3 were built in three rounds and the queue
   was never reset; the master appended a struck-through "done" item and a loop-status line instead. Cause: this
   recipe told the master to append to `improvement_notes.md` at Steps 1, 4 and 8, never said when to empty it, and
   did not link `jseries-paper-conventions`, where the reset rule lives, so the rule never loaded during a loop.
-  The principal had to ask "did you forget to reset improvement notes?". Now Step 5 reconciles the queue on every
+  The principal had to ask whether the improvement notes had been reset. Now Step 5 reconciles the queue on every
   version, decisions go to the adjudication file, the conventions recipe is a child, and the layout report
   checks the queue header against the manuscript's version.
 - **Close-out wrote the loop's status into the queue and left the recipe uncommitted (J11 v6.7, 2026-09-29):**
@@ -586,12 +584,12 @@ openai-codex/gpt-6-astra` reported `modelApplied:true` and ran `claude-code/clau
   "unscored", both scores and the stop rule, and the layout report passed it because it checked only the
   version and strike-throughs. The same close-out left 323 lines of this recipe family uncommitted, calling
   them another session's work; they were the same tab's, under two earlier session ids. The principal had to
-  ask "did you finish? did you remember to clear out the improvement notes?". Now Step 8 sends status to the
+  ask whether the loop was finished and the improvement notes cleared. Now Step 8 sends status to the
   adjudication, commits the loop's own edits, and reports both; the layout report goes red on scores or loop
   status in the queue (reference: J11 `reviews/layout_report.py`).
 - **Rigor mortis in the abstract (J11 v6.5–v6.7, 2026-09-29):** the abstract list asked for "the results with
   exact numbers and an honest not yet", two recipes gave word targets (200–350 here, 300–450 in `revise-paper`),
   and each round's evidence-honesty note added a caveat. The last paragraph became a test report: 12 cases
-  against 8, "at a fixed threshold", a protocol. The principal asked why it was there: "too much rigor can lead
-  to rigor mortis". Now a number enters the abstract only when it is the story, there is no word budget, and
+  against 8, "at a fixed threshold", a protocol. The principal asked why it was there, warning that excess rigour
+  buries the point. Now a number enters the abstract only when it is the story, there is no word budget, and
   caveats live in the body.

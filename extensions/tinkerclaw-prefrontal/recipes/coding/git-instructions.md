@@ -178,7 +178,7 @@ Before `git commit`, read `git diff --cached --stat` and the file list:
 - Do I want to ship all of this?
 - Are all staged files this hop?
 - Temporary files? Passwords? IPs, tokens, certificates?
-- **A model trailer?** `Co-Authored-By: Claude`, `Generated with Claude Code`, or any assistant signature. If the commit used the architect's key, the author is the architect. Strip the trailer and the hook that would add it (`git config --get commit.template`, `prepare-commit-msg`) before committing. the architect, 2026-09-29 22:21: _"In the git, no claude signature should ever show. I don't care it is the default. If you use my key, you push as me."_
+- **A model trailer?** `Co-Authored-By: Claude`, `Generated with Claude Code`, or any assistant signature. If the commit used the architect's key, the author is the architect. Strip the trailer and the hook that would add it (`git config --get commit.template`, `prepare-commit-msg`) before committing. Rule since 2026-09-29: no assistant signature in git, whatever the default; a commit made with the owner's key is the owner's.
 
 Unstage, split, or delete. Never `--no-verify`, `--amend` of published
 history, `git add -A`, or `--force` from a cron. A history rewrite that strips trailers is the architect's, on his ask.

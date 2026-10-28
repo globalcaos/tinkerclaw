@@ -2,8 +2,8 @@
  * FORK 2026-10-09 — wake a Tinker chat once the Claude usage limit that cut its turn has reset.
  *
  * Measured 2026-10-09: the five-hour window ran out at 19:37 and turns in Tinker chats ended with
- * "You've hit your session limit · resets 8:30pm (Europe/Madrid)". Nothing resumed them; the architect
- * typed "keep going" in three chats at 20:52, 22 minutes after the reset. The 2026-09-03 retry
+ * "You've hit your session limit · resets 8:30pm (Europe/Madrid)". Nothing resumed them; the owner
+ * restarted three chats by hand at 20:52, 22 minutes after the reset. The 2026-09-03 retry
  * (src/auto-reply/reply/rate-limit-retry.ts) never saw these turns: it hangs off the embedded
  * runner's "failed before reply" funnel, and this bridge ends a limit-hit turn as an ordinary
  * `done` message carrying the `__ERR_ENV__` envelope (stream.ts, the `is_error` arm), so nothing

@@ -1,8 +1,6 @@
 /**
- * FORK 2026-10-06 (the architect: "When a ui rebuild or gateway restart happens, the chats take forever to
- * reload their content … make sure there are 'loading...' indicators when loading the chat
- * history, indicators that have some movement so the user understands there is something turning.
- * Also, use the loading indicator for when we scroll backwards").
+ * FORK 2026-10-06: after a UI rebuild or gateway restart, chats were slow to reload with no sign of
+ * progress. Show a moving loading indicator while chat history loads, and when scrolling back.
  *
  * Measured on the 2026-10-06 06:15 restart: the page reloaded onto a gateway that refused
  * chat.history for 47 s ("unavailable during gateway startup") and then served the viewed tab's
@@ -58,14 +56,12 @@ export function retryLabel(reason: string): string {
  * `retryReason` is the viewed session's retry state (null when its read has not failed): a read
  * being retried shows at once, with the reason in its words, since it has already taken a while.
  *
- * FORK 2026-10-06 (the architect: "Make the message 'connecting to gateway' also as fast as possible and
- * also moving") — `connecting`: the page has no gateway connection (a first load, a restart). It
+ * FORK 2026-10-06: the connecting-to-gateway message also shows at once and moves — `connecting`: the page has no gateway connection (a first load, a restart). It
  * replaces the static "Connecting to gateway..." line that sat in the pane until the first render,
  * in the same moving pill, at once. On an EMPTY page a read shows at once too.
  *
- * FORK 2026-10-06 (the architect, after a restart that kept his page: "I could see a 'loading context'
- * indicator that did not add anything … Consider what the front-end has loaded, and do not try to
- * reload that which is already loaded") — over a page that already HOLDS rows nothing is drawn for
+ * FORK 2026-10-06: after a restart that kept the page, a loading indicator showed for rows already
+ * on screen; never reload what the front end already holds — over a page that already HOLDS rows nothing is drawn for
  * the newest rows: not the connecting pill, not the catch-up read, not its retry words. Those rows
  * are loaded; the catch-up only appends what came after them (a restart notice, a resumed answer),
  * and the header's dots already say the socket is down. Only a scroll back, which the user asked

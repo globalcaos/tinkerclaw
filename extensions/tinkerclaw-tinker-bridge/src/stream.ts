@@ -270,8 +270,7 @@ function deriveSessionKey(
 }
 
 // FORK 2026-06-23 (BRIDGE FIX 2/3 — fast-fail init-only stall): pure decision
-// FORK 2026-08-25 (the architect: "the original chat just swallowed intermediate
-// thinking text") — content-block identity for a whole turn.
+// FORK 2026-08-25: the chat dropped intermediate thinking text — content-block identity for a whole turn.
 //
 // An Anthropic content-block `index` is unique only WITHIN one assistant
 // message, and claude-cli emits every step of its tool loop as a separate
@@ -289,8 +288,8 @@ function deriveSessionKey(
 // Exported (pure, no side effects) so the boundary rule is unit-tested without
 // spawning a real claude-cli worker.
 //
-// FORK 2026-08-28 (the architect: "There seems to be a disconnect between what Jarvis
-// answers and what is visible in the chat") — the message id was necessary but
+// FORK 2026-08-28: what the agent answered and what the chat showed did not
+// match — the message id was necessary but
 // NOT sufficient, because the two ingest paths NUMBERED the same block
 // differently:
 //   • content_block_delta keys on Anthropic's ABSOLUTE block index (`ev.index`);
@@ -326,8 +325,7 @@ function deriveSessionKey(
 // stream.block-key.test.ts and it remains the honest answer to "which raw index
 // did this message use?" for diagnostics.
 //
-// FORK 2026-09-24 (the architect: "in nearly every thinking message … the messages show
-// twice") — a per-frame ordinal is only right while a message holds ONE block of
+// FORK 2026-09-24: nearly every thinking message showed twice — a per-frame ordinal is only right while a message holds ONE block of
 // each kind. claude-cli writes one `assistant` frame PER BLOCK, right after that
 // block's deltas and before its content_block_stop, so every one-block frame
 // counted itself as ordinal 0. Opus 5.5 at effort xhigh sends TWO thinking
@@ -801,7 +799,7 @@ export function bridgeRefusalOutcome(): {
  * owner's emitCallTelemetry hands the event to notifyListeners, which isolates each listener's
  * throw.
  *
- * FORK 2026-10-02 (owner: "I see some sent information is unitemised ... assign it a bucket") —
+ * FORK 2026-10-02 (unitemised sent context gets a bucket) —
  * `contextFor` finds the CLI transcript's reader (cli-context.ts) at each call. A `usage` frame then
  * carries `composition`: the billed prompt (input + cacheRead + cacheWrite) split into the panel's
  * buckets from what the CLI's own transcript recorded, summing to that billed figure exactly. The
@@ -1112,8 +1110,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // independently. Without this, a post-tool text block would be
       // dropped because its content does not prefix the preamble's text.
       //
-      // FORK 2026-08-25 (the architect: "the original chat just swallowed intermediate
-      // thinking text") — THE KEY IS NOW PER-MESSAGE, NOT PER-TURN. A content
+      // FORK 2026-08-25: the chat dropped intermediate thinking text — THE KEY IS NOW PER-MESSAGE, NOT PER-TURN. A content
       // block index is only unique WITHIN one assistant message, and claude-cli
       // emits every step of the tool loop as its OWN message whose indices
       // restart at 0. Measured on a live opus-5 run: msg1 = [thinking(0),
@@ -1594,9 +1591,8 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // tag every pushTextDelta with its caller so the next log capture
       // tells us which handler (content_block_delta vs assistant_cumulative
       // vs heartbeat) sourced the duplicate. Without this tag, I had to
-      // GUESS from timing alone — the user called this out: "Differentiate
-      // what you know vs what you assume … recognize what you don't know
-      // for certain." Future regressions will have the source on the line.
+      // GUESS from timing alone — and known facts must stay apart from
+      // assumptions. Future regressions will have the source on the line.
       const pushTextDelta = (delta: string, source: string = "unknown") => {
         pushStart();
         if (thinkingStarted) {

@@ -1077,7 +1077,7 @@ export function createDoor(opts) {
       });
       return json(res, 200, { ok: true });
     }
-    // 2026-10-26 (the architect: "the Jarvis app keeps stopping"): one crash or abnormal-exit report per POST.
+    // 2026-10-26 (the app kept stopping): one crash or abnormal-exit report per POST.
     // The full text lands in <dir>/crashes/, the audit gets kind + headline.
     if (p === "/door/app/crash" && req.method === "POST") {
       let text;

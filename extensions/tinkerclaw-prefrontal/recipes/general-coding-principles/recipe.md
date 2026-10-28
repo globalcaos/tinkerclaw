@@ -168,8 +168,8 @@ is the session discipline around it.
 - **Where knowledge goes** (2026-09-25): project documentation, including how-tos a colleague posts
   in team chat, goes into the repo's own documentation folder, on its own `docs/<topic>` branch.
   Credentials go into the team's private wiki or secret store, never the repo.
-- **One folder per machine** (the owner, 2026-09-28: "all the code should be inside the project
-  folder"): `{{repo}}` is the only checkout, on the development machine and on every bench.
+- **One folder per machine** (2026-09-28: all code lives inside the project
+  folder): `{{repo}}` is the only checkout, on the development machine and on every bench.
   `feat/{{feature}}` is switched inside it. Any legacy folder name is a symlink to it. No sibling
   `<project>-*` clones and no long-lived worktrees. A throwaway worktree under `/tmp` is fine if the
   same command removes it (step 3's verify loop).
@@ -342,7 +342,7 @@ unmapped, and prints whether the branch is on the remote. `--png` also writes
 three files there (keep it git-ignored), check that `curl` returns 200 on the served URL (in
 TinkerClaw: `/tinker/diagrams/<file>`), show the **`-chat.png`** inline in the chat, and link the
 full PNG and the HTML for the hover. The chat draws images at their full pixel size, so a full
-3568-px PNG filled the screen (the owner, 2026-09-25: "way too big … show it at 1/3").
+3568-px PNG filled the screen (2026-09-25: far too big, show it at a third).
 
 ### 7. Write the human test plan (2026-09-25)
 
@@ -427,7 +427,7 @@ is not there (`git -C {{repo}} push -u {{remote}} feat/{{feature}}`), and the me
   (reset, pairing, firmware) is copied in the vendor's own order, one numbered step per physical
   action, naming where each control is, with the source (manual section, FAQ number) cited in a code
   comment. A paraphrase from memory is a guess about hardware.
-  Then: "I do not see any switch". The note said "top panel, next to the power plug", the vendor's
+  Then the person could not find the switch. The note said "top panel, next to the power plug", the vendor's
   word for the narrow face with the network sockets. Place a physical control by LOOKING at the
   vendor's drawing (render the manual page), and describe it against what the person can see: "on
   the face with the orange plug and the two network sockets, between the plug and ETH1, a tiny black

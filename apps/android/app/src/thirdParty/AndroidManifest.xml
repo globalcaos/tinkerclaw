@@ -12,11 +12,11 @@
          (install permission + the PackageInstaller status receiver) and vibrate() for the page's
          JarvisNative bridge. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- 2026-10-22 (the architect: "I want you to be able to update the app anytime"): lets the
+    <!-- 2026-10-22: the agent may update the app at any time. Lets the
          installer of record update itself with no confirmation screen (Android 12+). -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- 2026-10-27 (the architect: "the Jarvis app keeps stopping"): Android 15 caps dataSync at 6 h a day and every wake
+    <!-- 2026-10-27: the app kept stopping. Android 15 caps dataSync at 6 h a day and every wake
          after that crashed the app, so the always-connected Jarvis build runs its node service as specialUse. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 

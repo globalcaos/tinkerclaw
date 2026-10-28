@@ -41,10 +41,10 @@ import { decideChannelReply } from "./channel-reply.js";
 import type { CcStreamStdoutLine } from "./protocol.js";
 import { createClaudeCodeStreamFn } from "./stream.js";
 
-// FORK 2026-10-02 (channel-reply). The 15:46 turn in the WhatsApp group "I've got special
-// powers" (session agent:main:whatsapp:group:120363050081077836@g.us, runId fd6fbe22): the
+// FORK 2026-10-02 (channel-reply). The 15:46 turn in a WhatsApp group
+// (session agent:main:whatsapp:group:120363000000000001@g.us, runId fd6fbe22): the
 // narration the model wrote before each of its 12 tool calls, then `NO_REPLY` after the
-// message tool had already sent the GIF. The whole 1004-char text went to the group.
+// message tool had already sent the GIF. The whole 991-char text went to the group.
 const NARRATION = [
   "Reading the gifgrep skill instructions to find a mic-drop GIF the right way.",
   'Searching Tenor/Giphy for "mic drop" GIFs to pick one for the group.',
@@ -57,9 +57,9 @@ const NARRATION = [
   "",
   "Looking at the extracted frame to confirm it really is the Obama mic drop before it goes to the group.",
   'Right clip: Obama, "Obama out", 2.9 s. Loading the message tool so I can send it as an auto-looping GIF.',
-  `Sending the mic-drop clip to the "I've got special powers" group as an auto-looping GIF, with no caption.`,
+  `Sending the mic-drop clip to the "Test Group" group as an auto-looping GIF, with no caption.`,
 ];
-const RECORDED_OFFSETS = [76, 144, 210, 309, 416, 566, 685, 685, 685, 787, 891, 996];
+const RECORDED_OFFSETS = [76, 144, 210, 309, 416, 566, 685, 685, 685, 787, 891, 983];
 const SESSION = "00000000-0000-4000-8000-000000000003";
 const MODEL = { api: "anthropic-messages", provider: "claude-code", id: "claude-opus-5-5" };
 
@@ -143,12 +143,12 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
     const message = await runTurn({
       lines: toolLoopTurn(NARRATION, "NO_REPLY"),
       channel: "whatsapp",
-      sessionKey: "agent:main:whatsapp:group:120363050081077836@g.us",
+      sessionKey: "agent:main:whatsapp:group:120363000000000001@g.us",
     });
-    // The transcript keeps exactly what the stream produced: 1004 chars, narration included.
+    // The transcript keeps exactly what the stream produced: 991 chars, narration included.
     expect(textOf(message)).toBe(`${NARRATION.join("")}NO_REPLY`);
-    expect(textOf(message)).toHaveLength(1004);
-    expect(message.channelReply).toStrictEqual({ kind: "silent", textLength: 1004 });
+    expect(textOf(message)).toHaveLength(991);
+    expect(message.channelReply).toStrictEqual({ kind: "silent", textLength: 991 });
   });
 
   it("records the same offsets the live turn persisted", () => {
@@ -156,8 +156,8 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
     expect(decideChannelReply({ text, toolTextOffsets: RECORDED_OFFSETS })).toStrictEqual({
       verdict: "silent",
       source: "silent-final-segment",
-      stamp: { kind: "silent", textLength: 1004 },
-      narrationChars: 996,
+      stamp: { kind: "silent", textLength: 991 },
+      narrationChars: 983,
       finalChars: 8,
     });
   });
@@ -165,12 +165,12 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
   it("stamps the final segment when the turn ends in a real answer", async () => {
     // The 16:36 reply in the same group: one narration sentence, one tool, then the joke.
     const narration =
-      "Running the draft reply to Luís through the `human-voice` checker and noting what this group is like in its chat-profile notes file.";
+      "Running the draft reply to Alex through the `human-voice` checker and noting what this group is like in its chat-profile notes file.";
     const answer = "Imposible, güey, no tengo boca, lo mío es soltar micrófonos 🎤";
     const message = await runTurn({
       lines: toolLoopTurn([narration], answer),
       channel: "whatsapp",
-      sessionKey: "agent:main:whatsapp:group:120363050081077836@g.us",
+      sessionKey: "agent:main:whatsapp:group:120363000000000001@g.us",
     });
     expect(textOf(message)).toBe(`${narration}${answer}`);
     expect(message.channelReply).toStrictEqual({
@@ -186,7 +186,7 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
       channel: "webchat",
       sessionKey: "agent:main:tinker:channel-reply",
     });
-    expect(textOf(message)).toHaveLength(1004);
+    expect(textOf(message)).toHaveLength(991);
     expect(message).not.toHaveProperty("channelReply");
   });
 

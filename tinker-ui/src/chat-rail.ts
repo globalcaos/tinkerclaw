@@ -1,9 +1,7 @@
 /**
- * FORK 2026-10-01 (the architect: "When an LLM is answering one of my prompts, I would like a vertical line
- * to show at the left of all its thinking, tool calls and responses. The line should start and end
- * with the logo of the model's company, and have its line with the same color as its EEG trace, and
- * show precisely on hover the model's full name. No line should be visible on the left of any
- * prompt.")
+ * FORK 2026-10-01: while a model answers a prompt, a vertical line runs left of all its thinking,
+ * tool calls and responses. It starts and ends with the provider's logo, takes the model's EEG trace
+ * colour, and shows the model's full name on hover. No line sits left of any prompt.
  *
  * THE RAIL IS DRAWN PER UNIT, never around a run. A wrapper around a whole run would make the run
  * one keyed unit, and every streaming delta would re-parse every row of it (chat-render.ts). So each
@@ -14,11 +12,9 @@
  *
  * Pure: what only app.ts knows (the live run table, the session row) is injected.
  *
- * FORK 2026-10-05 (the architect: "the tinker UI first assigns the last model used and, when and if the
- * model Thalamus choses to use is different, then the whole line changes, pretending nothing
- * happened. It would be better to just not show anything next to 'TURN TIMING' and instead wait
- * until we know for sure the model that needs to be used, then display all the thinking and model
- * indicators synchronized, without going back.")
+ * FORK 2026-10-05: the UI painted the previous model first and repainted the whole line when Thalamus
+ * picked another. Show nothing next to 'TURN TIMING' until the model is known, then show the thinking
+ * and model indicators together, never going back.
  *
  * THE TURN IN FLIGHT SHOWS ONLY THE MODEL IT HAS NAMED. The TURN TIMING block is written seconds
  * before any model is chosen, and it counted as an answer, so the resolver fell through to the

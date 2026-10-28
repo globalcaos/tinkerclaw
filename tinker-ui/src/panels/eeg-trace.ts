@@ -99,8 +99,8 @@ export const EEG_PROVIDER_COLORS: Record<string, string> = {
 // MODEL name — the live trace gets the cc-bridge model id ("claude-fable-5", no
 // "claude-code/" prefix), so providerOf() returns the bare name and a plain
 // provider-key lookup missed → gray. Matching model-name patterns keeps the trace
-// branded (the architect 2026-06-13: "why am I still seeing gray instead of orange").
-// FORK 2026-08-04 #2 (the architect: "The chinese models still have no visible color yet").
+// branded (2026-06-13: branded models were still drawn gray instead of orange).
+// FORK 2026-08-04 #2: the Chinese models still had no visible colour.
 // The vendor branch added earlier this day could NEVER fire: every caller passes
 // the PROVIDER string, and for these models that string is the literal
 // "openrouter" — which carries no vendor token at all. Adding the optional
@@ -139,8 +139,8 @@ export function eegProviderPaint(
       return { stroke: EEG_PROVIDER_COLORS[vendor], isRainbow: false };
     }
   }
-  // FORK 2026-09-02 (the architect: "the color of the trace of fable 5.1 should be the one
-  // assigned to claude, the orange one"). These branches tested `p` — the PROVIDER
+  // FORK 2026-09-02: the Fable 5.1 trace should take the Claude orange.
+  // These branches tested `p` — the PROVIDER
   // string — while the vendor branch above tests provider AND model. For a model we
   // reach THROUGH a router the brand lives in the model id's middle segment, so
   // `openrouter/anthropic/claude-fable-5.1` arrived with p="openrouter", matched
@@ -244,8 +244,8 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 // ESTIMATES except the Anthropic spend (real invoice); measured halo corrects
 // later. Never present as measured (bible §5.8h invariant 3).
 //
-// FORK 2026-08-12 (the architect: "draw it from public websites and then refute it with our
-// data"). Copilot is NO LONGER a ÷4.65 subscription row. Since 2026-06-01 Copilot
+// FORK 2026-08-12: take the prices from public websites, then check them against
+// our own data. Copilot is NO LONGER a ÷4.65 subscription row. Since 2026-06-01 Copilot
 // bills tokens at vendor sticker and publishes the rates itself
 // (docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing, read
 // 2026-08-12): Opus 4.7/4.8 $5/$25 · Sonnet 5 $2/$10 · Sonnet 4.5/4.6 $3/$15 ·
@@ -258,8 +258,8 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 // unit here against 0.0893 there, and `openai-codex/gpt-6-sol` / `gpt-6-luna` had NO
 // row here at all, so the MODELS panel and the smartness×cost chart (which read THIS
 // table) drew both at the 2.58 unknown-metered default, far right of where the seat
-// puts them. the architect caught it as "the cost of the tokens of the different openai models
-// are not calculated properly". Every surface now reads the shared table; the prose
+// puts them. The symptom: the OpenAI models' token costs
+// were miscalculated. Every surface now reads the shared table; the prose
 // basis block above is HISTORY — the live derivation (measured seats, one method) is
 // the SUBSCRIPTION SEATS block at the top of src/shared/rel-cost-table.ts.
 export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = REL_COST_TABLE;
@@ -314,8 +314,8 @@ export function eegRelCost(model: string, provider?: string): number {
 // against the same reference the numbers are derived from, instead of against a model
 // whose own basis just changed underneath it.
 export const EEG_COST_PX_PER_REL = 5.814; // px per 1.0 of relCost (€/Mtok-output)
-// FORK 2026-08-30 (the architect: "since grok is cheaper than sonnet, let's make the whole
-// models panel onhover references change now to grok"). SUPERSEDES the 2026-08-13
+// FORK 2026-08-30: Grok is cheaper than Sonnet, so the models panel hover
+// references move to Grok. SUPERSEDES the 2026-08-13
 // switch to Sonnet 5 described immediately above.
 //
 // Two reasons, and the second is the one that generalises. (a) Grok is CHEAPER than
@@ -333,7 +333,7 @@ export const EEG_COST_PX_PER_REL = 5.814; // px per 1.0 of relCost (€/Mtok-out
 // is a unit FOR. Re-pricing Grok re-bases every multiple automatically instead of
 // silently making them all wrong.
 //
-// FORK 2026-08-30 (the architect: "when I said Grok, I meant v4.6") — REF bumped
+// FORK 2026-08-30: the Grok reference means v4.6 — REF bumped
 // 4.5 → 4.6. PRICES CHECKED 2026-08-30 on Artificial Analysis: both versions publish
 // the IDENTICAL $2.00 in / $6.00 out sticker. Read off the PER-MODEL pages
 // (artificialanalysis.ai/models/grok-4-5 and .../models/grok-4-6). NOT off the
@@ -361,11 +361,11 @@ export const EEG_COST_COMPARE_REF = "xai/grok-4.6";
 export const EEG_COST_COMPARE_REL = eegRelCost(EEG_COST_COMPARE_REF, "xai");
 export const EEG_COST_COMPARE_LABEL = "Grok";
 
-// FORK 2026-08-04 (the architect: "Let's set up Luna at 1.5 pixels and resize the rest of
-// the stroke widths accordingly"). Luna stays the unit; only its pixel value moves,
+// FORK 2026-08-04: Luna at 1.5 px, with every other stroke width rescaled to
+// match. Luna stays the unit; only its pixel value moves,
 // so every other width rescales linearly and no relative relationship changes.
 //
-// FORK 2026-08-12 (the architect: "I would like to keep the linear axis") — a log axis was
+// FORK 2026-08-12: keep the linear axis — a log axis was
 // shipped earlier the same day and is REVERTED here. Linear is the architect's call
 // and it buys a real property that log destroys: the drawn ratio IS the cost ratio.
 // qwen3.8 renders 29.9× thicker than opus for 29.9× the cash. Under log the same
@@ -401,7 +401,7 @@ export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["claude-opus-4-8", 2.84], // 2026-10-10 seat re-measurement (was 3.31); 2026-09-23 measured-seat re-base
   ["tencent/hy3", 3.07], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
   ["deepseek/deepseek-v4-flash-vision-exp", 3.76], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
-  ["xiaomi/mimo-v2.6-pro", 4.55], // 0.783 (DeepInfra via OR, −10%; was $0.87) — re-checked 2026-10-20 live endpoints
+  ["xiaomi/mimo-v2.6-pro", 4.3], // 0.7395 (GMICloud bf16, −5.6%; was 0.783 DeepInfra via OR) — re-checked 2026-10-28 live endpoints
   ["deepseek/deepseek-v4-pro-0813", 4.65], // re-priced 2026-10-26 live endpoints (was 2.3px). 0.396 (Baidu fp8, -50%; Baidu promo back, may revert; was $0.80) — re-checked 2026-10-24 live endpoints (was 4.65px)
   ["codex/gpt-5.6-terra", 4.77], // 2026-09-23 measured-seat re-base
   ["minimax/minimax-m3", 5.12], // re-priced 2026-10-27 live endpoints (was 5.58px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
@@ -423,8 +423,8 @@ export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
 ] as const;
 
 export const EEG_COST_PX_FLOOR = 0.35; // tool:local hairline
-// FORK 2026-08-15 (the architect: "Do not cap pixel width of EEG traces, the thickness
-// comparison is the main objective of all of it in the first place"). EEG_COST_PX_CAP
+// FORK 2026-08-15: no pixel cap on EEG trace width; comparing thickness is the
+// whole point of the channel. EEG_COST_PX_CAP
 // = 40 is DELETED, not merely raised. It was introduced as "a runaway backstop, not a
 // design value" and had quietly become a design value: six rows sat on it, so kimi-k3
 // ($15/Mtok) and Copilot's Fable ($50) rendered as the same slab — a 3.3x price
@@ -464,17 +464,16 @@ export function eegCostWidthPx(model: string, level: string, provider?: string):
 }
 
 // ─── LOG scale — the BOUNDED surfaces (model selector · EEG paper) ───
-// FORK 2026-08-28 (the architect: "inside the models panel, when expanded, it shows a trace
-// thickness linearly proportional to the model's cost. However, in the model selector,
-// the big spenders are capped and the cheap ones are very thin. Turn those last ones
-// only into log-scale thickness, which will be also used in turn by the EEG.").
+// FORK 2026-08-28: the expanded models panel keeps a thickness linear in cost, but
+// the model selector capped the big spenders and drew the cheap ones hair-thin; the
+// selector (and the EEG) move to a log-scale thickness.
 //
 // TWO SCALES from here on, and which surface gets which is a property of the SURFACE,
 // not a matter of taste:
 //   · MODELS panel (expanded) → LINEAR. Its row HEIGHT is computed FROM the stroke
 //     (renderCostCol: H = max(ceil(w)+4, 10)), so a 162px stroke is drawn at 162px and
 //     the drawn ratio IS the cost ratio. Nothing is being squeezed, so nothing needs
-//     compressing. The 2026-08-12 "I would like to keep the linear axis" ruling governs
+//     compressing. The 2026-08-12 keep-the-linear-axis ruling governs
 //     this surface and KEEPS it — do not "unify" the panel onto the log scale.
 //   · model selector + EEG paper → LOG. Both draw into a box they do not control: the
 //     selector chip sits in a two-row button grid whose SVG height app.ts DERIVES
@@ -505,7 +504,7 @@ export function eegCostWidthPx(model: string, level: string, provider?: string):
 // which is synthetic local housekeeping and would spend a whole decade of the ramp on
 // something that is not a model at all. tool:local lands below the reference and
 // therefore on the log FLOOR, staying the thinnest thing on the paper by construction.
-// FORK 2026-08-29 (the architect: "luna 1 px and let's set the maximum at 25 px"). Both ends
+// FORK 2026-08-29: Luna at 1 px, maximum at 25 px. Both ends
 // are the architect's pixels; the decade slope is DERIVED, not chosen. MAXREL = 15.0
 // (openrouter kimi-k3, the largest relCost among models either surface can actually
 // draw — Copilot rows go higher, but app.ts filters Copilot ids off the chip and the
@@ -547,7 +546,7 @@ export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["claude-opus-4-8", 13.66], // 2026-10-10 seat re-measurement (was 14.16); 2026-09-23 measured-seat re-base
   ["tencent/hy3", 13.91], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
   ["deepseek/deepseek-v4-flash-vision-exp", 14.59], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
-  ["xiaomi/mimo-v2.6-pro", 15.22], // 0.783 (DeepInfra via OR, −10%; was $0.87) — re-checked 2026-10-20 live endpoints
+  ["xiaomi/mimo-v2.6-pro", 15.03], // 0.7395 (GMICloud bf16, −5.6%; was 0.783 DeepInfra via OR) — re-checked 2026-10-28 live endpoints
   ["deepseek/deepseek-v4-pro-0813", 15.29], // re-priced 2026-10-26 live endpoints (was 12.96px). 0.80 (Sail Research fp4, +37%; was $0.582) — re-checked 2026-10-24 live endpoints
   ["codex/gpt-5.6-terra", 15.38], // 2026-09-23 measured-seat re-base
   ["minimax/minimax-m3", 15.61], // re-priced 2026-10-27 live endpoints (was 15.89px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
@@ -591,10 +590,9 @@ export function eegCostLunaMult(model: string, provider?: string): number {
 }
 
 // ─── THE central paint resolution (the architect 2026-08-06) ───
-// FORK 2026-08-06 (the architect: "There should be a central point where the color and
-// thickness of the EEG lines are defined, and the rest of the pieces of code
-// that need them should go there to look. Also, the information about which
-// model at which effort is running should be a json object passed around.").
+// FORK 2026-08-06: one central place defines EEG colour and thickness, and every
+// other piece of code looks there; which model runs at which effort travels as one
+// JSON object.
 //
 // Before this, four surfaces each assembled their own (provider, model) argument
 // pair for eegProviderPaint + eegCostWidthPx — and three separate bugs came out
@@ -640,11 +638,9 @@ export function resolveEegPaint(run: EegRun): EegPaint {
   return { stroke: paint.stroke, isRainbow: paint.isRainbow, width, logWidth };
 }
 
-// FORK 2026-08-06 #2 (the architect: "We have multiple places where it shows thinking
-// progress, chat, tab title, model panel, recipes panel... The color of the
-// glows should be representative of the model running. Use the same strategy
-// you have used with the EEG trace color and unify all these thinking
-// indicators"). Every thinking/live glow — chat indicator, tab glow, model-row
+// FORK 2026-08-06 #2: thinking progress shows in several places (chat, tab title,
+// model panel, recipes panel); every glow should carry the running model's colour,
+// resolved the same way as the EEG trace colour. Every thinking/live glow — chat indicator, tab glow, model-row
 // glow, session-row glow, RECIPES panel node — resolves its color HERE, so a
 // model glows with exactly the color its EEG trace draws. The rainbow trace has
 // no single CSS color, so google gets a solid brand-blue fallback.
@@ -764,15 +760,15 @@ const ARC_HALF = 7; // bezier vertical half-span → ~14px of curve per column h
 // then RESTARTS across the boundary, the two ends nearly touching (the architect).
 const EEG_TURN_GAP = 5;
 // FORK 2026-06-20: half-gap each side of EVERY LLM call so consecutive calls read as
-// DISTINCT segments, never one continuous spline (the architect: "I don't see a clear
-// separation between calls"). Smaller than EEG_TURN_GAP so the per-prompt break stays
+// DISTINCT segments, never one continuous spline (calls must read as visibly
+// separate). Smaller than EEG_TURN_GAP so the per-prompt break stays
 // the stronger, dominant separation (call = small gap, prompt = big gap).
 const EEG_CALL_GAP = 2;
 const STRAND_CAP = 10; // bible §5.8h invariant 4: cap rendered strands per group; the dynamic ×N carries the true count (the architect 2026-06-19: 10, was 5)
 
 // ─── Segment LENGTH model: LENGTH = EURO COST → each €1 = one grid line ───
-// FORK 2026-06-20 (the architect): "make the horizontal lines mean one euro — the thinking
-// should scale to the grid so we understand how much we spend on every prompt."
+// FORK 2026-06-20: each horizontal grid line means one euro, and the thinking trace
+// scales to that grid so each prompt's spend can be read off it.
 // LENGTH now directly encodes the segment's EURO cost: a prompt's trace HEIGHT,
 // measured against the §1 horizontal grid (EEG_PX_PER_EURO px = €1, drawn in
 // renderSvg), reads as how many euros that prompt cost. width still = the model's
@@ -812,7 +808,7 @@ export function eegSampleEuros(s: EegSample): number {
 // EEG_MIN_LEN / EEG_PX_PER_EURO = €0.1778 before the ledger summed it. The review measured the
 // consequence at 1874x: 200 tool calls (cost €0) plus 40 sonnet turns drew 43 "€N" gridlines over
 // 2.3 cents of real spend, because the axis was a sample count wearing a euro label. That is
-// exactly the architect's report — "parts of the graph that are empty, and yet the grid shows it has cost".
+// exactly the reported bug: empty stretches of graph the grid still counted as spend.
 //
 // So the floor is gone from the ledger and survives only as a DRAWN-LENGTH minimum at the render
 // site. The reason the floor existed at all was that 90px/€ was calibrated when the cost constants
@@ -891,7 +887,7 @@ export function eegEuroLabel(value: number, step: number): string {
 }
 
 // ─── LANES: lateral offset must encode REAL simultaneity ───
-// FORK 2026-07-28 (the architect "lines dancing laterally within Min"): the original lane
+// FORK 2026-07-28 (bug: lines danced sideways within Min): the original lane
 // allocator handed every distinct (T/S,model,effort) group its OWN permanent lane,
 // numbered per RAW `chosenLevel`. Two defects, exactly inverted from the intent:
 //   1. SEQUENTIAL groups still got different lanes → strands that never once ran at
@@ -1118,8 +1114,8 @@ export class EegTraceStore {
     return { samples: [...this.samples.values()], ends: [...this.turnEnds] };
   }
 
-  // ONE TAB, ONE PAPER (the architect 2026-10-01: "the toggle switch needs to go, and the EEG has to stay
-  // specific for each tab"). There is no `overlay` option and no `dim` sample any more: the paper
+  // ONE TAB, ONE PAPER (2026-10-01: the toggle switch goes, and the EEG stays specific to each
+  // tab). There is no `overlay` option and no `dim` sample any more: the paper
   // draws THIS store — the viewed session plus its own subagents and its own tool calls — and
   // nothing else. The all-scope overlay made the same euro glyphs mean one tab's spend or the union
   // across tabs depending on a switch, and moved every strand when flipped; the axis could not be
@@ -1351,8 +1347,7 @@ export class EegTraceStore {
         // EEG_TURN_GAP below the marker instead of leaving a connector arc. Only the
         // VIEWED trunk breaks (this.turnEnds is the viewed session's).
         // FORK 2026-06-20: EVERY CALL is its own segment — no connector spline between
-        // calls (the architect: "the line is a continuous spline, I don't see a clear separation
-        // between calls"). Each main sample draws a fresh VERTICAL run at its effort
+        // calls (a continuous spline hid the boundaries between calls). Each main sample draws a fresh VERTICAL run at its effort
         // column, inset by a small CALL gap at each end so consecutive calls visibly
         // finish + restart. A PROMPT boundary (turn change) uses the bigger TURN gap so
         // the per-prompt break stays the dominant separation (hierarchy: call < prompt).
@@ -1497,7 +1492,7 @@ export class EegTraceStore {
         const ended = typeof s.endedAt === "number";
         // FORK 2026-06-20: floor the arch HEIGHT for an ended branch. A fast helper
         // whose start+end snap to the same row would otherwise split AND join at the
-        // same trunk point → a CLOSED 1px teardrop (the architect's "weird max↔low loop").
+        // same trunk point → a CLOSED 1px teardrop (the weird max↔low loop).
         // Newest-at-top: the join (newer endedAt) sits ABOVE the split; force it at
         // least arc*3 above so the branch reads as a small out-and-back arch — but
         // never above the paper's top pad (a branch that is the very newest event has
@@ -1516,7 +1511,7 @@ export class EegTraceStore {
         // FORK 2026-06-19: if the subagent crossed a prompt boundary, merge back into ITS
         // OWN turn's trunk column (the first turnEnd after it started), NOT the later turn's
         // — so a helper from the previous prompt never draws a high→max line across the
-        // prompt rule into the new turn's column (the architect's "previous call's high into max").
+        // prompt rule into the new turn's column (the previous call's high bleeding into max).
         let joinClampT = s.endedAt as number;
         if (ended && turnOf(joinClampT) !== turnOf(s.startedAt)) {
           joinClampT = this.turnEnds.find((t) => t.endedAt > s.startedAt)?.endedAt ?? joinClampT;
@@ -1543,7 +1538,7 @@ export class EegTraceStore {
             .filter(Boolean)
             .join(" · "),
         );
-        // FORK 2026-06-23 (the architect "weird max↔high loop stepping on the labels"): the
+        // FORK 2026-06-23 (bug: a weird max↔high loop drawn over the labels): the
         // out-arc top (yOut) and its control point were UNCLAMPED, so a branch whose split
         // sits near the paper TOP punched above TOP_PAD into the column-label row — and,
         // splitting from the parent column (max) to the strand column (high) and back, drew
@@ -1560,7 +1555,7 @@ export class EegTraceStore {
         // FORK 2026-06-20: never let a SHORT branch (a fast helper that finishes
         // before the next trunk call, so splitY≈joinY) pinch into a CLOSED teardrop —
         // force a small straight run at the strand column so it reads as a real
-        // out-and-back arch, not a meaningless 1px loop (the architect: "weird max↔low loop").
+        // out-and-back arch, not a meaningless 1px loop (it read as a weird max↔low loop).
         // Geometry stays honest: same split→strand-col→join columns/color/width.
         const yJoinInRaw = ended ? joinY + arc * 2 : joinY;
         const yJoinIn = ended ? Math.max(TOP_PAD, Math.min(yJoinInRaw, yOut - arc)) : yJoinInRaw;
@@ -1572,9 +1567,8 @@ export class EegTraceStore {
         branches +=
           `<path class="eeg-branch" d="${d}" fill="none" stroke="${shade.stroke}"` +
           ` stroke-opacity="${fx(shade.opacity)}" stroke-width="${fx(w)}"` +
-          // FORK 2026-08-05 (the architect: "the style of EEG trace should ALWAYS be a line
-          // that starts and ends abruptly, without the rounding effect embelishment
-          // at the ends"). Round caps also LIE about duration: a cap adds half the
+          // FORK 2026-08-05: an EEG trace always starts and ends abruptly, with no
+          // rounded end caps. Round caps also LIE about duration: a cap adds half the
           // stroke width past each endpoint, so a 20px-thick Fable branch drew ~20px
           // longer than the time it actually spans — the thicker the model, the
           // bigger the overstatement, on the axis that means elapsed time.
@@ -1606,7 +1600,7 @@ export class EegTraceStore {
           lastShown = count;
         }
       }
-      // FORK 2026-08-17 (the architect: "should show a few EEG traces side by side"): the gauge
+      // FORK 2026-08-17 (parallel work should show several EEG traces side by side): the gauge
       // coalesced only events at the SAME INSTANT, not at the same PIXEL. A real fan-out
       // ramps ×2→×10 within a couple of minutes, which on a multi-day paper is ~3px, so ten
       // 9px labels landed on top of each other and the one affordance that reports "ten ran
@@ -1652,8 +1646,8 @@ export class EegTraceStore {
       markers +=
         `<line ${attrs} x1="0" y1="${fx(y)}" x2="${width}" y2="${fx(y)}"` +
         ` stroke="${EEG_TURN_COLOR}" stroke-opacity="0.9" stroke-width="2"/>`;
-      // FORK 2026-09-06 (the architect: "the area of effect on the yellow line on-hover is too big …
-      // it should just be on top of the actual line, and maybe a hair or two out from there").
+      // FORK 2026-09-06: the yellow line's hover area was too big; it should sit on the line
+      // itself, plus a hair either side.
       // Was a 12px band (y-6, h=12) around a 2px rule — six times the line's own width, which
       // swallowed hovers meant for the traces underneath. Now ±3px. The rule is full-width, so
       // there is always somewhere else along it to trigger the tip.

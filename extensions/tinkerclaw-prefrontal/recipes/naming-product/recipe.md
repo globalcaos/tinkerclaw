@@ -294,27 +294,23 @@ If the owner then asks **what a filing costs** (this is a later ask, not this re
   not see the answer, say “reload the tab” first. Disk + session jsonl can hold
   a reply the `#messages` region never painted.
 - **One family label for a set of models (2026-10-11):** the data index named every
-  ORBIS network "Vigia N.x". the architect: "I don't like the name Vigia. I would like to give
-  each network a different name, within the same context/universe … but we already
-  started with Goku, and this universe is reserved for agents." Fix: Step 1 asks the
+  network in a model family with one shared label. The request was a distinct name per
+  network from one shared universe, avoiding the universe already reserved for agents. Fix: Step 1 asks the
   shape (family label vs one character per member) before any name is proposed.
-- **Two rounds of manga and childhood TV (2026-10-11):** Step 1 said "a universe
-  people around 45 in Catalonia/Spain all know", so round 1 led with Saint Seiya and
-  round 2 with Transformers. the architect: "I never watched this Saint Seiya", then "you are
-  narrowing yourself into manga. OpenAI just used stellar bodies … and I am sure there
-  is a rationale behind Anthropic's names too." Fix: Step 1 now opens with the labs'
+- **Two rounds of manga and childhood TV (2026-10-11):** Step 1 asked for a universe
+  one local generation all knows, so round 1 led with one anime and round 2 with another
+  cartoon. Feedback: the first was unknown to the reader, the search was stuck in manga,
+  and the labs' own naming schemes (stellar bodies and the like) have a rationale worth
+  studying. Fix: Step 1 now opens with the labs'
   schemes and rationale, needs five or more domains with at most one from fiction,
   and asks which universes he knows before ranking fiction first.
-- **Catalan-only round (2026-10-11):** after the manga fix, round 3 led with birds of
-  prey in Catalan (Xoriguer, Esparver), rose winds, Catalan peaks, castells and Gaudí,
-  because Step 1's own examples were regional. the architect: "Do not narrow yourself into
-  things that only a catalan knows, or things that are only in catalan. Science is also
-  known here, and there are a lot of weird names in the parts of the cells we learn at
-  school." Fix: Step 1 asks for domains anyone who went to school knows, lists school
+- **Catalan-only round (2026-10-11):** after the manga fix, round 3 led with regional
+  birds, winds, peaks and local landmarks named in one regional language, because Step 1's
+  own examples were regional. Feedback: avoid names only one region knows; school science
+  (cell parts and the like) is known everywhere. Fix: Step 1 asks for domains anyone who went to school knows, lists school
   science first, international names, and caps regional universes at one extra row.
 - **2026-10-11, rejected universes stored as bans; five rounds to the answer.** The
   network-naming run wrote each turned-down universe into the index as "rejected", and
-  reached chemical elements only after manga, regional and themed rounds. the architect:
-  "Remembering my rejects is futile ... all options we haven't used yet become available
-  again." Fix: Step 1 ranks by five tests (relatable, short + code, ordered, enough,
+  reached chemical elements only after manga, regional and themed rounds. Feedback:
+  storing rejects is pointless, and every unused option is available again. Fix: Step 1 ranks by five tests (relatable, short + code, ordered, enough,
   unused) with theme last, and excludes only universes IN USE, never past rejections.

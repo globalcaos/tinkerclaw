@@ -270,11 +270,10 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 
 ### 📹 Media, Location & Shopping
 
-| Skill                                                                          | What it does                                                                     |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate)           | Free transcripts, 4K downloads, video exploration — zero API quotas burned.      |
-| [`owntracks-location`](https://clawhub.ai/globalcaos/owntracks-location)       | Live GPS trail receiver. Loopback + token. A location server, honestly labelled. |
-| [`tinker-amazon-shopper`](https://clawhub.ai/globalcaos/tinker-amazon-shopper) | Anonymous amazon.es search and ranking. Cookie capture is not in the zip.        |
+| Skill                                                                          | What it does                                                                |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate)           | Free transcripts, 4K downloads, video exploration — zero API quotas burned. |
+| [`tinker-amazon-shopper`](https://clawhub.ai/globalcaos/tinker-amazon-shopper) | Anonymous amazon.es search and ranking. Cookie capture is not in the zip.   |
 
 ### 💰 Cost, Tokens & Command
 

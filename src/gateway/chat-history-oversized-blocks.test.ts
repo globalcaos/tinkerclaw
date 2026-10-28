@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { replaceOversizedChatHistoryMessages } from "./server-methods/chat.js";
 
-// FORK 2026-08-25 (the architect: "the intermediate thinking gets deleted in the chat").
+// FORK 2026-08-25: intermediate thinking was being deleted from the chat.
 //
 // chat.history replaced the ENTIRE content of any message over the per-message cap with
 // "[chat.history omitted: message too large]". A message goes over that cap because of one heavy

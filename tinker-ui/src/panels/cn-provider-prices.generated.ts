@@ -4,7 +4,7 @@
 // glm-5.2 fell 27% and deepseek-v4-flash rose 56% inside 48h in August 2026, so a
 // hand-edited number here is wrong almost immediately. The ROSTER is derived from the
 // live catalog too, so a new Chinese flagship appears here without a human edit.
-// Fetched: 2026-10-27T05:06:08.272Z
+// Fetched: 2026-10-28T19:46:51.209Z
 
 export interface CnProviderRow {
   out: number;
@@ -84,7 +84,7 @@ export interface CnProviderPrices {
 }
 
 export const CN_PROVIDER_PRICES: CnProviderPrices = {
-  fetchedAt: "2026-10-27T05:06:08.272Z",
+  fetchedAt: "2026-10-28T19:46:51.209Z",
   source: "openrouter.ai/api/v1/models/{id}/endpoints",
   catalogSource: "https://openrouter.ai/api/v1/models",
   unit: "USD per 1M tokens",
@@ -92,39 +92,39 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
   rosterRule:
     "derived from the live catalog: per Chinese lab namespace, the dearest model shipped within 180 days of that lab's newest, plus the cheapest model in the same family, capped at 20 rows including lab-direct-only labs; PINS and DROPS override.",
   openrouterFee: {
-    card: null,
-    crypto: null,
-    source: "https://openrouter.ai/docs/faq.md",
-    checkedAt: "2026-10-27T05:06:03.232Z",
-    error: "fee literal not found in FAQ source",
+    card: "5.5% ($0.80 minimum)",
+    crypto: "5%",
+    source: "https://openrouter.ai/docs/faq",
+    checkedAt: "2026-10-28T19:46:42.941Z",
+    error: null,
   },
   directSources: [
     {
       name: "DeepInfra",
       url: "https://api.deepinfra.com/models/list",
       models: 230,
-      checkedAt: "2026-10-27T05:06:03.519Z",
+      checkedAt: "2026-10-28T19:46:43.232Z",
       error: null,
     },
     {
       name: "Novita",
       url: "https://api.novita.ai/v3/openai/models",
       models: 94,
-      checkedAt: "2026-10-27T05:06:04.423Z",
+      checkedAt: "2026-10-28T19:46:44.323Z",
       error: null,
     },
     {
       name: "Vercel AI Gateway",
       url: "https://ai-gateway.vercel.sh/v1/models",
-      models: 351,
-      checkedAt: "2026-10-27T05:06:04.662Z",
+      models: 354,
+      checkedAt: "2026-10-28T19:46:44.761Z",
       error: null,
     },
     {
       name: "NanoGPT",
       url: "https://nano-gpt.com/api/v1/models?detailed=true",
-      models: 645,
-      checkedAt: "2026-10-27T05:06:04.801Z",
+      models: 638,
+      checkedAt: "2026-10-28T19:46:45.151Z",
       error: null,
     },
   ],
@@ -294,6 +294,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       labHost: "Z.AI",
       why: "flagship: dearest current model",
       providers: {
+        Baidu: {
+          out: 0.88,
+          in: 0.28,
+          cacheRead: 0.052000000000000005,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         Wafer: {
           out: 1.4,
           in: 0.0699,
@@ -315,6 +322,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
+        Reka: {
+          out: 2.0999999999999996,
+          in: 0.14,
+          cacheRead: 0.105,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         SiliconFlow: {
           out: 2.2,
           in: 0.7,
@@ -326,6 +340,20 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           out: 2.2,
           in: 0.7,
           cacheRead: 0.13,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Inceptron: {
+          out: 2.2,
+          in: 1.2,
+          cacheRead: 0.14,
+          quant: "fp4",
+          ctx: 1048576,
+        },
+        Morph: {
+          out: 2.2079999999999997,
+          in: 0.226,
+          cacheRead: 0.07600000000000001,
           quant: "fp8",
           ctx: 1048576,
         },
@@ -385,12 +413,12 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        Inceptron: {
-          out: 3.5,
-          in: 1.2,
-          cacheRead: 0.14,
-          quant: "fp4",
-          ctx: 1048576,
+        "Io Net": {
+          out: 3.1999999999999997,
+          in: 0.33,
+          cacheRead: 0.31,
+          quant: "fp8",
+          ctx: 262124,
         },
         InferenceNet: {
           out: 3.5999999999999996,
@@ -420,13 +448,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Reka: {
-          out: 4.199999999999999,
-          in: 0.14,
-          cacheRead: 0.105,
-          quant: "unknown",
-          ctx: 1048576,
-        },
         Relace: {
           out: 4.3843,
           in: 0.0703,
@@ -453,13 +474,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           in: 1.4,
           cacheRead: 0.14,
           quant: "nvfp4",
-          ctx: 1048576,
-        },
-        Baidu: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "fp8",
           ctx: 1048576,
         },
         BaseTen: {
@@ -532,13 +546,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Morph: {
-          out: 5.132000000000001,
-          in: 1.758,
-          cacheRead: 0.44,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         "Amazon Bedrock": {
           out: 5.28,
           in: 1.68,
@@ -560,10 +567,10 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         ctx: 1048576,
       },
       cheapest: {
-        provider: "Wafer",
-        out: 1.4,
-        in: 0.0699,
-        quant: "fp4",
+        provider: "Baidu",
+        out: 0.88,
+        in: 0.28,
+        quant: "fp8",
       },
       labDirect: null,
       direct: {
@@ -616,13 +623,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
-        OpenInference: {
-          out: 0.232973,
-          in: 0.02,
-          cacheRead: 0.015,
-          quant: "fp4",
-          ctx: 1048576,
-        },
         DeepInfra: {
           out: 0.2352,
           in: 0.0784,
@@ -630,18 +630,32 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
+        Morph: {
+          out: 0.38299999999999995,
+          in: 0.044,
+          cacheRead: 0.004,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         Ionstream: {
-          out: 0.39,
-          in: 0.14,
-          cacheRead: 0.012,
+          out: 0.44999999999999996,
+          in: 0.15,
+          cacheRead: 0.009500000000000001,
           quant: "unknown",
           ctx: 1048576,
         },
         Reka: {
           out: 0.5,
           in: 0.04,
-          cacheRead: 0.03,
+          cacheRead: 0.004,
           quant: "unknown",
+          ctx: 1048576,
+        },
+        Wafer: {
+          out: 0.5,
+          in: 0.07,
+          cacheRead: 0.0069,
+          quant: "mxfp4",
           ctx: 1048576,
         },
         Relace: {
@@ -651,18 +665,18 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        Wafer: {
-          out: 0.5,
-          in: 0.13,
-          cacheRead: 0.008,
-          quant: "mxfp4",
+        Decart: {
+          out: 0.516,
+          in: 0.129,
+          cacheRead: 0.0025800000000000003,
+          quant: "fp4",
           ctx: 1048576,
         },
-        Decart: {
-          out: 0.546,
-          in: 0.1365,
-          cacheRead: 0.00273,
-          quant: "fp4",
+        AtlasCloud: {
+          out: 0.54,
+          in: 0.135,
+          cacheRead: 0.0135,
+          quant: "fp8",
           ctx: 1048576,
         },
         InferenceNet: {
@@ -672,19 +686,19 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1040000,
         },
-        Morph: {
-          out: 0.6,
-          in: 0.098,
-          cacheRead: 0.007,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         Cloudflare: {
           out: 0.6,
           in: 0.09999999999999999,
           cacheRead: 0.003,
           quant: "unknown",
           ctx: 1048576,
+        },
+        StreamLake: {
+          out: 0.6,
+          in: 0.15,
+          cacheRead: 0.003,
+          quant: "fp8",
+          ctx: 1024000,
         },
         DeepSeek: {
           out: 0.6,
@@ -693,12 +707,19 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        StreamLake: {
-          out: 0.714,
-          in: 0.1785,
-          cacheRead: 0.00357,
-          quant: "fp8",
-          ctx: 1024000,
+        Alibaba: {
+          out: 0.66,
+          in: 0.165,
+          cacheRead: 0.016499999999999997,
+          quant: "unknown",
+          ctx: 1000000,
+        },
+        Cohere: {
+          out: 0.66,
+          in: 0.195,
+          cacheRead: 0.006,
+          quant: "unknown",
+          ctx: 1048576,
         },
         GMICloud: {
           out: 0.72,
@@ -706,13 +727,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.0036,
           quant: "fp8",
           ctx: 1048575,
-        },
-        AtlasCloud: {
-          out: 0.78,
-          in: 0.195,
-          cacheRead: 0.0039000000000000003,
-          quant: "fp8",
-          ctx: 1048576,
         },
         Novita: {
           out: 0.78,
@@ -756,6 +770,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
+        Phala: {
+          out: 1.2,
+          in: 0.19999999999999998,
+          cacheRead: 0.006,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         Crusoe: {
           out: 1.2,
           in: 0.29,
@@ -768,13 +789,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           in: 0.3,
           cacheRead: 0.006,
           quant: "fp8",
-          ctx: 1048576,
-        },
-        Phala: {
-          out: 1.2,
-          in: 0.3,
-          cacheRead: 0.006,
-          quant: "unknown",
           ctx: 1048576,
         },
         SiliconFlow: {
@@ -812,12 +826,12 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Alibaba: {
-          out: 1.32,
-          in: 0.33,
-          cacheRead: 0.032999999999999995,
-          quant: "unknown",
-          ctx: 1000000,
+        OpenInference: {
+          out: 1.7999999999999998,
+          in: 0.0115,
+          cacheRead: 0.011399999999999999,
+          quant: "fp4",
+          ctx: 1048576,
         },
       },
       openrouter: {
@@ -849,9 +863,9 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
             id: "deepseek/deepseek-v4.1-flash-1017",
           },
           NanoGPT: {
-            in: 0.09999999999999999,
+            in: 0.1,
             out: 0.6,
-            cacheRead: 0.003,
+            cacheRead: 0.005,
             quant: "unknown",
             id: "deepseek/deepseek-v4.1-flash-1017",
           },
@@ -875,17 +889,17 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       labHost: null,
       why: "pinned — a configured model on our own picker",
       providers: {
+        Baidu: {
+          out: 0.1752,
+          in: 0.0438,
+          cacheRead: 0.0008759999999999999,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         Decart: {
           out: 0.18,
           in: 0.09,
           cacheRead: 0.018,
-          quant: "fp4",
-          ctx: 1048576,
-        },
-        OpenInference: {
-          out: 0.232973,
-          in: 0.02,
-          cacheRead: 0.015,
           quant: "fp4",
           ctx: 1048576,
         },
@@ -896,10 +910,24 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
+        OpenInference: {
+          out: 0.27799999999999997,
+          in: 0.00273,
+          cacheRead: 0.00227,
+          quant: "fp4",
+          ctx: 1048576,
+        },
         DeepInfra: {
           out: 0.33599999999999997,
           in: 0.112,
           cacheRead: 0.00336,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Morph: {
+          out: 0.38299999999999995,
+          in: 0.044,
+          cacheRead: 0.004,
           quant: "fp8",
           ctx: 1048576,
         },
@@ -924,13 +952,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1024000,
         },
-        Morph: {
-          out: 0.6,
-          in: 0.098,
-          cacheRead: 0.007,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         InferenceNet: {
           out: 0.6,
           in: 0.103,
@@ -951,6 +972,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.012,
           quant: "mxfp4",
           ctx: 1048576,
+        },
+        Alibaba: {
+          out: 0.66,
+          in: 0.165,
+          cacheRead: 0.016499999999999997,
+          quant: "unknown",
+          ctx: 1000000,
         },
         ModelRun: {
           out: 0.67,
@@ -1050,13 +1078,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        Baidu: {
-          out: 1.2,
-          in: 0.3,
-          cacheRead: 0.006,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         BaseTen: {
           out: 1.2,
           in: 0.3,
@@ -1099,13 +1120,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1000000,
         },
-        Alibaba: {
-          out: 1.32,
-          in: 0.33,
-          cacheRead: 0.032999999999999995,
-          quant: "unknown",
-          ctx: 1000000,
-        },
       },
       openrouter: {
         out: 0.42,
@@ -1113,18 +1127,18 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         ctx: 1048576,
       },
       cheapest: {
-        provider: "Decart",
-        out: 0.18,
-        in: 0.09,
-        quant: "fp4",
+        provider: "Baidu",
+        out: 0.1752,
+        in: 0.0438,
+        quant: "fp8",
       },
       labDirect: null,
       direct: {
         sellers: {
           NanoGPT: {
-            in: 0.09,
-            out: 0.25,
-            cacheRead: 0.006,
+            in: 0.0438,
+            out: 0.1752,
+            cacheRead: 0.0008759999999999999,
             quant: "unknown",
             id: "deepseek/deepseek-v4.1-flash",
           },
@@ -1152,8 +1166,8 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
         cheapest: {
           seller: "NanoGPT",
-          out: 0.25,
-          in: 0.09,
+          out: 0.1752,
+          in: 0.0438,
         },
       },
     },
@@ -1162,12 +1176,26 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       labHost: "DeepSeek",
       why: "pinned — DeepSeek's strongest model; the newest-generation rule would keep only V4.1 Flash",
       providers: {
+        Baidu: {
+          out: 0.43956,
+          in: 0.14651999999999998,
+          cacheRead: 0.0046619999999999995,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         "Sail Research": {
           out: 0.7999999999999999,
           in: 0.44999999999999996,
           cacheRead: 0.065,
           quant: "fp4",
           ctx: 1048576,
+        },
+        Alibaba: {
+          out: 1.7424,
+          in: 0.5808,
+          cacheRead: 0.05808,
+          quant: "unknown",
+          ctx: 1000000,
         },
         StreamLake: {
           out: 1.9800000000000002,
@@ -1190,6 +1218,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
+        Phala: {
+          out: 2.8776,
+          in: 0.9569999999999999,
+          cacheRead: 0.099,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         Ionstream: {
           out: 2.9299999999999997,
           in: 0.37,
@@ -1210,13 +1245,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.035199999999999995,
           quant: "fp8",
           ctx: 1048575,
-        },
-        Alibaba: {
-          out: 3.366,
-          in: 1.122,
-          cacheRead: 0.1122,
-          quant: "unknown",
-          ctx: 1000000,
         },
         DekaLLM: {
           out: 3.8,
@@ -1252,13 +1280,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.04,
           quant: "fp8",
           ctx: 979000,
-        },
-        Baidu: {
-          out: 3.9600000000000004,
-          in: 1.32,
-          cacheRead: 0.041999999999999996,
-          quant: "fp8",
-          ctx: 1048576,
         },
         Parasail: {
           out: 3.9600000000000004,
@@ -1302,13 +1323,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "mxfp4",
           ctx: 1048576,
         },
-        Phala: {
-          out: 4.359999999999999,
-          in: 1.4500000000000002,
-          cacheRead: 0.15,
-          quant: "unknown",
-          ctx: 1048576,
-        },
         Venice: {
           out: 4.95,
           in: 1.6500000000000001,
@@ -1318,8 +1332,8 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
         Relace: {
           out: 8,
-          in: 0.2211,
-          cacheRead: 0.22,
+          in: 0.1318,
+          cacheRead: 0.13,
           quant: "fp4",
           ctx: 1048576,
         },
@@ -1330,18 +1344,18 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         ctx: 1048576,
       },
       cheapest: {
-        provider: "Sail Research",
-        out: 0.7999999999999999,
-        in: 0.44999999999999996,
-        quant: "fp4",
+        provider: "Baidu",
+        out: 0.43956,
+        in: 0.14651999999999998,
+        quant: "fp8",
       },
       labDirect: null,
       direct: {
         sellers: {
           NanoGPT: {
-            in: 0.66,
-            out: 1.98,
-            cacheRead: 0.022,
+            in: 0.14652,
+            out: 0.43956,
+            cacheRead: 0.0046619999999999995,
             quant: "unknown",
             id: "deepseek/deepseek-v4-pro-0813",
           },
@@ -1369,8 +1383,8 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
         cheapest: {
           seller: "NanoGPT",
-          out: 1.98,
-          in: 0.66,
+          out: 0.43956,
+          in: 0.14652,
         },
       },
     },
@@ -1443,9 +1457,9 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           ctx: 1048576,
         },
         Relace: {
-          out: 8.940000000000001,
-          in: 0.19,
-          cacheRead: 0.19,
+          out: 9.338799999999999,
+          in: 0.18239999999999998,
+          cacheRead: 0.18,
           quant: "fp4",
           ctx: 1048576,
         },
@@ -1512,10 +1526,17 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "mxfp4",
           ctx: 1048576,
         },
+        Morph: {
+          out: 14.626,
+          in: 1.15,
+          cacheRead: 0.324,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         Makora: {
           out: 15,
-          in: 0.65,
-          cacheRead: 0.22999999999999998,
+          in: 0.5,
+          cacheRead: 0.19999999999999998,
           quant: "fp4",
           ctx: 1048576,
         },
@@ -1575,17 +1596,10 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        Morph: {
-          out: 28.125,
-          in: 1.521,
-          cacheRead: 0.44999999999999996,
-          quant: "fp8",
-          ctx: 1048576,
-        },
       },
       openrouter: {
         out: 20,
-        in: 0.19999999999999998,
+        in: 0.192,
         ctx: 1048576,
       },
       cheapest: {
@@ -1771,11 +1785,25 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       labHost: null,
       why: "flagship: dearest current model",
       providers: {
+        StreamLake: {
+          out: 0.54,
+          in: 0.135,
+          cacheRead: 0.0135,
+          quant: "fp8",
+          ctx: 1000000,
+        },
         GMICloud: {
           out: 0.5700000000000001,
           in: 0.14250000000000002,
           cacheRead: 0.01425,
           quant: "fp8",
+          ctx: 1048576,
+        },
+        Fireworks: {
+          out: 0.6,
+          in: 0.15,
+          cacheRead: 0.015,
+          quant: "unknown",
           ctx: 1048576,
         },
         InferenceNet: {
@@ -1848,9 +1876,9 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         ctx: 1048576,
       },
       cheapest: {
-        provider: "GMICloud",
-        out: 0.5700000000000001,
-        in: 0.14250000000000002,
+        provider: "StreamLake",
+        out: 0.54,
+        in: 0.135,
         quant: "fp8",
       },
       labDirect: null,
@@ -2030,6 +2058,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       labHost: "Xiaomi",
       why: "flagship: dearest current model",
       providers: {
+        GMICloud: {
+          out: 0.7394999999999999,
+          in: 0.36974999999999997,
+          cacheRead: 0.0034,
+          quant: "bf16",
+          ctx: 1050000,
+        },
         DeepInfra: {
           out: 0.7829999999999999,
           in: 0.387,
@@ -2043,13 +2078,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.0036,
           quant: "fp8",
           ctx: 1048576,
-        },
-        GMICloud: {
-          out: 0.87,
-          in: 0.435,
-          cacheRead: 0.004,
-          quant: "bf16",
-          ctx: 1050000,
         },
         Xiaomi: {
           out: 0.87,
@@ -2072,10 +2100,10 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         ctx: 1050000,
       },
       cheapest: {
-        provider: "DeepInfra",
-        out: 0.7829999999999999,
-        in: 0.387,
-        quant: "fp8",
+        provider: "GMICloud",
+        out: 0.7394999999999999,
+        in: 0.36974999999999997,
+        quant: "bf16",
       },
       labDirect: null,
       direct: {
@@ -2121,6 +2149,27 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       labHost: "Tencent",
       why: "flagship: dearest current model",
       providers: {
+        Tencent: {
+          out: 2.2509,
+          in: 0.7505999999999999,
+          cacheRead: 0.0378,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        DeepInfra: {
+          out: 2.37595,
+          in: 0.7923,
+          cacheRead: 0.0399,
+          quant: "fp4",
+          ctx: 1048576,
+        },
+        GMICloud: {
+          out: 2.501,
+          in: 0.834,
+          cacheRead: 0.041999999999999996,
+          quant: "bf16",
+          ctx: 262144,
+        },
         AtlasCloud: {
           out: 2.501,
           in: 0.834,
@@ -2134,13 +2183,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.041999999999999996,
           quant: "unknown",
           ctx: 262144,
-        },
-        DeepInfra: {
-          out: 2.501,
-          in: 0.834,
-          cacheRead: 0.041999999999999996,
-          quant: "fp4",
-          ctx: 1048576,
         },
         Novita: {
           out: 2.501,
@@ -2156,32 +2198,32 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Tencent: {
-          out: 2.501,
-          in: 0.834,
-          cacheRead: 0.041999999999999996,
-          quant: "fp8",
-          ctx: 1048576,
-        },
       },
       openrouter: {
-        out: 2.501,
-        in: 0.834,
+        out: 2.2509,
+        in: 0.7505999999999999,
         ctx: 1048576,
       },
       cheapest: {
-        provider: "AtlasCloud",
-        out: 2.501,
-        in: 0.834,
+        provider: "Tencent",
+        out: 2.2509,
+        in: 0.7505999999999999,
         quant: "fp8",
       },
       labDirect: null,
       direct: {
         sellers: {
+          NanoGPT: {
+            in: 0.7505999999999999,
+            out: 2.2509,
+            cacheRead: 0.03780000000000001,
+            quant: "unknown",
+            id: "tencent/hy4-preview",
+          },
           DeepInfra: {
-            in: 0.834,
-            out: 2.501,
-            cacheRead: 0.04199999814,
+            in: 0.7922999999999999,
+            out: 2.37595,
+            cacheRead: 0.03989999823299999,
             quant: "fp4",
             id: "tencent/Hy4-preview",
           },
@@ -2199,18 +2241,11 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
             quant: "unknown",
             id: "tencent/hy4-preview",
           },
-          NanoGPT: {
-            in: 0.834,
-            out: 2.501,
-            cacheRead: 0.041999999999999996,
-            quant: "unknown",
-            id: "tencent/hy4-preview",
-          },
         },
         cheapest: {
-          seller: "DeepInfra",
-          out: 2.501,
-          in: 0.834,
+          seller: "NanoGPT",
+          out: 2.2509,
+          in: 0.7505999999999999,
         },
       },
     },
@@ -2220,9 +2255,9 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
       why: "pinned — a configured model, and the price reference HY4 is measured against",
       providers: {
         Tencent: {
-          out: 0.5279999999999999,
-          in: 0.13199999999999998,
-          cacheRead: 0.032999999999999995,
+          out: 0.33,
+          in: 0.0825,
+          cacheRead: 0.020625,
           quant: "fp8",
           ctx: 262144,
         },
@@ -2256,14 +2291,14 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
       },
       openrouter: {
-        out: 0.5279999999999999,
-        in: 0.13199999999999998,
+        out: 0.33,
+        in: 0.0825,
         ctx: 262144,
       },
       cheapest: {
         provider: "Tencent",
-        out: 0.5279999999999999,
-        in: 0.13199999999999998,
+        out: 0.33,
+        in: 0.0825,
         quant: "fp8",
       },
       labDirect: null,
@@ -2372,7 +2407,7 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         usdIn: 1,
         usdOut: 2.7,
         source: "https://platform.stepfun.ai/docs/en/guides/pricing/details",
-        checkedAt: "2026-10-27T05:06:07.650Z",
+        checkedAt: "2026-10-28T19:46:50.709Z",
         error: null,
       },
       direct: {
@@ -2472,13 +2507,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           in: 0.075,
           cacheRead: 0.015,
           quant: "unknown",
-          ctx: 262144,
+          ctx: 1000000,
         },
       },
       openrouter: {
         out: 0.22499999999999998,
         in: 0.075,
-        ctx: 262144,
+        ctx: 1000000,
       },
       cheapest: {
         provider: "DeepInfra",
@@ -2537,7 +2572,7 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         usdIn: null,
         usdOut: null,
         source: "https://cloud.baidu.com/doc/WENXINWORKSHOP/s/hlrk4akp7",
-        checkedAt: "2026-10-27T05:06:05.585Z",
+        checkedAt: "2026-10-28T19:46:47.907Z",
         error: "price not present in served HTML (table is client-rendered)",
       },
       direct: {
@@ -2547,7 +2582,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
     },
   },
   errors: [
-    "openrouter fee: fee literal not found in FAQ source",
     "baidu/ernie-5.0 (lab-direct): price not present in served HTML (table is client-rendered)",
   ],
 };

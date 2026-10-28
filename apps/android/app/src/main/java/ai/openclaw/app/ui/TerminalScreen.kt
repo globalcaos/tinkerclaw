@@ -48,8 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 
-// 2026-10-20 (the architect): "a terminal on the pi … to access claude code and repair jarvispi when it
-// hangs". The page and its shell live in the phone door (scripts/phone-door/term.mjs), not in the
+// 2026-10-20: a terminal on the host, to reach Claude Code and repair the gateway when it hangs. The page and its shell live in the phone door (scripts/phone-door/term.mjs), not in the
 // gateway or the Tinker page server, so this screen still works when those are stuck.
 private const val TERM_PATH = "/door/term/"
 

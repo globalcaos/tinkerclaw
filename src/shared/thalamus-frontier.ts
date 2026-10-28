@@ -4,12 +4,10 @@
 // (the yellow envelope) and by the reply-path Auto router, so the line the architect sees and
 // the model that actually answers cannot disagree.
 //
-// FORK 2026-09-02 (the architect): "the yellow envelope … is a complete disaster. They are
-// supposed to be picked as up-left as possible, basically defining the top-left
-// outline … make sure the yellow envelope line shows the best intelligence/price
-// models and that Thalamus actually automatically switches among them smartly,
-// following the BIAS selected in the slider … routes intelligently depending on the
-// task at hand, following the Fugu family of harnesses approach."
+// FORK 2026-09-02: the yellow envelope was wrong. It must trace the top-left outline,
+// the best intelligence-per-price models, and Thalamus must switch among them on its
+// own, following the slider's BIAS and the task at hand, in the style of the Fugu
+// family of harnesses.
 //
 // WHAT WAS WRONG. thalamus-candidates.ts answers "which models CAN thalamus reach"
 // (everything routable under a 1.5x cost ceiling), and the chart drew a polyline
@@ -21,8 +19,8 @@
 //
 // WHAT THIS MODULE DOES, in three pure steps:
 //   1. RUNGS. Every reachable (model, thinking effort) is a point on the chart's
-//      €/TASK axis — the architect 2026-09-02: "make sure to use the graph in €/task to make
-//      the envelope, not the €/token". cost = the route's €/Mtok x
+//      €/TASK axis — 2026-09-02: the envelope is built on the €/task graph, not
+//      €/token. cost = the route's €/Mtok x
 //      tokenRatioFor(model, effort) (tokens-per-task.ts, normalised to Opus 5 @high
 //      like the chart's task view; the effort ladder is already IN those tokens, so it
 //      is applied once — see taskCostFactor, 2026-09-30); smart = AA's measured
@@ -279,8 +277,8 @@ export function anchoredBiasPick(
  * (smart-model-dossier.ts `SC_SKILLS`), minus SPEED and COST, which are properties of
  * the route rather than of the work.
  *
- * WIDENED 2026-09-23 (the architect: "the table that explains which model is best at what
- * should be more granular, more visual, and it finally influences Thalamus"). Eight
+ * WIDENED 2026-09-23 (2026-09-23: the which-model-is-best-at-what table should be
+ * more granular and visual, and should feed Thalamus). Eight
  * domains became fifteen. The split is not cosmetic — each new domain is a question
  * whose answer is a DIFFERENT model, which is the only test a routing domain has to
  * pass:
@@ -303,8 +301,8 @@ export function anchoredBiasPick(
  *                            obeying an exact output format are three things the
  *                            architect routes by and this module could not name.
  *
- * WIDENED AGAIN 2026-10-02 (the architect: "find more verticals so we can better choose in
- * Thalamus the best model per task"): shell, ml, cad, research, office, security, health.
+ * WIDENED AGAIN 2026-10-02 (more verticals, so Thalamus can pick the best model
+ * per task): shell, ml, cad, research, office, security, health.
  * Six of the seven are MEASURED from day one, because Epoch already ships the tables and
  * they were being averaged into a broader domain (Terminal Bench in code, WeirdML in
  * reason, Cybench and GDPval in agentic, CadEval in vision). HEALTH has no Epoch rows yet
@@ -556,7 +554,7 @@ export const DOMAIN_SWITCH_MIN_GAIN = 0.1;
 export const DOMAIN_SWITCH_MAX_COST_MULT = 5;
 
 /**
- * A SUGGESTION IS A PRIOR, NOT A PIN (the architect, 2026-10-02: "his picks are suggestions"). The suggested rung runs
+ * A SUGGESTION IS A PRIOR, NOT A PIN (2026-10-02: the owner's picks are suggestions). The suggested rung runs
  * unless it cannot (the plan removes it: a limit, a cooling supply, a context too small, the allowlist) or
  * another rung still beats it for THIS TASK after a bonus of this fraction of the suggestion's own score. "For this
  * task" means the measured domain strength `p` of the task's domain, the only task-specific evidence the router

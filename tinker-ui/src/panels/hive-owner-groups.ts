@@ -1,5 +1,5 @@
-// FORK 2026-10-06 (the user: "Me, the admin user, will have access to all the chats of all the users,
-// and the UI will divide the chats into groups with their owner's tags").
+// FORK 2026-10-06 (need: the admin sees every user's chats, and the UI groups them under each
+// owner's tag).
 //
 // In multi-user mode the door tags every row of `sessions.list` with `hiveOwner`, `hiveOwnerName`
 // and `hiveScope` ("private" | "user" | "legacy" | "system"). This orders an admin's chat list by

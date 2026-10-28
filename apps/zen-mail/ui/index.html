@@ -439,7 +439,7 @@ function attsHtml(t){
 // The butler (2026-10-16): what Jarvis already did on this topic, what is missing, and the files ready to go.
 function butlerHtml(b){
   let h=`<div class="lbl">From your butler</div><div class="butler">`;
-  // 2026-10-22 (the architect: "it saves me time if I have the pdf links available and the SV2 start command clearly visible").
+  // 2026-10-22: the brief shows its PDF links and its start commands in plain view, to save time.
   if(b.brief)h+=`<p class="b-brief">${esc(b.brief)}</p>`;
   if(b.links&&b.links.length)h+=`<div class="b-links">${b.links.map((l,i)=>`<button class="b-link" data-act="blink" data-v="${i}" title="${esc(l.target)}">${/\.pdf$/i.test(l.target||"")?"📄 ":/^https?:/i.test(l.target||"")?"🔗 ":"📁 "}${esc(l.label||l.target)}</button>`).join("")}</div>`;
   if(b.commands&&b.commands.length)h+=b.commands.map((c,i)=>`<div class="b-cmd"><span class="b-cmd-l">${esc(c.label||"")}</span><code>${esc(c.cmd)}</code><button class="b-copy" data-act="bcopy" data-v="${i}">Copy</button></div>`).join("");

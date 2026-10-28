@@ -526,8 +526,8 @@ export function logSessionStateChange(
   const prevState = state.state;
   state.state = params.state;
   state.lastActivity = Date.now();
-  // FORK 2026-08-23 (the architect: "the 'prompt queued' message is not working well, it shown
-  // during normal operation after I send a normal prompt").
+  // FORK 2026-08-23: the 'prompt queued' message showed during normal operation after an
+  // ordinary prompt.
   //
   // He is right, and the cause is here. `queueDepth` was incremented on ENQUEUE and decremented
   // only on the transition to IDLE — so for the whole of a perfectly normal turn the counter

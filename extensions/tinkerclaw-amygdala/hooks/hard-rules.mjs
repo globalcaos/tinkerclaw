@@ -170,8 +170,8 @@ function recentOwnerMessages(transcriptPath, maxAgeMs) {
 }
 
 /**
- * Storing a secret the architect pasted (the architect, 2026-10-15 12:19, after a pasted Jira token was refused:
- * "the cat is already out of the box ... now just store it properly"). An APPEND to
+ * Storing a secret the owner pasted (2026-10-15, after a pasted token was refused: once it is in
+ * the chat, storing it properly is the safer path). An APPEND to
  * ~/.openclaw/.env passes when every long value it writes was typed by the owner himself in the
  * last 30 minutes. Nothing stored is read, and the value is already his and in the chat. Any read
  * of .env in the same command, or any value he did not paste, keeps the normal gate.
@@ -202,7 +202,7 @@ function grantAlreadyUsed(code) {
 
 /** True when the owner granted exactly this command once; records the use. */
 /**
- * Deletion intent (the architect, 2026-10-13): "help me liberate some disk space" is a request for
+ * Deletion intent (2026-10-13): a request to free disk space is a request for
  * help, not an instruction to delete. A delete rule passes only when the owner's latest typed
  * message (same owner-only reading as the grant) asks for deletion in his own words.
  */
@@ -217,8 +217,8 @@ async function ownerAskedToDelete(transcriptPath, command) {
 }
 
 /**
- * Secret intent (the architect, 2026-10-13 21:13: "Jev should do the same with accessing the passwords as
- * with deleting stuff ... only allowed by express phrasing"). Reading or using a stored password
+ * Secret intent (2026-10-13): stored secrets get the same rule as deletion, allowed only by
+ * explicit phrasing. Reading or using a stored password
  * passes only when the owner's latest typed message asks for it in his own words and Jev agrees;
  * otherwise the one-time code. Same negation and question filters as deletion.
  */
@@ -235,8 +235,8 @@ async function ownerAskedForSecret(transcriptPath, command) {
 }
 
 /**
- * Jev check (the architect, 2026-10-13: "the Jev prompt should be something like 'Verify if this prompt
- * specifically asks for a deletion to be performed'"). The keyword filter alone misreads prompts;
+ * Jev check (2026-10-13): Jev verifies whether the prompt specifically asks for the deletion
+ * to be performed. The keyword filter alone misreads prompts;
  * Jev reads the owner's message against the exact command. Fails closed: no token, timeout or
  * any error → 0, and the deny's one-time code stays the way through.
  * Measured 2026-10-13 (jev-latest, 2 runs): explicit "Delete the 12 old Timeshift snapshots."
@@ -298,8 +298,9 @@ async function jevScore(words, command, question, instructions) {
 
 /**
  * A delete word counts only when its own sentence does not negate it shortly before:
- * "I never instructed you directly to delete anything" (the architect, 2026-10-13) is a refusal,
- * and a bare keyword match had read it as permission on the first live test.
+ * a sentence like "I did not ask you to delete those files" (invented example) is a refusal,
+ * and a bare keyword match had read a live sentence of that shape (2026-10-13) as permission
+ * on the first live test.
  */
 const NEGATION_RE =
   /\b(?:never|not|no|without|nothing|don't|didn't|doesn't|won't|shouldn't|do not|did not|sin|no|nunca|mai|cap|ni)\b|n't\b/i;
@@ -313,7 +314,7 @@ function hasUnnegatedIntent(words, intentRe) {
     const before = words.slice(Math.max(0, m.index - 60), m.index);
     const sentence = before.split(/[.!?;\n]/).pop() || "";
     if (NEGATION_RE.test(sentence)) continue;
-    // "Tell me what we can delete" (the architect, 2026-10-13 11:32) asks for a list; it is not consent.
+    // A question like "what could we delete?" (seen 2026-10-13) asks for a list; it is not consent.
     if (QUESTION_RE.test(sentence)) continue;
     return true;
   }
@@ -322,8 +323,7 @@ function hasUnnegatedIntent(words, intentRe) {
 
 /**
  * True when the command loads ~/.openclaw/.env only to call read-only Slack Web API methods
- * (the architect 2026-10-15: "refine the safety hook so it does not block you from obvious innocuous
- * interactions"; the read-only Frontier token was blocked on conversations.replies). Every URL
+ * (2026-10-15: the safety hook should not block obviously harmless interactions; the read-only Frontier token was blocked on conversations.replies). Every URL
  * must be a listed read method; anything that posts, sends data, or prints the key or the file
  * is still blocked. Only .env counts: *.secret files and ~/.config/jarvis stay gated.
  */
@@ -379,8 +379,8 @@ function deletesOnlyTmpScratch(command, ruleRe) {
   return sawDelete;
 }
 
-// Fresh files (the architect, 2026-10-16: "Upgrade the delete guard so you can delete files that you just created within 5
-// minutes"). A delete passes when EVERY target is named one by one (no wildcard, no $variable, no ".."), is a plain
+// Fresh files (2026-10-16): the delete guard lets the agent delete files it created in the last 5 minutes.
+// A delete passes when EVERY target is named one by one (no wildcard, no $variable, no ".."), is a plain
 // file or an empty folder owned by this user, and was born less than FRESH_MS ago by the filesystem's own birth time.
 // No recursive delete, no find -delete, no cache purge: anything older, shared or bulk still needs his words.
 const FRESH_MS = 5 * 60 * 1000;
@@ -475,8 +475,8 @@ function readStdin() {
 }
 
 /**
- * FORK 2026-10-15 (the architect: "all performed actions ... right where he does it, within its
- * context"): every spooled row names the tool call (toolUseId == the Claude tool_use id the
+ * FORK 2026-10-15: show every performed action at the tool call it judged, in context.
+ * Every spooled row names the tool call (toolUseId == the Claude tool_use id the
  * chat's tool row carries) and the session, so the UI can hang a bubble on the exact call.
  * Set once per run from the hook payload (this script is one process per call, see the
  * process.exit at the end); null when claude-cli did not send them.

@@ -366,8 +366,7 @@ class Handler(SimpleHTTPRequestHandler):
             write_json(HISTORY, h)
         self._json({"ok": True, "recorded": True})
 
-    # 2026-10-27 (the architect: "There is currently no way to delete current files. On long press the option should pop
-    # up"): a long press on a 🕘 Recent row offers both. Hide only takes it off the list; Trash moves the real PDF
+    # 2026-10-27: there was no way to remove a file. A long press on a 🕘 Recent row offers both. Hide only takes it off the list; Trash moves the real PDF
     # to the trash, where a file manager can restore it. Never a plain delete.
     def _hide(self):
         where = self._served_path()

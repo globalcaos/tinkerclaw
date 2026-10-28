@@ -3,8 +3,8 @@
  *
  * The census of 2026-10-09 read 2,675 reflections: 131 of the 536 claims that failed named a file
  * that was never on disk, and the only way to tell a reflection that fixed something from one that
- * said it did was to read it by hand. The owner does not want to vote cards ("I just don't have the
- * time, find a better way"), so the bridge, which sees every tool call of the run, writes down what
+ * said it did was to read it by hand. The owner does not want to vote cards and asked for another
+ * way, so the bridge, which sees every tool call of the run, writes down what
  * the run actually did and checks what its text says it did:
  *
  * - `writes`: the files its own Edit/Write/NotebookEdit calls changed (a failed call changed none);

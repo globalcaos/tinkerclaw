@@ -220,8 +220,8 @@ states), the merge and branch state, and what is still open.
 ## Constraints
 
 - One pass, one artifact, one review. Never start a pass before the previous one was read.
-- Summarise; point to the source instead of restating it. "Too much rigour is rigour mortis" (principal,
-  2026-09-29).
+- Summarise; point to the source instead of restating it. Excess rigour buries the point (principal's
+  review, 2026-09-29).
 - Every mock-up carries a feedback box; mock data is labelled as mock data.
 - The design folder is private; the server binds loopback only.
 - Links the principal should open go on their own line, as a URL and as a path.
@@ -235,13 +235,12 @@ states), the merge and branch state, and what is still open.
 
 - **2026-10-06, Broca retrieval v2 and every Jev feature:** designed, built, merged and deployed with no answer to
   how they reach a clone. Both Jev plugins ship `enabledByDefault: false`, nothing announces that a Jev token exists,
-  and a keyless client answers every question with "error". The principal: "How do we ship the jev-dependant
-  capabilities? Did you think about it? Did Fractal even consider it?? Maybe these capabilities should be bundled in a
-  new cloner installation and automatically disabled until a Jev token is available, right?" Pass 1 now carries the
-  ship path as a required row.
+  and a keyless client answers every question with "error". The principal asked how
+  Jev-dependent features reach a clone, and proposed shipping them in every new install, switched off until a Jev
+  token is available. Pass 1 now carries the ship path as a required row.
 
 - **Born project-specific (2026-09-29):** pass 1 was written as `digital-amygdala-build`; at the second pass the
-  principal asked for a name "useable by other things" that can start from a prompt, a paper or a dialog. The
+  principal asked for a general name, reusable elsewhere, for a recipe that can start from a prompt, a paper or a dialog. The
   amygdala is now the worked instance below.
 - **The verbose panel nobody reads:** the amygdala v3.1 panel listed every tool call. Pass 2 leads with one line
   and counts the rest.
@@ -251,8 +250,8 @@ states), the merge and branch state, and what is still open.
   Use a fresh `mktemp -d` folder per test run instead of deleting one.
 - **A design server that died with a power-off** (decision page, 2026-09-25): run it as a persistent user
   service.
-- **Answers typed, never sent** (Thalamus full deploy, 2026-10-02): "I have filled up the questionnaire but cannot
-  find a submit button." The answers lived only in the browser's draft and were recovered from Chrome's local
+- **Answers typed, never sent** (Thalamus full deploy, 2026-10-02): a filled questionnaire had no submit button.
+  The answers lived only in the browser's draft and were recovered from Chrome's local
   storage. Pages now save each change to the server and end with a Submit button (Step 2).
 
 ## Worked instance

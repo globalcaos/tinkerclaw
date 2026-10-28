@@ -1,9 +1,8 @@
 /**
  * FORK 2026-07-31 — the thinking indicator must name the model that is THINKING.
  *
- * the architect, on the 2026-07-31 gateway restart: "I can see now a thinking indicator
- * that is not orange (the color that would identify anthropic's models) although
- * opus was answering. Also, I can read 'gatewa'."
+ * Seen on the 2026-07-31 gateway restart: the thinking indicator was not orange
+ * (Anthropic's colour) although an Anthropic model was answering, and it read 'gatewa'.
  *
  * Both symptoms had one cause. `gateway-injected` and `delivery-mirror` are
  * SERVER-SIDE SENTINELS stamped on messages the gateway writes into a transcript
@@ -38,8 +37,7 @@ export function isTranscriptOnlyModel(model?: string | null): boolean {
  *
  * The previous fallback was a blind `.slice(0, 6)`, which reduced any id the
  * nickname table doesn't know to a meaningless stub ("gateway-injected" → "gatewa").
- * the architect: "I am not against the thinking indicator informing about the internal state
- * of the LLM, but 'gatewa' is not clear enough."
+ * The indicator may report internal state, but 'gatewa' says nothing.
  *
  * So: cut on a separator, so what survives is a whole word, and mark the cut with an
  * ellipsis so a truncated label LOOKS truncated instead of looking like a model

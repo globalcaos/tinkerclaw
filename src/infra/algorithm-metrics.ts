@@ -1,5 +1,4 @@
-// FORK 2026-07-28 (the architect: "numerically trace the effectiveness of different algorithms to feed
-// it later into the papers") — the ALGORITHM EFFECTIVENESS LEDGER.
+// FORK 2026-07-28: measure each algorithm's effectiveness in numbers for the papers — the ALGORITHM EFFECTIVENESS LEDGER.
 //
 // Companion to instrument-liveness.ts. That module answers "is this on the traffic path?";
 // this one answers "and how well is it working?" — as numbers durable enough to publish.

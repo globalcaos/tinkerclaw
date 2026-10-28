@@ -1,8 +1,8 @@
 // THALAMUS — which model the "Rewind and retry with ‹model›" button would use.
 //
-// FORK 2026-10-02 (the architect, full deploy): "Refusals are detected only. No automatic re-route, no veto in routing. Two
-// buttons under a reply read as refused: Rewind, and Rewind and retry with ‹model› (model chosen by Thalamus from
-// another family, shown with its logo)." His observation behind it: once a refusal is in the context, the next model
+// FORK 2026-10-02 (full deploy): refusals are only detected; no automatic re-route, no veto in routing. A reply read
+// as refused gets two buttons: Rewind, and Rewind and retry with ‹model› (chosen by Thalamus from another family,
+// shown with its logo). The observation behind it: once a refusal is in the context, the next model
 // tends to agree with it, which is why the retry rewinds first and why it must come from somewhere else.
 //
 // WHAT IT PICKS. The best rung for the task's domain among the models of ANOTHER VENDOR than the one that refused

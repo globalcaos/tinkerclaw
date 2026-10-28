@@ -224,8 +224,8 @@ def _gh(*args, timeout=60):
 
 
 def fetch_github(conn, acct, owner_login="globalcaos"):
-    """The opportunity radar's GitHub lane (the architect, 2026-10-22: "git stars, git PRs ... opportunities for me to get the
-    word out"). Open issues and PRs other people opened on the owner's repos, one pseudo-thread each (gh:repo#n); and,
+    """The opportunity radar's GitHub lane (2026-10-22: stars and PRs as chances to spread the word).
+    Open issues and PRs other people opened on the owner's repos, one pseudo-thread each (gh:repo#n); and,
     per repo that gained stars since the last run, one pseudo-thread naming the new stargazers with their reach
     (followers, bio, site), because a well-followed stargazer is a person worth reaching out to (ghstar:repo)."""
     live = set()
@@ -270,7 +270,7 @@ def fetch_github(conn, acct, owner_login="globalcaos"):
     log(f"[github] {acct}: {len(live)} open issues/PRs by others; star watch on {len(seen)} repos")
 
 
-# ─── Slack and ClawHub radar lanes (2026-10-22, the architect: "Slack and Clawhub should be available for you anytime") ─────
+# ─── Slack and ClawHub radar lanes (2026-10-22: Slack and ClawHub always available to the agent) ─────
 
 SLACK_ME = "U0C887M8SBU"  # the architect in The Frontier (Matthew Berman's community); the token is read-only, user scopes
 
@@ -458,8 +458,8 @@ def fetch_teams(conn, acct, days, me, owner):
     log(f"[teams] {acct}: {len(chats)} chats with activity in the last {days} days")
 
 
-# The owner's phone book, imported by skill phone-contacts into the people database (the architect, 2026-10-27: "Who the fuck
-# is jdthinking by the way??? You have access to my contact list in the phone"). A WhatsApp profile name is whatever the
+# The owner's phone book, imported by skill phone-contacts into the people database (2026-10-27:
+# cards showed WhatsApp handles instead of contact names). A WhatsApp profile name is whatever the
 # contact typed for himself; the phone book is what the owner calls them. Missing files (a fresh clone) = no names.
 PEOPLE_ALIASES = pathlib.Path(os.environ.get(
     "ZEN_MAIL_PEOPLE_ALIASES", pathlib.Path.home() / ".openclaw/workspace/memory/people/_aliases.json"))

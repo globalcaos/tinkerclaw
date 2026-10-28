@@ -4,8 +4,8 @@ import { renderSmartCostChart, type ScModel } from "./smart-cost-chart";
 /**
  * ONE MODEL, ONE MARK SIZE.
  *
- * the architect 2026-08-30: "Revise the circle sizes, opus 5 seems to have different
- * sizes in the same model, impossible, must be a bug." It was. Both emission
+ * 2026-08-30: one model showed circles of different sizes, which must be a
+ * bug. It was. Both emission
  * sites multiplied scRadius by `(anchor ? 1 : 0.82)`, so a model is plotted once
  * per EFFORT STOP — Opus 5 has five — and only the anchor drew full size. One
  * model with ONE context window therefore rendered at TWO radii, and size

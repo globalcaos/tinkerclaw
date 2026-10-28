@@ -83,8 +83,7 @@ describe("subagentBelongsToViewedTab", () => {
     expect(subagentBelongsToViewedTab(SUB, TAB_A, d)).toBe(true);
   });
 
-  // REGRESSION (2026-08-08, the architect: "Jarvis is doing things in parallel but the EEG does not show
-  // the traces"). An orchestrator-dispatched fan-out resolves its owner to `agent:main:orchestrator`
+  // REGRESSION (2026-08-08: parallel agent work showed no traces in the EEG). An orchestrator-dispatched fan-out resolves its owner to `agent:main:orchestrator`
   // — a session, but not a tab. That used to return false for EVERY tab, so four live legs were
   // invisible everywhere at once. A non-tab owner is the ABSENCE of tab evidence, not evidence of
   // a rival tab, so it must fall through to the lone-tab rule.

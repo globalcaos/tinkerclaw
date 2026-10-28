@@ -44,9 +44,8 @@
 // finding stands.
 //
 // What was WRONG in that finding was the conclusion "so there is nothing to draw".
-// the architect, the same evening: "You must certainly be able to find other benchmarks,
-// other intelligence index measurements, even if you have to approximate the ones we
-// don't know for sure, right?" He is right, and the approximation lives in
+// The same evening's correction: other benchmarks and intelligence-index measurements
+// exist, and the unknown cells can be approximated. The approximation lives in
 // `aa-effort-estimate.ts` (GENERATED — see model-rank-refresh/scripts/
 // estimate_effort_index.py): Epoch AI's benchmarking hub runs GPQA, CritPt, HLE,
 // DeepSWE, ARC-AGI, FrontierMath, SWE-bench … PER EFFORT, and LMArena rates some

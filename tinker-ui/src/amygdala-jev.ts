@@ -10,9 +10,8 @@ import {
 } from "./amygdala-html.js";
 /**
  * Jev in the chat: after each reply, at most two windows in TypeSafe's look (design block 5b, §9.2), deliberately foreign
- * to the theme. the architect 2026-10-05: "two kinds of messages, one with a summary of the checks it performed, which should
- * expand into a nice diagram of what it did and when ... and another type of entry ... with actions it would have taken,
- * for me to revise."
+ * to the theme. 2026-10-05: two kinds of entry, a summary of the checks it ran that expands into a diagram of what it
+ * did and when, and a list of actions it would have taken, for review.
  *
  * 1. CHECKS: one line, collapsed by default. Opened, a check timeline in the call timeline's encoding
  *    (context-window-panel.md §5.3): one equal-width column per step, the checks made before the step stacked above the
@@ -25,7 +24,7 @@ import {
  * Pure HTML-string builders; app.ts handles the `data-amy-act` attributes by delegation. A question's wording never
  * appears: names, ids, versions and answers only.
  *
- * FORK 2026-10-15 (the architect: "I don't need to see the jev boxes at the end of the turn anymore"): amygdala-ui.ts no longer
+ * FORK 2026-10-15 (no Jev boxes at the end of the turn any more): amygdala-ui.ts no longer
  * draws the two windows; it draws each action as a pink Amygdala bubble next to its tool row (amygdala-inline.ts), using
  * `renderAction` (exported, markup unchanged). The window builders stay for their tests and for any page that still wants them.
  */
@@ -433,7 +432,7 @@ export function actionsOf(turns: TurnView[]): JevAction[] {
 }
 
 /**
- * Whether an action belongs in the chat (2026-10-15, the architect: "I don't want to see so many pink stuff"): one of its
+ * Whether an action belongs in the chat (2026-10-15: less pink in the chat): one of its
  * decisions reached the agent, or its card still waits for an answer. Shadow records ("would have") stay out; the
  * reviewer judges them and the panel keeps them.
  */
@@ -471,24 +470,31 @@ export function actionDecisionId(a: JevAction): string | undefined {
   return a.reasons[0]?.decisionId ?? a.iv?.decisionId;
 }
 
-/** A vote targets the decision when there is one, else the first answer; a lone rule with no decision has no vote. */
-function voteTarget(a: JevAction): { id: string; kind: "decision" | "verdict" } | undefined {
-  const first = a.reasons[0];
-  if (first?.decisionId) return { id: first.decisionId, kind: "decision" };
-  if (first) return { id: first.id, kind: "verdict" };
-  if (a.iv?.decisionId) return { id: a.iv.decisionId, kind: "decision" };
-  return undefined;
+/**
+ * The judge's verdict on one action as a chip: who judged it and whether it was the right call (the explainer's
+ * suggestion, Grok first). FORK 2026-10-28: the owner no longer votes on each action; the judge does, and the chip says
+ * what it decided. Pending reads "judging…"; a failed or missing judgement shows nothing.
+ */
+function verdictChip(x: JevExplanation | undefined): string {
+  const words = x?.status === "done" ? x.explanation : undefined;
+  if (words) {
+    const model = x?.model ? x.model.split("/").pop()! : "judge";
+    const ok = words.suggest === 1;
+    return `<span class="amy-jverdict ${ok ? "amy-jv-ok" : "amy-jv-bad"}">${esc(model)}: ${ok ? "right call" : "wrong call"}</span>`;
+  }
+  return x?.status === "pending" ? `<span class="amy-jverdict amy-jv-wait">judging…</span>` : "";
 }
 
+/**
+ * One action as a small card (FORK 2026-10-28): one line by default (what Jev did, the judge's verdict, the time, a
+ * caret), the whole line toggles the rest open: what the agent was doing, what worried Jev, why the judge decided as it
+ * did, then the step and Jev's answers. Cards that wait for the owner (`extra`: a hold, a question, Rewind) stay outside
+ * the fold, always in view.
+ */
 export function renderAction(a: JevAction, o: JevActionsOptions): string {
-  const target = voteTarget(a);
   const x = o.explain?.(a);
   const words = x?.status === "done" ? x.explanation : undefined;
-  const voted = target ? (o.votes?.get(target.id) ?? (words ? x?.vote : undefined)) : undefined;
-  const voteAttrs = (value: 1 | -1): string =>
-    `data-amy-act="label" data-target-id="${esc(target!.id)}" data-target-kind="${target!.kind}" data-kind="useful" data-value="${value}"`;
-  const vote = (value: 1 | -1, text: string): string =>
-    `<button class="amy-jvote${voted === value ? " amy-voted" : ""}" ${voteAttrs(value)}>${text}</button>`;
+  const shown = o.openDetails?.has(a.key) ?? false;
   const why = a.reasons.length
     ? `<span class="amy-mt">because Jev answered</span> ` +
       a.reasons.map((d) => `<b>${esc(d.questionName)}</b> → ${esc(fmtAnswer(d))}`).join(" · ")
@@ -500,47 +506,31 @@ export function renderAction(a: JevAction, o: JevActionsOptions): string {
       ? `<div class="amy-jc-step"><span class="amy-mt">step</span> ${esc(a.step)}</div>`
       : "") + (why ? `<div class="amy-jc-why">${why}</div>` : "");
   const head =
-    `<div class="amy-jc-head"><span class="amy-jg">${GLYPH[a.did]}</span>` +
+    `<div class="amy-jc-head amy-jc-toggle" data-amy-act="jev-act-detail" data-action="${esc(a.key)}">` +
+    `<span class="amy-jg">${GLYPH[a.did]}</span>` +
     `<span class="amy-jo ${PILL_CLASS[a.did]}">${esc(DID_WORD[a.did])}</span>` +
     `<b>${esc(CHANGE_WORDS[a.did][o.shadow === false ? 1 : 0])}</b>` +
-    `<span class="amy-ja-time">${esc(fmtClock(a.ts))}</span></div>`;
-  const extra = o.extra?.(a) ?? "";
-  const tail = extra ? `<div class="amy-ja-extra">${extra}</div>` : "";
-  const open = `<div class="amy-jact${words ? " amy-jact-x" : ""}" data-turn="${esc(a.turnId)}" data-action="${esc(a.key)}">`;
-  if (words) {
-    // The explainer's words lead; the raw command and scores wait behind "details". One reply per vote, the
-    // suggested one first: marked, never pre-selected, so the vote stays the owner's (his votes teach Jev).
-    const shown = o.openDetails?.has(a.key) ?? false;
-    const model = x?.model ? x.model.split("/").pop()! : "the explainer";
-    const replies = target
-      ? `<div class="amy-jx-replies">` +
-        words.replies
-          .map(
-            (r) =>
-              `<button class="amy-jvote amy-jreply${r.vote === words.suggest ? " amy-jrec" : ""}${voted === r.vote ? " amy-voted" : ""}" ` +
-              `${voteAttrs(r.vote)}${r.vote === words.suggest ? ` title="${esc(`Suggested by ${model}`)}"` : ""}>` +
-              `${r.vote === 1 ? "👍 Right call" : "👎 Wrong call"}: ${esc(r.text)}</button>`,
-          )
-          .join("") +
-        `</div>`
-      : "";
-    return (
-      `${open}<div class="amy-ja-main">${head}` +
+    verdictChip(x) +
+    `<span class="amy-ja-time">${esc(fmtClock(a.ts))}</span>` +
+    `<span class="amy-jx-more">${shown ? "▾" : "▸"}</span></div>`;
+  let body = "";
+  if (shown && words) {
+    const model = x?.model ? x.model.split("/").pop()! : "judge";
+    const reason = words.replies.find((r) => r.vote === words.suggest)?.text ?? "";
+    body =
       `<div class="amy-jx-doing">${esc(words.doing)}</div>` +
       `<div class="amy-jx-jev"><span class="amy-mt">Jev</span>${esc(words.jev)}</div>` +
-      `<div class="amy-jx-more" data-amy-act="jev-act-detail" data-action="${esc(a.key)}">${shown ? "details ▾" : "details ▸"}</div>` +
-      (shown ? raw : "") +
-      `</div>${replies}${tail}</div>`
-    );
-  }
-  const votes = target
-    ? `<div class="amy-ja-votes" title="Was that the right call?">${vote(1, "👍 right call")}${vote(-1, "👎 wrong call")}</div>`
-    : "";
-  const wait =
-    x?.status === "pending"
-      ? `<div class="amy-jx-wait">Explaining this flag in plain words…</div>`
-      : "";
-  return `${open}<div class="amy-ja-main">${head}${raw}${wait}</div>${votes}${tail}</div>`;
+      (reason
+        ? `<div class="amy-jx-verdict"><span class="amy-mt">${esc(model)}</span>${esc(reason)}</div>`
+        : "") +
+      raw;
+  } else if (shown) body = raw;
+  const extra = o.extra?.(a) ?? "";
+  const tail = extra ? `<div class="amy-ja-extra">${extra}</div>` : "";
+  return (
+    `<div class="amy-jact${words ? " amy-jact-x" : ""}${shown ? " amy-jact-open" : ""}" data-turn="${esc(a.turnId)}" data-action="${esc(a.key)}">` +
+    `<div class="amy-ja-main">${head}${body}</div>${tail}</div>`
+  );
 }
 
 /** The WOULD HAVE window for one reply; "" when Jev would have changed nothing in it. */

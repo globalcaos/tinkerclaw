@@ -1,6 +1,6 @@
 // FORK 2026-10-19 (the architect: phone app) — Tinker phone mode.
 //
-// the architect flies with only his phone (a flip phone: a cover screen and a ~412 CSS px inner one),
+// The owner may have only a phone (a ~412 CSS px wide screen),
 // and the Jarvis app is a WebView of this very page through the phone door. The desktop layout is
 // a three-column grid with a 420px right rail, which does not fit. Phone mode keeps every piece
 // of it and rearranges it for one hand:
@@ -143,7 +143,7 @@ export interface PhoneModeController {
 
 let current: PhoneModeController | null = null;
 
-// FORK 2026-10-23 (the architect: "the row of icons shown have no similarity, no cohesive style"). The dropdown's
+// FORK 2026-10-23: the icon row had no cohesive style. The dropdown's
 // buttons were a text +, colour emoji 📄 📬 and text ✈ ⚙ ⌨. Now one line set: 24-unit grid, the stroke
 // width and round joins set once in phone.css, colour from currentColor. Zen Mail = an envelope with a
 // bonsai on top, the same drawing as its favicon (apps/zen-mail/ui/index.html).
@@ -232,10 +232,10 @@ export function initPhoneMode(
     // FORK 2026-10-19 (the architect: phone app) — the trip corner lives here inside the Jarvis app, so no
     // floating button covers the chat. Hidden in a plain browser (no JarvisNative).
     `<button type="button" class="phone-hbtn" id="phone-trip-btn" aria-label="Trip" hidden>✈</button>` +
-    // FORK 2026-10-19 (the architect: "there is no app settings or I cannot reach it") — the app's own settings
+    // FORK 2026-10-19: app settings were missing or unreachable — the app's own settings
     // (door addresses, version, Check for update). App only, like the trip button.
     `<button type="button" class="phone-hbtn" id="phone-settings-btn" aria-label="App settings" hidden>⚙</button>` +
-    // 2026-10-19 (the architect): exec mode lives in the header on the phone; it drives the toolbar's 🎯.
+    // 2026-10-19: exec mode lives in the header on the phone; it drives the toolbar's 🎯.
     `<button type="button" class="phone-hbtn" id="phone-exec-btn" aria-label="Exec mode">🎯</button>` +
     `<button type="button" class="phone-hbtn" id="phone-new-btn" aria-label="New chat">+</button>` +
     `<button type="button" class="phone-hbtn" id="phone-more-btn" aria-label="Panels">⋯</button>`;
@@ -272,8 +272,8 @@ export function initPhoneMode(
   let sheetOpen = false;
   let drag: Drag | null = null;
 
-  // FORK 2026-10-23 (the architect: "when a download is happening and I open the drop-down, I cannot click on
-  // any of the options; the downloading message should stick to the bottom of the drop-down"). Inside
+  // FORK 2026-10-23: during a download the drop-down options were not clickable; the download
+  // message now sits at the bottom of the drop-down. Inside
   // the Jarvis app the page tells the app when this sheet opens: the app's update banner steps aside
   // and its line comes back as a "jarvis-native" {ev:"update"} event, shown in the sheet's footer.
   type SheetNative = { sheet?: (open: boolean) => void };
@@ -413,7 +413,7 @@ export function initPhoneMode(
           : `<button type="button" class="phone-sheet-close" data-phone-close="${esc(t.id)}" aria-label="Close chat">✕</button>`) +
         `</div>`;
     }
-    // 2026-10-20 (the architect): "All chats…" is redundant (the right drawer lists them). ✈ ⚙ ⌨ moved from
+    // 2026-10-20: "All chats…" is redundant (the right drawer lists them). ✈ ⚙ ⌨ moved from
     // the header into the button row above (the terminal is served by the phone door, so it opens
     // even when the gateway hangs).
     sheet.innerHTML =
@@ -529,8 +529,7 @@ export function initPhoneMode(
       const r = [...sheet.querySelectorAll<HTMLElement>("[data-phone-menu]")]
         .find((b) => b.dataset.phoneMenu === hit?.id)
         ?.getBoundingClientRect();
-      // FORK 2026-10-27 (the architect: "the drop down contracts while the options are visible. It should
-      // not contract"): the sheet stays open under the menu (menu z-index 1300 > sheet 1150).
+      // FORK 2026-10-27: the drop-down must not contract while its options are visible: the sheet stays open under the menu (menu z-index 1300 > sheet 1150).
       deps.openTabMenu?.(hit.id, r ? r.left - 160 : 16, r ? r.bottom : 64);
       return;
     }
@@ -749,7 +748,7 @@ export function initPhoneMode(
       doc.documentElement.style.setProperty("--phone-vh", `${win.innerHeight}px`);
   };
   syncPhoneVh();
-  // FORK 2026-10-22 (the architect: the review PDF opened grey, "1 of 15", Recent a brown line). A tapped
+  // FORK 2026-10-22 (a review PDF opened grey and broken in the app). A tapped
   // http link to the viewer (/pdf/viewer/…) loaded it as the whole WebView page, where every vh is 0
   // (above), so its pages and dialogs collapsed. Open it in the reader layer's iframe instead, where
   // vh is right (client log: 100vh = 882 framed). Same-origin or door-host links only.

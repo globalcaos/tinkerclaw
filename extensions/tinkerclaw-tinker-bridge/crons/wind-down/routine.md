@@ -101,7 +101,7 @@ CHANGE: if either schedule moves, or runs keep finishing well inside the window,
 
 ## Step 4: Fix what keeps going wrong (act, then report)
 
-a. **Repeated corrections.** For each correction in the owner's words (Step 0a and 0c), search the
+a. **Repeated corrections.** For each correction the owner made (Step 0a and 0c), search the
 reflections, `$WS/memory/` and the lesson pass's report for the same correction on an earlier
 day. Seen before means the gap is in what the agent reads, not in one turn: change the source
 so it cannot recur. In the workspace that means `$WS/AGENTS.md`, a skill under `$WS/skills/`, a

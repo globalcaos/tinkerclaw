@@ -68,7 +68,7 @@ describe("dropImportCoveredLocalAssistants", () => {
   });
 });
 
-// FORK 2026-08-23 (B043 — "I saw an answer yesterday and this morning it was gone"):
+// FORK 2026-08-23 (B043 — an answer seen one day was gone from the chat the next morning):
 // an EMPTY local assistant placeholder (a turn that died before producing text) must not
 // suppress the import's real answer for that slot.
 //

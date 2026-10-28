@@ -126,7 +126,7 @@ describe("detectAgentMessage", () => {
 });
 
 describe("detectSystemNotice: behind total-recall's retrieval pack", () => {
-  // the architect 2026-10-13 20:56: "I see a big green prompt that I did not do". The 15:36 restart report was stored like this.
+  // 2026-10-13 bug: a big green prompt showed that the user never typed. The 15:36 restart report was stored like this.
   const pack =
     "## Retrieved Memory Context\n\n## Retrieved Context\n[2026-10-13T12:24:31] [agent_message] Miro quines fotos…\n\n" +
     '## Humor: the purple line only\n\n- "Each one gets its own lane now." → unobserved\n\n';

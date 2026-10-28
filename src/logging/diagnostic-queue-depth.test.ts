@@ -1,8 +1,8 @@
 /**
  * FORK 2026-08-23 — `queueDepth` must mean "accepted but NOT STARTED".
  *
- * The architect: "the 'prompt queued' message is not working well, it shown during normal
- * operation after I send a normal prompt."
+ * Report: the "prompt queued" message showed during normal operation, right after an ordinary
+ * prompt was sent.
  *
  * It was incremented on enqueue and decremented only on the transition to IDLE, so for the whole
  * of a normal turn the counter still read 1 while that very prompt was the one running. The

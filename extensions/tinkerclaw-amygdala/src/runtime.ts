@@ -800,7 +800,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
               }),
           });
         }
-        // FORK 2026-10-15 (the architect: "grok should keep evaluating every action taken or not taken"): the steps Jev let
+        // FORK 2026-10-15: Grok also evaluates every action taken or not taken. The steps Jev let
         // pass are judged too, as ONE job for the whole turn (2,761 passes by 10-15; a call each is too many). Same
         // queue, ladder and redaction as the flag review; its own cap, in turns.
         const turnId = result.situation.turnId;

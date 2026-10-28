@@ -32,8 +32,8 @@ export interface DecisionEvent {
   /** The tool call this decision judged (a note rides on that tool row). */
   toolUseId?: string;
   /**
-   * The decision reached the agent (2026-10-15). Shadow records stay out of the chat: the architect, "I don't want to see so
-   * many pink stuff"; the reviewer still judges them.
+   * The decision reached the agent (2026-10-15). Shadow records stay out of the chat, which they had
+   * crowded with pink rows; the reviewer still judges them.
    */
   enforced?: boolean;
 }

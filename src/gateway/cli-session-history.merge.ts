@@ -42,8 +42,8 @@ function memoised<T>(
 }
 
 /**
- * FORK 2026-09-23 (the architect: "in the work tab, I see an injection of the ethical rules as
- * if it was my prompt") — the PREFIX twin of the `<!-- TINKERCLAW -->` suffix rule below.
+ * FORK 2026-09-23 (bug on a work tab: the injected ethical rules showed as if the user had typed
+ * them) — the PREFIX twin of the `<!-- TINKERCLAW -->` suffix rule below.
  *
  * When the tinker-bridge resumes a claude-cli session that does not yet carry the moral code, it
  * prefixes the pack to the next message it forwards (tinker-bridge worker.ts,
@@ -313,7 +313,7 @@ function isEquivalentImportedMessage(existing: unknown, imported: unknown): bool
     // turn into ONE assistant message that BEGINS with that same narration. The imported
     // segment is therefore a strict PREFIX of the local message — never text-equal — so it
     // slips past the equality check and renders as a duplicated, thinking-less echo of the
-    // answer (the recurring "I see my answer twice" report). Dedup an imported ASSISTANT
+    // answer (the recurring report of an answer shown twice). Dedup an imported ASSISTANT
     // message whose visible text is a strict prefix of a LONGER existing message. Direction
     // is one-way: we only drop the shorter import (local always carries the full coalesced
     // turn), never the fuller text. Min-length guard avoids collapsing legit short repeats
@@ -488,7 +488,7 @@ export function mergeImportedChatHistoryMessages(params: {
 
     // --- layer 2: local assistant timestamps for slot-coverage check ---
     //
-    // FORK 2026-08-23 (B043 — "I saw an answer yesterday and this morning it was gone"):
+    // FORK 2026-08-23 (B043 — an answer seen one day was missing from the tab the next):
     // ONLY a local assistant that actually HAS TEXT may cover an imported one. Coverage means
     // "the local store already provides this turn"; a content-empty assistant provides nothing,
     // so letting it match deletes the turn from both sides and renders an empty bubble.

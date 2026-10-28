@@ -1,8 +1,8 @@
 /**
- * FORK 2026-10-02 (the architect: "When you show me an example of whatsapp message, I don't like that it
- * appears in one line with a sliding bar under it, I would rather the text wrap around").
+ * FORK 2026-10-02: an example chat message showed on one line with a scrollbar under it; prose
+ * should wrap instead.
  *
- * Second time: on 2026-08-28 the Veolia letter came in a ``` fence and he had to drag a scrollbar
+ * Second time: on 2026-08-28 a draft letter came in a ``` fence and the reader had to drag a scrollbar
  * to read every line. The fix then was a memory rule ("paste-ready prose never in a fence"); the
  * rule was archived out of the always-loaded index and the drafts went back into fences. A habit
  * rule did not hold, so the renderer now carries it.

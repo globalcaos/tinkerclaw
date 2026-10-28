@@ -1,6 +1,5 @@
-// Landscape phone (2026-10-24, the architect: "When the pdf reader turns horizontal, I would like to have all
-// the available vertical space ... make all the toolbox only icons and present them on the left side of
-// the screen, with vertical scroll"). Inside a stand-in of Tinker's reader layer (same origin, as on the
+// Landscape phone (2026-10-24: a horizontal PDF reader keeps all the vertical space; the toolbox
+// becomes an icon-only column on the left, with vertical scroll). Inside a stand-in of Tinker's reader layer (same origin, as on the
 // phone): landscape → icon column on, Tinker's title bar hidden, the column scrolls, ✕ closes the layer;
 // portrait → unchanged. node test/landscape-rail.mjs  (server on 127.0.0.1:18820; Pi: PW_CHROMIUM=/usr/bin/chromium)
 import { createRequire } from "node:module";

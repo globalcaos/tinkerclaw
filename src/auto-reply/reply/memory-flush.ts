@@ -65,7 +65,7 @@ function resolveMemoryFlushGateState<
     return null;
   }
 
-  // FORK 2026-07-27 (the architect: "instrument the compaction predicate") — this gate reads
+  // FORK 2026-07-27: instrument the compaction predicate — this gate reads
   // SessionEntry.totalTokens, which on the embedded path is the TURN AGGREGATE, not a
   // context snapshot (measured 9,380,101 with fresh:true against a 1,000,000 window; 58%
   // of persisted assistant-usage rows exceed the model window). If this gate is the one

@@ -45,8 +45,8 @@
  *      0 of 39 entries, so the 1.5× cost veto stays inert until it reads this.
  */
 // ─── SUBSCRIPTION SEATS — MEASURED, ONE METHOD FOR EVERY VENDOR (the architect 2026-09-23) ───
-// "I think the cost of the tokens of the different openai models are not calculated
-// properly." He was right. Until today EVERY prepaid row was `0.0893 × (sticker ÷ $10)`,
+// The owner reported that the token cost of the OpenAI models was miscalculated.
+// The report was right. Until today EVERY prepaid row was `0.0893 × (sticker ÷ $10)`,
 // where 0.0893 was the ANTHROPIC Max 20x unit — so the ChatGPT seat was priced as if it
 // returned exactly as many tokens per euro as Max 20x. Nobody had measured it. And the
 // Anthropic unit itself was measured with an `output + 0.2·input` blend that counts a
@@ -71,8 +71,8 @@
 //     (laptop $1,563.12 + Goku $31.67; ~96% Opus/Fable) → $2,703 of list value / week.
 //   · ChatGPT Plus — `Weekly` 16% since 2026-09-21 10:00 UTC; burn $14.39 (151 Sol +
 //     10 Luna turns, laptop only — Goku drew none) → $89.9 / week.
-//   · RE-MEASURED 2026-10-10 ~16:48 UTC (the architect: "redo all the numbers"): Claude Max 20x on
-//     owner@example.com — `seven_day` 67%; burn since the CLI moved to that account
+//   · RE-MEASURED 2026-10-10 ~16:48 UTC (full re-measure of every number): Claude Max 20x
+//     seat — `seven_day` 67%; burn since the CLI moved to that account
 //     (2026-10-09 10:45 UTC, so the meter's first ~19 h of window are NOT in the sum)
 //     $2,109.78 (Opus 5.5 $1,829.60 · Sonnet 5.5 $244.63 · Haiku $28.17 · Fable $7.38),
 //     laptop only → $3,149 / week. Replaces the 09-23 $2,703. Same direction as before:
@@ -103,8 +103,8 @@
 /** Weeks in a month, for turning a weekly quota into a month's worth of fee. */
 export const WEEKS_PER_MONTH = 52 / 12;
 
-/** The utilisation our OWN seats are drawn at (the architect 2026-08-13: "consider an average of
- *  75% usage"). The chart's plan-tier waypoints are drawn at 100%, by definition. */
+/** The utilisation our OWN seats are drawn at (2026-08-13: assume an average of
+ *  75% usage). The chart's plan-tier waypoints are drawn at 100%, by definition. */
 export const PLAN_UTIL = 0.75;
 
 export type SeatVendor = "anthropic" | "openai";
@@ -168,8 +168,8 @@ export const SEAT_TIERS: readonly SeatTier[] = [
     note: "standard Business seat, monthly; same limits as Plus",
   },
   { vendor: "openai", tag: "Pro 5× €100", feeEur: 100, quotaMult: 5, note: "Pro 100: 5× Plus" },
-  // FORK 2026-09-30 (the architect: "now GPT models have different subscriptions, one is a 500€
-  // per month"). DevDay 2026-09-29: Pro 500 launched at 25× Plus, and Pro 200 fell from
+  // FORK 2026-09-30: GPT models now come in several subscriptions, one at 500€ a month.
+  // DevDay 2026-09-29: Pro 500 launched at 25× Plus, and Pro 200 fell from
   // 20× to 10× for new subscribers (existing ones keep 20× through 2026-10-29). Sources:
   // thenextweb.com, engadget.com, nerdschalk.com, read 2026-09-30 (chatgpt.com and
   // help.openai.com answer 403 to a fetcher). Every personal tier is now exactly 1× Plus's
@@ -209,8 +209,7 @@ export function seatRelCost(vendor: SeatVendor, listOut: number): number {
 
 export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // ── GitHub Copilot Pro+ — PREPAID at a PUBLISHED allowance ──
-  // FORK 2026-08-15 (the architect: "revise the models that have an EEG trace thicker than
-  // fable"). On 2026-08-12 these rows were moved to RAW vendor sticker because Copilot
+  // FORK 2026-08-15: revise the models whose EEG trace is thicker than Fable's. On 2026-08-12 these rows were moved to RAW vendor sticker because Copilot
   // switched to token billing on 2026-06-01. That was half right: Copilot bills tokens,
   // but Pro+ is still a **subscription with an included allowance** — $39/mo carrying
   // **$70 of AI credits** (7,000 credits at $0.01; docs.github.com plans + billing).
@@ -299,8 +298,8 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   //   0.50). Three moves in four days on one model, in both directions: GLM's routed
   //   price is the most volatile figure on this panel. Everything else held exactly.
   // RE-CHECKED 2026-08-19 → glm-5.2 3.15 → 3.036 (−3.6% out; input 0.50 → 0.966).
-  // ── OpenRouter catalog rows (FORK 2026-08-15, the architect: "add all of them ... which
-  //    will tell us how good we are doing"). Metered $/Mtok-OUTPUT, every figure
+  // ── OpenRouter catalog rows (FORK 2026-08-15: add all of them, as a
+  //    benchmark of how well our routes do). Metered $/Mtok-OUTPUT, every figure
   //    read off the live /api/v1/models endpoint, never off a price page.
   //    SPECIFIC ROWS MUST STAY ABOVE the generic /kimi/, /glm/, /deepseek.*flash/
   //    rows below — regex order decides, and the generic rows misprice these by up
@@ -326,7 +325,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /openrouter\/.*gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.750/$3.750 OR
   { modelMatch: /openrouter\/.*gemini-3\.7.*flash/i, relCost: 1.875 }, // $0.375/$1.875 OR
   { modelMatch: /mimo.*flash/i, relCost: 0.238 }, // re-checked 2026-10-24 live endpoints. $0.119/$0.238 GMICloud bf16 cheapest healthy seat (was Darkbloom $0.10/$0.28, -15%; DeepInfra $0.182 reports status -5 and 13% uptime, held out). Earlier: re-checked 2026-10-06 live endpoints. $0.10/$0.28 Darkbloom cheapest (was GMICloud $0.133/$0.266, +5%).
-  { modelMatch: /mimo/i, relCost: 0.783 }, // re-checked 2026-10-20 live endpoints. pro: $0.387/$0.783 DeepInfra cheapest via OR (was $0.43/$0.87, -10%; DeepInfra API list unchanged). Earlier: re-checked 2026-10-06 live endpoints. pro: $0.43/$0.87 DeepInfra cheapest (was GMICloud $0.4133/$0.8265, +5%).
+  { modelMatch: /mimo/i, relCost: 0.7395 }, // re-checked 2026-10-28 live endpoints. pro: $0.36975/$0.7395 GMICloud bf16 cheapest (was DeepInfra $0.387/$0.783 via OR, -5.6%; DeepInfra's own API list, our route, still $0.43/$0.87). Earlier: re-checked 2026-10-20 live endpoints. pro: $0.387/$0.783 DeepInfra cheapest via OR (was $0.43/$0.87, -10%; DeepInfra API list unchanged). Earlier: re-checked 2026-10-06 live endpoints. pro: $0.43/$0.87 DeepInfra cheapest (was GMICloud $0.4133/$0.8265, +5%).
   { modelMatch: /inkling-small/i, relCost: 1.2 }, // $0.450/$1.200
   { modelMatch: /inkling/i, relCost: 4.05 }, // $0.950/$4.050
   { modelMatch: /tencent|hy3/i, relCost: 0.528 }, // $0.132/$0.528 — re-checked 2026-09-19 live endpoints (Tencent took cheapest back; DeepInfra $0.435 is gone). OR list still $0.132/$0.528 (weekday 00-16 UTC window).
@@ -368,7 +367,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /glm/i, relCost: 3.036 }, // GLM generic fallback (glm-5.1/5.2/5.3 have specific rows above)
   { modelMatch: /deepseek.*flash/i, relCost: 0.168 }, // $0.0679/$0.168 — generic fallback (re-checked 2026-08-29; was 0.159)
 
-  // ── FORK 2026-08-30 (the architect: "update it with the newest models in the market") ──
+  // ── FORK 2026-08-30: update with the newest models on the market ──
   // Every figure below read off the LIVE OpenRouter catalog this pass (http=200,
   // 396 models, 655,423 bytes) — id, price AND context window from /api/v1/models,
   // never a price page. That is the rule the Kimi K3 miss bought ($2.90/$14 on
@@ -399,7 +398,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // frozen at the Opus-4.1 era ($75 out).
   //   measured 2026-08-12, trailing 30d: 6,291 Mtok in + 34.2 Mtok out over 23,354
   //   turns → 1,292 Mtok weighted → 3,323 Mtok-sonnet-eq.
-  // FORK 2026-08-13 (the architect: "consider an average of 75% usage"). The denominator is
+  // FORK 2026-08-13: assume an average of 75% usage. The denominator is
   // no longer raw measured burn but the QUOTA CEILING × his stated utilisation, which
   // is the number he actually reasons with. Derived end to end from live data:
   //   · live `budget.usage` 2026-08-12 16:36 UTC: seven_day = **70%**, window opened
@@ -491,8 +490,8 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // in this table divides by a denominator we invented. Treat these four values as an
   // ACCOUNTING CONVENTION, never as a price, and never compare them to a metered row
   // without saying which is which.
-  // ══ FORK 2026-08-13 — THE ÷4.65 BLANKET IS GONE. the architect: "How can Sol cost so much
-  // more than Fable? There must be a mistake here somewhere." There was, and it was
+  // ══ FORK 2026-08-13 — THE ÷4.65 BLANKET IS GONE. Sol drew as costing far
+  // more than Fable, which had to be a mistake. It was, and it was
   // an INVERSION, not a magnitude error. Claude Fable 5 is the dearest model we can
   // reach ($50/Mtok out) and drew at 2.60px; gpt-5.6-sol ($30) drew at 37.50px —
   // Sol **14.4× thicker than a model 1.67× its price**, an end-to-end error of 24×.
@@ -529,8 +528,8 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /5\.6-sol/i, relCost: seatRelCost("openai", 20) }, // $20 out short-ctx
   { modelMatch: /5\.6-terra/i, relCost: seatRelCost("openai", 12) }, // $12 out
   { modelMatch: /5\.6-luna/i, relCost: seatRelCost("openai", 1.2) }, // $1.20 out
-  // Google — METERED API KEY, NO SUBSCRIPTION (the architect 2026-09-23: "I don't even have a
-  // subscription. Weren't they all API call per use?" — yes). The 2026-07-22 Google One
+  // Google — METERED API KEY, NO SUBSCRIPTION (2026-09-23: there is no
+  // Google subscription; every call is metered per use). The 2026-07-22 Google One
   // attribution ended with the 2026-08-15 re-base below. Prices re-verified 2026-09-23
   // against live OpenRouter /api/v1/models: 3.8/3.7/3.6 Flash $0.75/$3.75, 3.5 Flash
   // $1.50/$9, 3.1 Pro $2/$12. They draw far right of Claude because a metered token is

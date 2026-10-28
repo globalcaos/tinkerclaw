@@ -1,4 +1,4 @@
-// FORK 2026-07-28 (the architect: "implement the liveness invariant") — the INSTRUMENT LIVENESS
+// FORK 2026-07-28: implement the liveness invariant — the INSTRUMENT LIVENESS
 // REGISTRY. Single owner of the answer to one question: *is this thing actually on the
 // traffic path, or does it merely exist?*
 //
@@ -36,7 +36,7 @@
 //    "broken" — the distinction the six cases above all lacked.
 //  - Nothing here throws into a serving path. Diagnostics must never disturb what they observe.
 //
-// FORK 2026-08-03 (the architect: "it works; nobody can read it") — THE ALARM'S OWN SIGNAL-TO-NOISE.
+// FORK 2026-08-03: it worked but its output was unreadable — THE ALARM'S OWN SIGNAL-TO-NOISE.
 // Measured: `journalctl -u openclaw-gateway --since '7 days ago' | grep instrument-liveness` →
 // 86,386 lines. The first reporter read `overdue` as a VERDICT and re-printed every silent
 // instrument on every 60s maintenance tick, so a gateway with no traffic for 108 minutes emitted

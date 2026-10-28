@@ -157,13 +157,13 @@ export function applyTap(
 
 /** The per-turn block: whether a joke is welcome now, and the last lines with how he took them. */
 // How often a joke is wanted, per the plugin's `frequency` setting. "max" since 2026-10-18
-// (the architect: "humor or sarcasm nearly in every interaction").
+// (2026-10-18: humour or sarcasm in nearly every interaction).
 const CADENCE: Record<string, string> = {
   low: "Aim for about one line in three; the others are a plain summary.",
   medium: "Aim for about one line in two; the others are a plain summary.",
   high: "Aim for most lines, about two in three; the others are a plain summary.",
-  // the architect, 2026-10-18 21:52: "Jokes cannot be scheduled. You don't have a turn to be funny and another
-  // one to be dull." So max is a personality, not a rate.
+  // 2026-10-18 21:52: jokes cannot be scheduled; there is no turn for being funny and another for being
+  // dull. So max is a personality, not a rate.
   max:
     "There is no quota and no schedule: the personality is always on. Every purple line is you being you: " +
     "Data's deadpan field notes on these humans, sarcasm aimed at the situation, the software or yourself " +

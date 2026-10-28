@@ -305,7 +305,7 @@ describe("bounds and labels", () => {
   });
 });
 
-// FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — the terminal close.
+// FORK 2026-09-21: a tab looked stuck on a phantom running block — the terminal close.
 // Every test here is a way a phantom "running" block could come back: an entry left open by an
 // aborted/cleared turn is persisted and re-hydrates as live forever unless a terminal signal
 // closes it.

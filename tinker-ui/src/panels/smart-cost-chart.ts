@@ -24,7 +24,7 @@
 // HONESTY (bible §5.8h invariant 3): X = effective €/Mtok (the EEG number);
 // Y = AA index; effort COST mults = EEG_EFFORT_MULT (documented).
 //
-// FORK 2026-08-27 (the architect: "you flattened the graphs"). AA DOES publish per-effort
+// FORK 2026-08-27: restore the per-effort curves that had been flattened. AA DOES publish per-effort
 // Intelligence Index rows — Opus 5 low 52.46 / medium 58.64 / high 61.48 /
 // xhigh 62.52 / max 63.05, live scrape 2026-08-27. The 2026-08-25 flattening was
 // the right answer to an invented 0.9…1.12 curve, and the wrong answer once a
@@ -32,10 +32,9 @@
 // Y is AA's number when AA published one (solid), an ESTIMATE from other public
 // per-effort benchmark runs fitted to AA's scale when not (dotted, ±1σ, since
 // 2026-09-02 — see aa-effort-estimate.ts), and the headline index on a dashed rail
-// when neither exists. The rule the architect wrote on 2026-08-27 — "If you did not find
-// the intelligence index of a particular model-effort level do not approximate" —
-// forbade an INVENTED number; on 2026-09-02 he asked for the derived kind ("find
-// other benchmarks … even if you have to approximate"), on condition it is never
+// when neither exists. The 2026-08-27 rule (no approximation when a
+// model-effort level has no published index) forbade an INVENTED number; on
+// 2026-09-02 the derived kind was allowed (fitted from other benchmarks), on condition it is never
 // mistakable for a measurement.
 //
 // TOKENS-PER-TASK: Opus 5 and Kimi K3 are benchmark-anchored (OckBench,
@@ -92,8 +91,8 @@ export interface ScModel {
    *  on the chart — under one grey "openrouter" bucket. Defaults to provider. */
   vendorKey?: string;
   /** Render a text label at the max-effort point. Defaults to ON — every
-   *  plotted model gets its name (the architect 2026-08-06 #11: "there are a lot of
-   *  model names missing"). Set false to leave one tooltip-only. */
+   *  plotted model gets its name (2026-08-06 #11: many model names were
+   *  missing). Set false to leave one tooltip-only. */
   labeled?: boolean;
 }
 
@@ -129,10 +128,9 @@ export const SC_COPILOT_PINK = "#ff7ac6";
 //  indicate me, upon a new best frontier model appearing, whether or not thalamus
 //  is taking it into consideration or not."
 //
-// FORK 2026-09-02 (the architect): "the yellow envelope … is a complete disaster. They are
-// supposed to be picked as up-left as possible, basically defining the top-left
-// outline" — and "make sure to use the graph in €/task to make the envelope, not
-// the €/token". Until then the path ran through the ANCHOR stop of EVERY model in
+// FORK 2026-09-02: the yellow envelope was wrong. It must pick the most up-left
+// points, tracing the top-left outline, and be built on the €/task graph rather
+// than €/token. Until then the path ran through the ANCHOR stop of EVERY model in
 // `thalamusCandidates(...).considered`, x ascending. That is the ladder's EXTENT —
 // everything under the cost ceiling — and it zig-zagged by construction, because a
 // membership set is not a frontier.
@@ -596,8 +594,8 @@ export function scEffortsFor(m: { id: string; provider: string; index: number })
           : "Effort ladder unknown";
     return { kind: ladder.kind, note: ladder.note, stops: [scSoleStop(label, m.index)] };
   }
-  // FORK 2026-08-30 (the architect: "Fable appears only as one bubble, break it down into
-  // different thinking efforts"). Until now an effort AA had not scored was DROPPED,
+  // FORK 2026-08-30: a model with one AA row drew as a single bubble; split it
+  // into its thinking efforts. Until now an effort AA had not scored was DROPPED,
   // so a model's constellation showed only the rungs AA happened to publish. Fable 5
   // has exactly one AA row (max) against a five-rung Anthropic ladder, so it drew as
   // a single dot — and the census says Fable is not special: 60 of 99 plotted models
@@ -620,8 +618,8 @@ export function scEffortsFor(m: { id: string; provider: string; index: number })
   // unscored rungs carry the one index AA did publish, flagged `measured:false`, and
   // the styling makes the difference visible before the tooltip is even opened.
   //
-  // THIRD KIND OF RUNG (the architect 2026-09-02 evening: "you must certainly be able to find
-  // other benchmarks … even if you have to approximate"). Between MEASURED and COST
+  // THIRD KIND OF RUNG (2026-09-02 evening: fill unscored efforts from other public
+  // benchmarks, approximated if need be). Between MEASURED and COST
   // RAIL now sits ESTIMATED: the y comes from other public per-effort benchmark runs
   // fitted to AA's scale (aa-effort-estimate.ts), it carries a 1σ, it is drawn
   // DOTTED (finer than the rail's dashes) and the tooltip says ESTIMATE. The order of
@@ -1014,7 +1012,7 @@ const MB = 66;
 const PW = W - ML - MR;
 const PH = H - MT - MB;
 
-// 2026-10-10 the architect: "make all the bubbles a 30% smaller, the scene is too crowded" — 12 → 8.4, floor 2 → 1.4.
+// 2026-10-10: bubbles 30% smaller, the scene was too crowded — 12 → 8.4, floor 2 → 1.4.
 const R_MAX = 8.4; // largest context window → this radius; all others ∝ √ctx
 const R_MIN = 1.4;
 // Task mode shifts dots by up to ~0.5 decades; the domain grows so nothing
@@ -1087,9 +1085,8 @@ export function scComputeScales(models: ScModel[], xScale: ScXScale = "log"): Sc
     x0: Math.log10(minCost) - 0.09 - TASK_PAD,
     x1: Math.log10(maxTaskCost) + 0.09 + TASK_PAD,
     c0: 0,
-    // FORK 2026-08-06 #8 (the architect: "when I turn into linear scale, the right of the
-    // graph should not be empty, the cost scale should span from 0 to the maximum
-    // priced model, and no more"). This was maxTaskCost — the €/TASK maximum, which
+    // FORK 2026-08-06 #8: on the linear scale the right of the graph must not sit
+    // empty; the cost axis spans 0 to the highest-priced model and no more. This was maxTaskCost — the €/TASK maximum, which
     // is cost x a verbosity ratio and can sit far right of any real price, leaving
     // the whole right half of a LINEAR axis blank. The linear axis now ends just
     // past the dearest model's actual €/Mtok. Task-mode dots clamp at the edge
@@ -1103,8 +1100,8 @@ export function scComputeScales(models: ScModel[], xScale: ScXScale = "log"): Sc
 }
 
 // ─── pan / zoom view box ───
-// FORK 2026-08-06 #8 (the architect: pan by drag, zoom by wheel, "don't let the graph zoom
-// out more when all the models are already visible"). The CLAMP lives here, not in
+// FORK 2026-08-06 #8 (pan by drag, zoom by wheel, and no zooming out past the
+// point where every model is visible). The CLAMP lives here, not in
 // app.ts, because it is the only part that can be silently wrong — the event
 // plumbing fails loudly, an off-by-one in the bounds just quietly lets the chart
 // drift off-screen. Pure in, pure out, unit-tested.
@@ -1189,12 +1186,12 @@ export function scY(index: number, s: ScScales): number {
   return MT + (1 - t) * PH;
 }
 /** Radius: strictly ∝ √ctx through the origin, so AREA ∝ context window —
- *  the architect's "size proportional to context window" taken literally, no offset.
+ *  size proportional to the context window, taken literally, no offset.
  *
  *  INVARIANT — never scale this at a call site. Until 2026-08-30 both emission
  *  sites multiplied it by `(anchor ? 1 : 0.82)`, so a model with ONE context
- *  window drew at TWO radii (the architect: "opus 5 seems to have different sizes in the
- *  same model, impossible, must be a bug"). Size then meant context window AND
+ *  window drew at TWO radii (reported as one model showing two sizes, a bug).
+ *  Size then meant context window AND
  *  anchor-ness at once — and the on-plot SIZE ∝ CONTEXT legend, which calls this
  *  UNSCALED (scCtxLegendSvg), was therefore a lie for every non-anchor mark.
  *  Anything a mark needs to say beyond its context window goes on the stroke,
@@ -1335,8 +1332,8 @@ export function scIdxTag(
   p: { smart: number; measured: boolean; label: string; estimate?: ScEstimateTag },
   measuredSuffix = "",
 ): string {
-  // 2026-10-10 the architect: "add (Estimated Intelligence Index) if you have just guessed it, nothing if
-  // the data is public". A public AA number prints bare; anything we inferred says so in those words.
+  // 2026-10-10: mark a guessed score as an estimate, and print nothing extra when the
+  // data is public. A public AA number prints bare; anything we inferred says so in those words.
   // The headline rail counts as a guess: AA's one score, put on an effort AA never ran.
   void measuredSuffix;
   if (p.measured) return `idx ${p.smart.toFixed(1)}`;
@@ -1352,7 +1349,7 @@ export function scIdxTag(
 /**
  * Freeze a mark: strip its SMIL animation elements.
  *
- * FORK 2026-08-06 #10 (the architect: "why is gemini flash pulsating? It should not").
+ * FORK 2026-08-06 #10: the Gemini Flash mark must not pulsate.
  * FORK 2026-09-03: the Google mark itself is now the static colourful G
  * (`GOOGLE_G_LOGO_SVG`) — the SMIL ring is gone at the source, not just here.
  * The 2026-08-06 exception ("panels that show ONE logo keep their animation")
@@ -1368,8 +1365,8 @@ function scStill(mark: string): string {
 /**
  * Make a provider mark safe to nest INSIDE an <svg>.
  *
- * FORK 2026-08-06 #7 — THE ACTUAL CAUSE of "logos under the graph at the left,
- * circle outlines not visible" (the architect, three reports). The comment this replaces
+ * FORK 2026-08-06 #7 — THE ACTUAL CAUSE of logos drawn under the graph at the left
+ * and invisible circle outlines (three reports). The comment this replaces
  * claimed "Both are complete <svg> elements". They are not: the GitHub Copilot
  * mark is an <img>, and `<img>` sits on the HTML parser's FOREIGN-CONTENT
  * BREAKOUT LIST. When the app does `body.innerHTML = "<svg>…<img>…</svg>"` the
@@ -1405,7 +1402,7 @@ function scSvgSafeMark(mark: string): string {
 /** The dot's logo: the vendor mark when the model id carries one, else the
  *  provider logo — normalised so it can never break the enclosing <svg>. */
 function scLogoFor(m: ScModel): string {
-  // FORK 2026-08-30 (the architect: "openrouter bubbles have the wrong icon"). This read
+  // FORK 2026-08-30: openrouter bubbles showed the wrong icon. This read
   // `getModelLogoSvg(m.id) ?? getProviderLogoSvg(m.provider)`, and the fallback
   // returned Anthropic's sparkle for any provider it did not know — `openrouter`
   // among them. 15 of 99 plotted models were branded as Claude, including NVIDIA,
@@ -1464,8 +1461,8 @@ export function renderSmartCostChart(
     ...(opts?.thalamusAllowedModelKeys ? { allowedModelKeys: opts.thalamusAllowedModelKeys } : {}),
   });
   const thalConsidered = new Set(thal.considered.map((c) => c.key));
-  // THE FRONTIER (the architect 2026-09-02: "picked as up-left as possible, basically defining
-  // the top-left outline"). Every rung of every considered model, priced in €/TASK by
+  // THE FRONTIER (2026-09-02: the most up-left points, tracing the top-left
+  // outline). Every rung of every considered model, priced in €/TASK by
   // the shared module — `m.relCost` and `m.index` are the SAME inputs scPointsFor
   // draws from, so a rung's cost equals `p.cost * scTaskCostFactor(m.id, p.lvl)` and its
   // ring lands on the dot it names (the envelope test asserts that equivalence).
@@ -1669,8 +1666,8 @@ export function renderSmartCostChart(
     // the vendor exposes and is a COST ladder: it says "these settings exist and
     // cost this much", nothing about how smart they are. A model with full AA
     // coverage (only Opus 5 today) draws no rail at all, so nothing changes for it.
-    // HOVER LAG (the architect 2026-09-23 #3, "make sure the whole model's path and bubbles light
-    // up on-hover"): these polylines used to carry the glide stagger as an inline
+    // HOVER LAG (2026-09-23 #3: a model's whole path and bubbles light
+    // up on hover): these polylines used to carry the glide stagger as an inline
     // `transition-delay`. A line does not glide — its two copies crossfade on
     // stroke-opacity, and `.sc-svg .sc-line-*` already narrows the transition to
     // `opacity` — so the ONLY thing the delay ever delayed was the hover highlight: a
@@ -1782,11 +1779,9 @@ export function renderSmartCostChart(
           ` stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`;
       }
       // ─── plan-tier waypoints on EVERY rung's bridge (the architect 2026-09-23 #2, #3) ───
-      // #2: "let's make all those marks triangles, and when we are dragging a particular
-      //  circle the row of triangles will get selected (thus showing brighter) and the
-      //  triangle positions will have some stickiness. When putting the circle on top of
-      //  it, the model and price per month will show."
-      // #3: "make all the triangles the same size, same behavior."
+      // #2: every waypoint is a triangle; dragging a circle selects (brightens) its row,
+      //  the positions are sticky, and dropping the circle on one shows model and €/month.
+      // #3: all triangles share one size and one behaviour.
       //
       // SAME SIZE, SAME BEHAVIOUR — BY CONSTRUCTION, NOT BY COPY. A waypoint is emitted
       // with the API triangle's OWN classes (.sc-apipos / .sc-apig / .sc-tri), its radius
@@ -1856,8 +1851,8 @@ export function renderSmartCostChart(
       const onFrontier = thalFrontierSet.has(rungTag);
       const isPick = onFrontier && rungTag === thalPickTag;
       if (onFrontier) envAt.set(rungTag, { x: c.x, y: c.y, dx: c.dx });
-      // ONE MODEL, ONE CIRCLE SIZE (the architect 2026-08-30: "opus 5 seems to have different
-      // sizes in the same model, impossible, must be a bug"). He was right: this used
+      // ONE MODEL, ONE CIRCLE SIZE (2026-08-30: one model drew at two sizes, a bug).
+      // This used
       // to multiply the radius by 0.82 on every non-anchor stop, so Opus 5 — one
       // model, one context window, five effort rungs — rendered at two radii. Radius
       // now means only what scRadius says it means: area ∝ context window.
@@ -1885,7 +1880,7 @@ export function renderSmartCostChart(
       // the dot: an OUTLINE circle carrying the model logo (the architect 2026-08-06 #2),
       // positioned by CSS custom properties so the task-mode toggle can glide it.
       const tokens = scTokensPerTask(m.id, c.p.lvl);
-      // 2026-10-10 the architect: "on mouseover each bubble, make the effort show" — the stop label read as a
+      // 2026-10-10: the hover tooltip must name the thinking effort — the stop label read as a
       // bare "High" / "Minimal" that nobody took for the thinking effort. Name it.
       const effortTxt = /effort/i.test(c.p.label) ? c.p.label : `${c.p.label} effort`;
       const tip =
@@ -1919,8 +1914,8 @@ export function renderSmartCostChart(
         /^<svg /,
         `<svg x="${fx(-logoSize / 2)}" y="${fx(-logoSize / 2)}" width="${logoSize}" height="${logoSize}" `,
       );
-      // FORK 2026-08-06 #6 (the architect: "logos are not in the right place, I see a
-      // few out of the graph top-left. Also I don't see the circle outlines"):
+      // FORK 2026-08-06 #6: some logos sat outside the graph's top-left and the
+      // circle outlines were missing:
       // the base position now lives in an SVG TRANSFORM ATTRIBUTE on an outer
       // <g class="sc-dotpos"> — always applied, always in user space, scales
       // with the viewBox. The old CSS transform(var(--sc-x),var(--sc-y)) for
@@ -1941,7 +1936,7 @@ export function renderSmartCostChart(
       dots +=
         `<g class="sc-dotpos" transform="translate(${c.x}, ${c.y})"${vAttr}${tAttr}${mAttr}${eAttr}${dragAttr}>` +
         `<g class="sc-dotg" style="--sc-x:${c.x}px;--sc-y:${c.y}px;--sc-dx:${c.dx}px;transition-delay:${delay}">` +
-        // THALAMUS RING — "bigger circle" (the architect). Emitted FIRST so it paints UNDER
+        // THALAMUS RING — a bigger circle. Emitted FIRST so it paints UNDER
         // the model's own ring and logo, this file's twice-stated rule that a
         // relationship mark goes under the thing it relates.
         //
@@ -2006,7 +2001,7 @@ export function renderSmartCostChart(
   // One dashed segment per ADJACENT pair of routes to the same brain, drawn
   // between their medium-effort anchors. Twins share an AA index, so the two
   // anchors share a y and the segment comes out horizontal on its own — the
-  // "obviously horizontal" the architect asked for is a property of the data, not a
+  // horizontal segment that was asked for is a property of the data, not a
   // constraint imposed on the drawing. Should a route ever carry a different
   // index, the segment tilts and says so rather than lying flat.
   //
@@ -2120,8 +2115,8 @@ export function renderSmartCostChart(
   // with their constellation (same --sc-dx as the dots). ONLY labelled models
   // get text — the rest live in their tooltips.
   //
-  // FORK 2026-08-06 #11 (the architect: "the model names need to be exactly at the same
-  // height than its highest effort bubble"). The greedy y de-collision that used
+  // FORK 2026-08-06 #11: each model name sits at exactly the height of its
+  // highest-effort bubble. The greedy y de-collision that used
   // to nudge crowded names apart is GONE: a name a few px off its own dot is a
   // name pointing at the wrong model, which is worse than two names overlapping —
   // and overlap resolves itself the moment you zoom, because the dots spread while
@@ -2129,9 +2124,8 @@ export function renderSmartCostChart(
   // on the dot's centre, so "same height" is exact, not approximated by a baseline
   // nudge.
   //
-  // FORK 2026-08-06 #10 (the architect: "the model names should be to the right of its
-  // most effort bubble, and should approach the circle as I zoom in, otherwise
-  // it renders out of view"). Two changes, one cause. The label used to carry
+  // FORK 2026-08-06 #10: a model name sits right of its highest-effort bubble and
+  // closes in on the circle when zooming, so it never renders out of view. Two changes, one cause. The label used to carry
   // its final position in its x/y ATTRIBUTES — chart units — so its distance
   // from the dot was fixed in CHART space and therefore grew on screen with
   // every zoom step, until the name sat off-screen while its dot was centred.
@@ -2247,7 +2241,7 @@ export function renderSmartCostChart(
     // below the dots — each layer sits under the thing it describes.
     `<g class="sc-raillayer">${rails}</g>` +
     `${linesTask}${linesCost}${ghosts}` +
-    // FORK 2026-08-06 #9 (the architect: "make the load and the zoom faster"): the neon
+    // FORK 2026-08-06 #9: faster load and zoom: the neon
     // bloom was `filter="url(#sc-glow)"` on EVERY ring — 132 separate Gaussian
     // blur passes, re-run on each viewBox change, which is what made zooming
     // crawl. One filter on the dot LAYER renders the same bloom in a single pass.

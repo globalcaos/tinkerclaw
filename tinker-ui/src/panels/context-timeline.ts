@@ -28,8 +28,7 @@ export const SEGMENT_COLORS: Record<string, string> = {
   skills: "#eab308",
   toolSchemas: "#f97316",
   conversation: "#ef4444",
-  // FORK 2026-09-30 (the architect: "remove the purple from that graph ... this graph only is supposed to
-  // visualize the input tokens"). Tool results ARE input: the tool's output, fed back to the model
+  // FORK 2026-09-30: drop the purple from this graph, which shows input tokens only. Tool results ARE input: the tool's output, fed back to the model
   // in the prompt (context-anatomy.ts counts the `toolResult` messages). They were purple-500, one
   // shade from RESPONSE_COLOR (0.110 OKLab ΔE), so a fifth of the prompt read as the model's own
   // output. Lime-400 keeps them on the bar and leaves purple to mean output only: ΔE 0.405 against
@@ -289,8 +288,8 @@ export function callColumn(
 
 export type BarSelectMode = "context" | "response" | "context-summarize" | "response-summarize";
 
-/** FORK 2026-10-15 (the architect: "little brain icons in the call timeline panel on the turn it
- *  intervened"). One Amygdala bubble the chat currently shows for this tab; `ts` in ms. */
+/** FORK 2026-10-15: small brain icons in the call timeline on the turns where Amygdala
+ *  intervened. One Amygdala bubble the chat currently shows for this tab; `ts` in ms. */
 export interface AmyMark {
   id: string;
   ts: number;
@@ -963,7 +962,7 @@ export function mountContextTimeline(
       if (modelShort) {
         iconEl.title = `${provider}/${cleanModelName(modelId)}`;
       }
-      // FORK 2026-10-15 (the architect: "little brain icons ... on the turn it intervened"). In-flow,
+      // FORK 2026-10-15: brain icons on the turns where Amygdala intervened. In-flow,
       // right above the provider icon, so it rides the bar's height and COLUMN_CHROME_PX (the
       // chrome OUTSIDE the bar area) stays the measured 60. Several bubbles on one call stack
       // as ONE brain with a count; a click opens the first, each re-click the next.

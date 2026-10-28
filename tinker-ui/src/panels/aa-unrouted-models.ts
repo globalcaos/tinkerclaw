@@ -1,6 +1,6 @@
 // Models Artificial Analysis scores in its top 50 that nothing we can call sells at a price we
-// can plot (the architect, 2026-10-13: "no model should be left out ... even if we had no api, I want to
-// know there is a new model in town"). They are NOT in AA_INTELLIGENCE_INDEX on purpose: that
+// can plot (2026-10-13: no model is left out; a new model
+// shows up even when there is no API to route it). They are NOT in AA_INTELLIGENCE_INDEX on purpose: that
 // table is a dot source, and a dot with no cost row draws at DEFAULT_REL_COST (2.58), a price
 // nobody published. They are NOT in openclaw.json either, so the picker cannot offer a model
 // that would fail on first use. The dossier lists them as rows; the chart names them in its

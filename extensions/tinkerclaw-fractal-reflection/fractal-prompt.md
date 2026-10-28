@@ -58,7 +58,8 @@ Take the highest rung that fits:
 1. **Fix the code or the check** that let it happen: on a branch, with a test that fails before and
    passes after.
 2. **Change the recipe or skill step** that governs the task (found in the real inventory, never
-   from memory), with a dated Failures Overcome entry in the owner's words. A recipe loads on every
+   from memory), with a dated Failures Overcome entry that states the correction neutrally, never quoting the
+   owner. A recipe loads on every
    run of the task; a note loads for one.
 3. **Correct a wrong record**: a note, doc, config comment or memory the turn proved false.
 4. **Only then a new memory note**, for something the next session needs that no code or recipe can
@@ -148,7 +149,7 @@ not a lag (five phantom memory files on 2026-08-21/22).
 
 A miss this doctrine should have caught is a defect in it. Edit this file or `chapters/<name>.md`
 in `extensions/tinkerclaw-fractal-reflection/` on a branch of `~/src/tinkerclaw`, with a dated
-instance in the owner's words; run `node scripts/sync-fractal-prompt.mjs` and
+instance stated neutrally (no quote of the owner); run `node scripts/sync-fractal-prompt.mjs` and
 `node scripts/check-fractal-prompt-sync.mjs`; commit with the subject `fractal(doctrine): …` and
 merge into `develop`. The weekly report shows him every doctrine diff. Tightening is yours to do;
 loosening is his call. Keep the core short: a rule with one trigger belongs in its chapter.

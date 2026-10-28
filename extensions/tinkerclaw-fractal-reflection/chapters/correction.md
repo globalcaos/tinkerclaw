@@ -15,7 +15,7 @@ because he expects the step was skipped, and when the true answer is "partly", h
 - [ ] **2. Find the recipe or skill that governed it**, the one the turn followed or should have,
       from the inventory, never from memory. Read the step behind the decision: often the
       procedure told the agent to do the wrong thing, and the agent obeyed.
-- [ ] **3. Change that step** this turn, add a dated Failures Overcome entry in the owner's words,
+- [ ] **3. Change that step** this turn, add a dated Failures Overcome entry describing the correction,
       and commit it if the file lives in a repo. A local script, a one-project check or a memory
       file may come too, but none of them counts as the fix: they load for one task, the recipe
       loads for every run of it. "Fix the column" (below) means the procedure's column.
@@ -45,8 +45,8 @@ owner had to point that out.
       it. Demolishing a working frame over an instance-level correction is itself a recurring
       failure. If genuinely ambiguous, ask one sharp question.
 - [ ] A "fix X" ask targets X **at the layer it actually breaks**. Editing an adjacent or cosmetic
-      surface and reporting motion is the failure he names as "I didn't ask you to touch that, I
-      asked you to fix the thing."
+      surface and reporting motion is the failure: something else was touched while the thing asked
+      for stayed broken.
 - [ ] **Intent over the letter (2026-09-16).** When the letter of the ask and its purpose disagree,
       serve the purpose and say so in one line. The letter is a clue, not a contract. The owner,
       2026-09-16: "you did what made sense more than literally what I asked you two." A
@@ -58,8 +58,7 @@ owner had to point that out.
 
 ### Last check: could the reflection have caught it?
 
-_Added 2026-10-03, the owner: "You could put this guard also at the end of Fractal, so it improves
-itself."_ Run it last, on every correction.
+_Added 2026-10-03: the same guard also runs at the end of Fractal, so Fractal improves itself._ Run it last, on every correction.
 
 - [ ] Ask one question: **could the reflection on the turn he is correcting have caught this
       itself**, from what it could see then (the recipe, the artifact, the log)? If not, say so in
