@@ -85,11 +85,11 @@ describe("createLinkIndex — forward / backward edges", () => {
 describe("createLinkIndex — backlinkCount", () => {
   it("counts distinct sources referencing one target", () => {
     const idx = makeIndex();
-    idx.append("src-1", { raw: "Caixa", normalized: "caixa", kind: "entity" });
-    idx.append("src-2", { raw: "caixa", normalized: "caixa", kind: "entity" });
-    idx.append("src-3", { raw: "CAIXA", normalized: "caixa", kind: "entity" });
-    expect(idx.backlinkCount("caixa")).toBe(3);
-    expect(idx.backlinkCount("Caixa")).toBe(3);
+    idx.append("src-1", { raw: "Acme", normalized: "acme", kind: "entity" });
+    idx.append("src-2", { raw: "acme", normalized: "acme", kind: "entity" });
+    idx.append("src-3", { raw: "ACME", normalized: "acme", kind: "entity" });
+    expect(idx.backlinkCount("acme")).toBe(3);
+    expect(idx.backlinkCount("Acme")).toBe(3);
   });
 });
 
@@ -98,21 +98,21 @@ describe("createLinkIndex — resolveTargets late-binding", () => {
     const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
     const idx = makeIndex();
 
-    // Mention [[caixa loan]] BEFORE any event names it.
-    idx.append("src-1", { raw: "caixa loan", normalized: "caixa loan", kind: "wikilink" });
+    // Mention [[acme loan]] BEFORE any event names it.
+    idx.append("src-1", { raw: "acme loan", normalized: "acme loan", kind: "wikilink" });
 
     // Later, an event whose content contains the target string is appended.
     const target = store.append({
       turnId: 1,
       sessionKey: "test-session",
       kind: "agent_message",
-      content: "Updated the Caixa Loan terms today.",
+      content: "Updated the Acme Loan terms today.",
       tokens: 8,
       metadata: {},
     });
 
     const resolved = idx.resolveTargets(store);
-    expect(resolved.get("caixa loan")).toContain(target.id);
+    expect(resolved.get("acme loan")).toContain(target.id);
   });
 
   it("returns an empty resolution map when nothing matches", () => {

@@ -53,7 +53,7 @@ The toggle persists in `localStorage` and the user's Tinker UI session state so 
 │N │  │    [Dismissed] [Tomorrow]   │  │                    │
 │S │  │    ▓▓▓▓▓▓▓░░░░░ 67%         │  │                    │
 │  │  │  ─ tasks grouped by axis    │  │      (input bar)   │
-│  │  │  ⬜ Caixa signature 58h ›   │  │                    │
+│  │  │  ⬜ Bank signature 58h ›   │  │                    │
 │  │  │  ⬜ Outlook re-auth Day 7 › │  │                    │
 │  │  │  ✅ Develop pushed (1m)     │  │                    │
 │  │  │  …                          │  │                    │
@@ -200,7 +200,7 @@ CREATE TABLE briefing_pass (                        -- NEW v3.1
 );
 
 CREATE TABLE task (
-  id TEXT PRIMARY KEY,                              -- stable id, e.g. "caixa-signature-2026-05-06"
+  id TEXT PRIMARY KEY,                              -- stable id, e.g. "bank-signature-2026-05-06"
   text TEXT NOT NULL,                               -- markdown content, single line preferred
   context_md TEXT,                                  -- (v3.1) expandable rich content shown on click
   status TEXT NOT NULL CHECK(status IN (
@@ -827,7 +827,7 @@ The morning briefing's `/new` output ends with a code block the plugin consumes:
       "carry_days": 5,
       "est_minutes": 3,
       "hands": "user",
-      "source_ref": "memory/morning-briefings/2026-05-11.md#caixa",
+      "source_ref": "memory/morning-briefings/2026-05-11.md#bank",
       "metadata": {
         "gmail_thread_ids": ["abc123", "def456"],
         "linked_files": []

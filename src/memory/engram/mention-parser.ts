@@ -7,8 +7,8 @@
  *      entity-extraction.ts — we do not add a second NER pass.
  *
  * Output is a normalized Mention[] list. Normalization lowercases + trims
- * (mirroring the dedup() helper in entity-extraction.ts) so "Caixa Enginyers"
- * and "caixa enginyers" collapse to one target key.
+ * (mirroring the dedup() helper in entity-extraction.ts) so "Acme Bank"
+ * and "acme bank" collapse to one target key.
  */
 
 import { extractEntities } from "./entity-extraction.js";
