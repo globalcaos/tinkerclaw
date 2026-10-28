@@ -186,7 +186,7 @@ class InvokeDispatcher(
       // 2026-10-23 (plan "phone app self-update", layer 1): the six phone verbs, the same code the page
       // and pack scripts use (JarvisVerbs.kt). jarvis.say {text, voice?, buzz?}: buzz = the old
       // locked-phone flag, kept so a Pi script written for the build before still works.
-      "jarvis.say", "jarvis.buzz", "jarvis.play", "jarvis.notify", "jarvis.open", "jarvis.keepAwake" ->
+      "jarvis.say", "jarvis.buzz", "jarvis.play", "jarvis.notify", "jarvis.open", "jarvis.keepAwake", "jarvis.badge" ->
         jarvisVerb(command.removePrefix("jarvis."), paramsJson)
       // Layer 2: the content pack (JarvisPack.kt).
       "jarvis.pack.status" -> GatewaySession.InvokeResult.ok(ai.openclaw.app.jarvis.JarvisPack.status(ai.openclaw.app.jarvis.JarvisLook.appContext()).toString())

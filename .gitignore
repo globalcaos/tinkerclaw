@@ -168,6 +168,8 @@ SESSION.md
 bank/
 data/
 state/
+# pdf-review's links to the owner's own PDFs (papers/open/...) and test fixtures: runtime, named after real files
+apps/pdf-review/papers/
 db/
 crm_data/
 sessions/

@@ -12,6 +12,7 @@ os.environ["ZEN_MAIL_WA_STORE"] = os.path.join(tmp, "whatsmeow.db")
 os.environ["ZEN_MAIL_WHATSAPP_DB"] = os.path.join(tmp, "history.db")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common, sources
+assert str(sys.modules["common"].DATA).startswith(tempfile.gettempdir()), "refusing to run against " + str(sys.modules["common"].DATA)  # 2026-10-27: a test run on an already-loaded common rewrote 58 real cards
 
 # Missing files: no names, no error.
 assert sources._phonebook_names() == {}

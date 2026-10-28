@@ -154,6 +154,8 @@ object InvokeCommandRegistry {
       InvokeCommandSpec(name = "jarvis.notify"),
       InvokeCommandSpec(name = "jarvis.open"),
       InvokeCommandSpec(name = "jarvis.keepAwake"),
+      // 2026-10-28: the icon's number, sent by the Pi while the app sleeps (JarvisBadge.kt).
+      InvokeCommandSpec(name = "jarvis.badge", requiresForeground = false),
       InvokeCommandSpec(name = "jarvis.pack.status"),
       InvokeCommandSpec(name = "jarvis.pack.update"),
       InvokeCommandSpec(name = "jarvis.pack.run"),

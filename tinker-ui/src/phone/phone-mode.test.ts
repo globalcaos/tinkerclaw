@@ -299,7 +299,7 @@ describe("initPhoneMode", () => {
       expect(deps.switchToTab).not.toHaveBeenCalled();
     });
 
-    it("each row's ⋯ opens the desktop tab menu, and the drawer has no New session (the architect 2026-10-19)", () => {
+    it("each row's ⋯ opens the desktop tab menu with the dropdown still open (the architect 2026-10-27), and the drawer has no New session (the architect 2026-10-19)", () => {
       ctl.destroy();
       const openTabMenu = vi.fn();
       const resetSession = vi.fn();
@@ -307,7 +307,7 @@ describe("initPhoneMode", () => {
       ctl.toggleSheet(true);
       sheet().querySelector<HTMLElement>('[data-phone-menu="tab-main"]')!.click();
       expect(openTabMenu).toHaveBeenCalledWith("tab-main", expect.any(Number), expect.any(Number));
-      expect(document.body.classList.contains("phone-sheet-open")).toBe(false);
+      expect(document.body.classList.contains("phone-sheet-open")).toBe(true);
       ctl.openDrawer("left");
       expect(document.querySelector('nav.sidebar [data-phone-act="reset"]')).toBeNull();
       expect(resetSession).not.toHaveBeenCalled();

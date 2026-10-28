@@ -127,7 +127,7 @@ function collectAncestorPids(): Set<number> {
 
 // FORK 2026-10-02: a process that only MENTIONS the chat key can live in its own systemd service (a
 // review page that wakes this chat on Send, a wake-on-finish watcher). Two Stop clicks meant for a
-// stuck turn also killed Sasha's trip page, because its row read "attached process". Name the service
+// stuck turn also killed Robin's trip page, because its row read "attached process". Name the service
 // so a Stop is a choice; what Stop does is unchanged. Our own worker units and the gateway keep the
 // generic label.
 function serviceName(unit: string | undefined): string | undefined {

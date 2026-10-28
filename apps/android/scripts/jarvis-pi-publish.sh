@@ -128,5 +128,7 @@ for _ in $(seq 1 12); do
   sleep 10
 done
 echo "phone still on an older build. The APK is published; the install needs the Jarvis app OPEN on screen" >&2
-echo "(silent installs only went through in the foreground, 2026-10-21): ask the architect to open it, then re-run jarvis.update." >&2
+echo "(silent installs only went through in the foreground, 2026-10-21): start the watcher as a longjob, it installs" >&2
+echo "the build the moment the architect opens the app (never wakes the phone itself), then tell him to open it:" >&2
+echo "  node $SRC/apps/android/scripts/update-when-on-screen.mjs $VC 3" >&2
 exit 3

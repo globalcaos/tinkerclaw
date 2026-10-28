@@ -6,10 +6,10 @@ Once the agent has listed the possible readings of a request, it does not have t
 
 ## Examples
 
-| Situation                                                                                                   | Jev should answer | Then                       |
-| ----------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------- |
-| "Send the quote to Jordi", reading _Jordi from the supplier_: a quote thread in the mail is with that Jordi | yes               | settled, the agent goes on |
-| the same reading when the agent has only looked at the contact list, which has both                         | no                | still open                 |
+| Situation                                                                                             | Jev should answer | Then                       |
+| ----------------------------------------------------------------------------------------------------- | ----------------- | -------------------------- |
+| "Send the quote to Sam", reading _Sam from the supplier_: a quote thread in the mail is with that Sam | yes               | settled, the agent goes on |
+| the same reading when the agent has only looked at the contact list, which has both                   | no                | still open                 |
 
 ## The question Jev is asked
 

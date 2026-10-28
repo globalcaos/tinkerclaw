@@ -303,6 +303,7 @@ fun jarvisDocumentStartScript(
             notify: function (title, body, tap) { return verb("notify", { title: str(title), body: str(body), tap: str(tap) }); },
             open: function (target) { return verb("open", { target: str(target) }); },
             keepAwake: function (minutes) { return verb("keepAwake", { minutes: Number(minutes) || 0 }); },
+            badge: function (count, titles) { return verb("badge", { count: Number(count) || 0, titles: titles || [] }); },
           };
           var port0 = window.$portName;
           if (port0) {
@@ -338,8 +339,18 @@ fun jarvisDocumentStartScript(
 
 /** Local notifications from the app itself, on the channel system.notify already uses. */
 object JarvisNotifications {
-  private const val CHANNEL_ID = "openclaw.system.notify.active"
+  // 2026-10-28: ".v2" = the same channel with badges off, so only the unread-chats notification
+  // (JarvisBadge.kt) counts on the app icon. Android fixes a channel's badge setting at creation.
+  private const val CHANNEL_ID = "openclaw.system.notify.v2.active"
   private const val CHANNEL_NAME = "OpenClaw Active"
+  private val BADGING_CHANNELS = listOf("active", "passive", "timesensitive").map { "openclaw.system.notify.$it" }
+
+  /** Delete the old channels that put a number on the icon for every alert; their notifications go with them. */
+  fun retireBadgingChannels(manager: NotificationManager) {
+    for (id in BADGING_CHANNELS) {
+      if (manager.getNotificationChannel(id) != null) manager.deleteNotificationChannel(id)
+    }
+  }
 
   fun canPost(context: Context): Boolean {
     if (Build.VERSION.SDK_INT >= 33 &&
@@ -363,8 +374,11 @@ object JarvisNotifications {
     if (!canPost(appContext)) return
     val manager = appContext.getSystemService(NotificationManager::class.java)
     if (manager.getNotificationChannel(CHANNEL_ID) == null) {
-      manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT))
+      manager.createNotificationChannel(
+        NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT).apply { setShowBadge(false) },
+      )
     }
+    retireBadgingChannels(manager)
     // 2026-10-23: notify {tap} opens that screen or URL (JarvisOpen) instead of just the app.
     val open =
       tap?.let { JarvisOpen.intent(appContext, it) }

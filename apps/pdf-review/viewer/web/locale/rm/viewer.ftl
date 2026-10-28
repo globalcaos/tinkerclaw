@@ -152,7 +152,7 @@ pdfjs-document-properties-page-size-dimension-name-string = { $width } × { $hei
 pdfjs-document-properties-linearized = Fast Web View:
 pdfjs-document-properties-linearized-yes = Gea
 pdfjs-document-properties-linearized-no = Na
-pdfjs-document-properties-close-button = Orbisr
+pdfjs-document-properties-close-button = Serrar
 
 ## Print
 
@@ -383,9 +383,9 @@ pdfjs-editor-comments-sidebar-title =
        *[other] Commentaris
     }
 pdfjs-editor-comments-sidebar-close-button =
-    .title = Orbisr la trav laterala
-    .aria-label = Orbisr la trav laterala
-pdfjs-editor-comments-sidebar-close-button-label = Orbisr la trav laterala
+    .title = Serrar la trav laterala
+    .aria-label = Serrar la trav laterala
+pdfjs-editor-comments-sidebar-close-button-label = Serrar la trav laterala
 # Instructional copy to add a comment by selecting text or an annotations.
 pdfjs-editor-comments-sidebar-no-comments1 = Vesas insatge interessant? Marchescha la passascha ed agiuntescha in commentari.
 pdfjs-editor-comments-sidebar-no-comments-link = Ulteriuras infurmaziuns
@@ -475,7 +475,7 @@ pdfjs-editor-new-alt-text-create-automatically-button-label = Crear automaticama
 pdfjs-editor-new-alt-text-not-now-button = Betg ussa
 pdfjs-editor-new-alt-text-error-title = I n’è betg reussì da crear automaticamain il text alternativ
 pdfjs-editor-new-alt-text-error-description = Scriva per plaschair tes agen text alternativ u emprova pli tard anc ina giada.
-pdfjs-editor-new-alt-text-error-close-button = Orbisr
+pdfjs-editor-new-alt-text-error-close-button = Serrar
 # Variables:
 #   $totalSize (Number) - the total size (in MB) of the AI model.
 #   $downloadedSize (Number) - the downloaded size (in MB) of the AI model.
@@ -517,7 +517,7 @@ pdfjs-editor-alt-text-settings-downloading-model-button = Telechargiar…
 pdfjs-editor-alt-text-settings-editor-title = Editur per text alternativ
 pdfjs-editor-alt-text-settings-show-dialog-button-label = Mussar l’editur per text alternativ directamain cun agiuntar in maletg
 pdfjs-editor-alt-text-settings-show-dialog-description = Ta gida a garantir che tut tes maletgs hajan in text alternativ.
-pdfjs-editor-alt-text-settings-close-button = Orbisr
+pdfjs-editor-alt-text-settings-close-button = Serrar
 
 ## Accessibility labels (announced by screen readers) for objects added to the editor.
 
@@ -545,8 +545,8 @@ pdfjs-editor-undo-bar-undo-button =
     .title = Revocar
 pdfjs-editor-undo-bar-undo-button-label = Revocar
 pdfjs-editor-undo-bar-close-button =
-    .title = Orbisr
-pdfjs-editor-undo-bar-close-button-label = Orbisr
+    .title = Serrar
+pdfjs-editor-undo-bar-close-button-label = Serrar
 
 ## Add a signature dialog
 
@@ -597,7 +597,7 @@ pdfjs-editor-add-signature-image-upload-error-title = Impussibel da transferir i
 pdfjs-editor-add-signature-image-upload-error-description = Controllescha tia connexiun cun la rait u emprova cun in’auter maletg.
 pdfjs-editor-add-signature-image-no-data-error-title = Impussibel da convertir quest maletg en ina signatura
 pdfjs-editor-add-signature-image-no-data-error-description = Emprova per plaschair da transferir in auter maletg.
-pdfjs-editor-add-signature-error-close-button = Orbisr
+pdfjs-editor-add-signature-error-close-button = Serrar
 
 ## Dialog buttons
 

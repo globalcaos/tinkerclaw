@@ -14,6 +14,8 @@
   POST /api/open {path}              link a PDF on disk under papers/open/ and answer its url path
   POST /api/opened?path=<url path>   the viewer opened this file: put it at the top of the history
   GET  /api/history                  every PDF opened with the viewer that still exists, newest first
+  POST /api/hide?path=<url path>     take that file off the history list (opening it again brings it back)
+  POST /api/trash?path=<url path>    move the PDF behind that link to the trash (~/.local/share/Trash, restorable)
 
 Bookmarks live in state/bookmarks.json, keyed by the PDF's fingerprint, so a
 renamed or moved copy of the same file still finds its place.
@@ -37,6 +39,9 @@ APPLYING = ROOT / "state" / "applying"  # <pdf name>.flag: Apply comments presse
 APPLYING_TTL = 30 * 60  # a flag older than this is ignored, so a chat that never rebuilt cannot block his edits
 ORIGINS = ROOT / "state" / "origins.json"
 HISTORY = ROOT / "state" / "history.json"  # url path -> {file, at}: what the viewer opened, for the phone's list
+HIDDEN = ROOT / "state" / "hidden.json"  # real file -> ms it was taken off the list; a later open shows it again
+# The freedesktop trash, so a file manager can put a deleted PDF back (2026-10-27). PDF_REVIEW_TRASH: the tests' own.
+TRASH = Path(os.environ.get("PDF_REVIEW_TRASH") or Path.home() / ".local/share/Trash")
 # /api/open serves a PDF from these folders only (the same roots Tinker's file links may open).
 OPEN_ROOTS = [Path.home() / d for d in ("Documents", "Downloads", "Desktop", "Pictures", "src", ".openclaw")]
 VOICES_DIR = Path.home() / ".local/share/piper-voices"
@@ -160,6 +165,30 @@ def link_pdf(pdf):
     return "/" + link.relative_to(ROOT).as_posix()
 
 
+def load_hidden():
+    try:
+        return json.loads(HIDDEN.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def trash(pdf):
+    """Move a file into the freedesktop trash with its .trashinfo (original path, date): restorable from any file
+    manager. Answers where it went."""
+    import shutil
+    from urllib.parse import quote
+    files, info = TRASH / "files", TRASH / "info"
+    files.mkdir(parents=True, exist_ok=True)
+    info.mkdir(parents=True, exist_ok=True)
+    name, n = pdf.name, 1
+    while (files / name).exists() or (info / f"{name}.trashinfo").exists():
+        name, n = f"{pdf.stem}.{n}{pdf.suffix}", n + 1
+    (info / f"{name}.trashinfo").write_text(
+        f"[Trash Info]\nPath={quote(str(pdf))}\nDeletionDate={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+    shutil.move(str(pdf), str(files / name))
+    return files / name
+
+
 def history_list():
     """Every PDF the viewer opened that still exists, newest first. Only links count: a PDF reaches the
     viewer as a link under papers/ (open-pdf, /api/open, a paper put up for review); the real files
@@ -181,7 +210,8 @@ def history_list():
         prev = seen.get(target)
         if prev is None or at > prev["at"]:
             seen[target] = {"path": where, "name": target.name, "dir": str(target.parent), "at": at}
-    return sorted(seen.values(), key=lambda e: -e["at"])
+    hidden = load_hidden()  # taken off the list by a long press, unless opened again since
+    return sorted((e for t, e in seen.items() if hidden.get(str(t), 0) < e["at"]), key=lambda e: -e["at"])
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -276,6 +306,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self._open()
         if route == "/api/opened":
             return self._opened()
+        if route == "/api/hide":
+            return self._hide()
+        if route == "/api/trash":
+            return self._trash()
         if route == "/api/clientlog":
             return self._clientlog()
         if urlparse(self.path).path != "/api/tts":
@@ -331,6 +365,38 @@ class Handler(SimpleHTTPRequestHandler):
             h[where] = {"file": str(link.resolve()), "at": int(time.time() * 1000)}
             write_json(HISTORY, h)
         self._json({"ok": True, "recorded": True})
+
+    # 2026-10-27 (the architect: "There is currently no way to delete current files. On long press the option should pop
+    # up"): a long press on a 🕘 Recent row offers both. Hide only takes it off the list; Trash moves the real PDF
+    # to the trash, where a file manager can restore it. Never a plain delete.
+    def _hide(self):
+        where = self._served_path()
+        if not where:
+            return self.send_error(404, "not a served paper")
+        target = str((ROOT / where.lstrip("/")).resolve())
+        with _history_lock:
+            hidden = load_hidden()
+            hidden[target] = int(time.time() * 1000)
+            write_json(HIDDEN, hidden)
+        self._json({"ok": True, "hidden": target})
+
+    def _trash(self):
+        where = self._served_path()
+        if not where:
+            return self.send_error(404, "not a served paper")
+        link = ROOT / where.lstrip("/")
+        if not link.is_symlink():  # a real file under papers/ is a test fixture, never his
+            return self._json({"error": "not a file this viewer opened"}, 403)
+        pdf = link.resolve()
+        if pdf.suffix.lower() != ".pdf" or not pdf.is_file() or not any(pdf.is_relative_to(r) for r in OPEN_ROOTS):
+            return self._json({"error": f"not a PDF the viewer may touch: {pdf}"}, 403)
+        try:
+            went = trash(pdf)
+        except OSError as err:
+            sys.stderr.write(f"trash failed for {pdf}: {err!r}\n")
+            return self._json({"error": f"could not move it to the trash: {err}"}, 500)
+        sys.stderr.write(f"TRASH {time.strftime('%Y-%m-%d %H:%M:%S')} {pdf} -> {went}\n")
+        self._json({"ok": True, "file": str(pdf), "trash": str(went)})
 
     def _origin_get(self):
         where = self._served_path()

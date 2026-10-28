@@ -57,6 +57,10 @@ def pressure(conn, t, me, now):
     if waited >= 48 and (t["importance"] or 0) >= 2:
         level += 1
         why.append(f"waiting {int(waited // 24)} days")
+    promise = (json.loads(t["extra"] or "{}").get("promise") or {})
+    if promise.get("broken"):  # promises.py: he said he would, the day passed, nothing since
+        level += 1
+        why.append(f"promised by {promise.get('due')}")
     if t["deadline"]:
         try:
             days = (datetime.date.fromisoformat(t["deadline"]) - now.date()).days

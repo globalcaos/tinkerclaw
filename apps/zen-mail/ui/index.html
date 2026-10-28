@@ -90,6 +90,7 @@ button,textarea{font-family:inherit}
 .p-title{font-family:var(--serif);font-size:25px;font-weight:560;line-height:1.25;margin:0 0 6px}
 .p-sub{color:var(--muted);font-size:13px;margin:0 0 14px}
 .facts{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}
+.owed{font-size:13px;color:var(--accent);margin:0 0 10px}.owed.late{color:var(--alert)}
 .chip{font-size:12px;background:var(--stone);color:var(--muted);border-radius:999px;padding:3px 10px}
 .lbl{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:24px 0 9px;display:flex;align-items:center;gap:10px}
 .lbl::after{content:"";flex:1;height:1px;background:var(--hair)}
@@ -290,7 +291,7 @@ function listHtml(){
   }else if(S.view==="waiting"){
     h+=`<div class="list-h">Waiting on others</div>`;
     if(!d.waiting.length)h+=`<p class="hint">Nobody owes you an answer.</p>`;
-    for(const w of d.waiting)h+=`<div class="row a-${esc(w.acct)}${S.sel===w.id?" on":""}" data-act="sel" data-v="${w.id}" role="button" tabindex="0"><span><span class="t">${esc(w.title)}</span><span class="s">${esc(w.who)}${w.who?" · ":""}since ${esc(w.since)}</span></span></div>`;
+    for(const w of d.waiting)h+=`<div class="row a-${esc(w.acct)}${S.sel===w.id?" on":""}" data-act="sel" data-v="${w.id}" role="button" tabindex="0"><span><span class="t">${esc(w.title)}</span><span class="s">${esc(w.who)}${w.who?" · ":""}${w.promise&&w.promise.what?`you promised ${esc(w.promise.what)} by ${esc(w.promise.due)}`:`since ${esc(w.since)}`}</span></span></div>`;
     h+=`<p class="hint">With no answer in 4 working days, the topic comes back to Today with a nudge written.</p>`;
   }else if(S.view==="aside"){
     h+=`<div class="list-h">Set aside</div>`+d.aside.map(senderHtml).join("");
@@ -357,6 +358,8 @@ function renderPane(){
   const box=((S.data.accounts.find(a=>a.id===t.acct)||{}).kind)==="gmail"?"Gmail":"Outlook";
   let h=back+`<div class="pane-in fade"><h2 class="p-title">${esc(t.title)}</h2><p class="p-sub">${esc(t.sub)}</p>`;
   if(t.facts&&t.facts.length)h+=`<div class="facts">${t.facts.map(f=>`<span class="chip">${esc(f)}</span>`).join("")}</div>`;
+  // 2026-10-27 (promises.py): what he said he would do in this thread and has not done yet.
+  if(t.promise&&t.promise.what)h+=`<p class="owed${t.promise.broken?" late":""}">You promised ${esc(t.promise.what)}, by ${esc(t.promise.due)}${t.promise.broken?". That day has passed.":"."}</p>`;
   if(t.butler)h+=butlerHtml(t.butler);
   h+=`<div class="lbl">Summary</div><p class="sum">${esc(t.summary||"")}</p>`;
   h+=`<div id="atts">${attsHtml(t)}</div>`;

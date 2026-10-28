@@ -303,7 +303,7 @@ describe("a live bubble covers its run until it was last written, not only until
   const LAST_DELTA = ANSWER_OPENED + 16_000; // its last delta, just before the CLI wrote the block
   const FINAL_AT = ANSWER_OPENED + 16_500; // the first final promoted it at 22:52:25.58
   const ANSWER =
-    "The October plan is on Sasha's page now: Maui, the San Jose days, the cliff hike.";
+    "The October plan is on Robin's page now: Maui, the San Jose days, the cliff hike.";
   /** The page after the first final: both bubbles promoted (no `_temporary`), end-stamped. */
   const page = (
     answerOpened = ANSWER_OPENED,

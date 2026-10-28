@@ -5,9 +5,11 @@ import {
   isPdfPath,
   lastPdf,
   openPdfReader,
+  pdfDictate,
   pdfReaderOpen,
   pdfViewerUrl,
   servePdf,
+  showPdfReader,
 } from "./pdf-reader.js";
 
 const reply = (status: number, body: unknown) =>
@@ -70,5 +72,24 @@ describe("pdf-reader", () => {
     await openPdfReader(null, f as unknown as typeof fetch);
     expect(closePdfReader()).toBe(true);
     expect(closePdfReader()).toBe(false);
+  });
+});
+
+describe("pdfDictate (side-key voice into a PDF comment)", () => {
+  it("is false with no reader layer, so the words go to the chat", () => {
+    expect(pdfDictate("hello")).toBe(false);
+  });
+
+  it("hands the words to the viewer and reports whether a comment box took them", () => {
+    const layer = showPdfReader("about:blank");
+    const win = layer.querySelector("iframe")!.contentWindow as Window & {
+      __pdfDictate?: (t: string) => boolean;
+    };
+    const got: string[] = [];
+    win.__pdfDictate = (t) => (got.push(t), true);
+    expect(pdfDictate("make this shorter")).toBe(true);
+    expect(got).toEqual(["make this shorter"]);
+    win.__pdfDictate = () => false; // comment box closed
+    expect(pdfDictate("open the chat")).toBe(false);
   });
 });

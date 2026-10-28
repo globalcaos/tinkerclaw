@@ -123,6 +123,16 @@ and the choice is kept: **↕ Scroll**, one column of pages at the screen's widt
 or **⇆ Pages**, one page fitted to the screen, turned by a swipe left or right (not while drawing, not
 when zoomed past the width, not while selecting text).
 
+## Where each feature lives (2026-10-28)
+
+Read this before grepping; a viewer change took 12 probe calls to map on 2026-10-28.
+- Comment tools: `viewer/web/tools.js` (💬 Comment toggle, tap-to-comment via pdf.js `commentSelection`, ↶/↷ undo/redo, comment box fit).
+- Comment box: pdf.js `#commentManagerDialog` in `viewer/web/viewer.html` (textarea `#commentManagerTextInput`, Cancel, Done). It has no lock or mic button.
+- Read aloud: `viewer/web/reader.js` (Piper via `/api/tts`; the phone voice via the `JarvisNative` bridge).
+- Phone layout: `viewer/web/phone.js`.
+- Phone app bridge verbs: `apps/android/app/src/main/java/ai/openclaw/app/jarvis/JarvisBridge.kt` (speak, synth, voices, share, vibrate, notify, verb…). No speech-to-text verb yet. The WebView grants the mic (`RESOURCE_AUDIO_CAPTURE` in `apps/android/.../ui/TinkerScreen.kt`), so `getUserMedia` works inside the app.
+- Tinker UI has no dictation code to reuse.
+
 ## Server
 
 User unit `pdf-review.service` (`~/.config/systemd/user/`) runs `server.py` on 127.0.0.1:18820: the

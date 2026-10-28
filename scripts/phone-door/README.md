@@ -59,7 +59,7 @@ What changes on the phone without an APK: `voice-fx.json` (the voice numbers the
 
 ## Tests
 
-`node --test scripts/phone-door/door.test.mjs scripts/phone-door/pack.test.mjs`
+`node --test scripts/phone-door/door.test.mjs scripts/phone-door/pack.test.mjs scripts/phone-door/phone-badge.test.mjs`
 
 ## Looking at the phone from the host
 
@@ -68,3 +68,11 @@ prints the result; `--shot out.jpg` saves a screenshot; `--eval-file f.js` reads
 change for the phone is checked with it, not with a hand-built script in `/tmp`. Touch handlers can be
 exercised by dispatching synthetic `PointerEvent`s (`pointerType:"touch"`) through `--eval`, as long as the
 needed view is already on screen: never switch the architect's view to set up a test.
+
+## The app icon's number (2026-10-28)
+
+`phone-badge.mjs` (unit `phone-badge.service`) keeps the Jarvis icon's number equal to the Tinker chats with an
+unread result: the rule of `tinker-ui/src/tab-attention.ts` on the shared page state and the gateway's session
+rows, sent as `jarvis.badge {count, titles}` when it changes (the gateway wakes a sleeping app). In the app,
+`JarvisBadge.kt` is the only notification on a badging channel; every other channel has badges off.
+`PHONE_BADGE_DRY=1 node scripts/phone-door/phone-badge.mjs` prints the current count and sends nothing.

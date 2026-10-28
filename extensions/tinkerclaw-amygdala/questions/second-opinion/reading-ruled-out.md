@@ -9,7 +9,7 @@ The mirror of the previous prompt. After each tool result Jev is asked, for each
 | Situation                                                                                                                          | Jev should answer | Then                    |
 | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------- |
 | "The disk is full, clean up the logs", reading _delete the logging code_: the disk check shows the space is taken by old log files | yes               | that reading is dropped |
-| "Send the quote to Jordi", reading _Jordi from the supplier_: the quote thread is with that Jordi                                  | no                | that reading stays      |
+| "Send the quote to Sam", reading _Sam from the supplier_: the quote thread is with that Sam                                        | no                | that reading stays      |
 
 ## The question Jev is asked
 

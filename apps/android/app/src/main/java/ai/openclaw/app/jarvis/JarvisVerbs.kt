@@ -32,7 +32,7 @@ import kotlinx.serialization.json.longOrNull
  * Bad input throws IllegalArgumentException; the callers turn it into their own error shape.
  */
 object JarvisVerbs {
-  val names = setOf("buzz", "say", "play", "notify", "open", "keepAwake")
+  val names = setOf("buzz", "say", "play", "notify", "open", "keepAwake", "badge")
   private const val TAG = "JarvisVerbs"
 
   fun run(
@@ -66,6 +66,13 @@ object JarvisVerbs {
       }
       "open" -> JarvisOpen.open(app, parseOpenTarget(args.string("target") ?: args.string("screen") ?: args.string("url")))
       "keepAwake" -> JarvisAwake.keep(app, (args["minutes"] as? JsonPrimitive)?.doubleOrNull ?: 0.0)
+      // 2026-10-28: the app icon's number = Tinker chats with an unread result (JarvisBadge.kt).
+      "badge" -> {
+        val count = (args["count"] as? JsonPrimitive)?.longOrNull
+        requireNotNull(count) { "badge: count is required" }
+        val titles = (args["titles"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content?.take(80) }.orEmpty()
+        JarvisBadge.set(app, count.toInt().coerceIn(0, 999), titles)
+      }
       else -> throw IllegalArgumentException("unknown verb ${verb.take(40)}")
     }
   }

@@ -734,10 +734,65 @@ async function showRecent() {
           `<span class="recentName">${escHtml(f.name)}</span>` +
           `<span class="recentMeta">${escHtml(ago(f.at))} · ${escHtml(f.dir)}</span></a>`).join("")
       : "No PDF opened yet.";
+    list.querySelectorAll(".recentRow").forEach((row, i) => holdForMenu(row, files[i], dlg));
   } catch (err) {
     console.error("[recent] the list failed", err);
     list.textContent = `The list could not be loaded: ${err.message}`;
   }
+}
+
+// 2026-10-27 (the architect: "There is currently no way to delete current files. On long press the option should pop up"):
+// hold a row (right-click on a desktop) for its menu: take it off this list, or move the PDF to the trash, where a
+// file manager can put it back. The trash asks for a second tap inside the menu (the phone app's WebView may not
+// show a confirm() box). After a hold, the tap that ends it does not open the file.
+const HOLD_MS = 550;
+
+function holdForMenu(row, f, dlg) {
+  let timer = 0, x = 0, y = 0, held = false;
+  const clear = () => { clearTimeout(timer); timer = 0; };
+  row.addEventListener("pointerdown", (e) => {
+    held = false; x = e.clientX; y = e.clientY;
+    timer = setTimeout(() => { held = true; rowMenu(row, f, dlg); }, HOLD_MS);
+  });
+  row.addEventListener("pointermove", (e) => { if (Math.abs(e.clientX - x) + Math.abs(e.clientY - y) > 12) clear(); });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) row.addEventListener(ev, clear);
+  row.addEventListener("contextmenu", (e) => { e.preventDefault(); clear(); if (!held) { held = true; rowMenu(row, f, dlg); } });
+  row.addEventListener("click", (e) => { if (held) { e.preventDefault(); held = false; } });
+}
+
+function rowMenu(row, f, dlg) {
+  dlg.querySelector(".rowMenu")?.remove();
+  const m = document.createElement("div");
+  m.className = "rowMenu";
+  m.innerHTML = `<button type="button" data-a="hide">Remove from this list</button>` +
+    `<button type="button" data-a="trash" class="danger">Delete the PDF (to the trash)</button>` +
+    `<button type="button" data-a="cancel">Cancel</button><div class="rowMenuNote"></div>`;
+  row.after(m);
+  m.scrollIntoView({ block: "nearest" });
+  const note = m.querySelector(".rowMenuNote");
+  let armed = false;
+  m.addEventListener("click", async (e) => {
+    const a = e.target.closest("button")?.dataset.a;
+    if (!a) return;
+    if (a === "cancel") return m.remove();
+    if (a === "trash" && !armed) {
+      armed = true;
+      e.target.textContent = `Tap again to delete ${f.name}`;
+      setTimeout(() => { armed = false; e.target.textContent = "Delete the PDF (to the trash)"; }, 4000);
+      return;
+    }
+    m.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try {
+      const r = await fetch(`${BASE}/api/${a}?path=${encodeURIComponent(f.path)}`, { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      showRecent();
+    } catch (err) {
+      console.error(`[recent] ${a} failed for ${f.path}`, err);
+      note.textContent = `That did not work: ${err.message}`;
+      m.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    }
+  });
 }
 recentBtn.addEventListener("click", showRecent);
 if (new URLSearchParams(location.search).has("recent")) showRecent();

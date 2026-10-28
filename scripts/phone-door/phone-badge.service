@@ -1,0 +1,18 @@
+# Phone badge: the Jarvis app icon's number = Tinker chats with an unread result (phone-badge.mjs).
+# Template. Copy to ~/.config/systemd/user/phone-badge.service, replace <repo> and <node>, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now phone-badge
+# Needs "jarvis.badge" in gateway.nodes.allowCommands and an app build that has JarvisBadge.kt.
+[Unit]
+Description=Jarvis phone badge (unread Tinker chats -> app icon number)
+After=openclaw-gateway.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=<node> <repo>/scripts/phone-door/phone-badge.mjs
+WorkingDirectory=<repo>
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

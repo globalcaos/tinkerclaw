@@ -11,6 +11,7 @@ for name, attrs in (("dams", {"release": lambda c: None}), ("streams", {"collect
                     ("butler", {"butler_pass": lambda c: None})):
     sys.modules[name] = types.SimpleNamespace(**attrs)
 import common
+assert str(sys.modules["common"].DATA).startswith(tempfile.gettempdir()), "refusing to run against " + str(sys.modules["common"].DATA)  # 2026-10-27: a test run on an already-loaded common rewrote 58 real cards
 lines = []
 common.log = lambda *a: lines.append(" ".join(str(x) for x in a))
 import sync
