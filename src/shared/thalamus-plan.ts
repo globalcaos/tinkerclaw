@@ -75,7 +75,7 @@ export type SuggestionMoveCause =
   | "engagement";
 
 /**
- * What became of the architect's suggestion for this turn (the architect, 2026-10-02: "his picks are suggestions").
+ * What became of the architect's suggestion for this turn (2026-10-02: its picks are suggestions only).
  *   kept     the suggestion's rung runs.
  *   moved    another rung runs; `cause` says why. `better` carries the lead in percent on the domain strength; a limit or a
  *            cooling supply carries `untilMs` when the cooling store knows when it ends.

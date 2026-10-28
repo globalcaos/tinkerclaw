@@ -384,8 +384,8 @@ export async function createModelSelectionState(params: {
     }
   }
 
-  // FORK 2026-09-08 — THE PICKER'S AUTO RIDES THE SEND (the architect, work tab: "I have Auto model
-  // selected, and I see a Sol thinking indicator ... Sol has reached a token limit"). The stored
+  // FORK 2026-09-08 — THE PICKER'S AUTO RIDES THE SEND (bug: with Auto selected, a
+  // Sol thinking indicator showed up although Sol had hit its token limit). The stored
   // pin is cleared HERE, in the turn that asked for Auto, with the same write the allowlist branch
   // above already uses — not by a separate patch the send then races. Provider/model fall back to
   // the configured default so the quota substitution and THALAMUS below start from the anchor, and
@@ -484,8 +484,8 @@ export async function createModelSelectionState(params: {
   // side effect, which is exactly what this feature must not have. The auth
   // profile is therefore still validated against the Auto selection.
   let quotaSubstitution: QuotaAwareAutoSubstitution | undefined;
-  // FORK 2026-09-08 (the architect: "Now Grok is triggering in Auto, this is insane. Thalamus should
-  // select opus first, right?") — a stored override the RUNNER wrote (`modelOverrideSource:
+  // FORK 2026-09-08 (bug: Grok kept firing in Auto when Thalamus should have picked Opus
+  // first) — a stored override the RUNNER wrote (`modelOverrideSource:
   // "auto"`, the fallback it landed on after a failure) is a starting point, not a pin. Counting
   // it as explicit hard-stopped the quota veto and THALAMUS on every later turn of that session,
   // so the tab that fell back to grok at 11:36 was still on grok at 12:00 with opus available and
@@ -543,10 +543,9 @@ export async function createModelSelectionState(params: {
 
   // ── THALAMUS: the BIAS dial and the task domain choose the rung ─────────────
   //
-  // FORK 2026-09-02 (the architect): "make sure … Thalamus actually automatically switches
-  // among them smartly, following the BIAS selected in the slider … and routes
-  // intelligently depending on the task at hand, following the Fugu family of
-  // harnesses approach." Until this block the dial wrote ~/.openclaw/orca-bias.json
+  // FORK 2026-09-02: Thalamus switches among the frontier models on its own, following
+  // the slider's BIAS and the task at hand, in the style of the Fugu family of
+  // harnesses. Until this block the dial wrote ~/.openclaw/orca-bias.json
   // for the ORCA Conductor and NOTHING on the reply path read it, so Auto moved only
   // when a provider's window was spent: the slider was a control with no effect on
   // the turn the architect was typing.
@@ -632,9 +631,9 @@ export async function createModelSelectionState(params: {
           coolingUntil: cooled.until,
           suggestion,
           contextWindowFor,
-          // OPENROUTER IS UNFUNDED BY POLICY (the architect, 2026-09-03: "I will keep openrouter
-          // without credits unless necessary because we are making too many mistakes trying to
-          // route to it, and it is way too expensive for regular use"). It is METERED, so it
+          // OPENROUTER IS UNFUNDED BY POLICY (2026-09-03: OpenRouter stays without
+          // credits unless needed, since routing to it caused too many mistakes and it costs too
+          // much for regular use). It is METERED, so it
           // can never win on the burn term either — this flag only makes the standing decision
           // explicit and reversible with one env var rather than a code edit.
           unfunded:
@@ -673,9 +672,9 @@ export async function createModelSelectionState(params: {
         const slash = routedKey.indexOf("/");
         if (route && slash > 0 && slash < routedKey.length - 1) {
           const rungEffort = route.rung.effort ?? "";
-          // THE TASK CHOOSES THE EFFORT (owner, 2026-10-09: "Auto is supposed to mean that Thalamus
-          // should take over deciding which effort is best for each task. A complex coding task would
-          // need ultracode, whereas a hello would only need low."). The rung above is the dial's and
+          // THE TASK CHOOSES THE EFFORT (2026-10-09: Auto means Thalamus
+          // decides the best effort for each task; a complex coding task needs ultracode, a hello
+          // only needs low). The rung above is the dial's and
           // the domain's choice of MODEL at the effort the stop suggests; that effort is now the
           // CEILING, and the local task read (no Jev wait on the reply path) picks the level at or
           // below it. The ladder is the routed model's own rungs on this board, so the level is always

@@ -4,8 +4,8 @@ Measured per-DOMAIN strength of each model family, from Epoch AI's public benchm
 tables — the data behind THALAMUS's task-aware routing (src/shared/thalamus-frontier.ts)
 and the dossier's "best at" marks.
 
-the architect 2026-09-02: "make sure Thalamus routes intelligently depending on the task at
-hand, following the Fugu family of harnesses approach." FUGU routes each query to the
+2026-09-02: Thalamus routes by the task at hand, following the Fugu family of
+harnesses. FUGU routes each query to the
 worker with the best MEASURED competence in that query's domain (J6 §3.6 specified the
 same thing in Feb 2026 as domain-specific CDI). This script produces that competence
 table from public measurements instead of opinions.
@@ -66,8 +66,8 @@ RECENT_MONTHS = 12
 # Domains with NO Epoch table at all today: data, languages, instruct, psych, frontend (the
 # WebDev Arena row is metadata-only). Their dossier columns say so in the header tooltip.
 #
-# WIDENED AGAIN 2026-10-02 (the architect: "find more verticals so we can better choose in Thalamus
-# the best model per task"). Seven verticals, each a TaskDomain, and each fed by tables that
+# WIDENED AGAIN 2026-10-02: more verticals, so Thalamus can better pick the best model
+# per task. Seven verticals, each a TaskDomain, and each fed by tables that
 # were already here but averaged into a broader domain: Terminal Bench left CODE for SHELL;
 # WeirdML and PostTrainBench left REASON/AGENTIC for ML; CadEval, Surface Evolver and
 # Blueprint-Bench left VISION for CAD, joined by Furniture Assembly (29 rows, previously

@@ -79,7 +79,7 @@ const IMPORT_ASSISTANT_SLOT_COVER_MS = 5 * 60 * 1000;
 // valve (the debris is ancient, the value is recent) while leaving the tail — and the merge —
 // intact. Measured on the live store, this drops ~70% of the work tab's payload (632 -> 189).
 //
-// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — OFF unless
+// FORK 2026-10-03: some tabs still showed erased history — OFF unless
 // OPENCLAW_IMPORT_FLOOD_MAX_RATIO sets a ratio. Its unit was wrong for the tabs it guarded: a
 // Claude-backed tab's local store holds little more than its prompts, so "3x the local rows" kept
 // each tab's newest steps and hid the answers of every older turn — 9 open tabs tripped it between

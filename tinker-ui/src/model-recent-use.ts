@@ -1,8 +1,7 @@
 // tinker-ui/src/model-recent-use.ts
 //
-// FORK 2026-10-02 (the architect: "sticky smart models that show me which models are currently in use, plus
-// the ones recently used (which should have a way longer sticky time)" and "On mouseover on them, I
-// would like to see the names of the tabs that are using them").
+// FORK 2026-10-02: sticky smart-model rows for models in use now, plus recently used ones with a much
+// longer sticky time; hovering one lists the tabs using it.
 //
 // Which models ran lately, and in which sessions. The collapsed SMART MODELS group shows a row only
 // while it is `.model-live` or `.model-recent`. Before this, `.model-recent` was ONE model, the last

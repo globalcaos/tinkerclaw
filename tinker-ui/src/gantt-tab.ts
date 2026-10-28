@@ -1,7 +1,5 @@
-// FORK 2026-10-05 (the architect: "When we have a master-slave chain set up and the task at hand needs a
-// gantt chart, I would like to have a dedicated tab to visualize it. This tab would appear as a
-// slither tab (only a graph icon) between master and slave, and would be attached to the master,
-// meaning that deleting the first would delete the graph tab.")
+// FORK 2026-10-05: a master-slave chain whose task needs a gantt chart gets a dedicated slim tab
+// (graph icon only) between master and slave, attached to the master: deleting the master deletes it.
 //
 // Pure module: no DOM. The board list comes from tinker-prod-ui (/api/gantt/boards), which reads
 // what skill build-gantt registered (`gantt.py render` from a Tinker chat, or `gantt.py attach`).

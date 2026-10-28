@@ -18,14 +18,12 @@ trail, or a nudge on work that should have been running. v4 chapters 3 (friction
 - [ ] A friction you saw and only described is the failure this chapter exists for. "Open" with no
       edit to the skill is a miss.
 
-Worked instance. The owner, 2026-10-08 06:36: "Veig que has tingut dificultats transitòries per
-accedir al Factorial, però ho has arreglat. Fractal hauria d'haber detectat aquest moviment i
-hauria d'haber arreglat el skill de Factorial per tal que la propera vegada això no passi i es
-gastin menys tokens accedint-hi." (Fractal should have fixed the Factorial skill so that next time
-fewer tokens are spent getting there.) Asked to check his leave, the turn needed ~20 tool calls.
+Worked instance, 2026-10-08. The owner noticed the agent had struggled to reach a web app and then
+got through, and pointed out that Fractal should have spotted it and fixed that app's skill so the
+next visit costs fewer tokens. The lookup had needed ~20 tool calls.
 The jarvis MCP `browser act evaluate` failed twice with a bare "tool execution failed" (even on
 `document.title`); the CLI `openclaw browser evaluate --target-id … --fn …` worked. GraphQL
-introspection is disabled, so finding `allowanceBalancesConnection` took five probe rounds of ~8 s,
+introspection is disabled, so finding the right query took five probe rounds of ~8 s,
 one of which outran the 120 s tool timeout. The reflection listed the MCP failure as "open"; the
 skill got notes, not a one-command path.
 
@@ -54,9 +52,8 @@ chat is idle. It shows up as the next prompt.
       machinery under it restarts. Then resume the work itself. A reflection that only notes the
       stall is the miss.
 
-Worked instance. The owner, 2026-10-09 18:32: "This process is not going as smooth as possible.
-This has been interrupted too many times. Fractal should have picked up on it and should have
-investigated the cause and fixed it." A 20-paper fan-out ran 08:43–18:00; he typed "keep going"
+Worked instance, 2026-10-09. The owner reported that a long process had been interrupted too many
+times, and that Fractal should have noticed, found the cause and fixed it. A 20-paper fan-out ran 08:43–18:00; he typed "keep going"
 three times, after 210, 116 and 150 minutes of silence. Causes: a Claude weekly limit that killed
 11 analysts which still read as finished, and three gateway restarts (11:07, 14:32, 15:14). Every
 waiter watched for a success file or an "ok", the card said "running" throughout, and one

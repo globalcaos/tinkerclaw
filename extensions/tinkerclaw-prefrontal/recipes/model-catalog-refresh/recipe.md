@@ -306,14 +306,12 @@ and, for each addition, its **cost and its billing route** — subscription or c
   → Step 4c.
 - **2026-10-10** — the 09-23 re-measurement cut the Max 20× multiple from ~340× to ~59×, but the
   chart legend, the hero card (">100×") and a memory note kept the typed 340×; it reached a public
-  post in Matt Berman's community before anyone checked. the architect: "redo all the numbers you need,
-  and revise the graph that we have online." → Step 2b; the legend now computes it.
+  post in Matt Berman's community before anyone checked. The numbers were redone and the published graph revised → Step 2b; the legend now computes it.
 
 - **2026-10-13** — Meta's Muse Wonder (AA 52.39) and Muse Wonder Full (55.80) and Gemini 4 Argon
   (52.56) had a live OpenRouter price ($4/$20) and were left off because "that route is retired
-  for us". the architect: "Did our cron fail to recognize it or since we have no access to openrouter for
-  now you decided to ignore it?" Then: "no model should be left out … even if we had no api, I
-  want to know there is a new model in town anyway." → Step 1, the coverage rule (top 50 base
+  for us". The question was whether the cron missed it or skipped it for lack of a route; the
+  answer is that no model is left out, even one we cannot call, because a new model still matters. → Step 1, the coverage rule (top 50 base
   rows, route never decides inclusion). The same census found 8 older gaps the cron had never
   flagged (Fable 5, step-5, Ling 3.1 Flash, Qwen3.8-Flash-Next, Gemini 3.7 Flash, GPT-5.4,
   Mistral Large 4 Preview, plus the 0803 Qwen twin).

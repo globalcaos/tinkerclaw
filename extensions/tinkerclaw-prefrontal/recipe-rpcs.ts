@@ -313,8 +313,8 @@ function recipeFileSlug(fileName: string): string {
  *      folders (`writing/papers/*.md`). Every `.md` at any depth becomes visible;
  *      slug = frontmatter id/slug or the filename; category = the TOP folder name;
  *      subdivision = the nested folder path beneath it (frontmatter `subdivision`
- *      overrides). This is the architect's "subfolders as subdivisions of the same
- *      category" contract.
+ *      overrides). This is the owner's contract: subfolders are
+ *      subdivisions of the same category.
  * A bare `<name>.md` sitting at the recipes root is also surfaced (category from
  * frontmatter). DUAL-READ within a kit dir: recipe.md first, kit.md legacy.
  */

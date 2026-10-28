@@ -2,7 +2,7 @@
 file: context-window-panel.md
 purpose: The CONTEXT WINDOW right-rail panel — its data flow, the root causes behind the dead evict/compact buttons and the always-0 counters, the principles the context bar must obey, and the spec for the two-lane real-time call timeline. Written BEFORE the fix, per the architect's procedure (document the mechanism, then code it); brought up to the landed code on 2026-09-25, so every finding and every plan row now carries its status and commit.
 audience: AI
-status: LANDED WITH NAMED GAPS (2026-09-25) — Step 0 measured (§6.0); A1-A5 and A7-A9 in code (§6.1); B1-B6 in code (§6.2); A6 LANDED 2026-09-25 — the owner decided option (i) ("the button or /compact, either should work"): on the claude-code lane COMPACT sends the CLI's own `/compact` as a turn, from the button and from typed chat (§6.1 A6 as landed, gates 13 and 18). Open, each stated where it lives — F2 (the `sessions.compact` RPC called directly still compacts the gateway mirror; the button and typed `/compact` are RESOLVED), F7 (a cc-bridge turn sum that fits the window is still headed THIS CALL and drives the bar), F6 (cc-bridge rows report the moral code ABSENT: a producer that cannot see the CLI transcript sends 0), F8 / P12 (the CLI's own window is not read), P11 (two estimate ladders meet in the dropped totals), F5 (no pre-call row on a session's first turn per process), B5 (the 2 ms p95 is measured, not established)
+status: LANDED WITH NAMED GAPS (2026-09-25) — Step 0 measured (§6.0); A1-A5 and A7-A9 in code (§6.1); B1-B6 in code (§6.2); A6 LANDED 2026-09-25 — the owner chose option (i), both the button and a typed /compact: on the claude-code lane COMPACT sends the CLI's own `/compact` as a turn, from the button and from typed chat (§6.1 A6 as landed, gates 13 and 18). Open, each stated where it lives — F2 (the `sessions.compact` RPC called directly still compacts the gateway mirror; the button and typed `/compact` are RESOLVED), F7 (a cc-bridge turn sum that fits the window is still headed THIS CALL and drives the bar), F6 (cc-bridge rows report the moral code ABSENT: a producer that cannot see the CLI transcript sends 0), F8 / P12 (the CLI's own window is not read), P11 (two estimate ladders meet in the dropped totals), F5 (no pre-call row on a session's first turn per process), B5 (the 2 ms p95 is measured, not established)
 created: 2026-09-24
 last_verified: 2026-09-25
 last_verified_commit: 5dea8d5fc15
@@ -67,9 +67,8 @@ verify:
 
 # CONTEXT WINDOW panel — data contract, findings, principles, call timeline
 
-> Written 2026-09-24, before any fix, because the architect asked for exactly that order: _"the right
-> procedure is to create a document in the bible about this particular mechanism, and then code it.
-> The design principles are important to leave behind, they help us make less mistakes when coding."_
+> Written 2026-09-24, before any fix, on purpose: document the mechanism in the bible first, then code
+> it. The design principles left behind help the code make fewer mistakes.
 >
 > The report that opened it: the **EVICT** and **COMPACT** buttons do not work; the **evicted** and
 > **compactions** counts are always 0; _"it does not make sense to have a context window bar where we
@@ -745,10 +744,8 @@ budget that is measured but not yet established (§5.6).
   largest prompt in view; `out ↓ 420`, the largest reply; until 2026-09-30 the words took the gateway's
   view, `out ↑` / `in ↓`, which captioned the input stack "out") — the two lanes have different
   denominators, so each carries its own label (right-rail-interaction.md §7's rule).
-- **One column per call (owner, 2026-10-02: _"the graph has horizontal gaps where nothing is sent nor
-  received, they should be cut out. ... some lines are very thin horizonally and vertically, so let's
-  not be so rigorous with the time factor, and present a simplified graph where more area is
-  painted"_).** Each call of the prompt on screen gets one column of EQUAL width (`columnSlots`), side
+- **One column per call (owner request, 2026-10-02: drop the stretches where nothing is sent or
+  received, and trade strict time scaling for a simpler graph with more painted area).** Each call of the prompt on screen gets one column of EQUAL width (`columnSlots`), side
   by side in send order, so no stretch without data is drawn and no call is a sliver for being quick;
   a column 6 device px or wider keeps a 1 px seam on its right so neighbours read as separate calls.
   Its height is its token count against the lane's largest (`columnHeight`), at least 2 CSS px while it
@@ -769,8 +766,8 @@ budget that is measured but not yet established (§5.6).
   the axis. A call that carried no moral code (a measured 0) gets a red rule on the axis under its
   column. The remainder of an exact total over its buckets is the hatched `unitemised` piece (the
   bar's rule, reused) — since 2026-10-02 only when no producer itemised the call (next bullet).
-- **Where the buckets come from (owner, 2026-10-02: _"I see some sent information is unitemised, why is
-  that? Can you fix it and assign it a bucket?"_).** Why: on the cc-bridge lane the only breakdown the
+- **Where the buckets come from (owner report, 2026-10-02: part of what was sent showed as
+  unitemised and should get a bucket).** Why: on the cc-bridge lane the only breakdown the
   timeline had was the gateway's anatomy row, which describes the GATEWAY's mirror transcript, not what
   the claude CLI sends (the root F6 names: on this lane the gateway's producer "cannot see" the CLI's
   transcript, and reading it per turn on the gateway loop was a stall). Measured 2026-10-02 on a Tinker chat:
@@ -801,9 +798,8 @@ budget that is measured but not yet established (§5.6).
   (`responseThinking`, `responseText`, `responseToolCalls`): each kind's estimated share
   (ceil(chars/3.5) of what streamed), eased to the exact total when it lands (§5.4); a reply that
   never streamed to us (a tool-only answer) is its final total as one kind (`outputPieces`).
-- SUPERSEDED 2026-10-02, kept for the record: both lanes were RATES (owner, 2026-10-01: _"the vertical
-  axis is the bits/second sent (top) or received (bottom) by the AI, and the horizontal axis the time,
-  because then the area becomes the amount of data"_). The top lane spread a call's prompt over its
+- SUPERSEDED 2026-10-02, kept for the record: both lanes were RATES (owner request, 2026-10-01: rate on the
+  vertical axis, sent on top and received below, time on the horizontal, so area equals data). The top lane spread a call's prompt over its
   send → first token window, the bottom lane the slope of its cumulative output smoothed over 400 ms,
   one column per device px (`rateColumns`), each fitting its own peak (`in ↑ 103.3k tok/s`). The
   owner found the result full of empty stretches (tool runs, waits) and thin lines in both directions.
@@ -811,8 +807,8 @@ budget that is measured but not yet established (§5.6).
   recorded; any shape for it would be invented. When the latest prompt is one, the last run that has a
   live record is drawn instead (next bullet); only when there is none (a browser restart, see the
   limit below) does the stage say so, and the next prompt draws live.
-- **The last run stays on screen (owner, 2026-10-02: _"The CALL TIMELINE panel sometimes stays empty,
-  it should always show the last run instead"_).** The panel used to go blank in three cases, all in
+- **The last run stays on screen (owner report, 2026-10-02: the CALL TIMELINE panel
+  sometimes went empty and should show the last run instead).** The panel used to go blank in three cases, all in
   `promptView`: after any page reload (the store lives in the page, so it held only history rows, and
   every rebuild pushes a reload), from the moment a new prompt was sent until its first call ("Preparing
   prompt N…", for ever if that preparation never became a run), and after a turn that made no call.
@@ -846,10 +842,10 @@ budget that is measured but not yet established (§5.6).
   1 px ticks, compactions as translucent full-height bands, and between the calls of one turn an empty
   top lane while tools ran. Tool runs now show only as the `responseToolCalls` part of the reply that
   asked for them.
-- **x-axis — the latest prompt, restarting at each one (owner, 2026-09-30: _"a graph that restarts
-  every prompt and it shows me on the top what is sent and in the bottom what is received"_).** Span =
-  [t0, t1] = the prompt's DATA span (owner, 2026-10-01: _"it should only keep zooming out as new data
-  arrives, always covering the full width ... freeze when nothing is being sent or received"_): t0 = its
+- **x-axis — the latest prompt, restarting at each one (owner request, 2026-09-30: restart
+  the graph at every prompt, sent on top and received below).** Span =
+  [t0, t1] = the prompt's DATA span (owner request, 2026-10-01: zoom out only as new data
+  arrives, always fill the width, and hold still while nothing moves): t0 = its
   first call's send, t1 = its last token. No clock is in the axis, so nothing moves between data events
   and each new token re-fits the full width; until 2026-10-02 a stretch with no data longer than
   `IDLE_FOLD_MS` (2 s: a tool run, the wait between calls) folded into a ⫽ break, and since then the
@@ -1112,7 +1108,7 @@ capture created were deleted. No `/compact` was sent to a live worker.
 | A3   | Bridge: on the CLI's `compact_boundary` line, emit A1 `end` with `trigger:"cli-internal"`, exact pre / post / duration and `start` on `system/status` `compacting`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `extensions/tinkerclaw-tinker-bridge/src/stream.ts` (or the `worker.ts` line router)                                      | no                | fixture line from Step 0 yields one event with exact numbers                                                 |
 | A4   | Compaction LEDGER: the A1 owner is the single writer of one row per event (session, time, trigger, lane, before / after / dropped, provenance) + a read path (extend the context-anatomy route or a `context.compactions` RPC returning count / sums / last). If the logs-and-telemetry optic written in this same wave lands a telemetry DB, the ledger is a table there.                                                                                                                                                                                                                                                                                                                                | A1 module; `src/agents/context-anatomy-db.ts` or the telemetry DB; `extensions/tinkerclaw-tinker/index.ts` route          | no                | unit: count / sum; one manual compaction reported by RPC and stream is ONE row                               |
 | A5   | Eviction: move the eviction branch body into `src/gateway/session-eviction.ts` (`evictTranscriptTail` moves with it); `sessions.ts` calls one function. The module emits A1 (`trigger:"evict"`), returns `tokensBefore` / `tokensAfter` (estimated), and REFUSES, with a reason string, on a lane whose runtime owns the context (claude-code), resolved with the same `resolveSessionModelRef` the narrative branch uses (`sessions.ts:2148`).                                                                                                                                                                                                                                                           | `src/gateway/server-methods/sessions.ts` (delegating edit), new module                                                    | **yes** (minimal) | existing eviction tests move with the function; new: lane refusal                                            |
-| A6   | Manual compaction on the claude-code lane — an architect decision after Step 0 (c): (i) forward `/compact` to the live CLI worker, or (ii) keep the button disabled on that lane (P8). Default until decided: (ii). **LANDED 2026-09-25, option (i)** — the owner: "the button or /compact, either should work": see _A6 as landed_ below the table                                                                                                                                                                                                                                                                                                                                                       | bridge `cli-command.ts` (new), `worker.ts`, `stream.ts`; gateway `commands-compact.ts`; UI `context-buttons.ts`, `app.ts` | no                | per unit: the bridge's command grammar, the gateway's lane pass-through, the button's route (_A6 as landed_) |
+| A6   | Manual compaction on the claude-code lane — an architect decision after Step 0 (c): (i) forward `/compact` to the live CLI worker, or (ii) keep the button disabled on that lane (P8). Default until decided: (ii). **LANDED 2026-09-25, option (i)** — both the button and /compact must work: see _A6 as landed_ below the table                                                                                                                                                                                                                                                                                                                                                                        | bridge `cli-command.ts` (new), `worker.ts`, `stream.ts`; gateway `commands-compact.ts`; UI `context-buttons.ts`, `app.ts` | no                | per unit: the bridge's command grammar, the gateway's lane pass-through, the button's route (_A6 as landed_) |
 | A7   | Session row: expose `compactionCount` (exists on `SessionEntry`) plus ledger-derived `evictions`, `droppedTokens`, `lastCompactionAt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `src/gateway/session-utils.ts`, `session-utils.types.ts`                                                                  | no                | unit: the row carries the fields                                                                             |
 | A8   | `src/infra/call-telemetry.ts` — `stream:"call"` contract `{phase: "send", "usage" or "end", callIndex, t, promptTokensEstimate?, input?, cacheRead?, cacheWrite?, output?, stopReason?, provenance}`. Producers: bridge (`system/status` → `send`; `message_start.usage` → `usage`; `message_delta.usage` → `end`); embedded (`handlers.messages.ts` message start / end; a send event if pi has one, U5).                                                                                                                                                                                                                                                                                                | new module; bridge `stream.ts`; `src/agents/embedded-agent-subscribe.handlers.messages.ts`                                | no                | unit per producer with recorded fixtures                                                                     |
 | A9   | Pre-call composition + `moralCode`: `context-anatomy.ts` gains `moralCodeChars/Tokens` (marker detection in the prompt and messages; on cc-bridge, the published pack size when the CLI transcript carries the marker). Wire the dead `emitPrePromptAnatomy` from the existing pre-prompt hook call (`captureForensicDumpHook`, `attempt.ts:3118`) — call 1 of each turn; later tool-loop calls take their size from A8. Add `UNIQUE(run_id, round_number)` + upsert first, as `attempt-hooks.ts:1086-1088` requires. Post-turn rows stay, stamped `snapshot:"post-turn"`. If the system-prompt report can only be reached from `attempt.ts`, that is a one-line tier-1 addition — flag it in the commit. | `src/agents/context-anatomy.ts`, `src/fork/attempt-hooks.ts`, `src/agents/context-anatomy-db.ts`                          | conditional       | unit: marker attribution; pre-call `userMessage` > 0; no duplicate rows                                      |
@@ -1202,8 +1198,8 @@ refusal (`resolveEvictionRefusal`) covers claude-code and every registered CLI b
 banked into `totalTokens`. A real eviction emits one A1 pair (`evict`, `embedded`, `estimated`) under a
 minted `evict:<uuid>` run id, through the owner since `a893546e726`; a decline emits nothing.
 
-**A6 as landed (2026-09-25) — option (i).** The owner decided: _"Compaction from tinkerclaw will be
-done by the button or /compact, either should work."_ On the claude-code lane both reach the CLI as
+**A6 as landed (2026-09-25) — option (i).** The owner decided that both the button and a typed
+`/compact` should compact. On the claude-code lane both reach the CLI as
 its own `/compact`, which is the one compaction that shrinks what the model reads there (F2). U3 was
 measured live first (§6.0 c), and it set the design's one hard rule: the CLI runs the command only
 when the stdin line STARTS with `/compact`, and it takes whatever follows as the compaction's

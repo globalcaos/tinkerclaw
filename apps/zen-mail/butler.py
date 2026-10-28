@@ -1,5 +1,5 @@
-"""The butler pass (the architect, 2026-10-16: "be my butler, and take care of everything you can, take any requirement as far as
-you can before you present it to me").
+"""The butler pass (2026-10-16: act as a butler, handling everything possible and taking each requirement as far as
+it can go before presenting it).
 
 Each hourly run picks the few open topics that need something from the architect (a reply, a decision, an action), most urgent
 first, and hands each to a Sonnet helper that WORKS the topic before he sees it: it searches his two mailboxes for what
@@ -26,8 +26,8 @@ from attachments import texts_for_topic
 from common import APP, CLAUDE, HOME, JIRA_CLI, MEMORY_DIRS, OUTLOOK_CLI, db, log, now_iso, parse_json, run, settings, source_of, unique_texts
 import owner
 
-# 2026-10-22 (the architect: "do not limit the agent ... to only 3 emails per turn. Instead make the primary agent detect what's
-# new and spin as many agents as needed to take care of one subject each, all in parallel"). No per-run cap: every
+# 2026-10-22: no limit of 3 emails per turn; the primary agent detects what is new and starts one helper per
+# subject, all in parallel. No per-run cap: every
 # changed subject gets its own helper, all started together. The only brake is the Pi's memory (one helper is a
 # Claude process of about 300 MB): a helper waits to start while less than MIN_FREE_MB would remain.
 MIN_FREE_MB = 1500

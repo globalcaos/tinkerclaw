@@ -63,8 +63,8 @@ const REDUCED_FRAME_MS = 250;
 /** Both lanes' fill. Provenance (exact, estimated, apportioned) is in the tooltip, not the paint. */
 const LANE_ALPHA = 0.85;
 const STYLE_ID = "call-timeline-style";
-/** FORK 2026-10-10 — a light green outline around Fractal calls (the owner, 13:20: "skip the green
- *  background. Instead, do a light green outline"); its width in CSS px, and its opacity. */
+/** FORK 2026-10-10 — a light green outline around Fractal calls (no green
+ *  background, a light green outline instead); its width in CSS px, and its opacity. */
 const FRACTAL_OUTLINE_CSS_PX = 2;
 const FRACTAL_OUTLINE_ALPHA = 0.7;
 /** FORK 2026-10-10 — the Fractal divider is this share of a column's width ("proportional to the
@@ -585,9 +585,8 @@ export function mountCallTimeline(host: HTMLElement, deps: CallTimelineDeps): Ca
       legendOf.compactions = true;
     }
 
-    // 4b. FORK 2026-10-08 — the main turn ends here and its Fractal turn begins (the owner: "Afegeix
-    //     una línia vertical quan acaba el torn normal i segueix dibuixant els tokens d'anada i vinguda
-    //     del torn fractal"). One rule across both lanes at the first Fractal column; the columns on
+    // 4b. FORK 2026-10-08 — the main turn ends here and its Fractal turn begins (need: a vertical
+    //     line where the normal turn ends, then keep drawing the Fractal turn's tokens in and out). One rule across both lanes at the first Fractal column; the columns on
     //     its right are the reflection's own calls, in and out, drawn like any other.
     if (view?.fractal) {
       const j = calls.findIndex((c) => isFractalRunId(c.runId));

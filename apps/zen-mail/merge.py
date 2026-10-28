@@ -1,5 +1,5 @@
-"""One matter, one topic (the architect, 2026-10-19 17:23: two Lena water-leak topics, "this is the whole point of Zen Mail,
-to aggregate context from different sources and email threads into one").
+"""One matter, one topic (2026-10-19: one matter showed up as two separate topics; the point of Zen Mail is to
+aggregate context from different sources and email threads into one).
 
 Outlook and Gmail start a new conversation for a resend, a forward or a reply written as a new mail, so one matter can
 arrive as several threads. Two rules join them:

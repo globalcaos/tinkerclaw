@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * 2026-10-26 (the architect: "the Jarvis app keeps stopping unexpectedly … put logs to monitor it"):
+ * 2026-10-26: the app kept stopping unexpectedly, so it now logs crashes:
  * a crash leaves the Pi a report. Two sources:
  *  1. our own uncaught-exception handler writes the full Java stack trace to filesDir/crash/ before
  *     Android kills the process;

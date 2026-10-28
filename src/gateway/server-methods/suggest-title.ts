@@ -10,7 +10,7 @@
  * one-shot that was burning Claude subscription tokens (and a full `claude` CLI
  * cold-spawn per rename). Grok 4.6 is the surplus-token lane.
  *
- * FORK 2026-09-12 (the architect: "the auto-rename tab feature is not working anymore")
+ * FORK 2026-09-12: tab auto-rename had stopped working
  * — the suggester ran ONE hardcoded supply with NO recovery ladder. When xAI's
  * weekly allowance hit 100% the run threw `FailoverError: 403 "You have run out
  * of credits"`, the catch below returned null, and EVERY rename silently kept

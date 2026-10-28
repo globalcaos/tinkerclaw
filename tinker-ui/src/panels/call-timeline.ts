@@ -240,8 +240,8 @@ export interface PromptView {
   newer?: { ordinal: number; state: "preparing" | "no-calls" | "history"; fractal?: boolean };
   /**
    * FORK 2026-10-08 — set when the window is a Fractal turn drawn TOGETHER with the turn it reflects
-   * on (the owner: "Afegeix una línia vertical quan acaba el torn normal i segueix dibuixant els
-   * tokens d'anada i vinguda del torn fractal"). `firstCall` is the index in `calls` of the Fractal
+   * on (a vertical line marks where the normal turn ends, and the Fractal turn's
+   * sent and received tokens keep drawing after it). `firstCall` is the index in `calls` of the Fractal
    * run's first call, where the renderer draws the line; the counts are each side's calls.
    */
   fractal?: { firstCall: number; parentCalls: number; calls: number };
@@ -763,9 +763,8 @@ export function thinSamples(samples: readonly OutSample[], max: number): OutSamp
 
 // ─── Columns ───
 //
-// FORK 2026-10-02 (owner: "the graph has horizontal gaps where nothing is sent nor received, they
-// should be cut out ... some lines are very thin horizonally and vertically, so let's not be so
-// rigorous with the time factor, and present a simplified graph where more area is painted").
+// FORK 2026-10-02 (the graph had horizontal gaps where nothing was sent or received, and some lines
+// were too thin; the time axis is now simplified so more of the area is painted).
 // SUPERSEDES the 2026-10-01 rate chart (tokens per second over time, rateColumns), whose tool runs and
 // waits left empty stretches and whose quick calls were slivers. Each call of the prompt now gets ONE
 // column of equal width, side by side in send order, so no stretch without data is drawn and no call
@@ -2209,8 +2208,8 @@ export class CallTimelineStore {
   }
 
   /**
-   * FORK 2026-09-30 (the architect: "a graph that restarts every prompt and it shows me on the top what is
-   * sent and in the bottom what is received"). The window the timeline DRAWS: the latest prompt.
+   * FORK 2026-09-30 (the graph restarts with every prompt, with what is sent on top and what is
+   * received below). The window the timeline DRAWS: the latest prompt.
    *
    * It starts where that prompt was submitted: the newest turn's tick (the start of its preparation
    * window when one was seen), or an open preparation window that began after that turn ended, i.e.
@@ -2222,8 +2221,8 @@ export class CallTimelineStore {
    * and calls from it (context-counters.ts). The lane denominators are taken over this prompt's
    * calls alone, so an old turn's larger prompt cannot flatten this one. Cached per version.
    *
-   * FORK 2026-10-02 (the owner: "The CALL TIMELINE panel sometimes stays empty, it should always show
-   * the last run instead"). When the newest prompt has no live-recorded call to draw (it is being
+   * FORK 2026-10-02 (the CALL TIMELINE panel sometimes stayed empty; it must always show the last
+   * run instead). When the newest prompt has no live-recorded call to draw (it is being
    * prepared, its turn made no call, or it is a history row), the view HOLDS the last run that has
    * one and names the newer prompt in `newer`. It restarts on the new prompt at its first call.
    */
@@ -2257,8 +2256,7 @@ export class CallTimelineStore {
 
   /**
    * FORK 2026-10-10 — the Fractal runs in the background, so the owner can start a new prompt
-   * before it ends (owner, 2026-10-10: "Since it is running in the background, if I start a new
-   * turn before fractal is finished…"). Its later calls already fall into the new prompt's window;
+   * before it ends (2026-10-10). Its later calls already fall into the new prompt's window;
    * this pulls the window back to the reflection's first call, so it reads as one green stretch
    * that keeps going beside the new turn instead of starting mid-way.
    */

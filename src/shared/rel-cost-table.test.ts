@@ -131,8 +131,7 @@ describe("shared/rel-cost-table", () => {
     });
   });
 
-  // 2026-09-23 (the architect: "the cost of the tokens of the different openai models are not
-  // calculated properly"). Both seats are now MEASURED with one method; these pins are
+  // 2026-09-23: the OpenAI models' token costs were miscalculated. Both seats are now MEASURED with one method; these pins are
   // the published-ladder arithmetic on top of the two measurements.
   describe("measured subscription seats", () => {
     const at100 = (tag: string) => {

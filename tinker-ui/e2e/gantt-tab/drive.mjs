@@ -1,7 +1,6 @@
 /**
- * The Gantt tab end to end in Chromium (FORK 2026-10-05, the architect: "a dedicated tab to visualize [the
- * gantt] … a slither tab (only a graph icon) between master and slave … attached to the master …
- * connected in real time to the ongoing process").
+ * The Gantt tab end to end in Chromium (FORK 2026-10-05: a narrow icon-only Gantt tab between master
+ * and slave, attached to the master and updated live from the running process).
  *
  * Touches nothing live. It builds a temporary HOME holding a synthetic build plan, a synthetic
  * Claude Code workflow journal (one finished unit, one still running) and the board that attaches
@@ -19,9 +18,8 @@
  *     phase the user unfolded and the open drawer.
  *  6. Clicking the master goes back to the chat and unloads the chart.
  *  7. Deleting the master session drops its board, and the Gantt tab goes with it.
- *  8. The machines panel (the architect, 2026-10-05: "a little section where I can see the available
- *     machines for this project … if we have a healthy connection to them … the resources used by
- *     us"): under the chart, one row per machine through a fake ssh; ours counted (a busy process
+ *  8. The machines panel (2026-10-05: the plan's machines, whether each connection is healthy,
+ *     and the resources we use): under the chart, one row per machine through a fake ssh; ours counted (a busy process
  *     in a runner folder, its disk); an unreachable machine red with ssh's reason, one behind it
  *     blamed on it; the top-bar chip names it and scrolls to the panel; a plan that uses only this
  *     machine shows no panel.

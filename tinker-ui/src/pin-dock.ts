@@ -1,5 +1,5 @@
-// FORK 2026-10-13 (the architect: "a way to pin a particular response to the top of the chat, while I can
-// keep working … shrink the page and scroll it … on mouseover a brown pin on the top-right").
+// FORK 2026-10-13: pin a response to the top of the chat while work continues below; the pinned
+// page shrinks and scrolls, and a brown pin appears top-right on hover.
 //
 // One pinned answer per chat tab, docked above #messages. Hovering an assistant bubble shows a
 // brown pin at its top-right; clicking it copies the bubble's rendered HTML into the dock. The
@@ -41,7 +41,7 @@ function writePins(m: PinMap): void {
   sharePinChanges(before, m);
 }
 
-// FORK 2026-10-16 (the architect: Zen Mail may show "tasks that I have pinned"). Pins live only in this page's localStorage,
+// FORK 2026-10-16 (Zen Mail may show pinned tasks). Pins live only in this page's localStorage,
 // so the page tells Zen Mail (loopback, 127.0.0.1:18804) what CHANGED: pins added or edited, keys removed. Never the
 // full set: another browser running Tinker (a phone, a test page) has no pins, and a full set from it would wipe
 // these. A "simple" text/plain POST needs no CORS preflight and no answer; Zen Mail being down changes nothing here.

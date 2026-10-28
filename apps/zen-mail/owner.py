@@ -1,9 +1,8 @@
-"""Who the owner is and what he is doing right now (the architect, 2026-10-22 14:06: "You should first understand my priorities
-in life, like starting my own independent revenue stream ... Then you should understand my current focus, enjoying
-myself or performing at work").
+"""Who the owner is and what he is doing right now (2026-10-22: know the owner's priorities first, then his current
+focus, whether at leisure or at work).
 
 Two things, both computed in code each run and handed to triage, the butler and the escalation step:
-  - the priorities: sections 1-3 of Jarvis's objectives file (revenue outside the day job, the funnel, how to value a task);
+  - the priorities: sections 1-3 of Jarvis's objectives file (the goals, the funnel, how to value a task);
   - the focus now: "work" or "enjoy", from settings (an explicit switch, or the away periods: leave, trips) and the
     owner's local clock (weekends and evenings are "enjoy").
 """

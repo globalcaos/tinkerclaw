@@ -148,7 +148,7 @@ describe("hideRewound", () => {
   });
 });
 
-// 2026-10-22, the architect: "Rewind should get attached to the turn, so I can remove from history more than one turn".
+// 2026-10-22: Rewind attaches to a turn, so more than one turn can be removed from history.
 describe("a rewind to an older turn", () => {
   const view = () => [
     user("first", 1_000),

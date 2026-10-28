@@ -8,9 +8,8 @@ import android.util.Log
 import org.json.JSONObject
 
 /**
- * The side-key long press (2026-10-21, the architect: "When I make a long press on the lock button I would
- * like you to take the voice command instead of gemini on my phone, then open a new tab if none is
- * selected and answer"). With Jarvis set as the phone's digital assistant app, the long press sends
+ * The side-key long press (2026-10-21: a long press takes the voice command in place of the default
+ * assistant, opens a new tab if none is selected, and answers). With Jarvis set as the phone's digital assistant app, the long press sends
  * ACTION_ASSIST to MainActivity, which opens the speech recognizer. The words land here and go to
  * the Tinker page's `window.__jarvisAssist(text)` (tinker-ui app.ts), which picks the tab and sends.
  * A cold start has no page yet, so the prompt waits and is retried for up to 30 s.

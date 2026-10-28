@@ -225,7 +225,7 @@ function recordAllocation(
   }
 }
 
-// FORK 2026-07-26 (the architect: "when I move the effort level it magically hops to high") —
+// FORK 2026-07-26 (bug: moving the effort level made it jump to high on its own) —
 // the size heuristic must measure what the USER asked, not the envelope we wrap it in.
 //
 // The Tinker UI appends a fixed ~3,369-character FRACTAL reflection instruction to every

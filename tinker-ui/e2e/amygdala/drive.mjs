@@ -599,7 +599,7 @@ await page.waitForTimeout(200);
 await shot("11-full-page", "body");
 
 // ── 12. the explainer's words on a WOULD HAVE row (2026-10-05) ───────────────────────────────────────────────────────
-// the architect: "the concatenated commands are too complex for me to process. Plus, everything has a context."
+// Need: chained commands are too dense to read, and every decision has a context worth explaining.
 const explainedDecisions = noteDecisions.map((d) =>
   d.id === "dn" ? { ...d, decisionId: "D-note" } : d,
 );

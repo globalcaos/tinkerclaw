@@ -1,5 +1,4 @@
-"""Promises the owner made and has not kept (the architect, 2026-10-27: "Investigate what the Claude code commitment breaker
-does and develop something similar for zen mail").
+"""Promises the owner made and has not kept (2026-10-27: a Zen Mail counterpart of Claude Code's commitment check).
 
 Claude Code's autonomous loop check re-reads the conversation on a timer and acts on the "I'll also..." / "next I'll..."
 commitments it made and did not honor. Zen Mail had the reverse blind spot: when the owner wrote last, triage filed the

@@ -5,7 +5,7 @@ import type { SupplyId } from "./thalamus-supply.js";
 import { supplyStateFrom } from "./thalamus-supply.js";
 import { FABLE, GROK, HAIKU, NOW, OPUS, R, rung, supplies } from "./thalamus-v4.test-support.js";
 
-// the architect, 2026-10-02: "Rewind and retry with ‹model›: the model chosen by Thalamus from another family."
+// 2026-10-02: Rewind and retry with ‹model›, the model Thalamus picks from another family.
 
 const GPT = "openai-codex/gpt-5.6";
 const BOARD = [

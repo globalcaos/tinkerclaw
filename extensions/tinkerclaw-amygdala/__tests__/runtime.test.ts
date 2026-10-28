@@ -552,7 +552,7 @@ describe("Jev dormant: no token is not a judge that is down", () => {
   });
 });
 
-// the architect 2026-10-03: "I want it up and running." Personality acts while everything else stays in shadow.
+// 2026-10-03: personality goes live. Personality acts while everything else stays in shadow.
 describe("runtime: personality notes reach the next hook while the rest stays in shadow", () => {
   const noticer: Family = {
     id: "personality",

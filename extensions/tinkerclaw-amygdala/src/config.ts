@@ -36,8 +36,8 @@ export interface AmygdalaConfig {
 }
 
 /**
- * The reviewer's models (2026-10-15, the architect: "use sonnet instead of Grok for automatically evaluating whether it would be
- * a right or wrong call"). Haiku only answers when Sonnet does not; earned.ts counts Sonnet's reviews alone.
+ * The reviewer's models (2026-10-15: Sonnet, not Grok, judges automatically whether a call was right or
+ * wrong). Haiku only answers when Sonnet does not; earned.ts counts Sonnet's reviews alone.
  */
 export const DEFAULT_REVIEW_LADDER = [
   "claude-code/claude-sonnet-5-5",

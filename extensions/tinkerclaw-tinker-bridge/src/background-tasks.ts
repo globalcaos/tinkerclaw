@@ -1,6 +1,5 @@
 /**
- * FORK 2026-10-25 (the architect, 02:43: "while the job is being processed, there should always be a thinking
- * indicator below") — each chat's live Claude Code background tasks, for the Tinker page.
+ * FORK 2026-10-25: while a job runs there is always a thinking indicator below it — each chat's live Claude Code background tasks, for the Tinker page.
  *
  * A worker tracks the background tasks its CLI reports (worker.ts noteBackgroundLine: Bash in the
  * background, Workflow, Task, Monitor). They outlive the turn that started them, and the end of one

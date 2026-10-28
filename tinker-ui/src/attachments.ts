@@ -1,7 +1,6 @@
-// FORK 2026-08-18 — feature (the architect): "If a process is attached to a tab and it prevents me to send
-// more prompts, instead of setting up timers and watchdogs I would prefer if it was shown as a
-// progress indicator with a stop button, so I can kill it or understand it better. The more
-// background activity we bring to the ui, with controls, the better it is going to be flowing."
+// FORK 2026-08-18 — feature: a process attached to a tab that blocks new prompts is shown as a
+// progress indicator with a stop button, instead of hidden timers and watchdogs, so it can be
+// understood or killed. Background activity belongs in the UI, with controls.
 //
 // This module holds the PURE rules behind the ATTACHED ACTIVITY strip that renders directly above
 // the composer: how an age is written, what order the rows sit in, what the button says, and — the

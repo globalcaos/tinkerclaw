@@ -129,7 +129,7 @@ describe("querySessionTree — subagent family expansion", () => {
     expect((row as { durationMs?: number }).durationMs).toBeUndefined();
   });
 
-  // FORK 2026-10-05 (the architect: "it cannot be missing from the chat or from the EEG") — every tab shares
+  // FORK 2026-10-05: nothing may be missing from the chat or the EEG — every tab shares
   // the root, so one LIMIT over "the session OR any subagent" let other tabs' fan-outs push a tab's
   // own turns out (Main: 34 of 1,391 rows came back) and gave a tab with no row of its own 500
   // foreign strands.

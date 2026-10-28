@@ -7,8 +7,7 @@
  * only its executable encoding (FOUNDATION.md, "Three different jobs, three different homes": the
  * bible EXPLAINS, the running code ENFORCES, `scripts/bible/*.mjs` CHECKS that the two agree).
  *
- * WHY (2026-09-15, the architect: "If I rename manually one tab to be called something, it should not
- * change magically later"): before u7 one boolean, `titleLocked`, covered BOTH a hand-typed name
+ * WHY (2026-09-15: a tab renamed by hand must keep its name): before u7 one boolean, `titleLocked`, covered BOTH a hand-typed name
  * and a model-generated one, so the turn-end trigger (`tabTurns % TAB_TITLE_INTERVAL === 0`)
  * renamed both every 5 turns. u7 adds `Tab.titleKind` and a pure policy module:
  *   fortune → name at the first prompt (retry on any turn while still wearing the cookie)

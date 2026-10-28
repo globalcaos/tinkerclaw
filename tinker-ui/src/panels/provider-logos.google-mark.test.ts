@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { GOOGLE_G_LOGO_SVG, getProviderLogoSvg, getRoutedLogoSvg } from "./provider-logos.js";
 
 /**
- * FORK 2026-09-03 (the architect: "The logo in the models panel next to the gemini
- * models is flashing… Use the one we had before, the G from google, the
- * colorful one").
+ * FORK 2026-09-03: the Gemini logo in the models panel flashed; go back to the
+ * static colourful Google G.
  *
  * The class is every Google/Gemini mark the UI paints — models panel, smart x
  * cost chart, prefrontal tree, dossier — because they all resolve through

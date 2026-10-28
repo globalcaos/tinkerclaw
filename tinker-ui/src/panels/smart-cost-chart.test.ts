@@ -134,7 +134,7 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
 
   // REVISED 2026-08-30, then again 2026-09-02. A rung AA had not scored was first
   // DROPPED, then drawn on the dashed cost rail at the headline index. Since 2026-09-02
-  // (the architect: "find other benchmarks … approximate") such a rung carries an ESTIMATE from
+  // (ask: find other benchmarks and approximate) such a rung carries an ESTIMATE from
   // other public per-effort benchmark runs fitted to AA's scale, flagged as such. The
   // guard that matters is unchanged: `measured` is true ONLY for AA's own number, the
   // measured rung's value never moves, and an estimate is never a measurement.
@@ -662,8 +662,8 @@ describe("the chart markup can never break its own <svg>", () => {
   });
 });
 
-// FORK 2026-08-06 #8: the zoom-out floor the architect asked for — "don't let the graph
-// zoom out more when all the models are already visible" — plus the pan pin that
+// FORK 2026-08-06 #8: a zoom-out floor, so the graph stops zooming out once every model is
+// visible, plus the pan pin that
 // keeps the constellations reachable.
 describe("pan/zoom view clamp", () => {
   it("never shows more than the whole drawing, however hard you zoom out", () => {
@@ -830,7 +830,7 @@ describe("one brain, several vendors: every route keeps its own dot", () => {
   });
 });
 
-describe("chart dots hold still (the architect: 'why is gemini flash pulsating?')", () => {
+describe("chart dots hold still (bug: the gemini flash dot pulsated)", () => {
   it("inlines the colourful Google G with no SMIL animation", () => {
     const svg = renderSmartCostChart([
       model({ id: "google/gemini-3.6-flash", provider: "google", name: "Gemini Flash", index: 50 }),
@@ -844,7 +844,7 @@ describe("chart dots hold still (the architect: 'why is gemini flash pulsating?'
   });
 });
 
-describe("labels ride the zoom (the architect: 'should approach the circle as I zoom in')", () => {
+describe("labels ride the zoom (labels move toward their dot on zoom-in)", () => {
   const svg = () =>
     renderSmartCostChart([
       model({ id: "a/one", name: "One", index: 50, relCost: 2 }),
@@ -868,8 +868,8 @@ describe("labels ride the zoom (the architect: 'should approach the circle as I 
     expect(out).not.toMatch(/--sc-dy/);
   });
 
-  // the architect 2026-08-06 #11: "the model names need to be exactly at the same height
-  // than its highest effort bubble" — a name a few px off its dot points at the
+  // 2026-08-06 #11: each model name sits at exactly the height of its highest-effort
+  // bubble — a name a few px off its dot points at the
   // wrong model. The anchor y MUST equal the max-effort point's y, and the text
   // must be centred on it rather than sitting on a nudged baseline.
   it("puts each name at EXACTLY its max-effort bubble's height", () => {
@@ -1078,7 +1078,7 @@ describe("smart-cost chart — 2026-08-30 arrivals", () => {
   });
 });
 
-// ─── logo identity (the architect 2026-08-30: "openrouter bubbles have the wrong icon") ───
+// ─── logo identity (2026-08-30: OpenRouter bubbles showed the wrong icon) ───
 // The old fallback returned Anthropic's registered mark for ANY unknown provider, so
 // 15 of 99 plotted models — NVIDIA, Meta, Tencent, MiniMax, Xiaomi, Meituan … —
 // rendered as Claude. These tests exist because the defect was invisible in every
@@ -1139,8 +1139,8 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
   });
 });
 
-// ─── cost rail (the architect 2026-08-30: "Fable appears only as one bubble, break it
-//     down into different thinking efforts") ───
+// ─── cost rail (2026-08-30: Fable showed as one bubble; split it by thinking
+//     effort) ───
 // AA scores Fable 5 at exactly ONE effort (max) against Anthropic's five-rung
 // ladder — verified live 2026-08-30 15:09 UTC. So the rungs are real, the SCORES
 // are not, and these tests pin that the chart shows the first without claiming
@@ -1426,7 +1426,7 @@ describe("smart-cost chart — Claude Fable 5.1", () => {
   });
 
   // The OpenRouter route was REMOVED from the panel and the chart catalog on
-  // 2026-09-02 (the architect: "remove the erroneous openrouter Fable 5.1 model") — we hold
+  // 2026-09-02: the erroneous OpenRouter Fable 5.1 model was removed — we hold
   // the model on the subscription. The PRICING RULE it exercised is still live and
   // still worth guarding, because it is what stops a metered route drawing a fake
   // discount: when a model's plotted cost already IS its list price, there is no
@@ -1445,9 +1445,9 @@ describe("smart-cost chart — Claude Fable 5.1", () => {
   });
 });
 
-// FORK 2026-09-02 (the architect: "the triangles need to go at its official price and the
-// circles at the 20x price. The model points for different thinking efforts need
-// different intelligence index and different cost, without hallucinating any value").
+// FORK 2026-09-02: triangles sit at the official price and circles at the 20x price;
+// each thinking effort gets its own intelligence index and cost, with no invented
+// values.
 // Fable 5.1 shipped as an OpenRouter-only dot because the id was probed with AA's
 // DOTTED display name; the real subscription id is hyphenated, and Claude Code serves
 // it. This block locks the shape of the subscription route: five rungs, five DISTINCT
@@ -1518,9 +1518,8 @@ describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", ()
   });
 });
 
-// the architect 2026-09-23: "visualize, both for claude and openai models, a few landmarks of how
-// much their tokens cost with what kind of subscription … assume 100% consumption of
-// tokens every week". The waypoints are the SAME token on another plan of the SAME
+// 2026-09-23: show, for Claude and OpenAI models, a few landmarks of what their tokens
+// cost on each kind of subscription, assuming the full weekly allowance is used. The waypoints are the SAME token on another plan of the SAME
 // vendor; every figure comes from the measured seats in src/shared/rel-cost-table.ts.
 describe("smart-cost chart — plan-tier waypoints", () => {
   const opus = () =>
@@ -1611,7 +1610,7 @@ describe("smart-cost chart — plan-tier waypoints", () => {
     const svg = renderSmartCostChart([opus(), opus55, sol()]);
     // One ANCHOR row per model: 3 Claude marks × 2 models + 2 OpenAI marks (2026-09-30).
     expect(svg.match(/class="sc-apipos sc-wppos[^"]*sc-wp-anchor"/g)?.length).toBe(8);
-    // the architect 2026-09-23 #3 — "make all the triangles the same size, same behavior": a plan
+    // 2026-09-23 #3 — every triangle the same size and behaviour: a plan
     // triangle is drawn with the list triangle's OWN classes and EXACT points, so every
     // API rule (size, shade, dim, hover light, glide) applies to both by construction.
     const listPts =

@@ -213,8 +213,8 @@ fee, and that is an arithmetic you must actually do:
 **NEVER shortcut this as `sticker / N`.** The N is an OUTPUT of the arithmetic above and
 it moves: it was 112 on 2026-08-13 and 340 on 2026-09-02 — not because prices changed
 but because Anthropic raised the Max 20x weekly allowance ~10x, which only re-measuring
-can see. the architect's words: _"do not just divide the $50 sticker by 112, find the proper
-model cost."_
+can see. The instruction: never just divide the $50 sticker by 112; find the proper
+model cost.
 
 **Two traps that made the old number wrong, both worth checking explicitly:**
 
@@ -354,8 +354,8 @@ screenshot. Source ≠ built ≠ served ≠ rendered.
 - **2026-09-30 — three GPT models on the picker with no triangle.** GPT-6 Sol and Luna
   (onboarded 09-23) and GPT-6.1 Sol (09-30) got config, cost row and scores, but no
   `SC_API_PRICE` row, so the chart drew no API triangle and no OpenAI plan marks for any of
-  them. the architect asked for the OpenAI plans "same as with claude models, with triangles and the
-  whole thing". Step 3 now names `SC_API_PRICE`; step 6 calls an empty triangle list on a
+  them. The OpenAI plans were wanted the same way as the Claude ones, triangles and
+  all. Step 3 now names `SC_API_PRICE`; step 6 calls an empty triangle list on a
   subscription route a defect. Census that day: 18 seat-route models, 3 missing → 0.
 
 - **2026-09-02 — the display name became the id.** Fable 5.1 was probed as
@@ -376,14 +376,14 @@ screenshot. Source ≠ built ≠ served ≠ rendered.
   on the reasoning "same sticker, so same plan price". The sticker part was right (both
   $10/$50, verified live) but the ROW ITSELF was stale: it came from a 2026-08-13
   measurement that weighted cache reads at 10x their price and predated a ~10x rise in the
-  plan's weekly allowance. the architect: _"do not just divide the $50 sticker by 112 you moron."_
+  plan's weekly allowance. Correction received: never just divide the $50 sticker by 112.
   → Step 4b.
 - **2026-09-02 — one logo fixed, three call sites broken.** The chart resolver was corrected
   and reported as done; the models panel, the dossier and the legend each had their own
   copy of the lossy precedence and still drew grey. → Step 5.
 - **2026-09-02 — deleted from the config, still on the chart.** `AA_INTELLIGENCE_INDEX`
   independently sources dots, so removing the model from `openclaw.json` left it plotted at
-  the sticker price — read by the architect, correctly, as "you did not fix it". → Step 5b.
+  the sticker price — correctly read as not fixed. → Step 5b.
 - **2026-07-21 — auto-added ids that resolved nowhere** killed every non-Anthropic pin on
   the model slider. Verify the id at the provider before adding it. → Step 1.
 - **2026-09-22 — configured and paneled, but excluded from the picker.** Opus 4.8 existed

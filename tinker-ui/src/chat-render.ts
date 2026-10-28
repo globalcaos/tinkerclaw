@@ -240,8 +240,7 @@ function markStale(el: Element, node: Node): void {
 }
 
 /**
- * FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
- * Fractal") — move a reflection's timing block INTO its 🌿 section. Moved here from app.ts
+ * FORK 2026-08-24: the Fractal pass timings show only when Fractal is expanded — move a reflection's timing block INTO its 🌿 section. Moved here from app.ts
  * `graftReflectionTimingBlocks` (plan task 9) so the move is recorded (graftChatNode) and undone
  * before the next keyed pass.
  *

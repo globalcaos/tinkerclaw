@@ -833,8 +833,8 @@ export async function attachWebInboxToSocket(
 
       // FORK 2026-09-30: has the conversation moved on since this message?
       //
-      // the architect, after the 2026-09-17 replay: "don't reply without understanding
-      // if the conversation has moved forward". The 12h cap above cannot see
+      // After the 2026-09-17 replay: never reply before checking whether the
+      // conversation has moved on. The 12h cap above cannot see
       // that. A reconnect replays up to 50 messages from every quiet chat, and an
       // owner "Jarvis, ..." answered an hour earlier clears the cap, outlives the
       // 20-minute dedupe, and gets answered a second time.

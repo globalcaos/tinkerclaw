@@ -10,8 +10,8 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
 /**
- * Lets the gateway wake this app when Android has put it to sleep (2026-10-22, the architect: "can you now
- * wake up the phone app when needed?"). The gateway sends a high-priority FCM data message
+ * Lets the gateway wake this app when Android has put it to sleep (2026-10-22: wake
+ * the sleeping app with a Firebase push). The gateway sends a high-priority FCM data message
  * {type:"wake"} (src/infra/push-fcm.ts); Android delivers it even to a sleeping app, which then
  * restarts its node service and opens a fresh socket. The token reaches the gateway as node event
  * push.fcm.register on every connect. A build without google-services.json has no Firebase app,

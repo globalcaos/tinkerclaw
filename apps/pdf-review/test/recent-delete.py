@@ -1,5 +1,4 @@
-"""The 🕘 Recent list's long-press menu (2026-10-27, the architect: "There is currently no way to delete current files. On long
-press the option should pop up"). POST /api/hide takes a file off the list and a later open brings it back;
+"""The 🕘 Recent list's long-press menu (2026-10-27: a long press offers a way to delete a file from the list). POST /api/hide takes a file off the list and a later open brings it back;
 POST /api/trash moves the real PDF into the trash with its .trashinfo, so a file manager can restore it; a test
 fixture or a path outside papers/ is refused. Runs against a server started with PDF_REVIEW_TRASH=<trash dir>, never
 the live one (its trash is the owner's).

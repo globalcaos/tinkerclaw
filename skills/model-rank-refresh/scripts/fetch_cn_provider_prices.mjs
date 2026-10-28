@@ -2,8 +2,8 @@
 // Regenerate the Chinese-model × supplier price matrix rendered at the foot of the
 // SMART MODELS dossier.
 //
-// WHAT QUESTION THIS ANSWERS (the architect, 2026-08-15, widened 2026-09-23): "which supplier
-// of Chinese models charges less" — including OpenRouter itself, and covering every
+// WHAT QUESTION THIS ANSWERS (2026-08-15, widened 2026-09-23): which supplier
+// of Chinese models charges less — including OpenRouter itself, and covering every
 // frontier Chinese lab, not just the handful we happen to have configured.
 //
 // WHY IT IS GENERATED AND NEVER TYPED: OpenRouter routes each model to many hosts at
@@ -142,8 +142,7 @@ const LAB_ONLY = [
     match: /ERNIE[-\s]?5\.0[^<]{0,80}?([\d.]+)\s*元\s*\/\s*千\s*tokens/i,
   },
   {
-    // 2026-10-03 (the architect: "the best chinese models are not in the chinese models cost
-    // table"). Step 5 Preview is AA 43.73 — 4th of all Chinese models that day, above
+    // 2026-10-03: the best Chinese models were missing from the cost table. Step 5 Preview is AA 43.73 — 4th of all Chinese models that day, above
     // Kimi K3 and DeepSeek V4.1 — and OpenRouter sells none of it, only Step 3.7 Flash
     // (AA 24.9, the lab's cheap tier). StepFun's own page prices it in USD, so the row
     // carries a real figure rather than the CNY best-effort the ERNIE row uses.
@@ -177,8 +176,8 @@ const CATALOG_URL = "https://openrouter.ai/api/v1/models";
 const FEE_URL = "https://openrouter.ai/docs/faq.md";
 
 // ── SELLERS YOU CAN PAY WITHOUT OPENROUTER (the architect, 2026-10-02) ───────────────────
-// "Our bank has blocked openrouter as supplier ... do a deep dive on other online
-// suppliers of chinese models, and find the cheapest." The host prices OpenRouter shows
+// Need: find direct online sellers of Chinese models that can be paid without OpenRouter,
+// and the cheapest among them. The host prices OpenRouter shows
 // are NOT always what the same host charges you directly: on 2026-10-02 Novita sold
 // GLM-5.3 at $2.156 out THROUGH OpenRouter and $4.40 on its own API, SiliconFlow
 // likewise. So a direct price has to come from the seller's own list, never be inferred

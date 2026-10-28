@@ -4,8 +4,7 @@ import { AA_EFFORT_INDEX, aaEstimateAt, aaFamilyOf, aaScoreAt } from "./aa-effor
 
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-// FORK 2026-09-02 (the architect: "you must certainly be able to find other benchmarks … even
-// if you have to approximate"). The estimate table fills effort cells AA never
+// FORK 2026-09-02: find other benchmarks to fill the gaps, approximating where needed. The estimate table fills effort cells AA never
 // published from other public per-effort benchmark runs. These tests pin the contract
 // that makes that honest: an estimate never touches a measurement, it always says
 // what it rests on, and a ladder never reads as smarter at less effort.
@@ -66,7 +65,7 @@ describe("aa-effort-estimate — the estimate contract", () => {
     expect(est!.v).toBeLessThanOrEqual(aaScoreAt("claude-code/claude-opus-4-8", "max")!);
   });
 
-  // FORK 2026-09-02 (the architect: "No claude models should ever route through openrouter").
+  // FORK 2026-09-02: Claude models never route through OpenRouter.
   // The case "Opus 5 fast resolves to Opus 5's measured ladder, not a flat line" is DELETED,
   // not relaxed: it existed only to pin the `claude-opus-5-fast` → `claude-opus-5` family
   // alias, and that alias is gone because the route itself is banned — we hold Anthropic

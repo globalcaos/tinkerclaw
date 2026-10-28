@@ -1,7 +1,7 @@
 // FORK 2026-10-01 — single owner of the `stream:"thalamus"` agent-event contract.
 //
-// WHY. the architect asked for a THALAMUS panel that shows only the present turn: "the models/efforts involved, and if a
-// different model/effort was chosen due to either censorship or best-of on a particular task". The reply path already
+// WHY. The owner asked for a THALAMUS panel that shows only the present turn: the models and efforts involved, and
+// whether a different model or effort was chosen because of censorship or a best-of on the task. The reply path already
 // computes all of that for every Auto turn (`createModelSelectionState` in src/auto-reply/reply/model-selection.ts
 // builds a ThalamusPlan from the prompt), but it sent it only to a journal row. The browser recomputed its own plan
 // WITHOUT the prompt, so it could never know the domain, the subject class or the vetoes, which are exactly the reasons

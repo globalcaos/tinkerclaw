@@ -83,8 +83,7 @@ const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
 // in the feed instead of being invisible.
 const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
 
-// FORK 2026-10-15 (the architect: "all performed actions from Jev … right where he does it, within its
-// context"): the hook spool used to be read on request only (amygdala.feed), so a REAL enforced
+// FORK 2026-10-15: show every action Jev performs at the tool call it judged, in context. The hook spool used to be read on request only (amygdala.feed), so a REAL enforced
 // denial reached the chat late and nowhere near the tool call it judged. These helpers turn a
 // spool row into the live `amygdala.hook` event the UI pins to the tool row by `toolUseId`.
 // Pure and exported so the row → event mapping is tested without a gateway (hook-event.test.ts).
@@ -1061,7 +1060,7 @@ export default definePluginEntry({
       });
     }
 
-    // FORK 2026-10-15 (the architect: "all performed actions … right where he does it"): tail the hook
+    // FORK 2026-10-15: show each performed action where it happened. Tail the hook
     // spool and broadcast each bubble-worthy row as `amygdala.hook` the moment the hook writes
     // it. Owned by a plugin service so the gateway's stop closes the watcher and the poll (no
     // leaked fd/timer across reloads). Dedupe by id (an insertion-ordered Set, oldest evicted),

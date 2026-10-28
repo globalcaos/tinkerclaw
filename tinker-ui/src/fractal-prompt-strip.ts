@@ -1,6 +1,6 @@
 // Pure, DOM-free helper: cut the injected FRACTAL doctrine off a user turn.
 //
-// FORK 2026-09-07 (the architect: "a nonesense-bubble as if I was prompting in strange html").
+// FORK 2026-09-07: a nonsense bubble appeared, as if the user had typed raw html.
 //
 // The reflection doctrine is APPENDED to every prompt the architect types — his `keep going`
 // became a 22,548-character user turn. app.ts hides a fractal prompt at six separate sites, and

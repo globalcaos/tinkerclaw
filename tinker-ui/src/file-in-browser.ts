@@ -1,5 +1,4 @@
-// FORK 2026-10-15 (the architect: "what about the pdf or md links? Will they open correctly?" when the
-// agent runs on the Pi). A file link used to open on the GATEWAY's desktop (xdg-open). When the
+// FORK 2026-10-15: pdf and md links must open when the agent runs on another machine. A file link used to open on the GATEWAY's desktop (xdg-open). When the
 // page is not on the gateway's machine, or that machine has no desktop, the file is fetched over
 // the socket (config.readExternalFile) and shown in a new browser tab instead.
 import DOMPurify from "dompurify";

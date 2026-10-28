@@ -1,6 +1,6 @@
 /**
- * FORK 2026-09-23 (the architect, on the published smartness × cost map: "there are still bubbles on the
- * top-left that are meant to be somewhere else") — THE SAME SVG TRAP, TWICE.
+ * FORK 2026-09-23: on the published smartness × cost map, some bubbles sat top-left instead of
+ * their place — THE SAME SVG TRAP, TWICE.
  *
  * A CSS `transform` declaration REPLACES an SVG element's `transform="translate(…)"` presentation
  * attribute; it does not compose with it. So a group that is POSITIONED by the attribute and ALSO

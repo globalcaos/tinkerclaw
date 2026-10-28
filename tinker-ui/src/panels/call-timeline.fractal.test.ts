@@ -1,5 +1,5 @@
-// FORK 2026-10-08 — the Fractal turn in the call timeline (the owner: "Afegeix una línia vertical quan
-// acaba el torn normal i segueix dibuixant els tokens d'anada i vinguda del torn fractal").
+// FORK 2026-10-08 — the Fractal turn in the call timeline (a vertical line where the
+// normal turn ends, then keep drawing the Fractal turn's sent and received tokens).
 import { describe, expect, it } from "vitest";
 import { fractalRunIdFor } from "../fractal-run-id.js";
 import { CallTimelineStore, fractalSpans } from "./call-timeline.js";

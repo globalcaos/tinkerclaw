@@ -1,5 +1,5 @@
-// FORK 2026-08-16 (the architect: "the progress indicator in the neurocoin tab does not work, again" ->
-// "when a tab is out of focus, the progress indicator should still show").
+// FORK 2026-08-16: a tab's progress indicator failed again; it must show even when the tab
+// is out of focus.
 //
 // THE BLIND SPOT BOTH LANES SHARED. A tab you are not looking at had NO source of truth that a run
 // had started, so it stayed dark for the whole turn:

@@ -1,9 +1,7 @@
 /**
- * The ask-session card (FORK 2026-10-21, the architect: "a particular way to see that the ask skill is being used. The first
- * thing to see in the feed is a purple box, following our theme a bit, informing us about the question asked, which
- * session was awakened, and what the answer was. Then, upon expanding the card, we should be able to see all the
- * thinking and tool calls of the other session, all still with the purpled theme. Then the tool calls will be
- * expandable as usual.").
+ * The ask-session card (FORK 2026-10-21): a purple box in the feed, in the theme, saying which question was asked,
+ * which session was woken and what it answered. Expanded, it shows that session's thinking and tool calls in the same
+ * purple, and the tool calls expand as usual.
  *
  * The agent runs the skill through Bash (`python3 -I …/ask-session/scripts/sessions.py ask <id> "<question>"`), so the
  * call arrives as an ordinary tool_use. `parseAskSessionCall` recognises it from the command and reads the result:

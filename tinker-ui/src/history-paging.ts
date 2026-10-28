@@ -497,7 +497,7 @@ export function planOlderPage(
 
 // ─── Reset archives: paging past the start of the live transcript ─────────────────────────────
 //
-// FORK 2026-10-02 (the architect: "The parallel worker's chat history seems to not be loading") — a session
+// FORK 2026-10-02: the parallel worker's chat history did not load — a session
 // reset before every turn (the worker of a master-worker build) keeps its transcript path; each
 // reset renames what it held to `<path>.reset.<time>`, and chat.history served only the live file.
 // After any reload such a tab showed its current turn and nothing before it. `chat.history
@@ -507,7 +507,7 @@ export function planOlderPage(
 // the page is open.
 
 //
-// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — the gateway
+// FORK 2026-10-03: some tabs still showed erased history — the gateway
 // pages EVERY earlier transcript of a tab now: the resets of a transcript it left (Main's `/new`
 // moved it to a new file), that file itself, and earlier copies (repair backups, compaction
 // checkpoints). Copies overlap what the page shows, so the page names its FLOOR — the oldest server
@@ -635,7 +635,7 @@ export function nextResetPaging(
 }
 
 /**
- * FORK 2026-10-18 (the architect: "when I type /clear the chat does not reset") — what an archive may still
+ * FORK 2026-10-18: /clear did not reset the chat — what an archive may still
  * bring onto a tab the owner cleared at `clearedAt` (the gateway's reset instant). `/clear` keeps
  * Main's key, so every archive of that key stays pageable, and an empty pane is already "at the
  * top": the first upward flick paged the cleared turns, and weeks of older ones, straight back in.
@@ -708,8 +708,8 @@ export type RowsByTimePlan = OlderPagePlan & {
 };
 
 /**
- * FORK 2026-10-03 (the architect, 4th report: "In the 'Parallel worker' tab I still cannot see its full
- * history") — where rows the page lacks go, by TIME: each before the first page row (render order)
+ * FORK 2026-10-03 (4th report: the 'Parallel worker' tab still did not show its full
+ * history) — where rows the page lacks go, by TIME: each before the first page row (render order)
  * whose instant is later than its own, else after the last. Rows the page holds by identity are
  * skipped, and so are rows inside a run the page watched live (it shows them as live bubbles).
  * Nothing on the page moves. Used for reset archives, which are not always older than the page (a
@@ -890,8 +890,8 @@ export function applyResetArchivePage(page: unknown[], plan: ResetArchivePlan): 
 }
 
 /**
- * FORK 2026-10-02 (the architect: "When switching from Orbisvision to its slave, parallel worker, the chat
- * history does not load at all") — history for a page that holds NO server rows yet but is not
+ * FORK 2026-10-02: switching from a master tab to its slave parallel worker loaded no chat
+ * history at all — history for a page that holds NO server rows yet but is not
  * blank: the live bubbles of a run it has been watching (a reload while the session was busy), and
  * client notes. The tail merge treats such a page as blank and REPLACES it, which would drop the
  * bubble a live run is writing into, so under a live run it waited for a quiet moment that a session

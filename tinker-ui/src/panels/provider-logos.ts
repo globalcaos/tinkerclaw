@@ -7,15 +7,13 @@ const ASSET_BASE = import.meta.env.BASE_URL ?? "/";
 
 const ANTHROPIC_LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`;
 
-// FORK 2026-08-04 (the architect: "Copilot still has the blue logo, change it for its
-// mostly-used colorful one"). The 2023 PNG was the blue/purple ribbon; this is the
+// FORK 2026-08-04: swap Copilot's blue logo for its common colorful one. The 2023 PNG was the blue/purple ribbon; this is the
 // current multi-colour Copilot mark (17 colours, blue→magenta→amber). SVG rather
 // than PNG so it stays crisp at 14px and needs no retina twin.
 const COPILOT_LOGO_IMG = `<img src="${ASSET_BASE}copilot-logo.svg" width="14" height="14" alt="Copilot" style="display:block"/>`;
 
-// FORK 2026-09-03 (the architect: "The logo in the models panel next to the gemini
-// models is flashing, not nice. Use the one we had before, the G from google,
-// the colorful one"). The previous mark was a ring whose stroke cycled the four
+// FORK 2026-09-03: the Gemini logo in the models panel flashed; go back to the
+// static colorful Google G. The previous mark was a ring whose stroke cycled the four
 // Google colours on a 4s SMIL loop. That flash was already wrong on the smart-
 // cost chart (frozen 2026-08-06 after "why is gemini flash pulsating?") and the
 // leftover exception — "panels that show ONE logo keep their animation" — was a
@@ -137,7 +135,7 @@ PROVIDER_LOGO_SVG["xiaomimimo"] =
 PROVIDER_LOGO_SVG["upstage"] =
   `<svg width="14" height="14" fill="#A88BFF" fill-rule="evenodd" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19.763 0l-.373 1.297h2.594L22.354 0h-2.591z"></path><path d="M16.192 2.27l-.376 1.298h5.52l.37-1.298h-5.514z"></path><path d="M12.897 4.54l-.377 1.298h8.167l.37-1.297h-8.16z"></path><path d="M2.85 6.81l-.377 1.298h17.565l.37-1.297H2.85z"></path><path d="M3.884 9.081l-.376 1.297H19.39l.37-1.297H3.883z"></path><path d="M4.088 24l.376-1.297H1.866L1.5 24h2.588z"></path><path d="M7.662 21.73l.376-1.298H2.515L2.15 21.73h5.513z"></path><path d="M10.957 19.46l.377-1.298h-8.17l-.367 1.297h8.16z"></path><path d="M21.005 17.19l.376-1.298H3.812l-.366 1.297h17.559z"></path><path d="M19.967 14.919l.376-1.297H4.461l-.366 1.297h15.872z"></path><path d="M18.787 12.649l.376-1.298H4.26l-.366 1.298h14.893z"></path></svg>`;
 
-// FORK 2026-10-02 (the architect: "The chinese provider ranking lacks nice logos for every model").
+// FORK 2026-10-02: give every model in the Chinese provider ranking a proper logo.
 // Four labs in the CN price matrix still wore the neutral glyph. All four ship an official
 // -color mark in @lobehub/icons-static-svg@1.95.1 (npm pack into /tmp, inlined, not a
 // dependency), so none is drawn by hand. Two are PRODUCT marks, per this file's rule that
@@ -157,7 +155,7 @@ PROVIDER_LOGO_SVG["wenxin"] =
 PROVIDER_LOGO_SVG["antgroup"] =
   `<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.797 6.282a.451.451 0 01-.336-.315 1.019 1.019 0 010-.505c.156-.86.3-1.725.501-2.577.14-.7.42-1.367.823-1.96.305-.431.75-.746 1.262-.89.877-.217 1.24.629.937 1.348-.259.593-.877.914-1.334 1.348-.835.795-1.096 2.14-1.336 3.212a.427.427 0 01-.186.277.437.437 0 01-.331.062z" fill="url(#lobe-icons-ant-group-0-_R_0_)" transform="translate(3)"></path><path d="M6.334 4.672c.33-.121.682.146.946.297.278.145.587.219.901.214.231.01.466 0 .688.018 4.098.176 7.484 3.22 8.05 7.237.565 4.016-1.852 7.859-5.745 9.134-3.894 1.276-8.153-.38-10.126-3.935A8.339 8.339 0 013.133 7.081c.348-.278.716-.53 1.102-.755a8.404 8.404 0 001.318-.79c.28-.243.45-.742.781-.864zm4.406 2.15c-2.841.003-4.898 2.533-4.628 5.642.27 3.109 2.781 5.641 5.613 5.665 2.832.024 4.932-2.512 4.658-5.644-.273-3.133-2.802-5.666-5.643-5.663zm.357.57a4.707 4.707 0 013.304 1.446 5.703 5.703 0 011.643 3.49 4.841 4.841 0 01-1.141 3.705v.015a3.923 3.923 0 01-2.808 1.303 4.664 4.664 0 01-3.367-1.387 5.678 5.678 0 01-1.71-3.518 4.832 4.832 0 011.14-3.753 3.923 3.923 0 012.813-1.3h.126z" fill="url(#lobe-icons-ant-group-1-_R_0_)" transform="translate(3)"></path><path d="M2.346 2.054a1.26 1.26 0 01.384-.594.842.842 0 011.165.11c.694.82.169 2.078.142 3.02.013.805.208 1.597.57 2.318.084.134.147.279.186.43a.539.539 0 01-.3.577c-.345.17-.568-.19-.709-.446-.324-.6-.617-1.216-.877-1.846a8.698 8.698 0 01-.618-1.987 7.523 7.523 0 01-.051-.37 3.717 3.717 0 01-.024-.34 2.506 2.506 0 01.132-.872z" fill="url(#lobe-icons-ant-group-2-_R_0_)" transform="translate(3)"></path><defs><linearGradient id="lobe-icons-ant-group-0-_R_0_" x1="31.373%" x2="61.365%" y1="95.551%" y2="-.348%"><stop offset="0%" stop-color="#06F"></stop><stop offset="20%" stop-color="#1677FF"></stop><stop offset="100%" stop-color="#04A6FF"></stop></linearGradient><linearGradient id="lobe-icons-ant-group-1-_R_0_" x1="4.366%" x2="94.359%" y1="65.982%" y2="32.918%"><stop offset="0%" stop-color="#06F"></stop><stop offset="20%" stop-color="#1677FF"></stop><stop offset="100%" stop-color="#04A6FF"></stop></linearGradient><linearGradient id="lobe-icons-ant-group-2-_R_0_" x1="56.255%" x2="45.986%" y1="99.257%" y2="1.384%"><stop offset="0%" stop-color="#06F"></stop><stop offset="20%" stop-color="#1677FF"></stop><stop offset="100%" stop-color="#04A6FF"></stop></linearGradient></defs></svg>`;
 
-// FORK 2026-09-04 (the architect: "Openrouter has the wrong logo, do they have a specific one?").
+// FORK 2026-09-04: OpenRouter showed the wrong logo; use its own mark.
 // They do, and we were not shipping it, so the SMART x COST legend fell back to
 // getRoutedLogoSvg(sample) — the mark of whichever model happened to be FIRST in the
 // group. OpenRouter's tail starts with an NVIDIA re-sell, so the chip for a router
@@ -175,7 +173,7 @@ PROVIDER_LOGO_SVG["antgroup"] =
 const OPENROUTER_MARK_SVG = `<svg width="14" height="14" fill="#C8FF00" fill-rule="evenodd" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.654 3.87a5.087 5.087 0 110 10.174L23.7 19.09c.64.641.187 1.737-.72 1.737H8.48a8.479 8.479 0 010-16.958h10.175zM8.479 7.26a5.087 5.087 0 100 10.176 5.087 5.087 0 000-10.175z"></path></svg>`;
 
 // ─── Vendor-segment and model-family fallbacks (FORK 2026-09-03) ───
-// the architect, on a Claude turn: "why is there an OpenRouter icon there?". There was not.
+// Report: an OpenRouter icon seemed to appear on a Claude turn. There was not.
 // It was UNKNOWN_MARK_SVG, the neutral glyph above. A live browser probe pinned the
 // RESOLVER rather than the artwork:
 //
@@ -330,7 +328,7 @@ export function getProviderBorderColor(provider: string): string {
   return PROVIDER_BORDER_COLORS[provider] ?? PROVIDER_BORDER_COLORS.unknown;
 }
 
-// FORK 2026-08-30 (the architect: "openrouter bubbles have the wrong icon"). This function
+// FORK 2026-08-30: OpenRouter bubbles had the wrong icon. This function
 // used to default to PROVIDER_LOGO_SVG.anthropic, which made it a LIE GENERATOR: for
 // any provider it did not know it returned a specific vendor's registered trademark
 // as though that were the answer. `openrouter` is not in the table, so 15 of the 99

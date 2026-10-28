@@ -119,7 +119,7 @@ function restoreFloodRatio(): void {
   }
 }
 
-// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — the valve is
+// FORK 2026-10-03: some tabs still showed erased history — the valve is
 // OFF unless OPENCLAW_IMPORT_FLOOD_MAX_RATIO sets a ratio. A Claude-backed tab's local store holds
 // little more than its prompts, so 3x the local rows cut 9 live tabs to their prompts: 592 imported
 // rows to 99 on one, 577 to 63 on another (journal, 2026-10-02/03). Measured offline on the live

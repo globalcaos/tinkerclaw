@@ -348,8 +348,8 @@ export function attachPromptKeysToUserRows(
   return out;
 }
 
-// FORK 2026-09-23 — STRANDED PROMPTS (the architect: "lingering messages in the ui that chase me, never
-// actually engage, and they had already entered as prompt").
+// FORK 2026-09-23 — STRANDED PROMPTS (messages lingered in the UI as pending although
+// they had already been accepted as prompts).
 //
 // A prompt sent WHILE a turn is running is written — marker, then user row — onto the leaf the
 // file has at that moment. The running turn's SessionManager was opened before that and still

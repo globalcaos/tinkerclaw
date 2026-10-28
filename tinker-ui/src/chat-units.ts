@@ -84,7 +84,7 @@ export type ChatUnitDeps = {
     tail: boolean,
   ) => { rail: ChatRail; model: RailModel | null } | null;
   /**
-   * FORK 2026-10-02 (the architect: "when we expand anything, it should not compact automatically") — asked
+   * FORK 2026-10-02 (an expanded item must never collapse on its own) — asked
    * for a finished run's Reasoning group that `expandedTools` does not already open, with the group
    * id and the markup of the rows it folds. True opens it. app.ts answers once per group, as it
    * first forms: open when the owner had opened a row inside it while the turn ran, so the turn-end
@@ -153,7 +153,7 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
     }
     return true;
   };
-  // FORK 2026-09-08 (the architect: "any funky dedup algorithm or similar should be gone") — the
+  // FORK 2026-09-08 (no heuristic dedup of any kind) — the
   // 2026-09-07 render-time dedup that sat here is DELETED, not disabled. It was scaffolding around
   // `messages = incoming` in loadChat, which is the defect that manufactured the duplicates and is
   // itself gone (see history-reconcile.ts). The page is paper: what was written is painted, once,
@@ -240,7 +240,7 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
             .reduce((n: number, b: Row) => n + String(b.text ?? "").trim().length, 0),
         });
       }
-      // FORK 2026-08-05 (the architect: "old messages get rewritten") — FREEZE THE CLASSIFICATION. It used
+      // FORK 2026-08-05 (old messages were being rewritten) — FREEZE THE CLASSIFICATION. It used
       // to be recomputed from scratch on EVERY repaint, and `narrationIndices` demotes an assistant
       // text bubble as soon as a tool appears LATER in the run — so as `lastToolIdx` grew, text the
       // user was already reading as the ANSWER was retro-demoted into the collapsed group under
@@ -262,8 +262,8 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       // proofs that the turn is over; accept either.
       const runSettled =
         !runMsgs.some((m) => m._temporary) || !(streamRunId !== null || streamMsgUid !== null);
-      // FORK 2026-09-02 (the architect: "a bunch of thinking messages as final answers … all the tool calls
-      // in one single section … hints towards not having respected the time of arrival") — THE
+      // FORK 2026-09-02 (thinking shown as final answers and all tool calls lumped
+      // into one section, i.e. arrival order was not respected) — THE
       // FREEZE MUST BE ALL-OR-NOTHING PER RUN.
       //
       // Both gates used to ask `some(...)`, and that is the bug: ONE stamped message put the whole
@@ -367,10 +367,9 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
           intermediateIndices.push(j);
           continue;
         }
-        // FORK 2026-10-05 (the architect: "the 'TURN TIMING' box disappears after a while, not being
-        // visible when the answer appears, it should stay exactly where it was. The chat should
-        // work like a very long paper, when something is written here it stays, it might expand
-        // and contract, but never disappear"). SUPERSEDES the 2026-08-24 fold ("The timing list
+        // FORK 2026-10-05: the TURN TIMING box vanished once the answer arrived. It must stay where
+        // it was: the chat behaves like a long sheet of paper where written things may expand and
+        // contract but never disappear. SUPERSEDES the 2026-08-24 fold ("The timing list
         // should also fold into the reasoning whenever the turn ends"): classified intermediate,
         // the block went into the hidden "▸ Reasoning" group the moment the answer settled, which
         // is exactly when it was asked to be read. Measured on the live page: 59 of 64 blocks sat
@@ -410,7 +409,7 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       }
 
       // Determine if this run is still streaming (has temporary messages)
-      // FORK 2026-09-02 (the architect: "a lot of reasoning that did not collapse correctly") — A
+      // FORK 2026-09-02 (much of the reasoning failed to collapse) — A
       // `_temporary` FLAG MUST NOT OUTLIVE THE STREAM THAT SET IT. This test used to read the flag
       // alone, so ONE stale temp pinned a long-settled run to `isStreaming` FOREVER and the flat
       // branch below rendered every narration bubble as an answer, permanently. Nothing ever
@@ -438,8 +437,7 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
         liveStreamActive && intermediateIndices.some((j) => view[j]._temporary);
       const isStreaming = hasTemporaries || (i === view.length && streamMsgUid !== null);
 
-      // FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
-      // Fractal") — IS THIS RUN THE REFLECTION PASS?
+      // FORK 2026-08-24 (Fractal pass timings show only when Fractal is expanded) — IS THIS RUN THE REFLECTION PASS?
       //
       // The reflection is a separate run on the SAME session key, and `isRunBoundary` makes its
       // 🌿 bubble the boundary that closes this run. So a run whose boundary is a fractal section
@@ -586,8 +584,8 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       // own stretch of the line, and the logos are units of their own before and after the run, so
       // no unit's markup depends on what follows it (chat-rail.ts). It closes before the amygdala's
       // cards and never reaches the prompt below: those are not the model's answer.
-      // FORK 2026-10-06 (the architect: "I still see the line next to 'TURN TIMING', which does not make
-      // sense because this part does not use any agent to be computed") — nor does it reach a TURN
+      // FORK 2026-10-06 (no agent line next to TURN TIMING, since no agent computes that part)
+      // — nor does it reach a TURN
       // TIMING block. The block is the browser's and the gateway's measurement of the turn, written
       // before any model is chosen; the model wrote none of it. The rail wraps only the units a model
       // wrote, its logos bracket the first and last of them, and a run that holds nothing else (the

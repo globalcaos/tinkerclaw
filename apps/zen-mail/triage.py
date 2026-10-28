@@ -35,8 +35,8 @@ date, who is waiting on it and what the related lines say. For a chat, "reply" o
 owner; group chatter with nothing asked of the owner is "read" or "none".
 For every item you receive, answer with one JSON object. Reply with a JSON array only, no prose.
 Write "title", "summary", "facts" and the option labels in the item's "thread_language" (Spanish from Spain,
-Catalan or English), even when some messages in it are in another language (the architect, 2026-10-15: "since the thread
-was in Spanish it should all be in Spanish"). When "thread_language" is null, use the language most of its
+Catalan or English), even when some messages in it are in another language (a thread written in
+Spanish gets everything in Spanish). When "thread_language" is null, use the language most of its
 messages are written in. "draft_lang" stays in English.
 The messages run oldest first and each shows only what that message added: text quoted from an earlier message has
 been removed, so read them in order as one conversation and cover all of it in the summary, from the first request

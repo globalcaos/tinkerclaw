@@ -153,9 +153,8 @@ config: copy it with paths rewritten and name its MCP server after the clone's a
 
 - **2026-10-05, install died with ENOSPC.** Goku's disk was 100% full (48 MB free): five old deploy copies of 7 to 13 GB each. The update stopped at `pnpm install`; the live gateway was untouched. Freed 32 GB by deleting the half-built tree and the 21 and 23 September copies, then reran the update. Step 6 now checks `df` first.
 
-- **2026-10-05, "too many models" and THALAMUS out of place on Goku.** the architect: "Goku seems to have too
-  many models in the model picker ... Additionally, Thalamus is not right under the model picker,
-  which it should". Goku's 40 models carried no `rank` (the laptop's 50 did) and kept two Copilot
+- **2026-10-05, "too many models" and THALAMUS out of place on Goku.** The clone showed too
+  many models in the picker, and THALAMUS was not right under the picker. Goku's 40 models carried no `rank` (the laptop's 50 did) and kept two Copilot
   models removed on 2026-09-10; the THALAMUS move he asked for on 2026-10-04 had sat uncommitted in
   the laptop checkout for a day. Step 0 now measures both.
 

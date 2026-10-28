@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createBlockKeyTracker, keysForAssistantFrame } from "./stream.js";
 
-// FORK 2026-09-24 (the architect: "in nearly every thinking message, in the AI analysis
-// tab, the messages show twice"). Opus 5.5 at effort xhigh answers with TWO
+// FORK 2026-09-24: in nearly every thinking message of one tab, the text showed
+// twice. Opus 5.5 at effort xhigh answers with TWO
 // thinking blocks in one API message: an empty, signature-only block, then a
 // narration block that carries the visible text. Receipt — claude-cli
 // transcript 68da72bf, message msg_011CfMdii8Z7CRd328oUh4uJ:

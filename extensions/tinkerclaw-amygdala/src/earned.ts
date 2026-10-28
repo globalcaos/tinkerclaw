@@ -1,14 +1,13 @@
 /**
- * Progressive activation (2026-10-15). the architect: "I don't want all amygdala to go wired for real if it means I cannot work
- * anymore. I don't want the clutter I see now either ... schedule a progressive Amygdala activation, but use Sonnet to
- * evaluate the feedback you were expecting from me."
+ * Progressive activation (2026-10-15). Switching all of Amygdala to enforce at once would block work, and the current
+ * clutter is unwanted too, so rules activate progressively, with a model standing in for the owner's feedback.
  *
  * In shadow mode every flag is only a record. A rule (family + kind + reason code, drivers included) starts to ACT on its
  * own once the reviewer (Sonnet, `judge`) has judged enough of its flags over the last `days` and found them worth it:
  * at least `minReviews` reviews, a `minUseful` share useful, at most a `maxHarmful` share harmful. It stops again the
  * moment its numbers fall below the bar. Only kinds that steer the agent's own thinking can earn this: a note (a line in
  * its context) and a send-back (the reply goes back to be finished, at most twice a turn). Holds, proof checks and
- * questions to the architect never do: those stop the work and stay his decision (`mode: "enforce"`).
+ * questions to the owner never do: those stop the work and stay the owner's decision (`mode: "enforce"`).
  *
  * Why per reason code with its drivers: on 2026-10-15 `claim-unsupported[claim-record]` was judged useful 60% of the
  * time and `claim-unsupported[claim-support]` 11%; one bar for both would have switched on the bad one.
@@ -34,7 +33,7 @@ export const DEFAULT_EARNED: EarnedConfig = {
   judge: "claude-code/claude-sonnet",
 };
 
-/** The kinds that may act on earned trust: they change what the agent thinks, never whether the architect can work. */
+/** The kinds that may act on earned trust: they change what the agent thinks, never whether the owner can work. */
 export const EARNED_KINDS: ReadonlySet<string> = new Set(["note", "send-back"]);
 
 export interface EarnedRow {

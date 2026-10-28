@@ -3,7 +3,7 @@
 publish_ai_analysis.py — push the exported panels to thetinkerzone.com and
 rewrite ONLY the machine-owned regions of the AI-analysis page.
 
-FORK 2026-09-04 (the architect): "only one copy, no duplicates, no maintenance hell."
+FORK 2026-09-04: a single copy, no duplicates, nothing extra to maintain.
 The website holds the sole copy of the chart + dossier; this republishes it.
 
 Contract with the page:
@@ -97,8 +97,7 @@ def api(method, path, want_json: bool = False, **kw):
 
 
 # ---- SSH + WP-CLI transport (FORK 2026-09-23) --------------------------------------
-# the architect 2026-09-23: "I know you had trouble connecting to the ssh or updating the page
-# through wordpress, but try again". The REST path lost two mornings running: 09-23
+# 2026-09-23: retry after the SSH and WordPress update paths had both failed. The REST path lost two mornings running: 09-23
 # Cloudflare challenged every lookup for 3 minutes, 09-22 WordPress served a blank. SSH
 # goes to the HostGator IP directly — Cloudflare never sees it — and the host ships
 # WP-CLI, so read, write AND server-side render all work without the WAF. REST stays as
@@ -197,8 +196,7 @@ for key in ("CHART", "DOSSIER", "FIGURES", "NOTES"):
         sys.exit(f"FAIL marker pair AI-ANALYSIS:{key} missing from post {post_id}")
 
 # ---- 2. read the two INLINE FRAGMENTS (fail closed) ------------------------
-# FORK 2026-09-04 (the architect: "completely native, completely integrated, with no scrolling
-# bars and using the full width of the page").
+# FORK 2026-09-04: fully native to the page, no scroll bars, full page width.
 #
 # This used to upload two standalone HTML files to the media library and point an
 # <iframe> at each. That was a SECOND COPY of the artifact living beside the post —
@@ -221,8 +219,8 @@ for key, fname in (("chart", "chart.part.html"), ("dossier", "dossier.part.html"
         if needle not in body:
             sys.exit(f"FAIL {fname} is missing {needle!r} — refusing to publish a broken fragment")
     parts[key] = body
-# 2026-09-23: the chart's footnotes are PAGE TEXT now ("The fine print", the architect: "useless
-# bottom notes that should instead go in the main website as normal text"). Small by
+# 2026-09-23: the chart's footnotes are PAGE TEXT now ("The fine print": the bottom notes
+# belong in the main page as normal text). Small by
 # nature, so the size floor above does not apply; empty or tag-less is still a failure.
 notes_src = os.path.join(OUT, "notes.part.html")
 notes = open(notes_src, encoding="utf-8").read() if os.path.exists(notes_src) else ""

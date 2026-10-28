@@ -8,8 +8,7 @@
 // tinted with each vendor's EEG trace colour. Re-fetch + regenerate with:
 //   node tinker-ui/scripts/gen-vendor-marks.mjs
 //
-// FORK 2026-08-04 #2 (the architect: "Kimi, deepseek and qwen do not have a color yet
-// visible in the models panel"). The first pass used the "-color" variants — the
+// FORK 2026-08-04 #2: Kimi, DeepSeek and Qwen showed no color in the models panel. The first pass used the "-color" variants — the
 // real brand artwork — and at 14px on the #2a2318 paper they FAILED: Kimi's mark
 // is a white K with a 2px blue dot, so it read as colourless, and DeepSeek's
 // #4D6BFE and Qwen's #6336E7 are dark blues that sink into a dark brown panel.

@@ -82,7 +82,7 @@ A catalog of hand-written orchestration recipes lives at {{RECIPES_DIR}}. Each r
 
 When the user's task matches a recipe's `triggers`, READ the recipe FIRST and use its Steps as the skeleton of your plan. Do NOT name or announce the recipe, skill or plugin you are using in chat; the UI shows it from the files you read and the tools you call. Key catalog entries:
 
-- `writing/papers/adversarial-review-loop.md` — the default for improving one paper (the architect's own PDF comments first, then a second model reviews the PDF); `writing/papers/revise-paper.md` is the solo pass.
+- `writing/papers/adversarial-review-loop.md` — the default for improving one paper (the owner's own PDF comments first, then a second model reviews the PDF); `writing/papers/revise-paper.md` is the solo pass.
 - `writing/papers/write-paper.md`, `writing/planning/brainstorm.md`, `writing/planning/write-plan.md`
 - `coding/{code-review,debug,feature,refactor}.md`, `implementation-plan/recipe.md`, `verification-gate/recipe.md`
 - `analysis/{investigate,dependency-analysis}.md`

@@ -54,8 +54,8 @@ export type FractalGateResult = {
 export const FRACTAL_GATE_MAX_TEXT = 4000;
 /**
  * A turn with this many tool calls is a long turn: the rules' `delivery`, counted whatever Jev says.
- * FORK 2026-10-26 (the architect, 17:24: "I would like fractal to automatically build skills and recipes that would make each
- * turn faster next time … when you figure out how to do things burning enough tokens"): a costly turn is what the
+ * FORK 2026-10-26: Fractal should build skills and recipes that make the next turn faster whenever a turn
+ * spent many tokens working something out: a costly turn is what the
  * doctrine's "Make the next run cheaper" step reads, so Jev may not skip it.
  */
 export const LONG_TURN_TOOL_CALLS = 25;
@@ -369,8 +369,8 @@ export function decideFractalGate(
       }
     }
     const triggers = FRACTAL_TRIGGERS.filter((x) => set.has(x));
-    // FORK 2026-10-10 (the owner, 13:42: "I want Fractal to fire all the time if Jev is not responding,
-    // just to make sure the extra Jev mechanism is just on top"). Without Jev the Fractal always fires;
+    // FORK 2026-10-10: Fractal fires every time when Jev does not respond, so Jev stays a layer
+    // on top. Without Jev the Fractal always fires;
     // Jev only ever removes reflections, it is never what lets one run. The rules still name the triggers.
     if (triggers.length === 0) {
       reasons.push("Jev not answering: fires on every turn");

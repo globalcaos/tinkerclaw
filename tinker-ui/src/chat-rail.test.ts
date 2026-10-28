@@ -66,9 +66,8 @@ describe("answeringModel — which model answered a run", () => {
     expect(answeringModel([{ role: "user", content: "x" }], none, opus)).toBeNull();
   });
 
-  // FORK 2026-10-05 (the architect: "the tinker UI first assigns the last model used and, when and if the
-  // model Thalamus choses to use is different, then the whole line changes, pretending nothing
-  // happened"). The TURN TIMING block is chrome about the turn, written before any model is named.
+  // FORK 2026-10-05 (bug: the Tinker UI first showed the last model used, then silently rewrote the
+  // whole line when Thalamus picked a different one). The TURN TIMING block is chrome about the turn, written before any model is named.
   it("never guesses a model for a run whose only row is the TURN TIMING block", () => {
     const timing = [{ role: "assistant", content: "turn timing", _isPhaseTiming: true }];
     expect(runHasAnswer(timing)).toBe(false);

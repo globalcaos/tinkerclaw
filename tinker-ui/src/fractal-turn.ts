@@ -1,8 +1,7 @@
 /**
  * FRACTAL TURN — Fractal runs as its OWN turn, after the main one (2026-10-08).
  *
- * The owner: "assegura't que és un torn complert que s'engega després de l'ordinari" (make sure it
- * is a complete turn that starts after the ordinary one). Until today the doctrine rode the end of
+ * The requirement: Fractal is a complete turn that starts after the ordinary one. Until today the doctrine rode the end of
  * every prompt he typed, and the SAME reply wrote the 🌿 FRACTAL section as its last lines. That
  * reflection could read the trail (it was in context) but could not act on it: in Tinker a text
  * block followed by a tool call paints as a folded "Thinking" row, so any write had to happen
@@ -19,9 +18,9 @@
  * timeline tells a Fractal run from the run it reflects on with no extra channel, and the
  * gateway's durable dedupe (transcriptHasIdempotencyKey) makes two open tabs fire it once.
  *
- * 2026-10-09 — IN THE BACKGROUND. The owner: "We need a fractal turn that works on the background
- * without making me wait for its response … I don't want to see the fractal prompt, but I want to be
- * able to review it with the little link I see in each of my prompts." Sent into the SAME session,
+ * 2026-10-09 — IN THE BACKGROUND. Requirement: the Fractal turn runs in the background without
+ * holding up the next prompt, its prompt stays hidden, and it remains reviewable through the small
+ * link shown on each prompt. Sent into the SAME session,
  * the reflection held that session busy and his next prompt queued behind it, and its 40 KB prompt
  * drew as a blue bubble. It now goes to a session of its own, `agent:<id>:fractal:<P>`, which runs
  * beside the chat. The bridge starts that session as a FORK of the chat's CLI conversation

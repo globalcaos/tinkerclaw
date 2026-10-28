@@ -16,8 +16,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
- * Lets Jarvis see what the architect sees in the app (2026-10-19, the architect: "you created the phone app without
- * the ability for you to check what I am seeing"). Two node commands use it:
+ * Lets Jarvis see what the owner sees in the app (2026-10-19: the phone app had no way for the agent
+ * to check what is on screen). Two node commands use it:
  *   jarvis.screenshot  → the whole app window as JPEG (PixelCopy, so the GPU-drawn WebView is in it)
  *   jarvis.tinker.eval → run JavaScript in the Tinker page, return its result as JSON text
  * Both need the app in the foreground; the dispatcher refuses them otherwise.

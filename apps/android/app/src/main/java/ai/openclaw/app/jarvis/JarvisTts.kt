@@ -7,7 +7,7 @@ import android.speech.tts.Voice
 import android.util.Log
 import java.util.Locale
 
-// FORK 2026-10-21 (the architect: "Any idea how to make it read with a good voice?") — the PDF reader's
+// FORK 2026-10-21: read aloud with a good voice — the PDF reader's
 // read-aloud on the phone speaks with Android's own engine (Google's neural voices), on the phone,
 // instead of waiting for the Pi to synthesise each sentence (13 s a sentence when the Pi is busy).
 // The page sends one sentence at a time with an id; the engine's done/error for that id goes back
@@ -69,7 +69,7 @@ class JarvisTts(
       }
   }
 
-  // 2026-10-22 (the architect: "lacks the metallic voice"): Jarvis's lines are rendered to a wav instead of
+  // 2026-10-22: the metallic voice was missing: Jarvis's lines are rendered to a wav instead of
   // the speaker, so the page can run them through the Pi's metallic chain (Web Audio) before playing.
   private val cacheDir = context.applicationContext.cacheDir
   private val synthFiles = java.util.concurrent.ConcurrentHashMap<String, java.io.File>()
@@ -115,7 +115,7 @@ class JarvisTts(
       val tts = engine ?: return@whenReady
       if (language != lang) {
         lang = language
-        // 2026-10-22 (the architect: find a phone voice that actually intonates): "voice:<name>" picks one
+        // 2026-10-22 (need: a phone voice with natural intonation): "voice:<name>" picks one
         // installed voice by name, from the list voices() sends to the page.
         val named = if (language.startsWith("voice:")) tts.voices?.firstOrNull { it.name == language.removePrefix("voice:") } else null
         if (named != null) tts.voice = named else pickVoice(tts, Locale.forLanguageTag(language.ifBlank { "en-GB" }))

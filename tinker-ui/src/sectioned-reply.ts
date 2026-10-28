@@ -273,8 +273,8 @@ function findConclusionAnchor(text: string): number {
   return best;
 }
 
-// FORK 2026-08-16 (the architect: "Some chats still show a short final message as the final answer and
-// collapses the rest") — THE ANCHOR FOLD NEVER CHECKED WHAT IT WAS HIDING.
+// FORK 2026-08-16: some chats still showed a short final message as the answer and collapsed
+// the rest — THE ANCHOR FOLD NEVER CHECKED WHAT IT WAS HIDING.
 //
 // findConclusionAnchor answers "where might a conclusion start?". The branch below then treated
 // everything before it as working notes and collapsed it into "▸ Commentary" — without ever asking
@@ -344,8 +344,8 @@ export function splitReasoningFromAnswer(text: string): { reasoning: string; ans
 // section is gone: pre-marker narration (sec.other) folds INTO the answer bubble
 // inline instead of a collapsed reasoning surface, and no amygdala block is ever
 // fabricated.
-// FORK 2026-08-11 (the architect: "I an still not seing the button at the end of the expanded
-// fractal reasoning") — `anchorAttr` carries the ` data-fractal-parent-run="…"` tag that
+// FORK 2026-08-11: the button at the end of the expanded fractal reasoning was still
+// missing — `anchorAttr` carries the ` data-fractal-parent-run="…"` tag that
 // app.ts computes for answer bubbles. It is threaded in because THIS renderer returns
 // early at its call site (app.ts `h += renderSectionedReply(...); return h;`), BEFORE the
 // code that emits that attribute on the plain-markdown path. Consequence, unnoticed since

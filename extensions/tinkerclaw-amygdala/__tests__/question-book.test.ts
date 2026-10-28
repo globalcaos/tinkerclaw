@@ -92,13 +92,13 @@ describe("seed questions", () => {
     }
   });
 
-  // the architect 2026-10-01: "When I open a prompt from Jev, I don't understand it." Each file opens like a page for a person.
+  // 2026-10-01: a Jev prompt must be understandable when opened. Each file opens like a page for a person.
   it("every seed reads like a page for a person: family line, the idea, then examples, before the question", () => {
     for (const { question, file } of readSeeds(seedDir)) {
       const text = readFileSync(file, "utf8");
       const fam = FAMILY_PAPER.find((f) => f.id === question.family)!;
       const [title, familyLine, idea] = text.split(/\n\s*\n/);
-      // The paper's name for the function, then the question (the architect 2026-10-01: "I cannot find the curiosity one").
+      // The paper's name for the function, then the question (2026-10-01: each question must be findable by its function name).
       expect(title, file).toMatch(/^# [A-Z][^:]{2,30}: [a-z"].*\?$/);
       // `_italic_`: the repo formatter turns `*italic*` into it on commit.
       expect(familyLine, file).toBe(`_${fam.title}: ${fam.subtitle}_ · J11 paper §${fam.section}`);

@@ -96,7 +96,7 @@ On wake, read `$STATE_DIR/events` (JSONL). The click events are the exploration 
 
 ## Failures Overcome
 
-- 2026-10-05, SV2 decisions (the architect: "Turn it into a questionnaire with the reasoning behind every decision, and propose the most autonomous route as default"): the reused app treated ★ as a hint only, so untouched questions would have saved empty. Saves now fill the ★ and flag it
+- 2026-10-05, SV2 decisions (a questionnaire with the reasoning behind every decision, the most autonomous route as default): the reused app treated ★ as a hint only, so untouched questions would have saved empty. Saves now fill the ★ and flag it
 - Chat one-question-at-a-time brainstorms burning 10+ turns
 - Inline <script> dead when injected client-side — companion server wraps fragments SERVER-side, so handlers work
 - Submit event without a `choice` field reached server.log but never the events file — wake watcher stayed asleep (2026-06-13, first live run)

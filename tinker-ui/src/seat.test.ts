@@ -9,7 +9,7 @@ describe("formatAgentBanner (tinker re-export contract)", () => {
 
 // FORK 2026-10-05 — the 2026-09-21 port copied the seat id into the tab but never asked the house
 // who sits in it, so CONDUCTOR_STORAGE_KEY was read and never written and Goku's banner stayed
-// "GOKU" for everyone (the architect: "Goku still does not show my name next to GOKU"). Source check.
+// "GOKU" for everyone, with no conductor name beside it. Source check.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

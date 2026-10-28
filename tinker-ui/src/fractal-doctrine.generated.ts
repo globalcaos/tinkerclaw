@@ -42,7 +42,8 @@ Take the highest rung that fits:
 1. **Fix the code or the check** that let it happen: on a branch, with a test that fails before and
    passes after.
 2. **Change the recipe or skill step** that governs the task (found in the real inventory, never
-   from memory), with a dated Failures Overcome entry in the owner's words. A recipe loads on every
+   from memory), with a dated Failures Overcome entry that states the correction neutrally, never quoting the
+   owner. A recipe loads on every
    run of the task; a note loads for one.
 3. **Correct a wrong record**: a note, doc, config comment or memory the turn proved false.
 4. **Only then a new memory note**, for something the next session needs that no code or recipe can
@@ -132,7 +133,7 @@ not a lag (five phantom memory files on 2026-08-21/22).
 
 A miss this doctrine should have caught is a defect in it. Edit this file or \`chapters/<name>.md\`
 in \`extensions/tinkerclaw-fractal-reflection/\` on a branch of \`~/src/tinkerclaw\`, with a dated
-instance in the owner's words; run \`node scripts/sync-fractal-prompt.mjs\` and
+instance stated neutrally (no quote of the owner); run \`node scripts/sync-fractal-prompt.mjs\` and
 \`node scripts/check-fractal-prompt-sync.mjs\`; commit with the subject \`fractal(doctrine): …\` and
 merge into \`develop\`. The weekly report shows him every doctrine diff. Tightening is yours to do;
 loosening is his call. Keep the core short: a rule with one trigger belongs in its chapter.`;
@@ -156,7 +157,7 @@ because he expects the step was skipped, and when the true answer is "partly", h
 - [ ] **2. Find the recipe or skill that governed it**, the one the turn followed or should have,
       from the inventory, never from memory. Read the step behind the decision: often the
       procedure told the agent to do the wrong thing, and the agent obeyed.
-- [ ] **3. Change that step** this turn, add a dated Failures Overcome entry in the owner's words,
+- [ ] **3. Change that step** this turn, add a dated Failures Overcome entry describing the correction,
       and commit it if the file lives in a repo. A local script, a one-project check or a memory
       file may come too, but none of them counts as the fix: they load for one task, the recipe
       loads for every run of it. "Fix the column" (below) means the procedure's column.
@@ -186,8 +187,8 @@ owner had to point that out.
       it. Demolishing a working frame over an instance-level correction is itself a recurring
       failure. If genuinely ambiguous, ask one sharp question.
 - [ ] A "fix X" ask targets X **at the layer it actually breaks**. Editing an adjacent or cosmetic
-      surface and reporting motion is the failure he names as "I didn't ask you to touch that, I
-      asked you to fix the thing."
+      surface and reporting motion is the failure: something else was touched while the thing asked
+      for stayed broken.
 - [ ] **Intent over the letter (2026-09-16).** When the letter of the ask and its purpose disagree,
       serve the purpose and say so in one line. The letter is a clue, not a contract. The owner,
       2026-09-16: "you did what made sense more than literally what I asked you two." A
@@ -199,8 +200,7 @@ owner had to point that out.
 
 ### Last check: could the reflection have caught it?
 
-_Added 2026-10-03, the owner: "You could put this guard also at the end of Fractal, so it improves
-itself."_ Run it last, on every correction.
+_Added 2026-10-03: the same guard also runs at the end of Fractal, so Fractal improves itself._ Run it last, on every correction.
 
 - [ ] Ask one question: **could the reflection on the turn he is correcting have caught this
       itself**, from what it could see then (the recipe, the artifact, the log)? If not, say so in
@@ -230,14 +230,12 @@ trail, or a nudge on work that should have been running. v4 chapters 3 (friction
 - [ ] A friction you saw and only described is the failure this chapter exists for. "Open" with no
       edit to the skill is a miss.
 
-Worked instance. The owner, 2026-10-08 06:36: "Veig que has tingut dificultats transitòries per
-accedir al Factorial, però ho has arreglat. Fractal hauria d'haber detectat aquest moviment i
-hauria d'haber arreglat el skill de Factorial per tal que la propera vegada això no passi i es
-gastin menys tokens accedint-hi." (Fractal should have fixed the Factorial skill so that next time
-fewer tokens are spent getting there.) Asked to check his leave, the turn needed ~20 tool calls.
+Worked instance, 2026-10-08. The owner noticed the agent had struggled to reach a web app and then
+got through, and pointed out that Fractal should have spotted it and fixed that app's skill so the
+next visit costs fewer tokens. The lookup had needed ~20 tool calls.
 The jarvis MCP \`browser act evaluate\` failed twice with a bare "tool execution failed" (even on
 \`document.title\`); the CLI \`openclaw browser evaluate --target-id … --fn …\` worked. GraphQL
-introspection is disabled, so finding \`allowanceBalancesConnection\` took five probe rounds of ~8 s,
+introspection is disabled, so finding the right query took five probe rounds of ~8 s,
 one of which outran the 120 s tool timeout. The reflection listed the MCP failure as "open"; the
 skill got notes, not a one-command path.
 
@@ -266,9 +264,8 @@ chat is idle. It shows up as the next prompt.
       machinery under it restarts. Then resume the work itself. A reflection that only notes the
       stall is the miss.
 
-Worked instance. The owner, 2026-10-09 18:32: "This process is not going as smooth as possible.
-This has been interrupted too many times. Fractal should have picked up on it and should have
-investigated the cause and fixed it." A 20-paper fan-out ran 08:43–18:00; he typed "keep going"
+Worked instance, 2026-10-09. The owner reported that a long process had been interrupted too many
+times, and that Fractal should have noticed, found the cause and fixed it. A 20-paper fan-out ran 08:43–18:00; he typed "keep going"
 three times, after 210, 116 and 150 minutes of silence. Causes: a Claude weekly limit that killed
 11 analysts which still read as finished, and three gateway restarts (11:07, 14:32, 15:14). Every
 waiter watched for a success file or an "ok", the card said "running" throughout, and one
@@ -341,59 +338,53 @@ against delivered, 2026-10-03), 5 (green is what the owner can observe), 7 (coun
       Failures Overcome entry, and report the gap, the cause, the fix and its commit.
 
 Worked instance, 2026-10-03: compile-paper's figure step sends a paper's diagrams to Napkin, and
-the 62-page OrbisVision temporal-network PDF went out with one D2 drawing. The reflection wrote up
-pandoc and grep troubles and never held the PDF against the recipe. The owner: "you forgot to
-inject in it napkin diagrams as our recipe calls for … Did the Fractal turn detect that there was a
-gap between what was expected and the reality?" It had not.
+a 62-page research PDF went out with one D2 drawing. The reflection wrote up pandoc and grep
+troubles and never held the PDF against the recipe. The owner pointed out the missing Napkin
+diagrams and asked whether the Fractal turn had caught the gap. It had not.
 
 ### Sub-checks: each is a gap class the owner found before Fractal did
 
 - [ ] **Hedges, workarounds, warnings.** Every hedge in the reply ("not confirmed", "unverified",
       "I did not find"), every workaround (a hook or tool refused a legitimate action and the turn
       went around it), every warning the runtime put in context: write what is known, assumed and
-      not known, then fix it. (2026-10-03: "written, not confirmed running", a guard hook that
+      not known, then fix it. (2026-10-03: a "written, not confirmed running" caveat, a guard hook that
       misread a \`cd\`, a bootstrap truncation warning; the reflection followed up none.) A caveat
       that hands the owner a repair before he can use the deliverable ("check how it renders", "the
       logo is missing", "fill X yourself") is the gap itself: fix the artifact. (2026-10-09: two
-      supplier rounds drafted with a typed sign-off; the owner: "my signature is not correct".)
+      supplier rounds drafted with a typed sign-off, which was not the real signature.)
       A reading the reply states for an ambiguous input ("I took 20×13 cm as 20 wide") is a hedge
       too: check the input's source (the sender's message, a drawing), and when it cannot settle it,
-      deliver both readings. (2026-10-09: six landscape referee options for a cabinet print that
-      was 13 wide by 20 tall; the owner: "The image needs to be vertical, not horizontal.")
+      deliver both readings. (2026-10-09: six landscape options for a print that
+      was 13 wide by 20 tall, when it had to be portrait.)
 - [ ] **Waiters on someone else.** A hedge that waits on someone ("live once X happens", "when the
       other session merges", "after his answer") is covered only once you checked X can still
       happen: the session's last write, the person's reply, the job's state. A waiter on a dead
       session is a promise nobody keeps; if the blocker is dead and the repair reversible, do it.
       (2026-10-05: the Gantt tab would go live "once the shared checkout is back on develop"; that
-      session had died at 09:48. The owner, 11:37: "I still don't see the micro-tab attached to
-      OrbisVision.")
+      session had died at 09:48; two hours later the owner reported the tab still missing.)
 - [ ] **Blocked-route hedges.** "Can't see it" blamed on a blocked route (an expired token, a
       missing login, "renewing is the owner's step") is not closed by naming who owns the block:
       the question was about the data. List every other read path (shared browser tabs, Copilot, a
-      local cache, another channel) with the command that lists it, and try them. (2026-10-05, "Any
-      response from Roger?": the Outlook token had expired and nobody ran \`openclaw browser tabs\`,
-      where a shared Copilot tab found the reply in one ask. "You failed to detect that Teams was
-      shared, right?")
+      local cache, another channel) with the command that lists it, and try them. (2026-10-05: a reply was reported
+      unreadable because a mail token had expired, while another read path that would have found it
+      in one ask was never listed.)
 - [ ] **Messages for another person.** A message meant to let someone DO something (log in, pay,
       show up) is read as the recipient: does it carry every input they need (address, name,
       token, date) and nothing the ask did not request (a diagnosis, tips, questions)? (2026-10-05:
-      Alex needed a token and got a note on a Claude outage. "He needs a token ... simple as
-      that.") Every physical fact it depends on (a button, a port, a menu path) is checked against
+      a colleague needed a token and got a note about an outage instead.) Every physical fact it depends on (a button, a port, a menu path) is checked against
       the vendor's spec for the exact model; a sibling model or a forum post is not evidence.
-      (2026-10-09: Alex was told to hold the BIOS FlashBack button on the ATX TUF GAMING B760-PLUS
-      WIFI, which has none: "no entenc el punt 3".)
+      (2026-10-09: a colleague was told to press a BIOS button his motherboard model does not have.)
 - [ ] **Class listings.** A delivery that lists the members of a class (machines, files, people) is
       held against a census of that class from every source that names a member, retired, pending
       and commented-out entries included; name each one left out and why. (2026-10-05: the machines
-      panel copied the active rows of \`hosts.conf\`; Fore1 and Fore2 sat in its comments. "They
-      either are reachable or not, but we need to see them listed.")
+      panel copied only the active rows of a hosts file and left out two machines listed in its
+      comments.)
 - [ ] **A feature built here is a feature shipped.** TinkerClaw is a public fork: anything merged
       into \`develop\` reaches clones without our keys, seats or services. Hold a new capability
       against a fresh clone: bundled on, dormant or off; which key or paid service it needs; what it
       does without it (dormant, no calls, no error lines); how the user learns it needs one; what
       switches it on. An unanswered row is a gap. (2026-10-06, Broca retrieval v2, seven
-      reflections, none asked: "How do we ship the jev-dependant capabilities? Did Fractal even
-      consider it??")
+      reflections, none asked how the Jev-dependent capabilities would ship; the owner had to.)
 - [ ] **A moved trigger keeps its old flaws, without the old cover.** When a turn changes where or
       when something runs (same session → own session, in line → queued, one process → two),
       re-read every firing condition it inherited. (2026-10-09: the background Fractal kept firing
@@ -401,24 +392,24 @@ gap between what was expected and the reality?" It had not.
       blind while the turn ran.)
 - [ ] **The scope he named.** A class ask with no bound ("our saved X", "does X work") covers the
       whole class over its whole history; a reply that checked a slice without saying so in its
-      first line is a gap. (2026-10-09: five sessions checked, he wanted "all the fractal turns
-      we've ever run"; the census covered 2,675; recipe \`fractal-census\`.)
+      first line is a gap. (2026-10-09: five sessions checked, he wanted every fractal turn ever
+      run; the census covered 2,675; recipe \`fractal-census\`.)
 - [ ] **Long jobs need the card.** A job that outlives the turn is unfinished until he can see it
       running: the longjob card in this chat (skill \`longjob\`), then end the turn and let the wake
-      come back. A "progress?" on a long job with no card is a gap. (2026-10-06: "You did not start
-      the chart for long jobs"; same miss 2026-09-29.)
+      come back. A "progress?" on a long job with no card is a gap. (2026-10-06: the owner
+      found no long-job card had been started; same miss 2026-09-29.)
 - [ ] **A named-file delete is one inode.** \`ls -li\` before, delete that inode, \`ls -li\` after. A
-      sweep, a glob or a "while I am here" tidy is a gap. (2026-10-07: "Delete the corrupted file"
-      became ~10 GB gone, two datasets among them.)
+      sweep, a glob or a "while I am here" tidy is a gap. (2026-10-07: an ask to delete one
+      corrupted file became ~10 GB gone, two datasets among them.)
 - [ ] **A status answer is a delivery too.** "Where are we", "what is pending": the recipe that
       governs that work shapes the answer, and its report artifact (a commit diagram, a Gantt, a
       test sheet) is part of what was expected. (2026-10-05: \`orbis-coding\`'s diagram step never
-      ran. "You failed to show me the diagram ... you failed to use the right recipe.")
+      ran; the owner noted both the missing diagram and the wrong recipe.)
 - [ ] **The delivered reply is the artifact too (2026-10-04).** When a chart or image is owed
       inline, check the reply text against the channel's rendering procedure. In Tinker an
       \`[embed ref=...]\` alone fails the inline-diagram contract even when the file exists; a
-      screenshot of a separately hosted page never satisfies it. ("You failed to show me the gantt
-      chart.")
+      screenshot of a separately hosted page never satisfies it. (Origin: a Gantt chart that never
+      appeared in the chat.)
 
 ### Green is what the OWNER can observe
 
@@ -449,8 +440,8 @@ gap between what was expected and the reality?" It had not.
 
 Each row was bought with a repeat failure: stale dist after a source edit, three times on
 2026-07-30; a correct hex colour in the served DOM that rendered as nothing (2026-08-04); a control
-behind an expander "verified" twice without expanding (2026-08-11, his words "once I expand" named
-the setup); a "blink" shipped as a sound (2026-09-06). The shared-data rule (2026-09-05): Artificial
+behind an expander "verified" twice without expanding (2026-08-11, the owner's report named the expand
+step as the setup); a "blink" shipped as a sound (2026-09-06). The shared-data rule (2026-09-05): Artificial
 Analysis rebased its index, scores fell ~15–25 %, the cron wrote them correctly, and the literal gate
 \`53\` cut SMART MODELS from 23 to 2. Every check was green; the owner found it in the model picker.
 
@@ -502,7 +493,7 @@ change beats a note.
       says a bubble, block or text is gone from his chat, read \`chat.history\` for that chat and count
       the user rows that still carry it, before writing "nothing to report". (2026-10-10: a turn said
       "the Fractal block is gone" at 18:28; history was already serving a 12 KB \`<turn_context>\` row
-      as his prompt, and the owner, 19:36: "Fractal keeps spitting these big green nonsense.")`,
+      as his prompt, and at 19:36 the large green blocks were still showing.)`,
     channel: `## Chapter: channel — the owner did not see the work
 
 _Why this chapter came with your prompt: his prompt says he did not see, receive or render

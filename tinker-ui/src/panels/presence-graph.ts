@@ -598,7 +598,7 @@ export function attachPresenceGraphs(container: HTMLElement): void {
   if (container.dataset.pgDnd !== "1") {
     container.dataset.pgDnd = "1";
     // HTML5 drag-and-drop on a header that also click-collapses is a coin
-    // flip in Chromium (the architect 2026-09-10: "I want to be able to drag-and-drop").
+    // flip in Chromium (2026-09-10: drag-and-drop must work).
     // Pointer events + a 4px threshold: a click still collapses, a drag reorders.
     const THRESH = 4;
     let drag: {
@@ -794,7 +794,7 @@ export function attachPresenceGraphs(container: HTMLElement): void {
     window.addEventListener("pointerup", panEnd);
     window.addEventListener("pointercancel", panEnd);
 
-    // FORK 2026-10-20 (the architect, phone: "the three commands mix together, zoom is random"). Touch is
+    // FORK 2026-10-20: on a phone the three gestures mixed together and zoom was erratic. Touch is
     // one gesture at a time, decided once:
     //   • every finger is CAPTURED on .pg-body, which paintView never replaces. Before, the finger's
     //     own target (an SVG node) was thrown away by the repaint, its pointerup went nowhere, and a

@@ -7,9 +7,7 @@ import {
   type HistoryLoad,
 } from "./history-loading.js";
 
-// FORK 2026-10-06 (the architect: "make sure there are 'loading...' indicators when loading the chat
-// history, indicators that have some movement … Also, use the loading indicator for when we
-// scroll backwards").
+// FORK 2026-10-06: animated loading indicators while chat history loads, also when scrolling back.
 
 const same = (a: string, b: string) => a === b;
 const at = 10_000;
@@ -41,16 +39,14 @@ describe("historyIndicators", () => {
     expect(run({ loads: [load("tail")], now: at })[0]?.label).toBe("Loading chat history");
   });
 
-  // FORK 2026-10-06 (the architect: "Make the message 'connecting to gateway' also as fast as possible and
-  // also moving").
+  // FORK 2026-10-06: the connecting-to-gateway message appears fast and animated.
   it("says 'Connecting to the gateway' while an empty page has no connection, before any tab is known", () => {
     expect(run({ connecting: true, viewedKey: "" })).toEqual([
       { place: "center", kind: "tail", label: "Connecting to the gateway" },
     ]);
   });
 
-  // FORK 2026-10-06 (the architect: "Consider what the front-end has loaded, and do not try to reload that
-  // which is already loaded").
+  // FORK 2026-10-06: never reload what the page already holds.
   it("draws nothing for the newest rows over a page that holds rows: connecting, catching up or retrying", () => {
     expect(run({ connecting: true, pageHasRows: true })).toEqual([]);
     expect(run({ loads: [load("tail")], pageHasRows: true, now: late + 60_000 })).toEqual([]);

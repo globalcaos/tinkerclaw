@@ -78,8 +78,8 @@ def sort_topics(topics):
 
 
 def state_all():
-    """Every account in one list (the architect 2026-10-25: "drop the separation between personal and job related tasks.
-    Instead let's just see them both in two different colors"). Each card keeps its acct; the page colours by it.
+    """Every account in one list (2026-10-25: no split between personal and work tasks; both share one list in
+    two colours). Each card keeps its acct; the page colours by it.
     Mail, Jira, Teams, WhatsApp and Jarvis cards already share these lists; a new source joins by writing topics."""
     cfg = settings()
     parts = {a: state_payload(a) for a in cfg["accounts"]}
@@ -145,7 +145,7 @@ def state_payload(acct):
     sort_topics(topics)
     # Learned order (2026-10-16): a sender he answers fast rises a step, one he keeps putting off sinks a step; a
     # timid Jarvis card always sits at the bottom. Jira tasks in To Do or In Progress sit above everything else
-    # (the architect 2026-10-18: "prioritize those at the top"); Backlog tasks keep the normal order. A reminder he asked for
+    # (2026-10-18: they go first); Backlog tasks keep the normal order. A reminder he asked for
     # by hand, or a card he pinned with the bonsai button, carries extra.pin and sits above all of it, lowest first
     # (a new pin takes one less than the current top, so it lands on top).
     waiting = [{"id": t["id"], "acct": acct, "title": t["title"], "who": t["who"], "since": (t["last_date"] or "")[:10],
@@ -175,7 +175,7 @@ def state_payload(acct):
         "folders": [f[0] for f in FOLDERS[spec["kind"]]],
         "status": status, "last_sync": meta_get(conn, "last_sync"), "syncing": _sync_running(),
         "kind": spec["kind"],
-        # How old this list is (the architect 2026-10-21: after the move to the Pi it showed an empty list with no word of
+        # How old this list is (2026-10-21: after a machine move it showed an empty list with no word of
         # when it was last right). The newest real mail held here; null = this machine never had this mailbox.
         "newest_mail": (conn.execute("SELECT MAX(date) d FROM messages WHERE acct=? AND conv NOT LIKE '%:%'",
                                      (acct,)).fetchone() or {"d": None})["d"],
@@ -226,7 +226,7 @@ def _write_draft(conn, t, text):
             body = "".join(f"<p>{html.escape(p).replace(chr(10), '<br>')}</p>" for p in text.strip().split("\n\n"))
             path = os.path.join(tmp, "reply.html")
             open(path, "w", encoding="utf-8").write(body)
-            # --signature clones the architect's real Outlook signature; reply-draft adds none without it (2026-10-23: the ERP
+            # --signature clones the architect's real Outlook signature; reply-draft adds none without it (2026-10-23: a
             # reply went out unsigned; the drafts rule since 2026-10-09 is his real signature by default).
             args = ["mail", "reply-draft", last["id"], "--body-file", path, "--signature"]
             if len(json.loads(last["rcpts"] or "[]")) > 1:
@@ -395,7 +395,7 @@ Read, Grep and Glob: MEMORY.md in your working folder is its index, and the know
 When a question needs more than the thread (who someone is, what was decided before, how the owner likes things
 done), grep the memory for the names or words first and use what you find; say where a fact came from when it matters.
 Answer in "thread_language" (when null, the language most of its emails are written in), whatever language the
-owner types in (the architect, 2026-10-15: "since the thread was in Spanish it should all be in Spanish"). Be brief and plain, like a colleague. Use only what the thread
+owner types in: a thread written in one language gets every answer in that language. Be brief and plain, like a colleague. Use only what the thread
 and the owner tell you, plus what the memory says; say so when something is in neither.
 Reply with JSON only: {"reply": "your answer", "draft": null or "the full new reply", "remember": null or "a fact"}.
 "remember": when the OWNER's own message ("owner_says") states something lasting worth keeping (who someone is, how
@@ -408,9 +408,8 @@ message; keep the reply's language, its greeting style and its one-word sign-off
 
 
 def _to_main_chat(conn, tid, p, text):
-    """Hand the owner's prompt to the main Jarvis chat, with every tool and memory it has (the architect, 2026-10-23 21:02:
-    the card's own model "said that it was unable to access the web ... redirect my prompts to the main tab ... as we
-    do with the pdf editor"). Same wake as the PDF viewer's Redo: a longjob that ends at once and wakes that chat. The
+    """Hand the owner's prompt to the main Jarvis chat, with every tool and memory it has (2026-10-23: the card's
+    own model had no web access, so prompts go to the main tab, as the PDF editor does). Same wake as the PDF viewer's Redo: a longjob that ends at once and wakes that chat. The
     main chat writes its answer back with card_reply.py, so it shows in the card as before."""
     session = settings()["main_session"]
     mails = [f"- {m['date']} {m['from']}{' (the architect)' if m['me'] else ''}: {' '.join(m['body'].split())[:600]}"
@@ -590,8 +589,7 @@ def sender(body):
 
 
 def watch_op(body):
-    """Add or remove a subject to watch from the page (the architect 2026-10-25: "I should be able to put and remove subjects
-    to watch for"). Gmail only for now."""
+    """Add or remove a subject to watch from the page (2026-10-25). Gmail only for now."""
     if body.get("op") == "remove":
         return watch_mod.remove(body.get("id") or "")
     title, query = (body.get("title") or "").strip(), (body.get("query") or "").strip()
@@ -678,7 +676,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/watches":
                 return self._send(200, {"ok": True, "watches": watch_mod.listing()})
             if u.path == "/api/link":
-                # The chat card prompts go to (the architect, 2026-10-25: "its icon should replace the tab's title"):
+                # The chat card prompts go to (2026-10-25: its tab shows the Zen Mail icon in place of a title):
                 # the Tinker page reads it to draw the Zen Mail icon on that tab.
                 return self._send(200, {"ok": True, "session": settings().get("main_session") or ""})
             if u.path == "/api/dams":

@@ -1,7 +1,6 @@
 # Tone, familiarity and feeling — read them off the thread
 
-**For:** the owner, 2026-09-24: "you don't necessarily know the intended tone, familiarity or feeling
-of the message". A fingerprint averaged over thousands of messages to everyone cannot tell a condolence
+**For:** 2026-09-24: the intended tone, familiarity or feeling of a message is not always known. A fingerprint averaged over thousands of messages to everyone cannot tell a condolence
 from a delivery time. The thread can. **From:** Communication Accommodation Theory and Language
 Style Matching (Niederhoffer & Pennebaker 2002; Bierstetel et al. 2020), Gunraj et al. 2016
 (_Computers in Human Behavior_: a full stop makes a short text read insincere, handwriting unaffected),

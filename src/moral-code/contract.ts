@@ -1,9 +1,8 @@
 /**
  * The moral code's PUBLISHED CONTRACT — owned by TinkerClaw, read by every harness.
  *
- * FORK 2026-09-23 (the architect: "I would rather have tinkerclaw initiate, concentrate, say handle
- * this injection … the functionalities should be native in tinkerclaw but then used as extensions
- * from claude code only, like symlinks").
+ * FORK 2026-09-23: tinkerclaw owns and handles this injection; the functionality is native to
+ * tinkerclaw and Claude Code only uses it as an extension, like a symlink.
  *
  * TinkerClaw survives token windows because it can switch models, so the moral code has to belong
  * to TinkerClaw, not to whichever model happens to be answering. The split:

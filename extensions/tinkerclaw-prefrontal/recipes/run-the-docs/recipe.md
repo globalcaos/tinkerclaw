@@ -247,9 +247,8 @@ This threshold is a starting guess; change it when the table says otherwise.
 ## Failures Overcome
 
 - **2026-10-07, the run this recipe comes from.** A setup guide written that morning from recorded
-  commands was run on a freshly restored unit. The owner, giving the go: _"As you now discover
-  [the unit] and reassign the IPs and make them fixed, you will have the opportunity to test the
-  manual and update it with your experience."_ Seven steps failed or misled. A plugin card's
+  commands was run on a freshly restored unit. The owner's go asked for the guide to be tested
+  while setting the unit's fixed addresses, and updated with what the run found. Seven steps failed or misled. A plugin card's
   Start button only connects the plugin, and each script needs its own Start; pressing Start a
   second time spawned a copy that died and made the launcher show "finished" while the real one
   kept running. The old network profiles had other names, so "edit the profile" became "disable
@@ -259,12 +258,11 @@ This threshold is a starting guess; change it when the table says otherwise.
   remotely with `&` wrote an empty file. Two of the seven were slips at the keyboard, and the page
   now warns about both.
   The corrections were made in one batch after the run, from the session's memory, with no ledger
-  on disk. That worked only because the run was short. Afterwards the owner asked for this recipe:
-  _"create a recipe that will allow you to understand the usefulness of trying something for
-  yourself, then updating a documentation in parallel."_ So step 1 now writes the ledger per step,
+  on disk. That worked only because the run was short. Afterwards the owner asked for this recipe: a way
+  to try a procedure first-hand and update its documentation in parallel. So step 1 now writes the ledger per step,
   and step 2 runs alongside it instead of after.
-- **2026-10-07 15:42, the owner found a gap after the second run.** _"You forgot to put the test bench icon in the middle of the desktop in Fore2."_ He had asked at 10:58 for the app "in the center of the desktop". Neither run turned that into a check: the doc only said "put the launcher on the desktop", the run checked the file was there, and nobody looked at the screen. The launcher sat in the bottom-right corner. Step 0 now adds the owner's own requirements as end-state checks, and step 1 checks anything a person sees with a screenshot.
-- **2026-10-07, the second run on the same unit.** The first run had given the unit its own internal device-network address because the owner proposed one ("If Fore1 is .2, then it makes sense that Fore2 is in .3"), and the page grew a per-unit address table. The owner, an hour later: _"It actually does not make sense since we want to create a standard set-up for every installation, and you did not catch it."_ Nothing in the steps asked whether a value should be per-unit at all. Step 1 now does, for every `value` line.
+- **2026-10-07 15:42, the owner found a gap after the second run.** The test app's launcher was not in the middle of the desktop on the second unit, which he had asked for that morning. Neither run turned that into a check: the doc only said "put the launcher on the desktop", the run checked the file was there, and nobody looked at the screen. The launcher sat in the bottom-right corner. Step 0 now adds the owner's own requirements as end-state checks, and step 1 checks anything a person sees with a screenshot.
+- **2026-10-07, the second run on the same unit.** The first run had given the unit its own internal device-network address because the owner proposed numbering them in sequence, and the page grew a per-unit address table. An hour later the owner pointed out that this contradicted the goal of one standard set-up for every installation, and that the run had not caught it. Nothing in the steps asked whether a value should be per-unit at all. Step 1 now does, for every `value` line.
 - **2026-10-06, a restore drill.** Following the restore guide from scratch on a second machine
   showed that the nightly backup left 19.4 GB of the agent's state out of every backup, behind a
   coverage check that could not fail. Reading the guide had never shown it. The next day, driving

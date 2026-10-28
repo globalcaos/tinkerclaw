@@ -1,5 +1,5 @@
-/* Amygdala inline bubbles (FORK 2026-10-15, the architect: "a separate pink comment ... right where he does it, within its
-   context ... pink-ish and with a brain as leading icon"). One bubble per performed action, under the tool row it
+/* Amygdala inline bubbles (FORK 2026-10-15: a separate pink comment placed right at the action,
+   in its context, with a brain as the leading icon). One bubble per performed action, under the tool row it
    judged. The old Amygdala pink (#FF69B4, git a9ca9fb114e^) comes back; the TypeSafe look of amy-jev.css does not
    cross into these: an inner Jev row inherits the chat theme. Works on the cream and the dark theme via --text/--muted. */
 :root{--amy-pink:#FF69B4}
@@ -34,3 +34,15 @@
 .amy-inline .amy-lab{background:transparent;color:var(--text);border-color:var(--amy-pink);border-radius:6px}
 .amy-inline .amy-lab.amy-on{background:var(--amy-pink);color:#fff}
 .amy-inline .amy-ja-extra .amy-card{color:var(--text)}
+/* FORK 2026-10-28: the action is a one-line card; the line toggles the rest open. The judge's verdict rides on it as a
+   chip (Grok first), in place of the owner's vote buttons. */
+.amy-inline .amy-jc-toggle{cursor:pointer;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.amy-inline .amy-jc-toggle:hover b{text-decoration:underline dotted}
+.amy-inline .amy-jc-toggle .amy-jx-more{margin-left:auto}
+.amy-jverdict{font-size:10.5px;padding:0 6px;border-radius:9px;border:1px solid var(--muted);color:var(--muted);white-space:nowrap}
+.amy-jverdict.amy-jv-ok{border-color:#3f8f4f;color:#3f8f4f;background:rgba(63,143,79,.08)}
+.amy-jverdict.amy-jv-bad{border-color:#c0392b;color:#c0392b;background:rgba(192,57,43,.08)}
+.amy-jverdict.amy-jv-wait{font-style:italic}
+.amy-inline .amy-jact-open .amy-ja-main > div:not(.amy-jc-head){margin-top:3px}
+.amy-inline .amy-jx-verdict{color:var(--muted)}
+.amy-inline .amy-jx-verdict .amy-mt{margin-right:6px}

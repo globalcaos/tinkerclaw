@@ -472,8 +472,8 @@ describe("CallTimelineStore — the fallback column of §5.4", () => {
   });
 });
 
-// FORK 2026-09-30 (the architect: "a graph that restarts every prompt and it shows me on the top what is
-// sent and in the bottom what is received").
+// FORK 2026-09-30: a graph that restarts at every prompt, sent traffic on top and received
+// traffic below.
 describe("promptView — the timeline restarts at every prompt", () => {
   /** Turn 1: one call with a 90k prompt and 5k out. Turn 2: two calls, 10k and 12k in. */
   function twoPrompts(): { st: CallTimelineStore; t: (s: number) => number } {
@@ -516,8 +516,8 @@ describe("promptView — the timeline restarts at every prompt", () => {
     expect(st.scales()).toMatchObject({ prompt: 90_000, out: 5_000 });
   });
 
-  // FORK 2026-10-02 (the owner: "The CALL TIMELINE panel sometimes stays empty, it should always show
-  // the last run instead"). Until 10-02 the preparation tick restarted the view with no call in it.
+  // FORK 2026-10-02: the CALL TIMELINE panel sometimes stayed empty; it should always show the
+  // last run. Until 10-02 the preparation tick restarted the view with no call in it.
   it("keeps the last run on screen until the next prompt makes its first call", () => {
     const { st, t } = twoPrompts();
     st.turnEnd("p2", t(115));
@@ -593,7 +593,7 @@ describe("promptView — the timeline restarts at every prompt", () => {
   });
 });
 
-// FORK 2026-10-02 (the owner: "it should always show the last run instead"). The store lives in the page,
+// FORK 2026-10-02: the panel always shows the last run. The store lives in the page,
 // so a reload (every rebuild pushes one) used to leave only history rows, which are not drawn. The
 // last finished run is now snapshotted and restored into the fresh store.
 describe("the last run survives a reload — snapshot and restore", () => {
@@ -732,9 +732,8 @@ describe("the last run survives a reload — snapshot and restore", () => {
   });
 });
 
-// FORK 2026-10-02 (the owner: "the graph has horizontal gaps where nothing is sent nor received, they
-// should be cut out ... let's not be so rigorous with the time factor, and present a simplified graph
-// where more area is painted"). Supersedes the 2026-10-01 rate chart and its tests.
+// FORK 2026-10-02: cut out the horizontal gaps where nothing is sent or received; trade strict
+// time accuracy for a simplified graph with more painted area. Supersedes the 2026-10-01 rate chart and its tests.
 describe("columns — one per call, side by side, nothing drawn for the time between", () => {
   /** One prompt, two calls: 20k in, a 4 s wait, 400 out over 8 s; an 8 s tool gap; 30k in, 100 out. */
   function twoCalls(): CallTimelineStore {
@@ -902,8 +901,7 @@ describe("columns — one per call, side by side, nothing drawn for the time bet
   });
 });
 
-// FORK 2026-10-02 (the owner: "I see some sent information is unitemised, why is that? Can you fix it
-// and assign it a bucket?"). On the cc-bridge lane the anatomy row describes the gateway's mirror,
+// FORK 2026-10-02: some sent data showed as unitemised; give it a bucket. On the cc-bridge lane the anatomy row describes the gateway's mirror,
 // not what the CLI sends; the bridge now itemises each call from the CLI's own transcript and sends
 // it on the call's `usage` frame (the contract's CallComposition).
 describe("a call's own itemised prompt (the `usage` frame's composition)", () => {

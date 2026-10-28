@@ -2,10 +2,10 @@
 //
 // THALAMUS SUGGESTIONS — one suggested model, and its effort, per stop of the dial.
 //
-// FORK 2026-09-23 (the architect): "When I use the right click on a model in the model picker, I should
-// be able to set it as default for Thalamus." The picker's right-click wrote one pinned model per
-// dial band, and the pin beat the router. FORK 2026-10-02 (the architect, full deploy): the picks are
-// SUGGESTIONS, "model AND effort per stop"; the router starts from the suggestion and moves off it
+// FORK 2026-09-23: right-clicking a model in the picker sets it as a Thalamus default. The
+// picker's right-click wrote one pinned model per
+// dial band, and the pin beat the router. FORK 2026-10-02 (full deploy): the picks are
+// SUGGESTIONS, model AND effort per stop; the router starts from the suggestion and moves off it
 // only for a reason (a limit, a cooling supply, a context too small, the allowlist, or another rung
 // that still wins for this task after the suggestion's prior). The file keeps its name and its
 // writer (the picker's right-click, through `prefrontal.thalamusDefaults`); what changed is the

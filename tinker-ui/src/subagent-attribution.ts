@@ -31,8 +31,8 @@
  * attributing tells the user their session is doing something they never asked for. A gap is a
  * gap; a phantom is a false statement about what the system is doing.
  *
- * WHY (c') EXISTS — FORK 2026-08-08 (the architect: "Jarvis is doing things in parallel but the EEG does
- * not show the traces"). A fan-out dispatched through the orchestrator is minted with
+ * WHY (c') EXISTS — FORK 2026-08-08: parallel work did not show up as traces in the EEG.
+ * A fan-out dispatched through the orchestrator is minted with
  * `requesterSessionKey = "agent:main:orchestrator"`, so `recordSubagentOwner` resolved the leg's
  * owner to the ORCHESTRATOR LANE rather than to the tab that asked for the work. That key is a
  * session but it is not a tab, so (c) compared it against every tab, found no match, and returned

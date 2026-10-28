@@ -1051,8 +1051,8 @@ export function mountContextTreemap(
   }
 
   // ─── Load latest dump ───
-  // FORK 2026-10-06 (the architect: "I could see a 'loading context' indicator that did not add anything …
-  // do not try to reload that which is already loaded") — a drawn treemap stays on screen while a
+  // FORK 2026-10-06 (a 'loading context' indicator added nothing; never reload what is already
+  // loaded) — a drawn treemap stays on screen while a
   // refresh is in flight, and a refresh that fails (a gateway still starting) keeps it. "Loading..."
   // and "No context yet" are for a panel that has nothing to show.
   async function loadLatest() {

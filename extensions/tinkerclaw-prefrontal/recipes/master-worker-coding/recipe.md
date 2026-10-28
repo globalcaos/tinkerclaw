@@ -134,7 +134,7 @@ as active (a turn that just ended, or an idle worker process you have just stopp
 `UNAVAILABLE … still active; try again in a moment`. Wait a few seconds and retry; never send on a refused reset,
 because the turn then lands in the old session with all its context (2026-10-01 23:52: the master stopped the idle
 worker, reset at once, filtered the answer for a `sessionId`, saw nothing, and sent anyway). A resumed session drags
-the whole build into every model call: on the OrbisVision 2.0 build each call
+the whole build into every model call: on a product build each call
 carried about 565k tokens resumed and 216k fresh. So the turn file opens with what to read, in order (charter,
 the last status or progress file, the last pins and turn file), and never says "as before" without naming the
 file. Past 8 MB the bridge would not resume the transcript anyway.
@@ -146,8 +146,8 @@ screen). A track that waits on the principal (a spec that needs his answers) goe
 possible, because his time is the slowest resource in the build. A phase that cannot start yet is listed, not
 used as a reason to stop: send the next unit whose inputs already exist, even when it only prepares a later
 phase (a measurement, scaffolding, a watcher for the machine that is off). The loop ends only when the
-principal says stop. (2026-10-03 19:07, his words: "Why did you stop? The whole goal of a long-running task is
-to not stop for anything." The 15:48 review had ended the loop because Desk1 was off and his calls were open.)
+principal says stop. (2026-10-03: the principal objected that a long-running task should not stop; an earlier review had ended the loop
+while phases waited on him.)
 
 CPU is the ceiling, not agents: agent units
 mostly wait on the model, so fan them out freely. The machine that runs the principal's chat UI and the gateway is
@@ -156,7 +156,7 @@ the master's own machine is the last fallback, pinned to a few cores at the lowe
 `CPUQuota` on a user scope is ignored unless the cpu controller is delegated). Never write "don't wait, use this machine" into
 a turn. Tests get a **core budget**, not a suite count: the charter
 names the most test processes allowed at once (pytest workers, Playwright workers, browsers; 12 of 16 cores on
-the OrbisVision laptop), and every suite runs parallel inside itself. "Two suites at once" let two
+the build laptop), and every suite runs parallel inside itself. "Two suites at once" let two
 single-process suites use 1.4 of 16 cores while the worker waited. Timing tests (a latency bound, a real-time
 rate) carry a marker and run alone after the parallel pass. If the project's suites cannot run parallel yet
 (one shared database, one mock server), making them parallel is the first track of the next turn.
@@ -168,8 +168,8 @@ Then `python3 ~/src/tinkerclaw/skills/build-gantt/scripts/gantt.py derive charte
 `… render charter_dir/gantt.json --png /tmp/<build>-gantt.png > /tmp/<build>-gantt.block.md`. Look at the
 PNG. In Tinker, `render` gives the master's chat its Gantt tab, which redraws itself every 15 s and, with
 `worker_prompt_has` in the plan, picks up the worker's new workflows while the turn runs: the block does NOT
-go into the reply (the principal, 2026-10-05 20:31: "No need to show me the gantt here, it should be
-automatically updating the real one"). The reply says in one line where the build stands. A feature the principal did not
+go into the reply (set 2026-10-05: the live Gantt tab updates itself, so the chart is not repeated in the
+reply). The reply says in one line where the build stands. A feature the principal did not
 name himself gets a plain gloss the first time a reply mentions it: what it is, who sees it, and whether it runs
 anywhere yet. On a channel with
 no tab, the PNG goes into the reply, every phase, never a bare progress bar. A plan without
@@ -275,12 +275,12 @@ the next turn is sent (Step 2) or the loop is stopped.
    26-minute master turn that wrote turn 48 (66 calls, 12.5M tokens sent) ran while the window went from 21 % to 34 %.
    Width = (100 − `five_hour` %) ÷ minutes to its reset ÷ 0.15, with the master and the worker counted as one unit
    each (turn 48 measured about 0.15 % of the window a minute per unit). **The week (2026-10-10, ruled 2026-10-12).** The same call prints `seven_day` and its reset. The principal runs TWO Claude 20x
-   seats (owner@example.com resets Thursday 18:00, owner-work@example.com Saturday 08:00); spending the active seat's week is fine,
+   seats with different weekly resets; spending the active seat's week is fine,
    the other one takes over. So: no weekly stop level in turn files and no pause between turns for the week. Only the five-hour
    width and its 85 % stop bound a turn. When a worker or the master hits a weekly-limit error, the CLI moves to the other seat
    (on 2026-10-09 a re-login, not automatic): say so in one line, move it if you can, else ask for that one step, then resend.
-   The principal, 2026-10-12 10:03: "It is perfectly fine to exhaust the present one because we have a fresh 7-day budget
-   available when we use this one up."
+   The principal confirmed on 2026-10-12 that exhausting the active seat is fine, because the other seat has a fresh
+   7-day budget.
 1. Read the status file. **Do not re-run the suites the worker already ran on the same tip.** The worker's
    final-run logs are saved outside `/tmp` and start with the SHA they ran on: check that SHA is the tip you
    accept, compare the counts with the status file, and re-run alone (as a longjob) only what was red,
@@ -371,7 +371,7 @@ merge and delete status stated plainly.
 
 ## Speed tactics
 
-Measured on the OrbisVision 2.0 build (2026-10-01, the principal's review of its first 20 hours): building units
+Measured on a product build (2026-10-01, the principal's review of its first 20 hours): building units
 took 51 %, end-of-turn integration and test runs 27 %, incidents 11 %, setup and review 11 %. The model was not
 the bottleneck; serial and repeated testing, waiting at full context and late integration were. Every charter
 takes these tactics at Step 0, and the first phase builds the test environment to fit them: that build ran
@@ -383,7 +383,7 @@ takes these tactics at Step 0, and the first phase builds the test environment t
   worker (a Redis index, a MariaDB schema, an SQLite file) and the few tests that share one external service in
   a `serial` group. Browser mock tests with several Playwright workers, one mock server per worker on a free
   port. A suite that cannot run parallel is a defect of the test environment and is fixed first. Measured on
-  OrbisVision 2.0 after its speed phase: integration 28 min down to 7 min 48 s, browser mock 11.5 min down to 4.
+  product build after its speed phase: integration 28 min down to 7 min 48 s, browser mock 11.5 min down to 4.
 - Timing tests (a latency bound, a real-time rate) carry a marker and run alone after the parallel pass. They
   are never loosened to pass under load; every flaky failure on 2026-10-01 was one of them, at load 13 to 42.
 - Fakes do only the work a test reads: a fake camera draws a flat image wherever no test reads pixels (measured
@@ -394,7 +394,7 @@ takes these tactics at Step 0, and the first phase builds the test environment t
   sized under the free space of every test machine (never "the machine's free space minus a budget", which other
   writers move); ports picked free; the fonts the UI draws shipped with the UI, because a font the machine happens
   to have makes pictures, capture checks and label placement machine-dependent. A test that passes on one machine
-  and fails on another has found a hidden dependency and is a red like any other. Moving OrbisVision 2.0's suites
+  and fails on another has found a hidden dependency and is a red like any other. Moving the product build's suites
   to a second machine found five (an absolute-path filter, the real disk in a retention test, a missing make
   prerequisite, a recorder floor read off the machine's disk, the fonts) and one product fault: labels placed as
   if every glyph were 0.6 em wide.
@@ -414,7 +414,7 @@ retire it when the fix is live.
 
 - **Suite order.** The fast suites together (unit, lint, UI unit), then the stack suites together (integration,
   browser mock), then the real-stack browser suite alone, with nothing heavy beside it. Under time pressure a unit
-  moves to the next turn; the order never changes. On OrbisVision turn 10 the real suite failed 6 of 47 beside
+  moves to the next turn; the order never changes. On product build turn 10 the real suite failed 6 of 47 beside
   the integration suite at load 26 and passed alone.
 - **A merge that changes a shared component** (a date input, a capture helper, a fixture) runs the whole browser
   mock suite, not only the specs that look near. It takes 4 min; on turn 10 the nearby check passed and the full
@@ -422,7 +422,7 @@ retire it when the fix is live.
 - **A red seen twice becomes a unit.** One flaky failure is re-run alone. The same test red twice in one run, or
   in two turns running, gets its unit: a `timing` marker if it asserts a rate or a latency, otherwise a fix.
 - **The model per unit, by weight.** The strongest model for a trace across the system or a unit that already
-  failed once; a cheaper one for scoped units (OrbisVision turn 16: Opus for the real-suite trace, Sonnet for test
+  failed once; a cheaper one for scoped units (product build turn 16: Opus for the real-suite trace, Sonnet for test
   fixes and pictures).
 - **Small items ride along.** Low-priority fixes go into the next turn that exists anyway, never a turn of their
   own.
@@ -431,8 +431,8 @@ retire it when the fix is live.
 
 **Spread the suites over every machine at hand.** One laptop running every suite is the bottleneck the
 2026-10-01 numbers show. A runner image with the laptop's toolchain, a bare mirror on each test machine and one
-container and worktree slot per suite run turns any Docker host into extra cores: OrbisVision 2.0 does this with
-`sv2-build/remote/sv2-remote` (2026-10-02). Runs use the host network and every stack picks free ports, so two
+container and worktree slot per suite run turns any Docker host into extra cores: the product build does this with
+`<build>/remote/<build>-remote` (2026-10-02). Runs use the host network and every stack picks free ports, so two
 runs coexist (a container's own network broke the mDNS tests). Push only to the test machine's own mirror, never
 to the shared remote, and make the push succeed when the ref already holds the commit (two runs of one commit
 raced on it and one died). Keep a log per run that starts with the SHA, so the master accepts from it as from the
@@ -441,15 +441,15 @@ laptop's. Then:
 - **A machine list, fastest first**, each with its cap (runs at once, CPUs, memory), and an `auto` target that
   takes the first free slot and waits when all are busy. The units' own runs and the integration runs after each
   merge go there, so the units stop competing for the laptop's CPU.
-- **The final runs start all at once** (`sv2-remote fan`): every suite on its machine, one table at the end, the
+- **The final runs start all at once** (`<build>-remote fan`): every suite on its machine, one table at the end, the
   exit status the worst run's, while the laptop keeps only what still needs it. The unit suite also runs on the
   architecture that ships (an ARM box, capped so it keeps its own work).
 - **A machine that ships to a customer, or runs production, is never a test machine** (2026-10-02: the ARM box was the
-  controller due at a customer site in a week). Its runner footprint goes before it ships.
+  controller due to ship in a week). Its runner footprint goes before it ships.
 - **Respect each machine's owner:** nice, a CPU and memory cap, never log out a desktop session, and the owner's
-  hours written in the charter (Desk1: three runs and no GPU before 14:00 on a working day, five runs and the GPU
+  hours written in the charter (e.g. a desktop: three runs and no GPU before 14:00 on a working day, five runs and the GPU
   after).
-- Measured 2026-10-02: the unit suite 10 min on the loaded laptop, 1 min 19 s on Desk1 with 16 workers; the
+- Measured 2026-10-02: the unit suite 10 min on the loaded laptop, 1 min 19 s on a 16-worker desktop; the
   browser mock suite 7.1 min against 1.9 min; six suites on three machines in 10.3 min of wall time, the ARM unit
   suite the long pole.
 
@@ -505,55 +505,55 @@ laptop's. Then:
   over a large repo takes minutes, so limit the range.
 - No `rm -rf` (use `trash` or `mktemp -d` scratch). No `pkill -f` or `pgrep -f`: they match your own shell.
   `trash` frees nothing on the same disk: on a nearly full machine a turn reuses one output folder and overwrites
-  it, instead of trashing one per run (OrbisVision 2026-10-03: about 590 MB a run went to the Trash and pushed the
+  it, instead of trashing one per run (product build 2026-10-03: about 590 MB a run went to the Trash and pushed the
   laptop under the real stack's free-space floor).
 
 ## Failures Overcome
 
-- **2026-10-12, OrbisVision 2.0.** At the wake after turn 54 the week stood at 73 %, the stop level the master had written into
-  turns 53 and 54, and the master sent no turn 55 and reported the build "paused until Monday" without asking. The principal: "What is this
-  weekly budget nonesense?" A self-chosen threshold had become an unasked pause. 10:03: two 20x seats, exhausting one is fine.
+- **2026-10-12, product build.** At the wake after turn 54 the week stood at 73 %, the stop level the master had written into
+  turns 53 and 54, and the master sent no turn 55 and reported the build "paused until Monday" without asking. The principal rejected the weekly
+  pause. A self-chosen threshold had become an unasked pause. 10:03: two 20x seats, exhausting one is fine.
   Step 2 now has no weekly stop at all; only the five-hour width and its 85 % stop remain.
 
-- **2026-10-06 21:18, OrbisVision 2.0, the principal: "Tinkerclaw seems a bit slow. Are you consuming a lot of CPU here?
-  Remember you have more machines available."** Turn 41's final suites (edge unit tests, two Playwright suites, Vitest) ran on the
+- **2026-10-06 21:18, product build: the principal noticed TinkerClaw slowing down and pointed to the other
+  machines available.** Turn 41's final suites (edge unit tests, two Playwright suites, Vitest) ran on the
   laptop at full width for 23 minutes, load about 19 on 16 cores, because the master's turn text said to use the laptop rather
   than wait more than 10 minutes for a runner. Hence the paragraph on the master's machine in Step 2.
 
 - **2026-10-06, Broca retrieval v2.** Seven phases, every test green, merged and deployed, and no step ever started
-  it the way a clone would: no Jev key. The principal: "How do we ship the jev-dependant capabilities? Did you think
-  about it?" Step 4 now runs the build once keyless and once with a key.
+  it the way a clone would: no Jev key. The principal asked how the Jev-dependent capabilities ship to a clone.
+  Step 4 now runs the build once keyless and once with a key.
 
-- **2026-10-05 23:31, OrbisVision 2.0.** Turn 36's file said "report by 00:29; hard stop 00:59", four and a half hours
+- **2026-10-05 23:31, product build.** Turn 36's file said "report by 00:29; hard stop 00:59", four and a half hours
   after its 20:29 send. The gateway cut it at three hours, mid-unit, with no status file, and the morning wake had to
   reconstruct the turn from its reports and branches. The run-limit rule was already in Step 3 as advice ("plan turns
   to end well inside it") and turn 35 had also set a hard stop past it. Now the deadline is a computed clock time and
   the send script refuses a turn whose hard stop is past 2 h 50.
 
-- 2026-10-06 (Broca retrieval v2): phases A+B were sent with no `gantt.json`, because Step 2's "draw the Gantt" reads as an update and Step 0 never created the plan. the architect, 06:10: "I don't see any long job progress bar nor a progress indicator." Step 0 now requires the plan and one render before the first send.
+- 2026-10-06 (Broca retrieval v2): phases A+B were sent with no `gantt.json`, because Step 2's "draw the Gantt" reads as an update and Step 0 never created the plan. No long-job progress bar or progress indicator showed. Step 0 now requires the plan and one render before the first send.
 
-- **2026-10-05 20:31, OrbisVision 2.0, the principal: "No need to show me the gantt here, it should be
-  automatically updating the real one, right?"** Step 2 still pasted the chart block into every send's reply,
+- **2026-10-05: the Gantt need not be pasted in the reply; the real one should update by
+  itself.** Step 2 still pasted the chart block into every send's reply,
   written before the Gantt tab existed. And the tab was only half live: it redrew from the workflow ids the master
   writes in at its wakes, so turn 36's units were missing from it while they ran. In Tinker the tab is now the
   chart and the reply carries no block; the plan's `worker_prompt_has` lets the tab pick up the worker's
   workflows by itself (skill `build-gantt`).
 
-- **2026-10-03 21:02, OrbisVision 2.0.** Turn 29's worker died mid-unit with Claude's weekly limit ("You've hit your
+- **2026-10-03 21:02, product build.** Turn 29's worker died mid-unit with Claude's weekly limit ("You've hit your
   weekly limit · resets Oct 8, 6pm"). The gateway then started four more Claude workers on the same session, all
   hitting the same wall. A provider quota is a killed turn, not a reason to wait until the reset date. Step 3 now:
   stop the twins, pin the worker session to another family (`sessions.patch` `{key, model}`), keep any uncommitted
   worktree, and send a continuation that forbids a Workflow of the exhausted provider. The 19:07 "do not stop"
   rule covers quota the same way it covers a dark machine. **Superseded 2026-10-05, next entry.**
 
-- **2026-10-05, OrbisVision 2.0, the principal: "Stop the process for now, until we have claude tokens ready, I
-  don't trust the other models as much."** The 21:02 rule moved the worker to GPT-5.6-Sol while a Grok master
-  reviewed it, and four turns (29b to 32) of research were built and accepted outside Claude, though at 21:20 he had
-  said the build was running on extra usage. A quota now pauses the loop; switching family needs his say-so; the
+- **2026-10-05, product build: the principal stopped the loop until the build's own provider had quota again,
+  trusting the other model families less for this work.** The 21:02 rule moved the worker to GPT-5.6-Sol while a Grok master
+  reviewed it, and four turns (29b to 32) of research were built and accepted outside Claude, though at 21:20 the build was
+  known to be running on extra usage. A quota now pauses the loop; switching family needs his say-so; the
   first turn after the pause has the build's own provider re-check the other models' work (turn 34, unit RC1).
 
-- **2026-10-03 19:07, OrbisVision 2.0, the principal: "Why did you stop? The whole goal of a long-running task is
-  to not stop for anything."** Turn 26 had finished and Desk1 was off the network, so the 15:48 review followed the
+- **2026-10-03, the principal objected to the loop stopping: a long-running task should not stop.** Turn 26 had
+  finished and a machine was off the network, so the 15:48 review followed the
   old line ("when every phase left waits on the principal, send no turn and end"), stopped the worker and told him
   the build was paused. He had asked for a loop that keeps working. Step 2 now sends the next unit whose inputs
   exist anyway, and a phase that cannot start is listed, not used as a reason to stop. The loop ends only when he
@@ -573,17 +573,16 @@ laptop's. Then:
   gateway retried the prompt on a fresh bridge session, and the first CLI kept working (bug-log, same date). The
   30 s count caught it. The survivor found the stopped twin's two empty worktrees and was about to stand down for
   them. Hence the real-twin steps in Step 2.
-- 2026-10-01 07:52, the principal: "In every phase of the coding, report the progress in this chat before
-  sending work to your slave. The report cannot be just a progress bar, it has to have phases, in different
-  colors if possible, like a gantt, where one can understand the parallelism, the complexity of tasks by their
-  length and the different phases." Until then the master reported in prose plus a longjob bar, and the
+- 2026-10-01 07:52, the principal asked for a progress report in the master chat before every send: not a bare
+  progress bar but phases, in colours, Gantt-style, showing parallelism, task length and the phase structure.
+  Until then the master reported in prose plus a longjob bar, and the
   parallelism of ten units lived only in the workflow journals. Hence the Gantt before every send and skill
   `build-gantt`.
-- 2026-10-01 08:09: the count after the Phase C send read 2. The extra process was the principal's own
-  "keep going" in the worker tab at 07:38: finished at 08:07 (a fix merged into another repo's develop), its
+- 2026-10-01 08:09: the count after the Phase C send read 2. The extra process was a continuation prompt the
+  principal had typed in the worker tab at 07:38: finished at 08:07 (a fix merged into another repo's develop), its
   gateway gone after a 07:58 restart, still alive. One prompt copy proved no twin. Hence the count before the
   send and the finished-leftover case in Step 2.
-- 2026-10-01 08:18, the principal: "Are you sure you are doing things in parallel as much as possible?" Inside a
+- 2026-10-01 08:18, the principal questioned whether the work was as parallel as it could be. Inside a
   phase, yes: ten units started together. But phases ran one after another although D's screens needed only
   Phase B, the master's 25-minute re-run ran its five suites one by one, unit tests used one core, and the
   worker sat idle for 38 minutes while the master reviewed. Widening turn 05 to 14 units (C, D's screens, the
@@ -625,23 +624,23 @@ laptop's. Then:
   gateway's worker dir; the other was the fresh worker. One prompt copy, no forked chain: no twin. Step 2 now says
   how to tell them apart.
 
-- 2026-09-30 23:31, OrbisVision 2.0 build, Phase A: the worker's status file listed five "decisions that are
-  the architect's" (recorder capture time, Docker for tests, session length, a column name, migrations in the binary).
-  All five were technical; the architect had said of the sync problem "I leave it to you to solve however you see fit".
+- 2026-09-30 23:31, product build, Phase A: the worker's status file listed five decisions it reserved
+  for the owner (recorder capture time, Docker for tests, session length, a column name, migrations in the binary).
+  All five were technical; the principal had already left the sync problem to the master's judgement.
   The master decided them in the charter. Step 0 now splits the reporting contract into principal decisions
   and technical choices for the master.
 
-- 2026-10-01 11:05, OrbisVision 2.0 build, review of turn 05: the mock run's `admin-logic.png` and
+- 2026-10-01 11:05, product build, review of turn 05: the mock run's `admin-logic.png` and
   `admin-floor.png` showed "Loading…" and "Connecting…", an empty frame, while every spec around them was
   green. Phase H builds the user manual from these captures. Step 3 now checks screenshots for the loaded state.
 
-- 2026-10-01 13:55, OrbisVision 2.0 build, review of turn 06: the 27 screen pictures were gone. The capture
+- 2026-10-01 13:55, product build, review of turn 06: the 27 screen pictures were gone. The capture
   helper wrote them inside Playwright's `outputDir`, which the next run emptied, so the master could look at none.
   The second loss of this kind in one day: at 06:35 a reboot wiped `/tmp` and the reports with it. Hence the
   constraint on where evidence lives. The same review found the worker's transcript at 8.7 MB, past the resume
   limit; turn 07 was written for a fresh session and started in a new transcript. Hence the size check in Step 2.
 
-- 2026-10-01 13:59, OrbisVision 2.0 build, turn 07: the worker, a fresh session, launched six units as a
+- 2026-10-01 13:59, product build, turn 07: the worker, a fresh session, launched six units as a
   background Workflow and ended its turn to wait for a Monitor. Step 3.0 said re-arm and send nothing, but
   Monitor events to an idle worker are lost here, so the loop would have stalled until the watcher's 4 h timeout.
   The master sent a "wait in the turn" continuation. The resume printed an early empty result, the gateway retried
@@ -649,15 +648,15 @@ laptop's. Then:
   an untracked twin. The twin was stopped before it changed anything (bug-log `event-ordering+cleanup-race`, fixed
   the same day in worker.ts). Hence the exception in Step 3.0 and the charter rule.
 
-- 2026-10-01 18:54, OrbisVision 2.0 build, master re-run of Phases C and D in its own worktree: the worktree's
+- 2026-10-01 18:54, product build, master re-run of Phases C and D in its own worktree: the worktree's
   `ui/node_modules` was a symlink to the worker's checkout, and the Makefile's `ui-deps` ran `pnpm install`. pnpm
   tried to remove that modules folder and stopped only because the job had no TTY
   (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`); with `CI=true` it would not have asked. Nothing was lost; the
   worktree now installs its own from the store in 1 s. Hence Step 1's install rule.
 
-- 2026-10-01 19:50, OrbisVision 2.0 build, the principal's review of the first 20 hours: "In my estimate the same
-  build could finish in roughly half the wall-clock time, using far fewer tokens and much less CPU. The model
-  isn't the bottleneck." Building units took 51 %, end-of-turn integration and final runs 27 % (each red result
+- 2026-10-01 19:50, product build, the principal's review of the first 20 hours: the
+  same build could take about half the wall-clock time with far fewer tokens and less CPU, and the model was not
+  the bottleneck. Building units took 51 %, end-of-turn integration and final runs 27 % (each red result
   cost a whole extra turn), incidents 11 %, setup and review 11 %; Phase C was planned at 3.5 h and passed 10 h.
   Only `make test` ran parallel; the charter allowed "two heavy suites", which used 1.4 of 16 cores; the master
   re-ran all five suites at every acceptance on the tip the worker had just run; the worker spent 768 min in 167
@@ -665,21 +664,20 @@ laptop's. Then:
   fresh session and core budget in Step 2, the wait rule in Step 3.0, evidence reuse in Step 3.1, and the
   integrate-after-merge, re-run-only-failures, lock-per-turn and platform-tab constraints.
 
-- **2026-10-02, OrbisVision 2.0: the master slept while the worker worked.** After each send the master ended
+- **2026-10-02, product build: the master slept while the worker worked.** After each send the master ended
   its turn and stayed idle for two to three hours, while the laptop ran every suite alone and three other
-  machines sat unused. The principal: "while you are waiting for a response from your slave, you can engineer
-  optimizations, shuffle workloads and stuff, so instead of sending him the instructions and going to sleep,
-  you can work in parallel, knowing that your slave will take a few hours to respond." Step 2 now gives the
+  machines sat unused. The principal asked the master to use the hours a worker turn takes for optimizations
+  and rebalancing workloads instead of going idle after each send. Step 2 now gives the
   master a parallel track with three limits, and Speed tactics adds remote runners.
 
-- **2026-10-02, OrbisVision 2.0: five typed clock times in one day, all ahead of the clock.** Block headers and
+- **2026-10-02, product build: five typed clock times in one day, all ahead of the clock.** Block headers and
   review lines read 09:55, 11:45, 12:15, 12:40 and 12:45 when the shell said 09:51, 11:40, 12:12, 12:34 and 12:35.
   Three of them had already been sent to the worker as block names, so they had to stay wrong. A memory rule
   ("a time comes from date, never typed", 2026-09-28) existed and did not bind. Now a Constraint: the time comes
   from `date` inside the writing command.
 
-- **2026-10-02 14:54, OrbisVision 2.0, the principal: "Make sure all our speed optimizations are in the
-  recipe."** The build's speed rules had gone into its charter (§4b) turn by turn, and only some reached this
+- **2026-10-02 14:54, product build, the principal asked that every speed optimization reach the
+  recipe.** The build's speed rules had gone into its charter (§4b) turn by turn, and only some reached this
   recipe. Checking the charter against it found ten missing: the suite order, the full mock run after a
   shared-component merge, a red seen twice becoming a unit, the model per unit, small items riding along, what
   comes first when a turn runs short, tests that own their disk, ports and fonts, the machine list with `auto`,
@@ -687,27 +685,26 @@ laptop's. Then:
   network. Speed tactics now holds all of them, with measured numbers in place of the targets. A speed rule
   decided in a charter goes into this recipe in the same review.
 
-- **2026-10-02 22:26, OrbisVision 2.0, the principal: "I see you are planning to merge the present branch into main,
-  don't. I would rather wait for what Alex pushes next week, and would like to have a stable shinobi to install in
-  the customer install on Friday 9th, something we can trust."** The charter, copied from Step 0, ended in "merge into
-  `vms-main` after the master's go", and planned the field test on Fore2, the controller due at the customer that
-  Friday, which also served as the ARM test runner. The product's maintainer had not trusted the rewrite yet, and he is
-  the one who ships it. Step 0 and Step 5 now make the merge into someone else's product branch the principal's go,
+- **2026-10-02 22:26, product build: the principal stopped a planned merge into the product's main branch,
+  because another person ships from it and a stable build was due for a field install.** The charter,
+  copied from Step 0, ended in "merge into the main branch after the master's go", and planned the field test on a
+  machine due to ship that week, which also served as the ARM test runner. The person who ships the product had
+  not accepted the rewrite yet. Step 0 and Step 5 now make the merge into someone else's product branch the principal's go,
   and Speed tactics keeps shipping machines out of the runner pool.
 
-- **2026-10-02 22:43, OrbisVision 2.0 turn 19.** The worker stopped at its 2 h 30 min point, wrote a progress file,
+- **2026-10-02 22:43, product build turn 19.** The worker stopped at its 2 h 30 min point, wrote a progress file,
   removed PF1's worktree and wrote that PF1's fix stage was "left to die with the turn". It did not die: at the
   wake it was still running a real walkthrough suite on the laptop (an e2e stack, two fake cameras, Chrome) from the
-  removed `/tmp/sv2-pf1`, which would have collided with the next turn's real suite. Step 3 now has the worker stop
+  removed `/tmp/<build>-pf1`, which would have collided with the next turn's real suite. Step 3 now has the worker stop
   its Workflow before the progress file, and the master check the pids after the send.
 
-- **2026-10-07 13:40, OrbisVision 2.0, the principal: "What is the certificate warning you mention?"** Four wake replies
+- **2026-10-07 13:40, product build: the principal had to ask what "the certificate warning" was.** Four wake replies
   (turns 45 to 47) reported "the certificate warning" as built, failed or open for his call, and none said what it was: a
-  notice on ORBIS's platform panel that a site controller's 90-day client certificate ends within 14 days, in a phase
+  platform-panel notice that a site controller's 90-day client certificate ends within 14 days, in a phase
   that runs nowhere yet. The worker's status files use the build's own words, and the master copied them. Step 2 now
   glosses any feature the principal did not name himself the first time a reply mentions it.
 
-- **2026-10-09 18:47, OrbisVision 2.0.** Turn 48 went out at five units with the five-hour window at 34 %; 38 minutes
+- **2026-10-09 18:47, product build.** Turn 48 went out at five units with the five-hour window at 34 %; 38 minutes
   later it read 67 %, on course to run out at about 19:25, an hour before its reset. The master held the worker at
   18:52 (units not started answer "usage hold", running ones commit and stop), and the window still ran out at 19:26
   with a deploy restart burning beside the units; the principal's own chat got the rate-limited card at 19:37. The

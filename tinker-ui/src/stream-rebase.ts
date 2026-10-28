@@ -2,8 +2,8 @@
 // of stream-reslice.ts, so the law below is unit-testable in isolation and app.ts only APPLIES the
 // result.
 //
-// THE BUG THIS EXISTS TO KILL. the architect: "Jarvis just handed me a duplicated answer again. If I
-// refresh it goes away." That last sentence is the whole diagnosis — chat.history holds ONE copy,
+// THE BUG THIS EXISTS TO KILL. An answer showed up duplicated, and a page refresh made the copy
+// go away. That refresh detail is the whole diagnosis — chat.history holds ONE copy,
 // so the second copy exists only in the live DOM.
 //
 // The chat delta payload carries the SERVER-CUMULATIVE assistant buffer, and each streaming bubble

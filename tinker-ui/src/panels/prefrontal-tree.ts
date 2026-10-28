@@ -918,8 +918,8 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     glyph.style.color = node.status === "failed" ? "#f85149" : color;
     row.appendChild(glyph);
 
-    // Logo — FORK 2026-08-06: resolve by MODEL id first (the architect: "inside recipes
-    // the logo of the model does not update correctly"). getProviderLogoSvg
+    // Logo — FORK 2026-08-06: resolve by MODEL id first (bug: inside recipes
+    // the model logo did not update). getProviderLogoSvg
     // defaults to the Anthropic sparkle, so an openrouter vendor run showed a
     // Claude sparkle next to a Qwen model. The vendor mark wins when the model
     // id carries one; the provider logo stays the fallback for everything else.

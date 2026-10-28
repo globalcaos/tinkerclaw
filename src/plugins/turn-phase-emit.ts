@@ -3,9 +3,8 @@ import { recordHookSpan } from "../infra/events/turn-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
 /**
- * FORK 2026-08-15 (the architect: "leave messages in the chat after each phase finishes with the amount
- * of time it took, so we have a measurable way to see how much time we are investing in each
- * phase").
+ * FORK 2026-08-15: after each phase, a chat message with the time it took, so the time spent per
+ * phase can be measured.
  *
  * WHY THIS LIVES IN THE HOOK RUNNER AND NOT IN THE PLUGINS.
  *

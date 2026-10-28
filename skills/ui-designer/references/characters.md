@@ -52,6 +52,6 @@ lockups with the wordmark. Generator: a private Python generator (one body, four
 Failures overcome:
 
 - 2026-10-09, ORBIS cabinet-front robot: six referee options at 1536x1024 with three cropped
-  bodies. The owner: "I want a full body image. The image needs to be vertical, not horizontal."
+  bodies. The request was a full-body image in portrait orientation, not landscape.
   The next round asked for a "BIG, oversized" whistle and got a normal one; the size anchor grew it
   1.2 to 3.2 times on four of five poses.

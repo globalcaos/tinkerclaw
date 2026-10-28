@@ -17,8 +17,8 @@
 // This matches the Anthropic/Claude-Code stream shape: the answer is the text after the last
 // tool_result, narration is the text between tools.
 
-// FORK 2026-08-15 (the architect: "The turns now end up in a 'Reflection artifact verified' extra thinking
-// … I have to expand the thinking to see the answer") — THE ASSUMPTION ABOVE EXPIRED.
+// FORK 2026-08-15 (bug: turns ended in an extra 'Reflection artifact verified' thinking block,
+// and the answer was only visible after expanding it) — THE ASSUMPTION ABOVE EXPIRED.
 //
 // "The answer is the text after the last tool_result" held while every tool call in a run belonged
 // to the main turn's work. It no longer does. The 🌿 FRACTAL section became TOOL-BACKED: the
@@ -37,8 +37,8 @@
 //     file rendered "Thinking: ACK …", the one whose reflection was clean rendered "ACK".)
 //
 // FIRST FIX (superseded, same day): detect the reflection by its 🌿 marker and stop counting tools
-// past the last answer bubble ONLY in a run that carries one. the architect, hours later: "Some chats still
-// show a short final message as the final answer and collapses the rest."
+// past the last answer bubble ONLY in a run that carries one. Hours later, the same
+// bug again: some chats still showed a short final message as the answer and collapsed the rest.
 //
 // It was racy by construction, and the race is in the FREEZE. app.ts stamps `_narration` at the
 // first repaint where the run has no `_temporary` members left — which is main-turn end, BEFORE the
@@ -46,7 +46,7 @@
 // no boundary message to look at, no 🌿 marker anywhere, and the answer is stamped as narration and
 // FROZEN. The reflection arrives a moment later and reads an already-set stamp. Reload re-derives it
 // correctly (`_narration` is not a CLIENT_ONLY_FLAG, so it does not survive `loadChat`) — which is
-// why a fresh-load scan showed nothing and the tab the architect watched live showed the bug. "Some chats."
+// why a fresh-load scan showed nothing and a tab watched live showed the bug, in some chats only.
 //
 // So: DO NOT ASK WHETHER A REFLECTION IS THERE. Tools that fire after the last answer bubble never
 // demote it, full stop. No marker, no lookahead, nothing that can be absent at freeze time.
@@ -58,8 +58,8 @@
 // never desirable; it is the same pathology, seen from the other side. Every pre-existing case is
 // unchanged, guarded by test.
 //
-// THE KNOWN LIMIT ABOVE WAS NOT A CORNER — IT WAS THE COMMON CASE. the architect again: "Some chats still
-// show a short final message as the final answer and collapses the rest."
+// THE KNOWN LIMIT ABOVE WAS NOT A CORNER — IT WAS THE COMMON CASE. The same report again:
+// some chats still showed a short final message as the answer and collapsed the rest.
 //
 // Replaying this classifier over the 45 most recently active sessions found it repeatedly. One run,
 // measured end to end (`agent:main:tinker:msuxhsfq`, messages 173-176):

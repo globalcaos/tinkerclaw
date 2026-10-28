@@ -1,8 +1,7 @@
 /**
  * FORK 2026-10-09 — a background Fractal run starts as a COPY of the conversation it reflects on.
  *
- * The owner: "We need a fractal turn that works on the background without making me wait for its
- * response." Since 2026-10-08 the Tinker page sent the Fractal turn into the SAME session as the
+ * The need: a Fractal turn that runs in the background and never makes the owner wait for it. Since 2026-10-08 the Tinker page sent the Fractal turn into the SAME session as the
  * prompt it reflects on, so the chat stayed busy for the whole reflection and his next prompt waited
  * behind it. The page now sends it into a session of its own (`agent:<id>:fractal:<P>`), which runs
  * beside the chat instead of after it.

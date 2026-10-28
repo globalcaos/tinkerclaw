@@ -1,6 +1,6 @@
 /**
- * FORK 2026-10-02 (the owner: "Fix the moral code to be injected, in full, at the creation and after
- * compaction"). The claude CLI replaces any hook additionalContext over 10,000 chars with a ~2,000-char
+ * FORK 2026-10-02: inject the moral code in full at session creation and after compaction.
+ * The claude CLI replaces any hook additionalContext over 10,000 chars with a ~2,000-char
  * preview plus a file path (CLI 2.1.287: `L3o=1e4`, applied to EACH hook's additionalContext). The
  * 40k pack therefore reached the model as a preview. The tinkerclaw-core SessionStart hook now
  * delivers it as N complete parts, one hook slot each, every part under the cap.

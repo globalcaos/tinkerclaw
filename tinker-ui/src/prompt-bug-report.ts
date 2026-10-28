@@ -1,8 +1,6 @@
-// FORK 2026-09-26 (the architect: "my prompt already went through, and yet I see another prompt with the
-// same text with an orange outline with 'not in history' and a resend-dismiss button ... add a bug
-// icon button, which should log that this particular prompt feature did not work correctly. It
-// should be logging whatever we need to, in addition to our forensic dumps, to be able to find the
-// bug").
+// FORK 2026-09-26: a prompt that already went through could still show a twin with an orange
+// 'not in history' outline and a resend-dismiss button. A bug icon button now logs that the
+// prompt feature misfired, with whatever is needed beyond the forensic dumps to find the bug.
 //
 // The 🐛 on a LOST prompt (prompt-state.ts action `report-bug`) calls app.ts `reportPromptBug`,
 // which gathers plain data and hands it to `buildPromptBugReport`. The report holds every fact the

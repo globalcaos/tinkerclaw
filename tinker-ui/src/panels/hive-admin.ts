@@ -1,6 +1,6 @@
-// FORK 2026-10-06 (the user: "Admin should have a specific panel at the right panel at the bottom, to
-// create a new token for a new user, to revoke those tokens, regenerate them or simply delete the
-// user's access. No user data is ever removed when a user is deleted.")
+// FORK 2026-10-06 (requirement: an admin panel at the bottom of the right rail to create a token for
+// a new user, revoke or regenerate tokens, or delete a user's access; deleting a user never removes
+// their data.)
 //
 // The USERS panel talks to the hive door's admin API (scripts/hive-door/door.mjs, /tinker/door/api/*).
 // It only exists in multi-user mode: without the door, `fetchHiveMe` answers null and the panel stays
@@ -185,8 +185,8 @@ export function hiveWhoAmIHtml(me: HiveMe): string {
   return `Signed in as <b>${esc(me.displayName)}</b>${me.admin ? ' <span class="hive-chip hive-chip--admin">admin</span>' : ""} · <a class="hive-signout" href="/tinker/logout" data-hint="Sign out, then log in with another person's token">Sign out</a>`;
 }
 
-// FORK 2026-10-07 (the user: "build an extra left-panel tab under recipes called users, where I can
-// do all the user operations"). Same people list and actions as the right-rail panel, full width.
+// FORK 2026-10-07 (requirement: a "users" tab in the left panel, under recipes, with every user
+// operation). Same people list and actions as the right-rail panel, full width.
 // Everyone gets the "signed in as" line and Sign out: the user had logged in with a token that had
 // become someone else's and nothing on the page said so.
 export function renderHiveUsersTab(body: HTMLElement, sub: HTMLElement, me: HiveMe) {

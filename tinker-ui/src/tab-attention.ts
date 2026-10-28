@@ -1,5 +1,5 @@
-// FORK 2026-10-27 (the architect: "When it finishes any turn, the tab should remain on a state that lets me
-// think that there is an unread result, which should disappear when I click on the tab to read it").
+// FORK 2026-10-27: a finished turn leaves its tab marked as holding an unread result, cleared when
+// the tab is opened.
 //
 // UNREAD, per chat session, from two stamps:
 //   final — when the session last finished a turn. The SERVER's `endedAt` on the session row (every

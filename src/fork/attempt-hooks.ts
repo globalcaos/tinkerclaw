@@ -234,7 +234,7 @@ export function getAmygdalaNudge(): string[] | undefined {
  * (one-line touch — the merge guardian wiring check enforces the call
  * survives upstream merges).
  *
- * FORK 2026-07-30 (the architect: "Grok is firing without stop") — the run.ts call site
+ * FORK 2026-07-30 (bug: Grok kept firing without stop) — the run.ts call site
  * only covers `stage:"prompt"`. A `stage:"assistant"` surface_error (an xAI
  * stream that dies mid-turn) throws from `handleAssistantFailover` and never
  * passed through here, so `status:"running"` survived on disk and the Tinker UI
@@ -1670,7 +1670,7 @@ export async function amygdalaShadowLog(params: {
 }
 
 // ---------------------------------------------------------------------------------------------
-// FORK 2026-10-23 — junk-first eviction (the architect 19:59: "Turn on the junk first eviction").
+// FORK 2026-10-23 — junk-first eviction (switched on 2026-10-23).
 // The engine in memory/engram/pointer-compaction.ts ranks tool output first, but nothing called it
 // since the runner was renamed, and its rebuild of the message list from events dropped the
 // toolCallId pairing the provider APIs require. This pass keeps every message and every pairing:

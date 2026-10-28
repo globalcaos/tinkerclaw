@@ -1,9 +1,8 @@
 /**
  * What thinking efforts does the OFFICIAL provider actually expose for a model?
  *
- * FORK 2026-08-25 (the architect: "Make the official provider determine the different
- * thinking efforts, and be very careful not to hallucinate how smart any of the
- * models at any of the thinking efforts are").
+ * FORK 2026-08-25: the official provider defines the thinking effort levels; never
+ * invent how capable a model is at any effort.
  *
  * WHY THIS FILE EXISTS. The smartness×cost chart used to draw every model as a
  * six-bubble constellation — minimal · low · medium · high · xhigh · max — with

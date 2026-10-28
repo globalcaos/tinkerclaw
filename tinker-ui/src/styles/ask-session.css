@@ -1,5 +1,5 @@
-/* The ask-session card (FORK 2026-10-21, the architect: "a purple box, following our theme a bit … all still with the purpled
-   theme"). An agent woke a past Claude Code session and asked it one question: the card says which session, what was
+/* The ask-session card (FORK 2026-10-21: a purple box in the theme, purple all the way through when opened).
+   An agent woke a past Claude Code session and asked it one question: the card says which session, what was
    asked and what it answered; opened, it holds that session's own thinking and tool calls. The purple is --purple, the
    Jarvis voice line's colour; the frame is the woody surface the feed already uses, so the card reads on the dark and
    the cream theme alike through --text/--muted/--surface. Tool rows inside keep the feed's .tool-row/.tool-detail

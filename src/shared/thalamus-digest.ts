@@ -130,7 +130,7 @@ export function rawResultName(text: string): string {
   return `res-${fnv1a(text)}-${text.length.toString(36)}`;
 }
 
-/** What the reader is told. The brief is the thread's aim in the user's own words, never the whole thread. */
+/** What the reader is told. The brief is the thread's aim as the user stated it, never the whole thread. */
 export function digestBrief(p: { aim: string; toolName: string; digestTokens: number }): string {
   const aim = p.aim.replace(/\s+/g, " ").trim().slice(0, 600);
   return [

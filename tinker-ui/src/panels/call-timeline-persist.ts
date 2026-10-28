@@ -2,8 +2,8 @@
  * The CALL TIMELINE's last run per session, kept across a page reload (TINKER_UI_DESIGN_BIBLE/
  * context-window-panel.md §5.3, "the last run on screen").
  *
- * FORK 2026-10-02 (the owner: "The CALL TIMELINE panel sometimes stays empty, it should always show
- * the last run instead"). CallTimelineStore lives in the page, and nothing on the gateway keeps a
+ * FORK 2026-10-02: the CALL TIMELINE panel sometimes stayed empty; it always shows the last run.
+ * CallTimelineStore lives in the page, and nothing on the gateway keeps a
  * per-call record with first-token times, so a reload (every rebuild pushes one) left the store with
  * history rows only, which are not drawn: the panel sat empty until the next prompt. Each session's
  * newest finished run is written here as a RunSnapshot and put back into the fresh store.

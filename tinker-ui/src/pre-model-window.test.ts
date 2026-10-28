@@ -110,7 +110,7 @@ describe("it must never latch — every failure mode degrades to the glow STOPPI
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FORK 2026-09-03 (the architect: "the work tab is preparing context forever").
+// FORK 2026-09-03: a tab stayed in "preparing context" forever.
 //
 // The VIEWED tab's twin of this window (`preparingSince` in app.ts) had no terminal-event
 // terminator. It was cleared on disconnect, on the next send, and on send failure — never
@@ -221,8 +221,8 @@ describe("a terminal chat event closes the VIEWED pre-model window", () => {
 
 // ─── FORK 2026-09-04: the viewed lane's time bound ───────────────────────────
 //
-// The reported bug: "a few tabs like the amygdala get stuck 'preparing context' and never do
-// anything." `sending` is persisted per tab and read by shouldQueue(), and it was the one lane in
+// The reported bug: some tabs (the amygdala one among them) sat on "preparing context" and never
+// did anything. `sending` is persisted per tab and read by shouldQueue(), and it was the one lane in
 // this area with no bound — so a turn that ended without a terminal event for its tab parked every
 // later prompt typed into that tab for the life of the page.
 describe("sendingLatchIsLive", () => {

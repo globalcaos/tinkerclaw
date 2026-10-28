@@ -163,8 +163,8 @@ export function getWorkerProvider(): WorkerProvider | undefined {
 // FAIL OPEN. A resolver that throws, or returns a model that is not a non-empty string, is ignored for that unit.
 
 /**
- * FORK 2026-10-03 — which choice point is asking. the architect: "Make sure Thalamus is owner of all those model choices when it
- * is working." Every site is priced the same way (a fresh point); the site only decides which enforce flag lets the
+ * FORK 2026-10-03 — which choice point is asking. Thalamus owns all those model choices while it
+ * is working. Every site is priced the same way (a fresh point); the site only decides which enforce flag lets the
  * answer through, and it goes into the record. `orchestrate-auto` is a script's own `model: "auto"`; the others are
  * places that used to name a fixed model and keep it as their fallback when no answer comes back: a leaf with no model,
  * a sub-agent spawned with no model, and the Claude roles of a round-table debate.

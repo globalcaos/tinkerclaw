@@ -73,7 +73,7 @@ describe("explainBurn — mirrors effort-allocator deriveQuotaPressure", () => {
 });
 
 describe("MODEL section — the choice, not the rule", () => {
-  it("a fixed model is stated and nothing more (the architect: no unnecessary words)", () => {
+  it("a fixed model is stated and nothing more (no unnecessary words)", () => {
     expect(modelLine(base)).toBe("Fixed to <b>Opus 5</b>.");
   });
 
@@ -250,7 +250,7 @@ describe("FAN-OUT section", () => {
       { unit: "c", task: "the README", mode: "solo", model: "Fable 5" },
     ];
     const html = fanOutLine({ ...base, routes });
-    // ONE LINE, always (the architect 2026-07-29: "Fan-out should only be one line") — the same
+    // ONE LINE, always (2026-07-29: fan-out takes a single line) — the same
     // complaint as the "kilometer long" regression below, one level up: a <ul> of <li>s grew
     // the card with the fan-out. Detail moves to a hover title, never to extra lines.
     expect(html).toContain("<b>3 jobs</b> this turn");
@@ -279,7 +279,7 @@ describe("FAN-OUT section", () => {
     expect(html).not.toContain("this turn");
   });
 
-  // REGRESSION 2026-07-27 (the architect: "the orca panel is like a kilometer long"): the Conductor
+  // REGRESSION 2026-07-27 (the ORCA panel had grown far too long): the Conductor
   // writes each unit's FULL prompt into `task`, so the card was printing thousands of chars
   // per job. A job line is one line — never the prompt.
   it("names a prompt-sized job by its unit id, not the prompt", () => {

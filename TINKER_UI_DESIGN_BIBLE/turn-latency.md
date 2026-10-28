@@ -576,9 +576,8 @@ counter. It is the largest single number in the table and it is **not** understo
 
 ### 7.11 Two ways a row that WAS measured never reaches the screen
 
-Both reported by the architect on 2026-08-24: _"One with a fresh window only shows 'sending',
-nothing else. The other in the NeuroCoin shows more stuff, but 'Total Recall' is still not
-itemized."_ Neither was a measurement failure — both were delivery failures, and they are worth
+Both reported on 2026-08-24: a fresh window showed only 'sending', and an older session showed
+more stages but still did not itemize Total Recall. Neither was a measurement failure — both were delivery failures, and they are worth
 recording because the debugging went wrong the same way twice.
 
 **One session, two spellings of its key.** A new tab mints `tinker:<ts>` and sends under it; the
@@ -612,8 +611,7 @@ diagnosis gets written down with confidence.
 
 ## 8. The 1s rule, and the two aggregates it immediately killed (2026-08-24)
 
-**The rule (the architect):** _"If a task is in average more than 1 second it should be decomposed
-further."_ Encoded in `tinker-ui/src/phase-group.ts` as `needsDecomposition`, so a childless row
+**The rule:** a stage that averages more than 1 second is decomposed further. Encoded in `tinker-ui/src/phase-group.ts` as `needsDecomposition`, so a childless row
 over 1s MARKS ITSELF in the timing block rather than waiting for someone to notice.
 
 **Which units tripped it.** Fourteen days of gateway journal, `[turn-span]` + `[hook-span]`:

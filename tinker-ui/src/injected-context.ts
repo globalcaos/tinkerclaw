@@ -1,8 +1,7 @@
 // Pure, DOM-free: USER-ROLE ROWS THE HUMAN DID NOT WRITE.
 //
-// FORK 2026-09-23 (the architect: "In the work tab, I see an injection of the ethical rules
-// as if it was my prompt … I have been seeing these long 'quasi prompts' and sometimes it is a
-// recipe, sometimes something else").
+// FORK 2026-09-23: injected context (the ethical rules, a recipe, other blocks) was drawn as long
+// pseudo-prompts, as if the user had typed it.
 //
 // The model's input is a list of user/assistant turns, so everything the SYSTEM tells the model —
 // the moral code a resumed Claude session receives, the summary that replaces a compacted

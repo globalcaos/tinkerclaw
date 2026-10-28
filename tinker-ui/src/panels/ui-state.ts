@@ -27,8 +27,7 @@
 // and reshaping a live key in place buys nothing but risk.
 //
 // ── THE FOURTH KEY IS NOT A MAP ────────────────────────────────────────────────────
-// FORK 2026-08-16 (the user: "when I close the browser and restart it, the tinker ui tabs
-// that I had opened are not anymore"). `tinker-tabs` — the OPEN TAB LIST, owned and
+// FORK 2026-08-16: after a browser restart the open Tinker tabs were gone. `tinker-tabs` — the OPEN TAB LIST, owned and
 // shaped by app.ts — joined the durable snapshot. Until then the durable layer carried
 // `tab:active` (WHICH tab had focus) but never the tabs themselves, so on the cold start
 // that wipes localStorage the UI restored a pointer to a tab list that no longer existed
@@ -252,8 +251,8 @@ export function writeTabList(tabs: TabRecord[], store: Storage = globalThis.loca
 }
 
 // --- closed-tab tombstones --------------------------------------------------
-// FORK 2026-09-21 (the architect: "When I do ctrl+shift+R the tinker ui shows tabs I had deleted …
-// whatever is closed or deleted stays that way"). Closing a tab used to be recorded ONLY as
+// FORK 2026-09-21: a hard reload brought back deleted tabs; whatever is closed or deleted
+// must stay that way. Closing a tab used to be recorded ONLY as
 // its absence from a list, and absence meant "no information" to every other layer: the boot
 // hydrate let the file's list overwrite the cache, the re-hydrate merge re-added "file-only"
 // tabs on purpose, the server kept whichever list was POSTed last, and a mirror still in its
@@ -669,8 +668,8 @@ export function migrateLegacyUiState(store: Storage = globalThis.localStorage): 
 
 /** Dev-server endpoint owning the durable copy: GET returns the snapshot, POST replaces it. */
 export const UI_STATE_ENDPOINT = "/api/ui-state";
-// FORK 2026-10-06 (the user: "each user needs to have his own tabs, and have them reopen on reconnect
-// exactly as they were"). When the page is served by the gateway plugin (no dev server, no prod-ui
+// FORK 2026-10-06: each user has their own tabs, reopened on reconnect exactly as they were.
+// When the page is served by the gateway plugin (no dev server, no prod-ui
 // proxy), the root path above answers 404 and the state file lives under the app's base path. The
 // first 404 switches this page to the plugin's endpoint for the rest of its life; a 200 never does.
 export const UI_STATE_PLUGIN_ENDPOINT = "/tinker/api/ui-state";
@@ -706,8 +705,7 @@ export type UiStateSnapshot = {
 /** Long enough for a busy dev server, short enough that boot never visibly stalls. */
 const HYDRATE_TIMEOUT_MS = 1500;
 /**
- * FORK 2026-09-16 (the architect: "sometimes I switch to a tab and it is just empty … sometimes it
- * never gets restored") — the retry budget for a hydrate that already failed once.
+ * FORK 2026-09-16: a tab could open empty and never be restored — the retry budget for a hydrate that already failed once.
  *
  * The boot hydrate's 1500 ms is a page-start budget: the whole module awaits it, so it has to
  * be short. A RETRY is awaited by nobody (the hello path awaits it only on the failed branch,
@@ -754,7 +752,7 @@ let mirrorsInFlight = 0;
 let rehydrateTimer: ReturnType<typeof setTimeout> | null = null;
 let rehydrateFailures = 0;
 /**
- * FORK 2026-08-04 (the user: "the state of the UI is not kept after restart").
+ * FORK 2026-08-04: the UI state did not survive a restart.
  *
  * Did THIS page ever read the durable file? Until it has, its local maps are not
  * authoritative and must never be posted back.
@@ -1214,8 +1212,7 @@ export function mergeUiStateSnapshot(
 }
 
 /**
- * FORK 2026-09-16 (the architect: "I just restarted the computer and Jarvis does not have the tabs
- * open the same way they were when I turned it off").
+ * FORK 2026-09-16: after a reboot the tabs did not reopen as they were at shutdown.
  *
  * The boot hydrate runs ONCE, as the first statement of app.ts. When it failed — the
  * gateway mid-restart (three crash-restarts between 23:26 and 00:18 that night), or the
@@ -1339,8 +1336,8 @@ function flushUiStateMirror(finalFlush = false): void {
     return;
   }
   try {
-    // FORK 2026-09-10 (the user: "upon restart, in the production tinker ui, the tabs open
-    // before turning off don't appear open"). The seat header is CARRIED, never REQUIRED,
+    // FORK 2026-09-10: after a restart, the production Tinker UI must reopen the tabs that
+    // were open before shutdown. The seat header is CARRIED, never REQUIRED,
     // on the client. The hivemind-seats draft of 12:22 today returned early here whenever
     // sessionStorage held no `tinker.seatId` — and nothing sets one until the door lands
     // (plan units A/F) — so the laptop's production UI stopped mirroring altogether: the
@@ -1349,9 +1346,8 @@ function flushUiStateMirror(finalFlush = false): void {
     // decision (owner desk, or 400 under TINKER_REQUIRE_SEAT=1 in a hive) — see
     // scripts/tinker-prod-ui.mjs, tinker-ui/vite.config.ts and the plugin route.
     //
-    // FORK 2026-09-24 (the architect: "I have been deleting the SharePoint tab many times, and every time
-    // I restart the machine it appears again, and the tab I leave open all the time goes back to
-    // being closed"). Every mirror used to be `keepalive: true`, and nothing ever read the
+    // FORK 2026-09-24: after each restart a deleted tab came back and a tab left open came back
+    // closed. Every mirror used to be `keepalive: true`, and nothing ever read the
     // response. Chrome counts a keepalive request's body against a 64 KB per-page budget until
     // its response has been consumed, so the budget was never handed back: a ~6.7 KB snapshot
     // meant the 10th mirror of every page was rejected INSIDE the browser ("TypeError: Failed to

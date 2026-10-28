@@ -76,7 +76,7 @@ export function recommendable(p: PromptFacts): { ok: true } | { ok: false; why: 
 const wordCount = (s: string): number => (s.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? []).length;
 
 /**
- * The text to rank. A request under `FOLLOW_UP_WORDS` words that names no card ("Make the update land") has no subject of
+ * The text to rank. A request under `FOLLOW_UP_WORDS` words that names no card ("Go ahead with it") has no subject of
  * its own, so the previous user turn is ranked instead; with none to lean on it is skipped. A previous turn that is itself
  * a runtime notice is no help.
  */

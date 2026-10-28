@@ -467,9 +467,8 @@ body {
    the e2e drivers read it); the static "↺ Loading earlier turns…" text it drew is replaced by the
    moving indicator below, which also covers the first load and a reload. */
 
-/* FORK 2026-10-06 (the architect: "make sure there are 'loading...' indicators when loading the chat
-   history, indicators that have some movement so the user understands there is something turning.
-   Also, use the loading indicator for when we scroll backwards"). history-loading.ts decides what
+/* FORK 2026-10-06: show a moving loading indicator while chat history loads, including when
+   scrolling back for older pages. history-loading.ts decides what
    it says and where; app.ts places it over the messages pane (top for a scroll back, centred on an
    empty page, bottom over a page with rows). A static host in .chat-area, never inside #messages,
    so the keyed renderer never meets it; pointer-events off, so it covers nothing he can click. */
@@ -967,8 +966,7 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
 }
-/* FORK 2026-08-15 (the architect: "leave messages in the chat after each phase finishes with the amount
-   of time it took"). One row per FINISHED pre-model stage. Deliberately quiet: a normal turn
+/* FORK 2026-08-15: leave a row in the chat after each phase finishes, with its duration. One row per FINISHED pre-model stage. Deliberately quiet: a normal turn
    emits several of these and they must read as a measurement strip, not as conversation. Left
    aligned + monospace duration so the numbers form a scannable column down the transcript. */
 .msg-phase-timing {
@@ -1075,7 +1073,7 @@ body {
   flex-direction: column;
   gap: 1px;
 }
-/* FORK 2026-08-24 (the architect: "The collapse-expand mechanism does not work") — THE THIRD TIME.
+/* FORK 2026-08-24: the collapse-expand toggle did nothing — THE THIRD TIME.
    `display: flex` in the rule above OUTRANKS the user agent's `[hidden] { display: none }`, so the
    breakdown stayed on screen no matter what the toggle did. The state machine was correct the
    whole time — the snapshot showed `hidden=""` on this very node — and nothing moved, which is why
@@ -2200,7 +2198,7 @@ blockquote:has(> .bq-copy) {
   border-left: 1px solid var(--border);
   margin-left: 1px;
 }
-/* FORK 2026-08-05 (the architect: "carta a terra va a la guerra") — a COLLAPSED reasoning group now emits
+/* FORK 2026-08-05: once shown, text stays in the document — a COLLAPSED reasoning group now emits
    its intermediates ALWAYS and hides them with the `hidden` attribute, instead of omitting them
    from the document entirely. Collapsing is a change of APPEARANCE; the text stays in the DOM,
    findable by Ctrl-F, reachable by a screen reader, included in select-all.
@@ -2572,9 +2570,8 @@ blockquote:has(> .bq-copy) {
   background: #b47d04;
 }
 
-/* FORK 2026-08-18 (the architect: "...I would prefer if it was shown as a progress indicator with a stop
-   button, so I can kill it or understand it better. The more background activity we bring to the
-   ui, with controls, the better it is going to be flowing").
+/* FORK 2026-08-18: show background work as a progress indicator with a stop button, so it can
+   be killed or inspected; more visible background activity with controls is better.
    ATTACHED ACTIVITY strip - the per-tab list of what is holding this session, sitting directly
    above the composer inside .chat-area.
 
@@ -3139,8 +3136,8 @@ blockquote:has(> .bq-copy) {
   overflow-x: hidden;
   flex: 1;
 }
-/* FORK 2026-10-02 (the architect: "a very annoying vertical sliding bar spanning only the
-   'context window' panel"). The rule above was written for #budget-panel, but the static
+/* FORK 2026-10-02: remove a stray vertical scrollbar that spanned only the
+   'context window' panel. The rule above was written for #budget-panel, but the static
    folds that later moved into Models (CONTEXT WINDOW, THALAMUS, EEG) carry .rpanel-body
    too, so each became its own overflow-y:auto box. Nothing caps their height (the rail
    is not a flex container), so any descendant poking out the bottom turned into a
@@ -3339,14 +3336,14 @@ blockquote:has(> .bq-copy) {
      Col 2 was session token totals; the architect 2026-07-30 replaced it with the
      Artificial Analysis Intelligence Index used to sort the panel. */
   display: grid;
-  /* FORK 2026-07-27 (the architect: "the green-orange token-budget graphs start too far to
-     the right"). The name column was minmax(0, auto), so it grew to the WIDEST
+  /* FORK 2026-07-27: the green-orange token-budget graphs started too far to
+     the right. The name column was minmax(0, auto), so it grew to the WIDEST
      label in the group and pushed the bars column's start with it — one long id
      (e.g. gemini-3.5-flash-lite) indented every bar in the panel. Capping the name
      column pins the bars to a stable, much earlier x; .model-name ellipsises past
      the cap and the full id is still in the row's tooltip. */
-  /* FORK 2026-07-27b (the architect: "the graph should be as wide as possible, pushing the
-     EEG trace and the model count to the right"). The bars track was
+  /* FORK 2026-07-27b: make the graph as wide as possible, pushing the
+     EEG trace and the model count to the right. The bars track was
      minmax(56px, 1fr) sitting between two `auto` tracks, so the cost stroke and the
      count badge each claimed their content width FIRST and the bars only got the
      remainder — on a narrow right panel that left a stub. Now: name is capped, the
@@ -4040,9 +4037,8 @@ blockquote:has(> .bq-copy) {
 .session-row:hover {
   background: var(--surface2);
 }
-/* FORK 2026-09-02 (the architect: "make it stand more, make it darker, similar to the
-   colour the tab title gets, so that it seems it is integrated into the chat
-   window"). Was rgba(37,99,235,.08/.15) — upstream BLUE at 8%/15% over a brown
+/* FORK 2026-09-02: make it stand out more, darker, like the active tab title's
+   colour, so it looks integrated into the chat window. Was rgba(37,99,235,.08/.15) — upstream BLUE at 8%/15% over a brown
    wood texture, which is why it read as "a very subtle outline". It now borrows
    the active tab's own recipe (.tab.tab-active): --surface fill so the row sits
    on the same plane as the chat, --text label, and the accent edge the tab wears
@@ -4462,8 +4458,8 @@ blockquote:has(> .bq-copy) {
 }
 
 /* Usage Bars (inline with model rows) */
-/* FORK 2026-07-28 (the architect: "ridiculous amount of space on the right and the token
-   budget graph is minuscule"). ROOT CAUSE, measured: grid auto-placement is
+/* FORK 2026-07-28: too much empty space on the right and a tiny token
+   budget graph. ROOT CAUSE, measured: grid auto-placement is
    POSITIONAL, so a row that omits one cell shifts every later cell a track left.
    When modelTokenLabel started returning "" for models with no token history
    (2026-07-27, to kill the phantom column) rows dropped from 4 children to 3, and
@@ -4620,7 +4616,7 @@ blockquote:has(> .bq-copy) {
 .tab.tab-active:hover {
   background: var(--surface);
 }
-/* FORK 2026-10-05 (the architect: "a slither tab (only a graph icon) between master and slave") — the
+/* FORK 2026-10-05: a narrow icon-only graph tab between master and slave — the
    Gantt tab, right after a chain master that has a build plan (gantt-tab.ts). Icon only, tinted in
    the chain's metal. It has no data-tab-id, so drag, close and the chain anchor ignore it. */
 .tab.tab-gantt {
@@ -4766,7 +4762,7 @@ blockquote:has(> .bq-copy) {
   min-width: 0;
   max-width: 155px;
 }
-/* FORK 2026-10-25 (the architect: "its icon should replace the tab's title") — the chat Zen Mail hands its card
+/* FORK 2026-10-25: an icon replaces the tab's title — the chat Zen Mail hands its card
    prompts to shows the Zen Mail drawing instead of its title. Same line weight as the phone tool row
    (phone.css .phone-sheet-tool svg); the words stay in the DOM for screen readers and the hover hint. */
 .tab-title-zen {
@@ -7828,7 +7824,7 @@ blockquote:has(> .bq-copy) {
 
 /* ─── Right-click context menu ─── */
 
-/* FORK 2026-09-23 (the architect: "set conversation slave") — master/slave tab chain overlay.
+/* FORK 2026-09-23: link a conversation as a slave tab — master/slave tab chain overlay.
    Click-through, above the chat, under context menus (1000) and drag ghosts. */
 .tab-chain-overlay {
   position: fixed;
@@ -9051,9 +9047,8 @@ body.tab-chain-picking #tab-bar-scroll .tab:not(.tab-chain-master-picking):hover
   opacity: 0.9;
 }
 
-/* FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see a
-   particular message in the chat, just a short reminder that we are using it with a link to its
-   md"). One centred line under the prompt that matched. Bright green so the BROCA layer is
+/* FORK 2026-08-28: whenever a broca recipe is used, show a short reminder in the chat with a
+   link to its md. One centred line under the prompt that matched. Bright green so the BROCA layer is
    immediately readable against the woody chat; still a reminder, not an alert. Salience raised
    2026-09-03 after the muted 10% mix disappeared on the dark background. */
 .msg-recipe-notice {
@@ -9927,7 +9922,7 @@ line.eeg-marker.eeg-hl {
 }
 /* end FORK 2026-06-13 (eeg) */
 
-/* FORK 2026-07-25 (the architect): "why this routing" card — two labelled phrases under the
+/* FORK 2026-07-25: "why this routing" card — two labelled phrases under the
    MODEL slider explaining the model/effort in force and the fan-out count. Spans all
    grid columns like .eeg-paper (its parent .model-group-body is a grid). */
 .routing-why {
@@ -9999,7 +9994,7 @@ line.eeg-marker.eeg-hl {
 }
 
 /* Footer link to orca-policy.md — opens the real file via the app's .fs-link handler.
-   the architect 2026-07-27: "it should be not so prominent, just for curious people to click" — so no
+   2026-07-27: keep it low-key, a link only for the curious — so no
    divider rule above it and no standing underline; it reads as a footnote at rest and only
    resolves into a link on hover. Deliberately overrides the generic code.fs-link treatment
    (base.css ~820), which is tuned for paths inside chat prose, not for panel chrome. */
@@ -10145,11 +10140,10 @@ code.fs-link.routing-why-policy:hover {
 .orca-bias-row {
   margin-bottom: 2px;
 }
-/* FORK 2026-08-29 (the architect): "the thalamus panel slider should then become usable, otherwise
-   the circle should not be there at all." The dial only does something while the MODEL slider
+/* FORK 2026-08-29: the thalamus slider thumb shows only when the slider is usable. The dial only does something while the MODEL slider
    is on Auto — a pinned model bypasses THALAMUS — so when renderBiasSlider marks the row
    .is-locked the THUMB goes away entirely. Not greyed: gone. A dimmed-but-present circle is
-   what he was rejecting, because it still reads as a thing you can drag.
+   what was rejected, because it still reads as a thing you can drag.
 
    CRITICAL — hide the THUMB, never the INPUT. `display:none` / `visibility:hidden` on
    `.orca-bias-row.is-locked input[type="range"]` would take the TRACK and, by collapsing the
@@ -10387,8 +10381,8 @@ code.fs-link.routing-why-policy:hover {
   background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 
-/* FORK 2026-08-29 (the architect: "it does not make sense to represent in a graph an unbounded value,
-   so we will turn it into a couple panels"). THIS CALL and THIS SESSION are read as NUMBERS, not
+/* FORK 2026-08-29: an unbounded value does not belong in a bar graph, so it became two
+   number panels. THIS CALL and THIS SESSION are read as NUMBERS, not
    as widths — a billed prompt on the cc-bridge lane is a turn aggregate with no ceiling, and the
    session counters only grow, so neither has an honest denominator to draw against.
 
@@ -10428,7 +10422,7 @@ code.fs-link.routing-why-policy:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* FORK 2026-08-29 (the architect: "whenever the numbers change, they should glow for 5 seconds").
+/* FORK 2026-08-29: changed numbers glow for 5 seconds.
    Deliberately a STATE, not an animation: app.ts owns the 5s deadline and adds/removes the
    class, so a repaint landing mid-glow (there are several per turn) keeps the existing glow
    instead of restarting a keyframe clock from zero. Removing the class fades it out through the
@@ -10505,8 +10499,8 @@ code.fs-link.routing-why-policy:hover {
   display: none !important;
 }
 
-/* FORK 2026-08-28 (the architect: "an empty rectangle on top of the graph, in the color of
-   the provider, to show the context window of the specific model being used").
+/* FORK 2026-08-28: an empty provider-coloured rectangle over the graph marks the
+   context window of the model in use.
 
    An OUTLINE, never a fill. The bar's denominator is now a fixed 1M ruler, so this
    rectangle is where the CURRENT model's window ends on that ruler — a ruler MARK,
@@ -10530,9 +10524,8 @@ code.fs-link.routing-why-policy:hover {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 55%, transparent) inset;
 }
 
-/* FORK 2026-08-28 (the architect: "if the present context exceeds the window that we want
-   to use, it should warn by a red transparent blink on the excess context that
-   need trimming").
+/* FORK 2026-08-28: when the context exceeds the target window, blink the excess
+   in translucent red so it is clear what needs trimming.
 
    Covers the span between the window outline and the end of the used region —
    `left` and `width` are inline, for the same reason as the frame above. Blinks
@@ -10558,14 +10551,14 @@ code.fs-link.routing-why-policy:hover {
   }
 }
 
-/* FORK 2026-08-28 (the architect: "two small buttons that should fit next to the second
-   line of legend, one for 'evict', one for 'compact'").
+/* FORK 2026-08-28: two small 'evict' and 'compact' buttons next to the second
+   legend line.
 
    They ride at the END of .cache-legend--split, which is a wrapping flex row, so
    `margin-left: auto` pushes them to its right edge and they only drop to a second
    line if the three split-legend items genuinely fill the 300px rail. */
-/* FORK 2026-08-29 (the architect: "the evict-compact buttons should go next to the 'context window'
-   title, also aligned to the right"). They now live in the panel's .model-group-label, not in a
+/* FORK 2026-08-29: the evict-compact buttons moved next to the 'context window'
+   title, right-aligned. They now live in the panel's .model-group-label, not in a
    legend row, so the label becomes the flex row and `margin-left:auto` pushes the pair to its
    right edge. The label is also a COLLAPSE toggle, which is exactly why the fold handlers all
    exclude `button` from their hit test — without that, arming an eviction would also shut the
@@ -10612,9 +10605,8 @@ code.fs-link.routing-why-policy:hover {
   cursor: default;
 }
 
-/* FORK 2026-08-28 (the architect: "while Jarvis is doing the eviction or compaction
-   operation, the context cache panel should be pulsating, meaning it is actively
-   doing something (either triggered manually or automatically)").
+/* FORK 2026-08-28: the context cache panel pulses while an eviction or compaction
+   runs, whether triggered manually or automatically.
 
    Same box-shadow-only idiom as the two flashes above, and for the same reason
    (constraint 1: .rpanel is transparent, so animating background strobes the wood
@@ -10838,8 +10830,8 @@ code.fs-link.routing-why-policy:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* FORK 2026-08-28 #2 (the architect: "the trace thickness in the model selector... should not
-   be truncated in height"). WIDTH stretches to the column, HEIGHT never does.
+/* FORK 2026-08-28 #2: the trace thickness chip in the model selector must not be
+   cut off in height. WIDTH stretches to the column, HEIGHT never does.
 
    The old rule here overrode neither, because overriding either on a viewBox SVG
    rescales the STROKE and the chip's thickness must stay exactly the number
@@ -10858,9 +10850,8 @@ code.fs-link.routing-why-policy:hover {
   flex-shrink: 0;
   width: 100%;
 }
-/* FORK 2026-08-29 (the architect): "a red thin cross (both diagonals of the button) on the
-   models that are unavailable. The button should remain clickable in case I am
-   stubborn or want to try something." Two 1px corner-to-corner diagonals as
+/* FORK 2026-08-29: a thin red cross over unavailable models' buttons, which stay
+   clickable so they can still be tried. Two 1px corner-to-corner diagonals as
    gradient overlays — the hard stop at 50% of a to-corner gradient passes exactly
    through the other two corners for ANY aspect ratio, so both strokes stay true
    diagonals as buttons resize. pointer-events: none is LOAD-BEARING: the overlays
@@ -10940,7 +10931,7 @@ code.fs-link.routing-why-policy:hover {
 }
 .sc-card {
   position: relative;
-  /* FORK 2026-08-28 (the architect: "make the graph span all the width of the screen"):
+  /* FORK 2026-08-28: the graph spans the full screen width.
      the old `min(96vw, 940px)` stopped growing on any ordinary desktop and
      compressed the new API-vs-plan constellations into a postcard. Use the
      viewport itself, minus an 8px breathing edge on each side. `box-sizing`
@@ -11198,8 +11189,8 @@ code.fs-link.routing-why-policy:hover {
   fill-opacity: 0.2;
   stroke-width: 2.1;
 }
-/* LIT, not merely UNDIMMED (the architect 2026-09-23 #3: "make sure the whole model's path and
-   bubbles light up on-hover"). The rules above only RESTORE a hovered model to opacity
+/* LIT, not merely UNDIMMED (2026-09-23 #3: the whole model's path and bubbles
+   light up on hover). The rules above only RESTORE a hovered model to opacity
    1 while everything else dims — measured on the live page, its path kept
    stroke-opacity 0.34, so the model survived the dim without brightening. Brightness
    lives in stroke-opacity, which the €/Mtok↔€/task crossfade OWNS, so each rule is
@@ -11271,8 +11262,7 @@ code.fs-link.routing-why-policy:hover {
    transform ATTRIBUTE (user space, always applied, scales with the viewBox).
    CSS carries only the task-mode glide delta — the old base CSS transform
    collapsed dots to the SVG origin in the architect's browser. */
-/* FORK 2026-08-06 #9 (the architect: "when zooming in, I would like the icons and circles
-   to remain the same size, not to zoom with the scale").
+/* FORK 2026-08-06 #9: icons and circles keep their size when zooming in.
 
    Zoom drives the viewBox, so EVERYTHING scales by definition. --sc-k is set once
    per zoom on the <svg> to the inverse of the current zoom, and each marker
@@ -11323,8 +11313,8 @@ code.fs-link.routing-why-policy:hover {
 .sc-svg.sc-focus .sc-apipos.sc-hl .sc-tri.sc-wp-ours {
   fill-opacity: 0.6;
 }
-/* THE DRAG is a tier ABOVE hover (the architect #3: "once I choose to start dragging a circle,
-   its row elements will also highlight"). The whole model is already lit — its circle
+/* THE DRAG is a tier ABOVE hover (#3: dragging a circle also highlights its row
+   elements). The whole model is already lit — its circle
    is under the pointer — so the dragged rung's row (plan triangles, list triangle and
    the dashed bridge between them) goes one step further: fuller fill, heavier stroke,
    full ink, tags on. Measured before this rule: row and hover-lit model both sat at
@@ -11409,8 +11399,8 @@ code.fs-link.routing-why-policy:hover {
 /* ghost landing rings — invisible until task mode, then fade in ahead of the dots.
    The counter-scale sits HERE, on the circle, and never on .sc-ghostpos: that group is
    positioned by its transform ATTRIBUTE, and a CSS transform replaces the attribute. On
-   .sc-ghostpos it sent all 374 rings to the SVG origin (2026-09-23, "bubbles on the
-   top-left"). Pinned by styles-svg-transform-invariant.test.ts. */
+   .sc-ghostpos it sent all 374 rings to the SVG origin (2026-09-23, reported
+   as bubbles drawn at the top-left). Pinned by styles-svg-transform-invariant.test.ts. */
 .sc-ghost {
   opacity: 0;
   transition: opacity 0.7s ease;
@@ -11571,9 +11561,8 @@ code.fs-link.routing-why-policy:hover {
   stroke-opacity: 0.2;
 }
 /* labels glide with their constellation.
-   FORK 2026-08-06 #10 (the architect: "the model names should be to the right of its most
-   effort bubble, and should approach the circle as I zoom in, otherwise it renders
-   out of view"). The <g class="sc-labelpos"> puts the origin ON the max-effort dot;
+   FORK 2026-08-06 #10: model names sit right of the max-effort bubble and move
+   closer to it when zooming in, so they stay in view. The <g class="sc-labelpos"> puts the origin ON the max-effort dot;
    everything below is the OFFSET from it, and every term of that offset is
    multiplied by --sc-k (the inverse zoom the markers counter-scale by) so the name
    keeps a constant on-screen distance from its circle. --sc-dx is the task-mode
@@ -11759,8 +11748,7 @@ a.sc-head-btn:hover {
   width: min(98vw, 2100px);
 }
 .sd-body {
-  /* FORK 2026-08-30 (the architect: "extend the square with sliding bar so it fits the
-     total height span of the page"): the old `max-height: 70vh` capped the table
+  /* FORK 2026-08-30: the scrolling box extends to the full page height: the old `max-height: 70vh` capped the table
      while `.sd-card` inherits `.sc-card`'s `height: calc(100vh - 16px)`, leaving
      dead space below the rows. Same recipe as `.sc-body` — let the body shrink so
      the card keeps its height promise. `min-height: 0` is load-bearing: without it
@@ -11978,8 +11966,8 @@ a.sc-head-btn:hover {
 .sd-s-none {
   color: color-mix(in srgb, var(--muted) 95%, transparent);
 }
-/* ── PLACES 1–5 (FORK 2026-10-02, the architect: "make the rankings more visible ... which one is
-   first, second, third ... a gradient from background color to whatever other color").
+/* ── PLACES 1–5 (FORK 2026-10-02: make first, second and third place visible with a
+   gradient from the background colour).
    The cell wash used to follow the GRADE, which put gold on half the grid and named no
    second or third. It now follows the PLACE in the column: the panel's own best-gold at
    1st, fading step by step into the plain card at 6th. One hue on purpose — capability
@@ -12401,8 +12389,8 @@ td.sd-sorted {
    trackpad/touch drag scrolls the overlay instead of panning the chart. */
 .sc-svg {
   touch-action: none;
-  /* FORK 2026-08-06 #12 (the architect: "when I drag the graph I accidentally select some
-     axis titles and model names"). Every <text> in here — axis captions, tick
+  /* FORK 2026-08-06 #12: dragging the graph selected axis titles and model names
+     by accident. Every <text> in here — axis captions, tick
      numbers, model names — is selectable text as far as the browser is concerned,
      so a pan that starts on one begins a selection instead. Nothing inside the
      chart is meant to be copied (the numbers live in the tooltips), so the whole
@@ -12446,7 +12434,7 @@ td.sd-sorted {
 }
 /* end FORK 2026-08-06 #8 */
 
-/* FORK 2026-08-15 (the architect: "itemized as much as possible") — the pending pill's breadcrumb
+/* FORK 2026-08-15: itemise the stages as much as possible — the pending pill's breadcrumb
    of finished pre-prompt stages. Muted and small on purpose: the live label is the signal,
    these are the receipt. See TINKER_UI_DESIGN_BIBLE/turn-latency.md. */
 .thinking-phase-trail {
@@ -12524,7 +12512,7 @@ td.sd-sorted {
   color: #8a8f98;
 }
 
-/* FORK 2026-09-23 (the architect: "openrouter needs to be there"). OpenRouter's OWN default
+/* FORK 2026-09-23: include OpenRouter. OpenRouter's OWN default
    route is now a column, tinted so it reads as a reference price rather than as one
    more host — it is the number most people actually pay, and the gap between it and
    the green cell in the same row is the whole argument for shopping around. */
@@ -12605,9 +12593,8 @@ td.sd-sorted {
   color: #eab08c;
 }
 
-/* FORK 2026-10-02 (the architect: "the capacity matrix ... overflows on the right ... create two
-   separate matrices" and "the chinese provider ranking lacks nice logos ... make it all
-   prettier"). The dossier is now two tables under their own headings. In the Tinker panel
+/* FORK 2026-10-02: the capacity matrix overflowed on the right, so it became two
+   matrices, and the provider ranking got proper logos and a cleaner look. The dossier is now two tables under their own headings. In the Tinker panel
    .sd-body is already the scroller, so .sd-scroll stays a plain block here and the sticky
    header rows keep working; the exported page turns it into a sideways scroller instead. */
 .sd-sec-h {
@@ -12717,7 +12704,7 @@ td.sd-sorted {
   color: var(--accent);
 }
 
-/* FORK 2026-10-01 (the architect: "simplify it all … only the present turn's model/effort decisions") — the THALAMUS card,
+/* FORK 2026-10-01: simplify to only the present turn's model/effort decisions — the THALAMUS card,
    panels/thalamus-turn.ts. Same frame as the retired .routing-why card. A row per model that worked on the turn, a
    bar for its share of the work, a pulse while it is still running. */
 .thal-turn {
@@ -12879,7 +12866,7 @@ td.sd-sorted {
 .toast-error {
   border-color: var(--red);
 }
-/* FORK 2026-10-03: who put an injected prompt in the chat, before a word of it (the architect: "with the identity of the agent"). */
+/* FORK 2026-10-03: who put an injected prompt in the chat, before a word of it, with the agent's identity. */
 .msg.system-inject .inj-who {
   display: inline-block;
   margin-right: 6px;

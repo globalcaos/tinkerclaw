@@ -141,8 +141,8 @@ function renderAttribution(label: string, files: string[]): HTMLElement {
 //
 // The loader is INJECTED, exactly like `lookupAnchor` — this module stays free of
 // RPC/transport knowledge (the sectioned-reply.ts precedent); app.ts owns the wire.
-// EXPORTED 2026-08-11 (the architect: "I cannot see the extra expansion button once I expand
-// the fractal once") — there are TWO surfaces in chat whose name contains "fractal",
+// EXPORTED 2026-08-11: the extra expansion button vanished after the fractal was expanded once.
+// There are TWO surfaces in chat whose name contains "fractal",
 // and they are unrelated DOM:
 //   1. `details.fractal-details` (sectioned-reply.ts) — the 🌿 FRACTAL section of the
 //      assistant's OWN reply text. This is the one the architect expands; it has
@@ -215,17 +215,17 @@ export function renderFractalDock(
   const summary = document.createElement("summary");
   summary.className = "reasoning-header fractal-dock-summary";
   summary.textContent =
-    // FORK 2026-08-11 (the architect: "You should only have one thing called fractal, the other
-    // one is wrong and should be renamed") — this dock is the COLD lane's verdict on a
+    // FORK 2026-08-11: only one surface may be called fractal, so the other was renamed.
+    // This dock is the COLD lane's verdict on a
     // finished turn, and it was renamed to "Triage" so that 🌿 FRACTAL would mean only the
     // reflection the assistant writes into its own reply (sectioned-reply.ts).
     //
-    // FORK 2026-08-23 (the architect: "Triage should be renamed Fractal instead") — REVERSED. Both
+    // FORK 2026-08-23: Triage renamed back to Fractal — REVERSED. Both
     // decisions are kept in view because they contradict each other and the later one wins;
     // deleting the first would hide that this name has been argued twice.
     //
-    // FORK 2026-08-23, second pass (the architect: "we use adjectives to nouns to disambiguate ... the
-    // fractal response and the fractal reasoning turn"). Both surfaces may share the word; what
+    // FORK 2026-08-23, second pass: a qualifying noun tells the fractal response from the
+    // fractal reasoning turn. Both surfaces may share the word; what
     // they may not share is a BARE word. So each carries its own noun:
     //
     //   🔍 Fractal Reasoning — this dock: the cold pass over a FINISHED turn.

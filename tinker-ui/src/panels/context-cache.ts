@@ -1,4 +1,4 @@
-// FORK 2026-07-25 (the architect): "Context Cache" — the right-rail panel that answers two questions
+// FORK 2026-07-25: Context Cache — the right-rail panel that answers two questions
 // about the LAST API call: how much of the model's context window did it fill, and how much of
 // that was replayed from the provider's prompt cache instead of being billed as fresh input.
 //
@@ -23,8 +23,8 @@ import { RESPONSE_COLOR, SEGMENT_COLORS, SEGMENT_LABELS } from "./context-timeli
 import { EEG_GOOGLE_GLOW, eegProviderPaint } from "./eeg-trace.js";
 
 /**
- * FORK 2026-08-29 (the architect: switching opus -> grok left the window outline unchanged; "it should
- * have gone white").
+ * FORK 2026-08-29 switching opus -> grok left the window outline unchanged; it should
+ * have turned white.
  *
  * The outline used to take provider-logos.ts's PROVIDER_COLORS, which is the CHIP-FILL table:
  * there xai is the true brand black, drawn as a background behind a white logo. As a 1px STROKE
@@ -96,9 +96,8 @@ export interface CachePanelState {
    *  floors read it; see BAR_BUDGET_DEVICE_PX for the conservative default. */
   barDevicePx?: number;
 
-  // FORK 2026-08-29 (the architect: "we will have a section called 'this call' and another named 'this
-  // context' ... it does not make sense to represent in a graph an unbounded value, so we will
-  // turn it into a couple panels").
+  // FORK 2026-08-29: two sections, THIS CALL and THIS CONTEXT; an unbounded value is not drawn
+  // as a graph.
   /** Tokens dropped from the transcript by the LAST compaction/eviction this page watched on this
    *  session (context-counters.ts CountersState.lastDropped). */
   lastEvictedTokens?: number;
@@ -254,8 +253,7 @@ export function cacheSegments(
 }
 
 /**
- * FORK 2026-08-28 (the architect: "we should visualize the colorful graph of a 1M token window, which I
- * think is the maximum for now").
+ * FORK 2026-08-28: draw the coloured bar against a fixed 1M-token window, the largest one today.
  *
  * The window bar used to be drawn against `maxWindow` — whichever model answered last. That made
  * the bar meaningless as a COMPARISON: a 190k prompt on a 200k-window model and a 950k prompt on
@@ -544,8 +542,8 @@ export function renderCachePanelHtml(s: CachePanelState): string {
   // agreed for as long as nothing was floored; deriving it here means they cannot stop agreeing.
   const freeSpan = `<span class="cache-seg cache-seg--free" style="width:${wpct(alloc.freePct)}%"></span>`;
 
-  // FORK 2026-08-28 (the architect: "an empty rectangle on top of the graph, in the color of the
-  // provider, to show the context window of the specific model being used").
+  // FORK 2026-08-28: an empty rectangle over the bar, in the provider's colour, marks the
+  // context window of the model in use.
   //
   // An OUTLINE, not a fill: this is a ruler mark, not a quantity. A filled box would read as a
   // fourth data colour competing with the anatomy segments it sits over. It is positioned
@@ -562,8 +560,8 @@ export function renderCachePanelHtml(s: CachePanelState): string {
         ` title="${esc(`${s.model || s.provider || "model"} window — ${fmtTokens(maxWindow)} of the ${fmtTokens(scale)} scale`)}"></span>`
       : "";
 
-  // FORK 2026-08-28 (the architect: "if the present context exceeds the window that we want to use, it
-  // should warn by a red transparent blink on the excess context that need trimming").
+  // FORK 2026-08-28: context beyond the chosen window blinks in translucent red over the part
+  // that needs trimming.
   //
   // An absolute OVERLAY, deliberately not another flex span: the excess is the tail of the very
   // same tokens the coloured segments already draw, so laying it out in the flex row would add
@@ -631,7 +629,7 @@ export function renderCachePanelHtml(s: CachePanelState): string {
 
   // Only the WINDOW is a bar, and that is the point. It is the one quantity here with a real
   // denominator — the model's context window against the fixed 1M ruler. Everything below is
-  // UNBOUNDED (the architect: "it does not make sense to represent in a graph an unbounded value"): a
+  // UNBOUNDED (an unbounded value is not drawn as a graph): a
   // billed prompt on the cc-bridge lane is a turn aggregate with no ceiling, and the session
   // counters only ever grow. Drawing those as bars invents a denominator, which is exactly how
   // this panel once rendered "645%". They are numbers, so they are shown as numbers.
@@ -687,8 +685,8 @@ export function renderCachePanelHtml(s: CachePanelState): string {
       ? `${fmtTokens(promptTokens)} billed${callIsAggregate ? " · summed over the turn" : ""}`
       : "";
 
-  // FORK 2026-09-30 (the architect: "just add an extra number after 'this call', also purple if you will,
-  // with the amount of output tokens total per this call"). The bar above draws only what was SENT,
+  // FORK 2026-09-30: one extra purple number after THIS CALL with the call's total output
+  // tokens. The bar above draws only what was SENT,
   // so the model's reply is a number here, right after the label, in the output purple. It replaces
   // the OUTPUT cell that sat at the end of the grid: the same figure twice in one section is how the
   // two drift. `data-stat="output"` keeps app.ts's glow on it when the figure changes.

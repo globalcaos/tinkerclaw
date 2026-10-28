@@ -1,6 +1,6 @@
 import fx from "../../apps/android/app/src/thirdParty/assets/pack/voice-fx.json";
 import { exaggerateIntonation, singingFork } from "./voice-intonation.js";
-// FORK 2026-10-15 (the architect: "And what about Jarvis voice?" when the agent runs on the Pi). The
+// FORK 2026-10-15: play the Jarvis voice in the browser when the agent runs on another machine. The
 // `jarvis` script plays on the GATEWAY's speaker and also drops each line in a folder the Tinker
 // plugin serves (/tinker/api/jarvis-voice/). A page opened from another machine polls for the
 // newest line and plays new ones here. A page on the gateway's own machine does nothing: its
@@ -15,7 +15,7 @@ export function nextToPlay(latest: string | null, lastHeard: string | null): str
   return latest;
 }
 
-// 2026-10-22 (the architect 05:59: "Let's get you the GBD"): inside the Jarvis phone app, Jarvis's lines are
+// 2026-10-22: inside the Jarvis phone app, Jarvis's lines are
 // spoken by the phone's own Google voice GBD (male British, online first) instead of the Pi's wav.
 type NativeVoice = { name: string; network: boolean };
 type JarvisNativeTts = {
@@ -38,12 +38,11 @@ if (typeof window !== "undefined") {
     gbdName = gbd?.name ?? null;
   });
 }
-// 2026-10-22 (the architect 06:17: "30% extra speed ... and the metallic voice. Make it sound like the old
-// voice"): the app renders GBD to a wav and this chain copies the Pi's (jarvis-voice/bin/jarvis):
+// 2026-10-22: speak 30% faster with the old metallic voice. The app renders GBD to a wav and this chain copies the Pi's (jarvis-voice/bin/jarvis):
 // pitch x0.92, 4/9 ms comb, flanger, 10 ms echo, high-pass 300 Hz, treble +8 dB, chorus, 60 Hz tremolo.
 // 2026-10-23 (plan "phone app self-update", step 4): the numbers live in voice-fx.json, which the app
 // reads from its content pack for the closed-app voice (JarvisVoiceFx.kt). Tune there, not here.
-const INTONATION = fx.intonation.k; // pitch contour widened around the line's mean (14:42 the architect: "even more")
+const INTONATION = fx.intonation.k; // pitch contour widened around the line's mean (widened further on review)
 const SPEED = fx.speech.speed; // 30% faster
 const PHONE_RATE = SPEED / fx.speech.playbackRate; // ... after the pitch drop slows it down
 const pending = new Map<string, (b64: string | null) => void>();
@@ -75,8 +74,8 @@ function lfo(ctx: AudioContext, hz: number, depth: number, target: AudioParam) {
   return o;
 }
 
-// 13:37/13:48 the architect: tuning forks that resonate with the voice, but "only one fork should be active
-// at any given time and its sound should be very metallic" -> singingFork() in voice-intonation.ts.
+// 13:37/13:48: tuning forks that resonate with the voice, one fork active at a time, with a
+// metallic sound -> singingFork() in voice-intonation.ts.
 const RESONANCE = fx.fork.level; // the fork's loudness relative to the voice (0 = off)
 const CHAIN = fx.chain;
 
@@ -96,7 +95,7 @@ async function playMetallic(b64: string): Promise<void> {
   const src = ctx.createBufferSource();
   src.buffer = buf;
   src.playbackRate.value = fx.speech.playbackRate;
-  // comb: [ms, gain] taps. 15:39 the architect: "clearer ... words more articulated": less rasp (dry 0.8,
+  // comb: [ms, gain] taps. 15:39, for clearer articulation: less rasp (dry 0.8,
   // 4 ms tap 0.4 -> 0.2, 9 ms tap off)
   const comb = ctx.createGain();
   for (const [ms, gain] of CHAIN.comb) delayTap(ctx, src, comb, ms, gain);
@@ -107,14 +106,14 @@ async function playMetallic(b64: string): Promise<void> {
   const fd = ctx.createDelay(0.02);
   fd.delayTime.value = fl.delayMs / 1000;
   const fb = ctx.createGain();
-  fb.gain.value = fl.feedback; // 15:39 0.45 -> 0.25; 13:09 the architect: "too much reverberation" (was 0.6)
+  fb.gain.value = fl.feedback; // 15:39 0.45 -> 0.25; 13:09 less reverberation (was 0.6)
   const fwet = ctx.createGain();
   fwet.gain.value = fl.wet; // 15:39 (was 0.5)
   comb.connect(fd);
   fd.connect(fb).connect(fd);
   fd.connect(fwet).connect(flang);
   const lfos = [lfo(ctx, fl.rateHz, fl.depthMs / 1000, fd.delayTime)];
-  // echo taps; 13:11 the architect: "remove more reverb" (the 10 ms tap is off)
+  // echo taps; 13:11 reverb cut further (the 10 ms tap is off)
   const echo = ctx.createGain();
   for (const [ms, gain] of CHAIN.echo) delayTap(ctx, flang, echo, ms, gain);
   const hp = ctx.createBiquadFilter();
@@ -209,7 +208,7 @@ export function speakOnPhone(text: string | null): Promise<void> | false {
   });
 }
 
-// FORK 2026-10-23 (the architect: "when I lock the screen I still want the vibration and your voice"). While
+// FORK 2026-10-23: keep the vibration and the voice when the screen is locked. While
 // the screen is off, a waiting phone prompt is handed to the Pi, which sends the line to the app's
 // native jarvis.say. Lines spoken during the handoff count as heard, so unlocking replays nothing.
 let handedOff = false;
@@ -226,7 +225,7 @@ export function startVoicePolling(opts: {
   base: string;
   fetchImpl?: VoiceFetch;
   /** text = the line's words when the server has them (2026-10-22, the phone app speaks them). */
-  // 2026-10-27 (the architect: "two voice triggers can speak at the same time"): a play that returns a promise is
+  // 2026-10-27: two voice triggers could speak at the same time. A play that returns a promise is
   // awaited before the next poll, so a new line waits for the one still speaking.
   play?: (url: string, text: string | null) => unknown;
   intervalMs?: number;

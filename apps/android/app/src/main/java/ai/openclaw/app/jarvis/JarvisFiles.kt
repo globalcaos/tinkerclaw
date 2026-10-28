@@ -10,9 +10,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-// FORK 2026-10-22 (the architect: "File downloaded on the phone, find it and download it yourself").
+// FORK 2026-10-22: the agent finds and fetches a file downloaded on the phone.
 // jarvis.files.list / jarvis.files.get read the public Download folder. Android only shows other
-// apps' downloads with "All files access", a switch the architect turns on once; without it we open that
+// apps' downloads with "All files access", a switch the owner turns on once; without it we open that
 // settings page on his screen and report NEEDS_PERMISSION.
 object JarvisFiles {
   private const val MAX_BYTES = 20L * 1024 * 1024

@@ -1,6 +1,5 @@
 /**
- * FORK 2026-10-02 (the owner: "Fix the moral code to be injected, in full, at the creation and after
- * compaction"). How the SessionStart hook cuts the pack into parts the claude CLI delivers whole.
+ * FORK 2026-10-02: the moral code is injected in full at session creation and after compaction. How the SessionStart hook cuts the pack into parts the claude CLI delivers whole.
  *
  * WHY. The CLI replaces any hook additionalContext over 10,000 chars with a ~2,000-char preview and a
  * file path (CLI 2.1.287: `L3o=1e4`, applied to each hook's additionalContext separately). The pack

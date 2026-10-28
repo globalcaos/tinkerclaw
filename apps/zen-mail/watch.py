@@ -10,8 +10,8 @@ Two kinds. A one-answer watch ("tell me when they confirm") pins its card on top
 matching thread arrives. A standing watch (a sender that keeps writing, e.g. a school) treats everything already in
 Gmail as known and reopens its card, in its normal rank, only when Zen Mail's triage gave a new thread a need.
 A watch card is a Zen Mail topic with conv `jarvis:watch-<slug>` and extra.watch = {gmail, since, seen, standing}.
-Moved here from the zen-watch skill on 2026-10-25 so the page can list, add and remove watches (the architect: "I should be
-able to put and remove subjects to watch for"). Removing sets the card's state to 'removed': it stops being checked
+Moved here from the zen-watch skill on 2026-10-25 so the page can list, add and remove watches (2026-10-25 request).
+Removing sets the card's state to 'removed': it stops being checked
 and leaves both lists, and the row stays in the database.
 """
 import argparse
@@ -105,8 +105,8 @@ def listing():
 
 
 def standing_hit(conn, tid, extra, new):
-    """the architect 2026-10-25 02:38: "No need to go on the top, consider I know everything to date, and just inform me of
-    things that are important when it matters." A new thread counts only when Zen Mail's own triage gave it a need
+    """2026-10-25: no need to sit on top; assume everything to date is known and report only what matters, when it
+    matters. A new thread counts only when Zen Mail's own triage gave it a need
     (act, reply, decide, seize); the rest are marked seen silently. A thread not triaged yet waits for the next hour.
     The card reopens in its normal rank, never pinned to the top."""
     w = extra["watch"]

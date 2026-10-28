@@ -1,6 +1,6 @@
 /**
  * context-window-panel.md §5.3 — the call timeline's last run, kept across a reload (FORK
- * 2026-10-02, the owner: "it should always show the last run instead").
+ * 2026-10-02: always show the last run).
  */
 import { describe, expect, it } from "vitest";
 import { CallTimelineStore, type RunSnapshot } from "./call-timeline";

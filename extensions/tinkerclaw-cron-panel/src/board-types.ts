@@ -1,8 +1,7 @@
 /**
- * FORK 2026-08-18 (the architect: "Every cron should publish in its corresponding card
- * instead of here, in the main tab... If I don't click on the 'read' checkbox,
- * the cron should understand that I have not read it yet, and its nightly cron
- * should compound on top of what was there before").
+ * FORK 2026-08-18: every cron publishes to its own card, not the main tab. Until
+ * the 'read' checkbox is ticked the report counts as unread, and the next nightly
+ * run builds on top of what was already there.
  *
  * THE SHIFT THIS FILE ENCODES: the Crons tab was STATELESS — reports are
  * immutable `reports/<date>/<job>.md` files and the panel rendered the newest

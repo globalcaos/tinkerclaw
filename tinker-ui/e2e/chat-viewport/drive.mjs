@@ -19,8 +19,8 @@
  *  11. A reload while reading below closed "▸ Commentary" folds comes back to the row on screen: a fold's
  *      stamped body still reports a box in Chromium while hidden, so it must never be the anchor (2026-10-03).
  *  12. An answer that streams after a thought, for longer than the watched slack, on a tab left and re-opened
- *      during its run, is drawn once while live and once after a reload (2026-10-03, "if I refresh the page,
- *      the duplicate answer goes away").
+ *      during its run, is drawn once while live and once after a reload (2026-10-03, reported: a page
+ *      refresh made the duplicate answer go away).
  *  13. A prompt whose turn starts 20 s after the send is drawn once after a reload under its run, and once when
  *      the run finished while its tab was away (2026-10-03, the prompt drawn twice).
  *  14. A reload while the gateway refuses history (starting) shows a moving "Waiting for the gateway to start"
@@ -591,9 +591,8 @@ check(
   `reload-under-run=${reloaded13a} after-finals=${final13a} reload=${reload13a} back-from-away=${back13b} reload=${reload13b}`,
 );
 
-// 14 ─ FORK 2026-10-06 (the architect: "make sure there are 'loading...' indicators when loading the chat
-// history, indicators that have some movement … Also, use the loading indicator for when we scroll
-// backwards"). A reload onto a gateway that refuses history while it starts, then answers late: the
+// 14 ─ FORK 2026-10-06: a moving 'loading...' indicator while chat history loads, also when
+// scrolling back. A reload onto a gateway that refuses history while it starts, then answers late: the
 // moving indicator says why it waits, centred on the empty pane, and the read lands within a second
 // of the gateway answering (develop's backoff had reached 7 s gaps by then). Then a scroll back.
 const indicator = (id) =>
@@ -693,9 +692,8 @@ check(
   `older=${JSON.stringify(older)} archive-loading=${olderFlag}`,
 );
 
-// 14d ─ FORK 2026-10-06 (the architect, after a restart that kept his page: "I could see a 'loading context'
-// indicator that did not add anything … Consider what the front-end has loaded, and do not try to
-// reload that which is already loaded"). The gateway drops every socket and refuses new ones for 3 s,
+// 14d ─ FORK 2026-10-06 (after a restart that kept the page open, a 'loading context' indicator
+// showed for nothing; the front end must not reload what it already holds). The gateway drops every socket and refuses new ones for 3 s,
 // then refuses history for 2 s more, as a starting gateway does. Over a page that holds its rows: no
 // pill at any moment, no row ever leaves, the page is connected again soon after the gateway listens
 // (the 0.5 s re-dial), and the reconnect's first read is the viewed chat's catch-up, before the list.

@@ -27,7 +27,7 @@ export const FAMILY_IDS: readonly FamilyId[] = [
 /**
  * The families as the J11 paper names them (Chapter 6), in the paper's order, each with its prompts in the order a
  * step meets them. The panel groups the Jev prompts this way and every prompt file opens with its family line
- * (the architect 2026-10-01: "they should be classified into families, like the paper"). Learning (§6.6) asks Jev nothing of
+ * (2026-10-01: prompts are grouped into families, as in the paper). Learning (§6.6) asks Jev nothing of
  * its own: it retunes these. A new prompt goes in its family's list (a test checks every seed is listed once).
  */
 export const FAMILY_PAPER: readonly {

@@ -2,8 +2,8 @@
 //
 // THE BIAS DIAL, READ FROM THE GATEWAY.
 //
-// FORK 2026-09-02 (the architect): "make sure … Thalamus actually automatically switches
-// among them smartly, following the BIAS selected in the slider". The dial already
+// FORK 2026-09-02: Thalamus switches among them on its own, following the BIAS
+// set on the slider. The dial already
 // existed and already persisted: `prefrontal.orcaBias`
 // (extensions/tinkerclaw-prefrontal/index.ts:906) writes `{biasIdx, ts}` to
 // `~/.openclaw/orca-bias.json` on every drag. What was missing is a READER on the

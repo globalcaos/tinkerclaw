@@ -108,7 +108,7 @@ describe("allocateEffort — burn-down effort allocator policy (bible §5.84 / �
   });
 });
 
-// FORK 2026-07-26 (the architect: "when I move the effort level it magically hops to high") — the
+// FORK 2026-07-26: the effort level jumped to high on its own — the
 // UI appends a ~3,369-char FRACTAL trailer to EVERY message, which saturated the task-size
 // bucket (`taskLen >= 1200 -> high`) so the allocator could never pick low or medium.
 describe("userTaskLength — the size heuristic measures the USER's ask, not our envelope", () => {

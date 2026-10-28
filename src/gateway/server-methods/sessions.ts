@@ -2122,7 +2122,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         });
       }
 
-      // FORK 2026-09-07 (the architect: "I clicked compact, it churned for a while, and nothing") — the
+      // FORK 2026-09-07 (bug: a click on compact churned for a while and showed nothing) — the
       // saving was computed, banked and then thrown away on the wire. This branch used to respond
       // with `result` alone, but the Tinker panel reads `evictedTokens` OFF THE TOP LEVEL (the
       // shape the eviction branch above returns), so a narrative compaction always looked like a

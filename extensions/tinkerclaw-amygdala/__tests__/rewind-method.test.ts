@@ -108,7 +108,7 @@ describe("rewind targets only the newest exchange (2026-09-30)", () => {
   });
 });
 
-// 2026-10-22, the architect: "Rewind should get attached to the turn, so I can remove from history more than one turn".
+// 2026-10-22: Rewind is attached to its turn, so it can drop more than one turn from history.
 describe("rewind to an older turn, named by its prompt", () => {
   it("drops that exchange and every later one, and hands back that turn's prompt", () => {
     const { path, registry } = setup();

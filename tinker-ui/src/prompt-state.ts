@@ -346,8 +346,7 @@ const INDICATORS: Readonly<Record<PromptStateName, Readonly<PromptIndicator>>> =
   LOST: row("LOST", {
     badge: "not in history",
     tone: "amber",
-    // FORK 2026-09-26 (the architect: "add a bug icon button, which should log that this particular prompt
-    // feature did not work correctly"). The 🐛 retires nothing: it records why this prompt reads
+    // FORK 2026-09-26: a bug button logs that this prompt misbehaved. The 🐛 retires nothing: it records why this prompt reads
     // LOST (app.ts `reportPromptBug` → prompt-bug-report.ts → prod-ui /api/bug-report).
     actions: Object.freeze(["resend", "dismiss", "report-bug"]) as readonly PromptAction[],
     clearedBy: "the owner's action",

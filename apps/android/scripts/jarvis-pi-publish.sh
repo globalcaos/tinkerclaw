@@ -5,8 +5,8 @@
 #   bash ~/src/tinkerclaw/apps/android/scripts/jarvis-pi-publish.sh "release notes" [source-root]
 #
 # Run it as a longjob (a release build takes ~20 min on the Pi under pigov P2).
-# Why (2026-10-21): the laptop that used to build went offline for the US trip, and the architect made the Pi
-# Jarvis's home ("all the permissions on it ... no need to ask me for permission to sign anything").
+# Why (2026-10-21): the laptop that used to build went offline, and the Pi became Jarvis's home,
+# with permission to build and sign without asking.
 # Needs the Pi kit, user space, no root:
 #   ~/.jdks/jdk21 (Adoptium aarch64), ~/Android/Sdk (platforms;android-36, build-tools;36.0.0),
 #   ~/Android/aapt2-x86/bin/aapt2 = Google's x86-64 aapt2 for AGP 9.2.0 run under Debian's box64, with
@@ -53,14 +53,14 @@ bash "$SRC/apps/android/scripts/voice-parity.sh" >/tmp/voice-parity.$$ 2>&1 ||
 rm -f /tmp/voice-parity.$$
 
 # 2. Gradle on the Pi. Shrunk (R8) by default again since 2026-10-23: the quick build (no R8, 2026-10-22)
-# made the APK 72.7 MB instead of 8.5 MB, and the architect found the download slower than the build it saved
-# ("Maybe best to go back to the optimized build?"). JARVIS_QUICK=1 still builds the big, fast one.
+# made the APK 72.7 MB instead of 8.5 MB, and the download proved slower than
+# the build it saved. JARVIS_QUICK=1 still builds the big, fast one.
 # The daemon (~1.3 GB) now stays warm 10 minutes for back-to-back builds, then exits on its own.
 # Release lint is skipped: on the Pi its Kotlin analyzer crashes at random (2026-10-22, TerminalScreen.kt,
 # unchanged code that had built two hours before). Compile errors still fail the build.
 # Through pigov P2 (nice 19, CPUWeight 20): bare, the Gradle JVMs ran at nice 0 and starved the PDF
-# reader's Piper voice to 13 s a sentence, so Read aloud looked dead (the architect 2026-10-21: "Read aloud
-# still not working"). pigov runs the command as a systemd unit: it keeps the cwd, not the env.
+# reader's Piper voice to 13 s a sentence, so Read aloud looked dead (2026-10-21).
+# pigov runs the command as a systemd unit: it keeps the cwd, not the env.
 cd "$M/apps/android"
 [ -f "$O/output-metadata.json" ] && mv -f "$O/output-metadata.json" "$O/output-metadata.prev.json"
 python3 -I "$HOME/.openclaw/workspace/scripts/pi-gov/pigov.py" run --tier P2 --name gradle-apk -- \
@@ -86,7 +86,7 @@ printf '{"versionCode":%s,"versionName":"%s","file":"jarvis-%s.apk","sha256":"%s
 mv "$D/latest.json.new" "$D/latest.json"
 echo "published versionCode $VC"
 # Size against the build before (2026-10-23): the quick no-R8 build grew the APK from 8.5 MB to 72.7 MB
-# and nobody saw it for a day; the architect felt it as "it takes forever" on every download.
+# and nobody saw it for a day; every download felt slow.
 PREV=$(ls -1t "$D"/jarvis-*.apk 2>/dev/null | grep -v "jarvis-$VC.apk" | head -1)
 NEW_B=$(stat -c %s "$D/jarvis-$VC.apk")
 if [ -n "$PREV" ]; then

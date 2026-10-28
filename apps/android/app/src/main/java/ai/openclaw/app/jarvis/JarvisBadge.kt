@@ -12,8 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * FORK 2026-10-28 (the architect: "The phone app icon shows me numbers overlaid, it should match the number of
- * unread chat results"). The launcher badge counts this app's notifications, so every alert that piled
+ * FORK 2026-10-28: the app icon badge must match the number of unread chat results. The launcher badge counts this app's notifications, so every alert that piled
  * up in the shade added one. Now only this notification sits on a badging channel, and its number is
  * the count of Tinker chats with a result he has not read; the Pi works the count out with the page's
  * own rule (scripts/phone-door/phone-badge.mjs) and sends it as jarvis.badge {count, titles}. Zero

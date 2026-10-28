@@ -4,7 +4,7 @@
     pdf-carry-marks.py OLD.pdf NEW.pdf      # rewrites NEW.pdf in place
 
 A rebuild produces a fresh PDF with no annotations, so his comments vanished every time
-(the architect 2026-10-16: "rebuilding the pdf deletes the comments, and they should be kept").
+(2026-10-16: rebuilding the pdf deleted its comments; they must be kept).
 Highlights, underlines and strike-outs are re-anchored on the same words: the quoted text is
 searched on the same page first, then on every page. A mark whose text is gone keeps its old
 page and position. Notes, free text, ink and shapes keep their page and position.

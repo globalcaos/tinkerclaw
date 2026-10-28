@@ -80,8 +80,8 @@ const LANE = 40;
 const AX = 8;
 const y = (r: Element): number => Number(r.getAttribute("y"));
 
-// the architect 2026-10-05: "two kinds of messages, one with a summary of the checks it performed, which should expand into a
-// nice diagram of what it did and when ... and another type of entry ... with actions it would have taken".
+// 2026-10-05: two kinds of message, one summarising the checks performed (expanding into a diagram of what ran
+// and when) and one listing the actions it would have taken.
 
 describe("stepsOf: one timeline column per step", () => {
   it("a tool call's pre and post checks share its column, even when parallel calls interleave", () => {
@@ -404,52 +404,31 @@ describe("renderJevActions: the actions to review", () => {
     expect(render({ shadow: false }).querySelector(".amy-jkind")!.textContent).toBe("acted");
   });
 
-  it("one row per action: what, on which step, why, when, with the votes in view", () => {
+  it("one card per action: a single line by default, the step and the reasons behind the toggle, no vote", () => {
     const el = render();
     const rows = el.querySelectorAll(".amy-jact");
     expect(rows).toHaveLength(2);
     expect(rows[0]!.textContent).toContain("Would have held this step");
-    expect(rows[0]!.querySelector(".amy-jc-step")!.textContent).toBe("step rm -rf x");
-    const why = rows[0]!.querySelector(".amy-jc-why")!.textContent!;
+    expect(rows[0]!.querySelector(".amy-ja-time")!.textContent).toBe("09:38");
+    expect(rows[0]!.querySelector(".amy-jc-step")).toBeNull();
+    const head = rows[0]!.querySelector(".amy-jc-head")!;
+    expect(head.getAttribute("data-amy-act")).toBe("jev-act-detail");
+    expect(rows[1]!.textContent).toContain("Would have sent the reply back to be finished");
+    expect(el.querySelectorAll("button[data-amy-act=label]")).toHaveLength(0);
+    const opened = render({
+      openDetails: new Set([head.getAttribute("data-action")!]),
+    }).querySelector(".amy-jact")!;
+    expect(opened.querySelector(".amy-jc-step")!.textContent).toMatch(/^step \S/);
+    const why = opened.querySelector(".amy-jc-why")!.textContent!;
     expect(why).toContain("because Jev answered");
     expect(why).toContain("Danger level: how hard is this step to undo? → 3");
     expect(why).toContain("Planted instructions");
-    expect(rows[0]!.querySelector(".amy-ja-time")!.textContent).toBe("09:38");
-    expect(rows[1]!.textContent).toContain("Would have sent the reply back to be finished");
-    const votes = rows[0]!.querySelectorAll("button[data-amy-act=label]");
-    expect(votes).toHaveLength(2);
-    expect(votes[0]!.getAttribute("data-target-id")).toBe("D1");
-    expect(votes[0]!.getAttribute("data-target-kind")).toBe("decision");
-    expect(votes[0]!.getAttribute("data-kind")).toBe("useful");
-    expect(votes[0]!.getAttribute("data-value")).toBe("1");
-    expect(votes[0]!.textContent).toContain("right call");
-    expect(votes[1]!.getAttribute("data-value")).toBe("-1");
-    expect(votes[1]!.textContent).toContain("wrong call");
   });
 
-  it("a vote already given shows on its button; enforce mode says what it did", () => {
-    const v = render({ votes: new Map([["D1", 1]]) })
-      .querySelectorAll(".amy-jact")[0]!
-      .querySelectorAll("button");
-    expect(v[0]!.classList.contains("amy-voted")).toBe(true);
-    expect(v[1]!.classList.contains("amy-voted")).toBe(false);
+  it("enforce mode says what it did", () => {
     expect(render({ shadow: false }).querySelector(".amy-jact")!.textContent).toContain(
       "Held this step",
     );
-  });
-
-  it("without a decision id the vote falls back to the first answer; a lone rule with no decision has no vote", () => {
-    const b = render({}, turn([dec("x", { codeDid: "note" })])).querySelector(".amy-jact button")!;
-    expect(b.getAttribute("data-target-id")).toBe("x");
-    expect(b.getAttribute("data-target-kind")).toBe("verdict");
-    const lone = render({}, turn([], [iv("r1", { cmd: "rm -rf /tmp/x" })])).querySelector(
-      ".amy-jact",
-    )!;
-    expect(lone.querySelector("button")).toBeNull();
-    expect(lone.querySelector(".amy-jc-why")!.textContent).toBe(
-      "because of the rules effect: delete",
-    );
-    expect(lone.querySelector(".amy-jc-step")!.textContent).toBe("step rm -rf /tmp/x");
   });
 
   it("the extra markup (a waiting card, the refusal offer) rides on its own row", () => {
@@ -489,17 +468,15 @@ describe("renderJevActions: the actions to review", () => {
 
   it("escapes names and steps", () => {
     const evil = "<img src=x onerror=alert(1)>";
-    const el = render(
-      {},
-      turn([dec("e", { codeDid: "note", questionName: evil, stepLabel: evil })]),
-    );
+    const t = turn([dec("e", { codeDid: "note", questionName: evil, stepLabel: evil })]);
+    const el = render({ openDetails: new Set(actionsOf([t]).map((a) => a.key)) }, t);
     expect(el.querySelector("img")).toBeNull();
     expect(el.querySelector(".amy-jc-step")!.textContent).toContain(evil);
   });
 });
 
-// 2026-10-05, the architect: "the 'would have' descriptions are a bit complicated for me to understand ... the concatenated
-// commands are too complex for me to process. Plus, everything has a context." Grok words each flag and proposes a reply.
+// 2026-10-05: the 'would have' descriptions were hard to follow, chained commands too dense, and each lacked its
+// context. Grok words each flag and proposes a reply.
 describe("renderJevActions: the explainer's words", () => {
   const held = [
     dec("h", {
@@ -533,14 +510,11 @@ describe("renderJevActions: the explainer's words", () => {
   const render = (o: Partial<Parameters<typeof renderJevActions>[2]> = {}) =>
     parse(renderJevActions("t1", [turn(held)], { open: true, ...o }));
 
-  it("leads with what the agent was doing and what worried Jev; the command folds behind details", () => {
+  it("collapsed, the line carries the judge's verdict; opened, what the agent was doing, Jev's worry and the judge's reason", () => {
     const row = render({ explain: () => x() }).querySelector(".amy-jact")!;
-    expect(row.querySelector(".amy-jx-doing")!.textContent).toBe(
-      "Cleaning up its own login test files.",
-    );
-    expect(row.querySelector(".amy-jx-jev")!.textContent).toContain(
-      "Would have held it because files were deleted.",
-    );
+    expect(row.querySelector(".amy-jverdict")!.textContent).toBe("grok-4.6: wrong call");
+    expect(row.querySelector(".amy-jverdict")!.classList.contains("amy-jv-bad")).toBe(true);
+    expect(row.querySelector(".amy-jx-doing")).toBeNull();
     expect(row.querySelector(".amy-jc-step")).toBeNull();
     expect(row.querySelector("[data-amy-act=jev-act-detail]")!.getAttribute("data-action")).toBe(
       key(),
@@ -548,46 +522,39 @@ describe("renderJevActions: the explainer's words", () => {
     const opened = render({ explain: () => x(), openDetails: new Set([key()]) }).querySelector(
       ".amy-jact",
     )!;
-    expect(opened.querySelector(".amy-jc-step")!.textContent).toContain("rm -f /tmp/door-jar.txt");
+    expect(opened.querySelector(".amy-jx-doing")!.textContent).toBe(
+      "Cleaning up its own login test files.",
+    );
+    expect(opened.querySelector(".amy-jx-jev")!.textContent).toContain(
+      "Would have held it because files were deleted.",
+    );
+    expect(opened.querySelector(".amy-jx-verdict")!.textContent).toContain(
+      "Just its own test files.",
+    );
+    expect(opened.querySelector(".amy-jc-step")).not.toBeNull();
     expect(opened.querySelector(".amy-jc-why")!.textContent).toContain("Danger level");
   });
 
-  it("offers one reply per vote, the suggested one first and marked, each a vote on the decision", () => {
-    const el = render({ explain: () => x() });
-    const btns = el.querySelectorAll(".amy-jx-replies button[data-amy-act=label]");
-    expect(btns).toHaveLength(2);
-    expect(btns[0]!.getAttribute("data-value")).toBe("-1");
-    expect(btns[0]!.textContent).toBe("👎 Wrong call: Just its own test files.");
-    expect(btns[0]!.classList.contains("amy-jrec")).toBe(true);
-    expect(btns[0]!.getAttribute("data-target-id")).toBe("D1");
-    expect(btns[0]!.getAttribute("data-target-kind")).toBe("decision");
-    expect(btns[1]!.textContent).toBe("👍 Right call: A hold is fair.");
-    expect(btns[1]!.classList.contains("amy-jrec")).toBe(false);
-    expect(el.querySelectorAll(".amy-ja-votes")).toHaveLength(0);
+  it("asks the owner nothing: no vote buttons, with or without the judge's words", () => {
+    expect(render({ explain: () => x() }).querySelectorAll("button")).toHaveLength(0);
+    expect(render().querySelectorAll("button")).toHaveLength(0);
+    const right = render({
+      explain: () => x({ explanation: { ...x().explanation!, suggest: 1 } }),
+    }).querySelector(".amy-jverdict")!;
+    expect(right.textContent).toBe("grok-4.6: right call");
+    expect(right.classList.contains("amy-jv-ok")).toBe(true);
   });
 
-  it("marks a vote already given, here or before a reload", () => {
-    const b = render({ explain: () => x({ vote: 1 }) }).querySelectorAll(".amy-jx-replies button");
-    expect(b[1]!.classList.contains("amy-voted")).toBe(true);
-    const here = render({ explain: () => x(), votes: new Map([["D1", -1]]) }).querySelectorAll(
-      ".amy-jx-replies button",
-    );
-    expect(here[0]!.classList.contains("amy-voted")).toBe(true);
-  });
-
-  it("while the words are on their way the row keeps the old view and says so; a failure keeps the old view", () => {
+  it("while the judge is on its way the chip says so; a failure shows no chip", () => {
     const pending = render({
       explain: () => x({ status: "pending", explanation: undefined }),
     }).querySelector(".amy-jact")!;
-    expect(pending.querySelector(".amy-jx-wait")!.textContent).toBe(
-      "Explaining this flag in plain words…",
-    );
-    expect(pending.querySelector(".amy-jc-step")).not.toBeNull();
+    expect(pending.querySelector(".amy-jverdict")!.textContent).toBe("judging…");
     const failed = render({
       explain: () => x({ status: "failed", explanation: undefined }),
     }).querySelector(".amy-jact")!;
-    expect(failed.querySelector(".amy-jx-wait")).toBeNull();
-    expect(failed.querySelectorAll(".amy-ja-votes button")).toHaveLength(2);
+    expect(failed.querySelector(".amy-jverdict")).toBeNull();
+    expect(failed.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("actionDecisionId names the decision an action's vote and words belong to", () => {

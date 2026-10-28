@@ -336,7 +336,7 @@ export function installToolResultContextGuard(params: {
     }
     const estimatedContextChars = estimateGuardContextChars(contextMessages);
     if (estimatedContextChars > maxContextChars) {
-      // FORK 2026-07-27 (the architect: "instrument the compaction predicate") — this guard is the
+      // FORK 2026-07-27: instrument the compaction predicate — this guard is the
       // one observed throwing live: every [context-overflow-diag] line carries this exact
       // message, and all of them land on small-window models (grok/codex), because
       // maxContextChars is linear in the window.

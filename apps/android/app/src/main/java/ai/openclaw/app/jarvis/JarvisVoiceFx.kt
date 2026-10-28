@@ -17,7 +17,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * FORK 2026-10-22 (the architect: "reach me anytime by voice"). Jarvis's phone voice without the Tinker page:
+ * FORK 2026-10-22: the agent can reach the owner by voice at any time. Jarvis's phone voice without the Tinker page:
  * the same processing as tinker-ui/src/voice-intonation.ts (exaggerateIntonation, singingFork) and the
  * Web Audio chain in voice-in-browser.ts (playMetallic), so a line spoken with the app closed sounds
  * like one spoken in the app. The x0.92 pitch drop is not here: the player plays at playbackRate.

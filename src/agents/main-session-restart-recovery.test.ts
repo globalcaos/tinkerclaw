@@ -227,7 +227,7 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
   });
 
-  // FORK 2026-05-31 (the architect directive: "fix the resume on idle"). An idle
+  // FORK 2026-05-31 (fix resume on an idle session). An idle
   // session whose last turn already COMPLETED (assistant text tail) must NOT be
   // resumed — doing so fires a phantom [System] continue at a turn with nothing
   // to resume (the "talked with no prompt" loop). It is settled to done so the

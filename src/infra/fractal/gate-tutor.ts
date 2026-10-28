@@ -1,5 +1,5 @@
 /**
- * FORK 2026-10-25: the Fractal gate's tutor. the architect: "wire in all the missing Grok tutors" (the after-the-fact
+ * FORK 2026-10-25: the Fractal gate's tutor, one of the missing Grok tutors wired in (the after-the-fact
  * usefulness reviewers), after the Jev audit found the gate's skips invisible.
  *
  * WHAT IT DOES. A few of the turns the gate skipped (at most `dailyCap` a day, each skip taken with probability

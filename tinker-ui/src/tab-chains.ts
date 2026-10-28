@@ -1,4 +1,4 @@
-// FORK 2026-09-23 (the architect: "set conversation slave") — master/slave tab pairs for the
+// FORK 2026-09-23: link a conversation as a slave tab — master/slave tab pairs for the
 // conversation-loop skill, plus the rope physics the chain overlay draws.
 //
 // Pure module: no DOM. app.ts persists the list as the ui-state choice LOOP_CHAINS_CHOICE

@@ -1,6 +1,6 @@
 /**
- * FORK 2026-09-08 (the architect, work tab, minutes after the Sol report: "Now Grok is triggering in
- * Auto, this is insane. Thalamus should select opus first, right?").
+ * FORK 2026-09-08 (work tab, minutes after the Sol report): Auto kept picking Grok when
+ * Thalamus should have picked opus first.
  *
  * The failover machinery persists the candidate it fell back to as a session override with
  * `modelOverrideSource: "auto"` (agent-runner-execution.ts, `buildFallbackSelectionState`) — so

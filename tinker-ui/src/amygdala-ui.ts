@@ -68,7 +68,7 @@ export interface AmygdalaUiDeps {
   exchangeKeyOf?(promptRow: unknown): string | null;
   newestExchange?(): { key: string; prompt: string; at?: number } | null;
   /**
-   * 2026-10-22 (the architect: "Rewind should get attached to the turn, so I can remove from history more than one turn"): the
+   * 2026-10-22 (Rewind attaches to the turn, so more than one turn can be removed from history): the
    * exchange with this key on the page now and how many exchanges follow it; null while a reply runs or when it is gone.
    */
   exchangeAt?(key: string): { key: string; prompt: string; at?: number; later: number } | null;
@@ -168,7 +168,7 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
   const retryByTurn = new Map<string, RetryPickView | null>();
   const retryAsked = new Set<string>();
   let canaryText = "";
-  // FORK 2026-10-15 (the architect: "all performed actions ... right where he does it"): the hook's actions (AEGIS, v3.1) by id,
+  // FORK 2026-10-15 (each of Jev's actions shows where it happened): the hook's actions (AEGIS, v3.1) by id,
   // and the bubble a timeline brain focused. The hook needs no amygdala2, so these live outside `available()`.
   const hooks = new Map<string, HookAction>();
   let focusedId: string | null = null;
@@ -228,9 +228,8 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
   const rewoundTurnByKey = new Map<string, string>();
 
   /**
-   * FORK 2026-10-22 (the architect: a Rewind next to a refusal "would remove the last response from context and chat, and put the
-   * prompt's message back in the input text box, so as to follow the instructions of the refusal, to try a different
-   * way"). The gateway takes the tab's last exchange out of what the model sees; this puts the prompt back in the box
+   * FORK 2026-10-22: a Rewind next to a refusal removes the last response from context and chat and puts the prompt
+   * back in the input box, so the refusal's advice can be followed another way. The gateway takes the tab's last exchange out of what the model sees; this puts the prompt back in the box
    * and takes the exchange off the page. Nothing is sent and no model is picked.
    *
    * Guards, each bought by a way this click could do harm:
@@ -395,8 +394,8 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
   }
 
   /**
-   * A refusal Jev saw, whole or partial (2026-10-22, the architect: "Add the rewind every time Jev detects a refusal, not only
-   * complete but also partial"): its refusal mark, or a reply sent back because it dodged part of the work. A reply sent
+   * A refusal Jev saw, whole or partial (2026-10-22: every refusal Jev detects gets the rewind,
+   * partial ones included): its refusal mark, or a reply sent back because it dodged part of the work. A reply sent
    * back for another reason (an unsupported claim) is not one.
    */
   const wholeRefusal = (a: JevAction): boolean => a.did === "refusal" || a.iv?.kind === "refusal";
@@ -452,11 +451,10 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
     const key = turns[0]?.turnId;
     if (!key) return "";
     const shown = actionsOf(turns)
-      // A provider safeguard block is a refusal the owner can rewind and retry on another model (2026-10-22, the
-      // architect: "the button to rewind which should put in my input box the same prompt that caused it, and Thalamus
-      // should be at work here proposing which model to choose next"). Shown in shadow too; nothing resends unclicked.
-      // Every other refusal Jev detects offers the same strip, shadow included (2026-10-22 14:55: "When Jev detects a
-      // refusal to respond, the ui should present a rewind button along its detection"), once the gateway's Rewind
+      // A provider safeguard block is a refusal the owner can rewind and retry on another model (2026-10-22: the rewind
+      // button puts the triggering prompt back in the input box, and Thalamus proposes which model to try next). Shown in shadow too; nothing resends unclicked.
+      // Every other refusal Jev detects offers the same strip, shadow included (2026-10-22: every refusal
+      // Jev detects shows a rewind button beside the detection), once the gateway's Rewind
       // really takes the exchange out of the model's context (status `rewind` ≥ 2). The strip is his choice, never an
       // enforcement: the 10-15 rule that hid shadow decisions had hidden it too.
       .filter(

@@ -65,7 +65,7 @@ describe("phaseDocFor", () => {
   });
 
   it("cites thetinkerzone.com and nowhere else", () => {
-    // the architect, 2026-08-16: "The paper links should go to thetinkerzone.com". Also guards the rule
+    // 2026-08-16: paper links point to thetinkerzone.com. Also guards the rule
     // at the top of phase-docs.ts — no URL goes in from memory, so a new host is the signature
     // of a link nobody verified against the live page.
     for (const label of documentedPhaseLabels()) {

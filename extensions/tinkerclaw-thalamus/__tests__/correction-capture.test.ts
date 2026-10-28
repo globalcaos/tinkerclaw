@@ -51,147 +51,147 @@ type Case = { text: string; classes: CorrectionClass[]; named?: string[]; ambigu
 const CASES: Case[] = [
   // use_existing (C3)
   {
-    text: `[Thu 2026-09-03 09:57 GMT+2] Did you forget we have a youtube skill?${DOCTRINE}`,
+    text: `[Thu 2026-09-03 09:57 GMT+2] Wait, you forgot that we have a youtube skill.${DOCTRINE}`,
     classes: ["use_existing"],
     named: ["skill:youtube-ultimate"],
   },
   {
-    text: "[Sun 2026-08-30 16:16 GMT+2] I don't need to share any tab, you have a gmail skill",
+    text: "[Sun 2026-08-30 16:16 GMT+2] No need for the browser, you have a gmail skill",
     classes: ["use_existing"],
     named: ["skill:gog"],
   },
-  { text: "Remember we have a skill that overcomes this difficulty", classes: ["use_existing"] },
+  { text: "Remember we have a skill that handles this", classes: ["use_existing"] },
   {
-    text: "El skill sharepoint-download permet descarregar els arxius, collons! Fes-lo servir per descarregar-te els putus arxius!!",
+    text: "Tens el skill sharepoint-download per baixar els arxius. Fes-lo servir!",
     classes: ["use_existing"],
     named: ["skill:sharepoint-download"],
   },
   {
-    text: "Great work on the paper, but you forgot to inject in it napkin diagrams as our recipe calls for",
+    text: "Nice draft, but you forgot to run the spell check as our recipe says",
     classes: ["use_existing"],
   },
   {
-    text: "Nope, you are not following the right script or recipe. Remember the one you used last time, the last version with the NN focus",
+    text: "Not quite, you are not using the right recipe. Remember the one you used for the March report",
     classes: ["use_existing"],
   },
   {
-    text: "Is amygdala done? If so, put it into production. You should have a skill to restart the gateway and the front-end",
+    text: "Is the build done? If so, ship it. You should have a skill to restart the server",
     classes: ["use_existing"],
   },
   {
-    text: "Update the wiki entry with the new IPs. Dude, you have the login and passwords of the wiki",
+    text: "Update the wiki page with the new dates. You already have a plugin for the wiki",
     classes: ["use_existing"],
   },
   // dont_ask (C5)
   {
-    text: "I just sent a test to Goku and it still does not work. Make it work, don't ask me to run commands, fix it",
+    text: "I tried the export again and it still fails. Just fix it, don't ask me to run anything",
     classes: ["dont_ask"],
   },
   {
-    text: "[Sat 2026-10-10 09:21 GMT+2] ok, do it yourself, you have the tab",
+    text: "[Sat 2026-10-10 09:21 GMT+2] ok, do it yourself, you have access",
     classes: ["dont_ask"],
   },
   {
-    text: "Do the sudo thing in the pi yourself, you have the root password",
+    text: "Run the install yourself, we have a recipe for it",
     classes: ["use_existing", "dont_ask"],
   },
-  { text: "why do you even ask?", classes: ["dont_ask"] },
+  { text: "why would you even ask?", classes: ["dont_ask"] },
   // simpler (C6)
-  { text: "Simplify your explanation for me, will you?", classes: ["simpler"] },
+  { text: "Please simplify the answer a bit", classes: ["simpler"] },
   {
-    text: "No clue, I don't understand anything here. Explain it as if I was a grandma without computer knowledge",
+    text: "Sorry, I don't understand a word. Explain it like I am a grandma",
     classes: ["simpler"],
   },
   {
-    text: "The title is way too complicated, bring it down to human terms, something we can all relate to.",
+    text: "The summary is way too technical, say it in human terms.",
     classes: ["simpler"],
   },
   {
-    text: "Expain better the invariant gate question, I don't understand it. Put it in human terms, things I can relate to",
+    text: "Expain better the second step, I don't understand it.",
     classes: ["simpler"],
   },
   // reply_language (C8)
   {
-    text: "The rule is that if I speak in one language, you respond in the same one. Try again",
+    text: "When I write in one language, please answer in the same one. Try again",
     classes: ["reply_language"],
     ambiguous: false,
   },
   {
-    text: "Why did you switch language to Spanish? I would like this chat and the test itself to be entirely in English",
+    text: "Why did you switch language? Keep the whole report entirely in English",
     classes: ["reply_language"],
   },
-  { text: "Hello? Anybody hoe?? And let's switch to English please", classes: ["reply_language"] },
+  { text: "Hi again. Can we switch back to English?", classes: ["reply_language"] },
   // purple_line (C9)
   {
-    text: "So, is it working now? I haven't seen the purple text in a long while. Why is that?",
+    text: "Is the voice working? I haven't seen the purple line today.",
     classes: ["purple_line"],
   },
   {
-    text: "Ok, what about your humor? Revise the humor paper. Your humor will only go in the purple text",
+    text: "Put the jokes only in the purple text, please",
     classes: ["purple_line"],
   },
   // keep_going (C4)
   { text: "[Wed 2026-07-08 16:48 GMT+2] keep going", classes: ["keep_going"] },
   { text: "Are you stuck? Keep going", classes: ["keep_going"] },
-  { text: "I cannot see an answer yet, keep going", classes: ["keep_going"] },
+  { text: "I can't see any progress, keep going", classes: ["keep_going"] },
   { text: "Good. Keep going", classes: ["keep_going"] },
-  { text: "keep going with opus", classes: ["keep_going"] },
+  { text: "keep going with the next file", classes: ["keep_going"] },
   { text: "continue where you left off", classes: ["keep_going"] },
-  { text: "keep going, something interrupted your thinking", classes: ["keep_going"] },
+  { text: "something interrupted the run, keep going", classes: ["keep_going"] },
   // Not a correction: a new request with the same words in it.
-  { text: "Translate the pamiesvitae pdf into Spanish", classes: [], ambiguous: false },
+  { text: "Translate the brochure into Spanish", classes: [], ambiguous: false },
   {
-    text: "Ok, the key worked through the phone, you have the key stored properly. Test it",
+    text: "Ok, the token works now, you have the token saved. Test it",
     classes: [],
     ambiguous: false,
   },
   {
     // "I don't understand why" is a question, not "explain simpler". "still" is no cue for these classes: on the corpus
     // it sent 126 unrelated prompts to Jev.
-    text: "I don't understand why there are still improvement notes that are not empty.",
+    text: "I don't understand why there are still open items in the queue.",
     classes: [],
     ambiguous: false,
   },
   {
-    text: "Let's create a linkedin skill. I want you to do something similar to what we did with the teams hack",
+    text: "Let's create a linkedin skill, similar to the one we made for calendars",
     classes: [],
     named: [],
   },
   {
-    text: "Improve the 365 copilot skill, we need to inject the context in every llm call",
+    text: "Improve the 365 copilot skill so it keeps the context",
     classes: [],
     named: [],
   },
   {
-    text: "Rename the skill to something more plain, like sharepoint-download.",
+    text: "Give the skill a more plain name, like sharepoint-download.",
     classes: [],
     named: [],
   },
   {
-    text: "Ok, confirmed, it works, keep going through the next phase",
+    text: "Right, it works now, keep going through the next phase",
     classes: [],
     ambiguous: true,
   },
   // A plain instruction names a card for THIS task; it is not a correction.
   {
-    text: "Ara fes una cerca utilitzant el skill de linkedin que hem desenvolupat sense cremar la sessió compartida.",
+    text: "Cerca feines utilitzant el skill de linkedin, sense pressa.",
     classes: [],
     named: ["skill:linkedin-hack"],
   },
   // Two cards share the word: never a guess.
   {
-    text: "Use your amazon skill to search for micro SD and make me an html graph of price/capacity",
+    text: "Use your amazon skill to compare prices of hiking boots",
     classes: [],
     named: [],
   },
   // Weak cue, no class: Jev's.
   {
-    text: "Keep going with the SV2 development and after giving the next job to the worker explain me the next remaining tasks to be done",
+    text: "Keep going with the report and after the next section list the remaining tasks",
     classes: [],
     ambiguous: true,
   },
   {
-    text: "Dude, how many times do I have to tell you?? Concentrate on page 4",
+    text: "How many times do I have to say it? Look at the second table",
     classes: [],
     ambiguous: true,
   },
@@ -271,9 +271,7 @@ describe("the capture", () => {
   it("pins a plainly named card on the current task, `by: named`, with no correction row", () => {
     const t = capture();
     const out = t.cap.observe(
-      typed(
-        "[Wed 2026-09-23 17:08 GMT+2] Importa les dades del sharepoint, utilitza el skill sharepoint-download",
-      ),
+      typed("[Wed 2026-09-23 17:08 GMT+2] Baixa l'informe, utilitza el skill sharepoint-download"),
     );
     expect(out?.pins).toEqual([
       { taskId: "run-now", cardId: "skill:sharepoint-download", by: "named" },
@@ -286,7 +284,7 @@ describe("the capture", () => {
 
   it("an unnamed 'you have a skill' writes the row with n1 = 0 and no pin", () => {
     const t = capture();
-    t.cap.observe(typed("Remember we have a skill that overcomes this difficulty"));
+    t.cap.observe(typed("Remember we have a skill that handles this"));
     expect(t.store.listPins()).toEqual([]);
     expect(t.rows).toMatchObject([
       { name: "j.correction", record: { label: "use_existing", n1: 0 } },
@@ -295,13 +293,13 @@ describe("the capture", () => {
 
   it("a corrective naming with no earlier task in the chat pins the current one", () => {
     const t = capture();
-    t.cap.observe(typed("Did you forget we have a youtube skill?"));
+    t.cap.observe(typed("Wait, you forgot that we have a youtube skill."));
     expect(t.store.listPins()).toMatchObject([{ taskId: "run-now", by: "correction" }]);
   });
 
   it("writes one row per class, the non-pin classes with n1 NULL", () => {
     const t = capture();
-    t.cap.observe(typed("Do the sudo thing in the pi yourself, you have the root password"));
+    t.cap.observe(typed("Run the install yourself, we have a recipe for it"));
     expect(t.rows.map((r) => [r.record.label, r.record.n1, r.record.fields])).toEqual([
       ["use_existing", 0, { via: "rule" }],
       ["dont_ask", null, { via: "rule" }],
@@ -338,16 +336,13 @@ describe("the capture", () => {
     expect(ask).not.toHaveBeenCalled();
 
     const out = t.cap.observe(
-      typed(
-        "Keep going with the SV2 development and after giving the next job explain me the remaining tasks",
-      ),
+      typed("Keep going with the report and after the next section list the remaining tasks"),
     );
     expect(ask).toHaveBeenCalledTimes(1);
     expect(ask.mock.calls[0][0]).toEqual({
       id: "correction:run-now",
       request: {
-        value:
-          "Keep going with the SV2 development and after giving the next job explain me the remaining tasks",
+        value: "Keep going with the report and after the next section list the remaining tasks",
       },
     });
     await expect(out?.jev).resolves.toBe("keep_going");
@@ -359,7 +354,7 @@ describe("the capture", () => {
   it("never asks Jev when the privacy gate says no, and drops a weak or `none` answer", async () => {
     const ask = vi.fn<CorrectionAsk>(async () => [verdict("keep_going", 0.9)]);
     const closed = capture({ ask, allowed: false });
-    expect(closed.cap.observe(typed("how many times do I have to tell you?"))?.jev).toBeUndefined();
+    expect(closed.cap.observe(typed("how many times do I have to say it?"))?.jev).toBeUndefined();
     expect(ask).not.toHaveBeenCalled();
 
     expect(correctionFromVerdict(verdict("keep_going", 0.4))).toBeUndefined();
@@ -376,7 +371,7 @@ describe("the capture", () => {
         throw new Error("down");
       },
     });
-    const out = t.cap.observe(typed("how many times do I have to tell you?"));
+    const out = t.cap.observe(typed("how many times do I have to say it?"));
     await expect(out?.jev).resolves.toBeUndefined();
     expect(t.rows).toEqual([]);
   });

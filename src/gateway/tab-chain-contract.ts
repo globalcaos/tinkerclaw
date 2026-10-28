@@ -1,5 +1,5 @@
-// FORK 2026-10-15 (the architect: "when a tab has no master-slave contract set up, it should not be
-// allowed to infiltrate another chat") — the cross-tab contract, enforced where the message
+// FORK 2026-10-15: a tab without a master-slave contract may not write into another
+// chat — the cross-tab contract, enforced where the message
 // lands. Bible §5.8AG.
 //
 // A message that speaks AS an agent into a chat (`⟦AGENT:<label>⟧ …`, written by converse.mjs

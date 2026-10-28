@@ -1,8 +1,7 @@
 // Pure, DOM-free: ONE WRITER PER RUN.
 //
-// FORK 2026-09-23 (the architect: "most of the time, the messages show repeated … if I refresh the page,
-// the duplicate goes away … sometimes I see a thinking bubble up high being filled up with text,
-// instead of appearing at the bottom like it should").
+// FORK 2026-09-23: messages often showed twice until a page refresh, and a thinking bubble
+// sometimes filled with text high up instead of at the bottom.
 //
 // THE DEFECT. The gateway streams a run as CUMULATIVE buffers: every text delta carries all the
 // answer text of the run so far, every thinking event all the reasoning so far (cc-bridge

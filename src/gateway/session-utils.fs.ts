@@ -160,8 +160,7 @@ function readEvictedTokens(entry: { details?: unknown }): number | undefined {
 }
 
 /**
- * FORK 2026-09-07 (the architect: "I can see a message like it was me prompting it but with some strange
- * html code") — hide the internal runtime-context envelope on the HISTORY path too.
+ * FORK 2026-09-07 (a message rendered as if the user had sent it, full of odd markup) — hide the internal runtime-context envelope on the HISTORY path too.
  *
  * OpenClaw injects runtime events (a finished subagent, a cron result) into the conversation as a
  * role:"user" message wrapped in `<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> … <<<END…>>>`. That is how

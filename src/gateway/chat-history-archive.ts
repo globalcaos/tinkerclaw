@@ -1,4 +1,4 @@
-// FORK 2026-10-02 (the architect: "The parallel worker's chat history seems to not be loading") — a session
+// FORK 2026-10-02 (bug: the parallel worker's chat history did not load) — a session
 // that is RESET keeps one transcript path, and every reset renames what it held to
 // `<transcript>.reset.<ISO time>` (session-transcript-files.fs.ts archiveSessionTranscriptsDetailed).
 // chat.history served only the live file, so a tab whose session is reset before every turn (the
@@ -51,7 +51,7 @@ export function listResetArchives(transcriptPath: string): ResetArchiveRef[] {
   return out.toSorted((a, b) => b.resetAt - a.resetAt);
 }
 
-// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — a tab's
+// FORK 2026-10-03 (bug: some tabs still showed erased history) — a tab's
 // history is not one file's archives. Main's `/new` at 2026-10-02 12:12 started it on a NEW
 // transcript path (a reset keeps the path; that command does not), so every reset of the old path
 // — 534 messages from 2026-08-22 to 09-22 — sat beside a file no store entry named, served by
@@ -159,8 +159,8 @@ export function listSessionArchives(params: {
   return out.toSorted((a, b) => b.resetAt - a.resetAt);
 }
 
-// FORK 2026-10-05 (the architect: "Some tabs in tinkerclaw appear without history. I should be able to
-// scroll back until the beginning") — a compaction checkpoint is a snapshot of an append-only
+// FORK 2026-10-05 (bug: some tabs showed no history; scrolling back must reach the
+// beginning) — a compaction checkpoint is a snapshot of an append-only
 // transcript, so the transcript still holds every byte of it. OrbisVision's live file (23 MB) had 22
 // checkpoints of 15-23 MB, every one a byte-prefix of it, and its three repair backups differed only
 // in their last line, the entry the repair rewrote. An archive read parsed each copy whole (the

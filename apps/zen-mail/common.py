@@ -24,8 +24,8 @@ OUTLOOK_CLI = pathlib.Path(
 
 CLAUDE = os.environ.get("ZEN_MAIL_CLAUDE") or shutil.which("claude") or "claude"
 
-# The other places work and life arrive besides mail (the architect, 2026-10-15 13:46-13:50: "and with teams", "and with
-# whatsapp", "context from all sides needs to be considered"). Each lands in `messages` like a mail thread, its conv
+# The other places work and life arrive besides mail (2026-10-15: Teams and WhatsApp too,
+# since context from every side counts). Each lands in `messages` like a mail thread, its conv
 # prefixed with the source, so triage ranks everything in one list. Read-only: nothing is ever sent from here.
 JIRA_CLI = pathlib.Path(os.environ.get("ZEN_MAIL_JIRA_CLI", HOME / ".openclaw/workspace/skills/jira/scripts/jira.py"))
 TEAMS_CLI = pathlib.Path(
@@ -162,8 +162,8 @@ def gog(*args, timeout=120):
     return json.loads(run(["gog", *args, "--json", "--no-input"], timeout=timeout))
 
 
-# Jarvis's memory, readable by the topic chat (the architect, 2026-10-19 19:24: "zen mail is amnesic … allow it to fetch your
-# memories"). Read-only: the model gets Read, Grep and Glob, and only inside these folders.
+# Jarvis's memory, readable by the topic chat (2026-10-19: Zen Mail had no memory, so it
+# may read Jarvis's). Read-only: the model gets Read, Grep and Glob, and only inside these folders.
 MEMORY_DIRS = [HOME / ".openclaw/agent-memory", HOME / ".openclaw/workspace/memory"]
 
 
@@ -196,7 +196,7 @@ def ask_model(prompt, system, model=None, timeout=300, read_dirs=None):
 
 
 def unique_texts(bodies):
-    """Each paragraph of a thread once (the architect, 2026-10-15: "I want to see each mail text once"). bodies run oldest
+    """Each paragraph of a thread once (2026-10-15: show each mail text only once). bodies run oldest
     first; a paragraph of 30+ characters already written in an earlier message (a quoted reply, a forwarded mail, a
     banner, a repeated sign-off) is dropped from the later ones. Returns the bodies in the same order."""
     seen, out = set(), []

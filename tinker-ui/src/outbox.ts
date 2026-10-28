@@ -1,6 +1,5 @@
-// FORK 2026-08-16 — bug (the architect): "when you are changing the UI while I send prompts to Jarvis,
-// sometimes the prompt that I wrote gets forgotten. It does not show in the UI history, Jarvis
-// does not acknowledge it or respond it, and I just wasted my time."
+// FORK 2026-08-16 — bug: a prompt sent while the UI was being rebuilt could be lost: absent from
+// the history, never acknowledged, never answered.
 //
 // THE DEFECT this module closes. A typed prompt used to exist in exactly two volatile places
 // between pressing enter and the gateway accepting it:
@@ -64,7 +63,7 @@ export type OutboxEntry = {
   /**
    * When the gateway ACKED this id (ms epoch), or absent if it never has.
    *
-   * FORK 2026-09-04 (the architect: "there is a bug that makes it delete it somehow" — four prompts
+   * FORK 2026-09-04 (prompts were somehow being deleted — four prompts
    * gone in one morning). An ack is NOT proof of durability, and the send path has said so since
    * 2026-08-24. But it IS proof the gateway holds this idempotencyKey, which makes re-sending it
    * pointless: the dedupe cache just echoes `{status:"ok"}` for a run that already finished.
@@ -125,7 +124,7 @@ export type OutboxEntry = {
    * FORK 2026-09-24 — the key of the prompt this entry RE-SENDS. Set by exactly two producers:
    *   - prompt-queue.md U4: the owner's explicit RESEND of the LOST prompt with this id;
    *   - prompt-queue.md U5 (contradiction C8): one fire of the recoverable-error retry ladder
-   *     (`enqueueLadderRetry`), naming the prompt the owner typed (§2: "RETRYING → SENDING: ladder
+   *     (`enqueueLadderRetry`), naming the prompt that was typed (§2: "RETRYING → SENDING: ladder
    *     fires — a NEW prompt linked by retryOf").
    * Either way the entry travels under its OWN id, a new key: the original's would be absorbed by
    * the gateway's dedupe cache, which only echoes the finished run, so a re-send never reuses the key
@@ -823,7 +822,7 @@ export const PREFIX_MATCH_TAIL = 8;
  * once and the text fallback below decided every reconcile. The gateway persists and serves the key
  * as of 2026-09-08, and an entry that expects it (`keyedProofExpected`) is proven by NOTHING else.
  *
- * REGRESSION FIX 2026-08-16 (the architect: "I am still missing prompts"). The text fallback used to be
+ * REGRESSION FIX 2026-08-16 (prompts were still going missing). The text fallback used to be
  * unbounded in time, and that turned this function into a way to LOSE a prompt: re-sending
  * something you had sent before was instantly "confirmed" by the OLD copy, so the entry was
  * dropped from the outbox, un-flagged, and then deleted from the transcript by the next loadChat —
@@ -915,7 +914,7 @@ export function reconcileWithHistory(
 
 // ─── Append-only prompt journal ──────────────────────────────────────────────────────────────
 //
-// FORK 2026-08-16, second pass (the architect: "I am still missing prompts", after the outbox shipped).
+// FORK 2026-08-16, second pass (prompts still went missing after the outbox shipped).
 //
 // The outbox is DELIVERY state: entries are added and, necessarily, removed. Every removal is a
 // judgement call, and the first version of that judgement was wrong in a way that DELETED prompts

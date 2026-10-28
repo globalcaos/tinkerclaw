@@ -287,7 +287,7 @@ describe("clicks call the gateway with the right parameters", () => {
     await ui.handleClick(btn({ "data-amy-act": "dot" }));
     expect(spies.openPanel).toHaveBeenCalled();
   });
-  // 2026-10-15, the architect: "I don't need to see the jev boxes at the end of the turn anymore."
+  // 2026-10-15: no Jev boxes at the end of the turn any more.
   it("an action with no tool call is a pink bubble at the end of its run; a card that waits for an answer rides on it", async () => {
     const { ui } = await available({
       decisionEvents: [dec("v1", { codeDid: "sent-back", decisionId: "D1" })],
@@ -305,7 +305,7 @@ describe("clicks call the gateway with the right parameters", () => {
   });
 });
 
-// 2026-10-15, the architect: "all performed actions from Jev (not the ones he skips) right where he does it, within its context."
+// 2026-10-15: every action Jev performs (not the skipped ones) is shown where it happens, in context.
 describe("inline bubbles per tool call", () => {
   it("a Jev action that names a tool call is drawn by inlineFor, not after the run", async () => {
     const { ui } = await available({
@@ -341,12 +341,13 @@ describe("inline bubbles per tool call", () => {
     const b = inline.querySelector('[data-amy-bubble="jev:D1"]')!;
     expect(b.getAttribute("data-tool-use")).toBe("toolu_9");
     expect(b.querySelector(".amy-jact")).not.toBeNull();
-    expect(b.querySelector('[data-amy-act="label"]')).not.toBeNull(); // the vote stays
+    expect(b.querySelector('[data-amy-act="jev-act-detail"]')).not.toBeNull(); // a card that opens, no vote
+    expect(b.querySelector('[data-amy-act="label"]')).toBeNull();
     expect(ui.inlineFor("toolu_ok")).toBe(""); // a check that passed is skipped
     expect(ui.inlineFor("toolu_nope")).toBe("");
     expect(ui.inlineFor("")).toBe("");
   });
-  // 2026-10-15, the architect: "I don't want to see so many pink stuff." A shadow record ("would have") draws nothing.
+  // 2026-10-15: less pink in the chat. A shadow record ("would have") draws nothing.
   it("a shadow decision draws no bubble and no timeline mark", async () => {
     const { ui } = await available({
       decisionEvents: [
@@ -534,8 +535,8 @@ describe("rewind and retry with another model (Thalamus full deploy)", () => {
     expect(html).toContain('data-amy-act="rewind"');
   });
 
-  // 2026-10-22 14:55, the owner: "When Jev detects a refusal to respond, the ui should present a rewind button along its
-  // detection". Amygdala runs in shadow, so an ordinary refusal is settled and unenforced, and the 10-15 rule hid it.
+  // 2026-10-22 14:55: when Jev detects a refusal, the UI offers a Rewind button beside the detection.
+  // Amygdala runs in shadow, so an ordinary refusal is settled and unenforced, and the 10-15 rule hid it.
   const shadowRefusal = () => ({
     interventions: [hold({ kind: "refusal", state: "settled", cmd: undefined })],
     decisionEvents: [dec("v1", { codeDid: "refusal", enforced: false })],
@@ -848,7 +849,7 @@ describe("Rewind next to a refusal takes the exchange off the page and keeps the
     return { ...m, hideExchange, showExchange, sendOneTurn, click, rewinds };
   };
 
-  // 2026-10-22, the architect: "Rewind should get attached to the turn, so I can remove from history more than one turn".
+  // 2026-10-22: Rewind is attached to its turn, so it can drop more than one turn from history.
   it("level 3: an older refused turn offers Rewind for it and the exchange after it, and sends its prompt", async () => {
     const at = { key: "K", prompt: "the refused request", at: 9_000, later: 1 };
     const m = make(
@@ -1051,7 +1052,7 @@ describe("Rewind next to a refusal takes the exchange off the page and keeps the
   });
 });
 
-// the architect 2026-10-05 wanted "two kinds of messages"; since 2026-10-15 (the architect) neither window is drawn. Nothing
+// 2026-10-05 asked for two kinds of entry; since 2026-10-15 neither window is drawn. Nothing
 // else of Jev's is drawn per reply either: no chip on a tool row, no sent-back chip, no settled one-liners, no CHECKS.
 describe("no windows per reply", () => {
   it("a reply with checks that all passed draws nothing after the run", async () => {
@@ -1081,7 +1082,7 @@ describe("no windows per reply", () => {
   });
 });
 
-// 2026-10-22, the architect: "Add the rewind every time Jev detects a refusal, not only complete but also partial".
+// 2026-10-22: offer Rewind on every refusal Jev detects, partial as well as complete.
 describe("a partial refusal (a reply sent back for dodging part of the work) offers the same strip", () => {
   const sendBack = (id: string, decisionId: string) =>
     hold({

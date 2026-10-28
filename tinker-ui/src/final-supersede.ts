@@ -1,4 +1,4 @@
-// FORK 2026-08-16 (the architect, on a live tab: "answering twice every turn") — a PURE,
+// FORK 2026-08-16 (bug on a live tab: every turn was answered twice) — a PURE,
 // DOM-free module in the style of stream-reslice.ts / msg-order.ts, so the rule below is
 // unit-testable without app.ts's 12k lines of DOM.
 //
@@ -45,8 +45,8 @@ export type RunBubble = {
 };
 
 // ════════════════ TWO COORDINATE SPACES — WHY A THOUGHT IS NEVER A TEXT BUBBLE ════════════════
-// FORK 2026-10-03 (bug-log [final-mixed-coordinates]; the architect: "still duplicating some
-// messages … if I refresh the page, the duplicate answer goes away"). The thinking writer stamps
+// FORK 2026-10-03 (bug-log [final-mixed-coordinates]; bug: some messages still
+// doubled, and a page refresh cleared the duplicate). The thinking writer stamps
 // its bubbles with `_runId` and a text block, like the text writer does, and since 2026-09-23 with
 // a `_segmentStart` too — but that offset counts characters of the run's THINKING buffer (the
 // trimmed cumulative reasoning when the thought opened), while every text bubble's counts
@@ -188,8 +188,7 @@ export function planFinalWrite(
 // ═════════════════════════════════════════════════════════════════════════════════
 
 // ════════════════ THE VOICE SPAN — THE DIFFERENCE THAT DOUBLED EVERY ANSWER ════════════════
-// FORK 2026-09-24 (the architect, work tab `agent:main:tinker:mue2cvin`: "every time he
-// answers I see the response double"). Final #2's body went through the gateway's
+// FORK 2026-09-24 (bug on a work tab: every answer showed twice). Final #2's body went through the gateway's
 // `applyJarvisVoiceMarkup`, which rewrote every `**Jarvis:** x` into `**Jarvis:** <span
 // class="jarvis-voice">x</span>` — trimming `x`, so the whitespace before the NEXT label vanished
 // too. Final #1 is the raw streamed text. Nearly every answer opens with a voice line, so no shown

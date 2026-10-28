@@ -66,8 +66,7 @@ export async function materializeBundleMcpToolsForRun(params: {
   reservedToolNames?: Iterable<string>;
   disposeRuntime?: () => Promise<void>;
   /**
-   * FORK 2026-08-24 (the architect: "If a task is in average more than 1 second it should be decomposed
-   * further") — report the two halves separately.
+   * FORK 2026-08-24: a step that averages over 1 second gets broken down further — report the two halves separately.
    *
    * `mcp-tools` averaged 1,311ms over 321 turns (gateway journal, 14 days), p50 878ms, max 12.5s —
    * a per-turn tax, not a warm-up. It is two unlike things under one name: `getCatalog()`, which

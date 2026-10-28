@@ -1,4 +1,4 @@
-// FORK 2026-10-05 (the architect, 11:37: "I still don't see the micro-tab attached to OrbisVision").
+// FORK 2026-10-05: the micro-tab for a project checkout was still missing.
 // The Tinker page is built from ~/src/tinkerclaw's WORKING TREE, on whatever branch it is on. A
 // session switched that checkout to its own branch at 09:42 and died at 09:48; the page's rebuild
 // at 11:35 built that branch, 11 commits behind develop, and said "ok", so the Gantt tab merged

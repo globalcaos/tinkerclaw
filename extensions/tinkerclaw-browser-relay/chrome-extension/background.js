@@ -35,8 +35,8 @@ const BADGE = {
 /** @type {WebSocket|null} */
 let relayWs = null;
 
-// FORK 2026-10-21 — extension log lines reach the gateway journal (the architect: "Fix the gap, make logs
-// proper"). Service-worker console output stays inside Chromium, so every log/warn/error is also kept
+// FORK 2026-10-21 — extension log lines reach the gateway journal, closing the logging gap.
+// Service-worker console output stays inside Chromium, so every log/warn/error is also kept
 // in a ring buffer (persisted, so a worker recycle or a relay outage loses nothing) and sent to the
 // relay as {method:"extLog"} whenever the socket is open. The gateway logs them as [relay-ext].
 const EXT_LOG_MAX = 300;
@@ -1158,7 +1158,7 @@ restoreAndReconnect("startup");
 
 // FORK 2026-10-21 — after a Chromium restart with session restore, the service worker can wake
 // before the restored "Tinker Shared" group exists, so the startup pass found nothing and the shares
-// were lost (the architect: restart Chromium "with its same tabs shared"). Retry when the group appears and a
+// were lost (a restarted Chromium must keep the same tabs shared). Retry when the group appears and a
 // few times after startup; attachTab skips tabs already attached.
 chrome.tabGroups.onCreated.addListener((g) => {
   if (g.title === TAB_GROUP_NAME) void restoreAndReconnect("group-created");

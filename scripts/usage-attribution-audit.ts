@@ -1,7 +1,7 @@
 /**
  * FORK 2026-10-21 — replay audit of the chat usage chips (bible tinker-ui.md §5.8AA).
  *
- * the architect, 2026-10-21: "I feel like you do not report all the skills and recipes used". This walks the
+ * 2026-10-21: the chips seemed to miss some of the skills and recipes used. This walks the
  * cc-bridge worker's Claude Code transcripts, feeds every tool_use to the REAL attributeToolUsage
  * (src/fork/usage-attribution.ts, the registry the gateway builds), and compares the marks with an
  * independent ORACLE that shares no code with the attributor:
@@ -40,10 +40,7 @@ const opt = (name: string, dflt: string) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 };
 const SINCE = Date.parse(opt("--since", "2026-10-15") + "T00:00:00Z");
-const DIR = opt(
-  "--dir",
-  path.join(HOME, ".claude/projects/-home-user--openclaw-jarvis-workspace"),
-);
+const DIR = opt("--dir", path.join(HOME, ".claude/projects/-home-user--openclaw-jarvis-workspace"));
 const BRIDGE_CWD = opt("--cwd", path.join(HOME, ".openclaw/jarvis-workspace"));
 
 type Call = {

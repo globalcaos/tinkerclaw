@@ -1,7 +1,7 @@
 // The thinking indicator's model name, with the version spelled out.
 //
-// FORK 2026-09-24 (the architect: "put more detail into the model names in the thinking indicator
-// in the chat. Now Opus can be 3 different versions. The chatgpt models too"). The row used
+// FORK 2026-09-24: more detail in the model names of the chat's thinking indicator, since Opus
+// (and the ChatGPT models) now come in several versions. The row used
 // shortModelLabel, which is sized for the picker's button grid: every Opus collapses to
 // "Opus" and the current GPT major to a bare codename, so Opus 5.5, Opus 5 and Opus 4.8 all
 // read the same while they answer. The thinking row has the width, so it names family AND

@@ -106,6 +106,6 @@ target; the loop should end on completion, not on exhausting iterations.
 - **2026-10-05 — auto-arming switched off.** The runtime armed this loop on any prompt that looked
   multi-step. Across Aug–Oct it made 250 deliveries and none was a useful directive: error envelopes,
   empty runs, "the task is complete" injected back as a nudge, and its own report re-arming it. On a
-  finished morning briefing it woke the main chat five times. the architect: _"Ok, deactivate it. The new
-  Thalamus with Jev is not taking care of it."_ Now manual only; the bible check in
+  finished morning briefing it woke the main chat five times. It was deactivated, since
+  Thalamus with Jev did not cover it. Now manual only; the bible check in
   `subagents-and-recipes.md` fails if auto-arming returns.

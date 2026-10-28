@@ -128,8 +128,8 @@ few rows. Parse its JSON and keep TWO tables:
    AA number is waiting to be found elsewhere**, and nothing goes into
    `AA_EFFORT_INDEX` that AA did not publish.
 
-   **But the missing cells CAN be estimated, and are (2026-09-02, the operator: "you must
-   certainly be able to find other benchmarks … even if you have to approximate").**
+   **But the missing cells CAN be estimated, and are (2026-09-02: the operator asked
+   for other benchmarks to fill the gaps, approximating if needed).**
    Step 1b below fits other public per-effort measurements to AA's scale and writes
    them to a SEPARATE table the chart draws as estimates, never as measurements.
 
@@ -317,8 +317,8 @@ Walk the AA list in score order. **TIE-BREAK equal Intelligence-Index scores by
 version recency (newer minor version = better rank), then by lower price.** AA
 often gives a new point-release the SAME score as its predecessor (e.g. Gemini
 3.6 Flash = 3.5 Flash = 50 on v4.1, but 3.6 is faster + cheaper); a naive stable
-sort then parks the newer/better model BELOW the old one, which reads as "3.6 is
-dumber than 3.5" on the slider (the operator flagged this 2026-07-22). Never let a
+sort then parks the newer/better model BELOW the old one, so the slider shows the
+newer model as the weaker one (flagged 2026-07-22). Never let a
 strictly-better point-release sort under its predecessor.
 
 For each AA model that maps to a supported OpenClaw provider:

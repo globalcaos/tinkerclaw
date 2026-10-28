@@ -545,7 +545,7 @@ function canContinueFromTranscript(transcriptPath: string | undefined): boolean 
 /**
  * The model this session is explicitly pinned to, if any.
  *
- * FORK 2026-07-29 (the architect: "I specifically requested Grok and Sol did the job instead").
+ * FORK 2026-07-29: a user-pinned model was replaced by another one after a restart.
  * Measured: `agent:main:main` held `providerOverride=xai / modelOverride=grok-4.5 (source=user)`,
  * the gateway restarted, and the resumed turn ran `codex/gpt-5.6-sol`.
  *

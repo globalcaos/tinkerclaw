@@ -15,8 +15,8 @@
  * model. (A `tinkerclaw` CLI call would be the literal symlink, but a plugin subcommand takes
  * ~11.6 s to start, over this hook's 10 s budget; measured 2026-09-23.)
  *
- * FORK 2026-10-02 (the owner: "Fix the moral code to be injected, in full, at the creation and
- * after compaction") — ONE PART PER INVOCATION. hooks.json runs this PART_SLOTS times, with
+ * FORK 2026-10-02: inject the full moral code at session creation and after
+ * compaction — ONE PART PER INVOCATION. hooks.json runs this PART_SLOTS times, with
  * `--part 1` … `--part N`: the claude CLI cuts any hook additionalContext over 10,000 chars to a
  * ~2 KB preview, and until this change the whole ~40k pack went out as one, so the model got the
  * preview. Each slot now prints part i of the pack (moral-code-parts.mjs), every part a complete

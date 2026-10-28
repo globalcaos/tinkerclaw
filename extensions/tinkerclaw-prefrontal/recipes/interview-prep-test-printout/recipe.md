@@ -83,8 +83,8 @@ One A4 PDF, portrait, in the language set in {{values_file}}:
 4. **Every question** — `N.M · <title>` with its score chip, the question id and
    its paste count/characters in small grey, the verbatim answer in a tinted box (self-rating grids expanded row by
    row), then `Grader: <why>` in small grey.
-   4b. **The drawing question shows the drawing** (2026-09-30, owner: _"I want to view the
-   diagram 4.1 the candidate made, even if the chapter spans 2 pages instead of only 1"_):
+   4b. **The drawing question shows the drawing** (2026-09-30: the owner asked to
+   see the candidate's diagram even when the chapter then spans two pages):
    draw the saved components and cables as the test canvas did (same palette and box size,
    data vs power cables distinguishable), with a legend and a cable list. Never print it as
    "no answer" or as a count; the section may take two pages, the drawing never splits.
@@ -215,9 +215,9 @@ A4, double-sided long edge, and confirm the job left the queue.
   telemetry of the ship-AI-code answer itself before taking it as their practice.
 - **A short script instead of the brief** (2026-09-30) — asked for an "interview script"
   an hour before the interview, a session wrote a fresh 2-page Spanish script, then
-  added a "one-hour script" step here. The owner: _"Nope, you are not following the
-  right script or recipe. Remember the one you used last time, the last version with
-  the NN focus, the rainbow colors and the CV summary."_ The script IS this brief (step
+  added a "one-hour script" step here. It was rejected: the session should have reused
+  the existing brief (its latest version, with the focus area, the colour coding and the
+  CV summary) instead of writing a new document. The script IS this brief (step
   4b); the fix was a per-candidate entry in the generator, not a new document.
 - **An index read as a meaning** (2026-09-30) — the candidate summary turned skip answers into
   labels by position, so a candidate who answered "not enough experience · Yes, interested" on four

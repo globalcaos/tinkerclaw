@@ -171,9 +171,8 @@ export function listSessionAttachments(params: {
         stoppable: true,
       });
     }
-    // FORK 2026-08-28 (the architect: "there are two redundant mechanisms to either track or
-    // visualize how a prompt is being queued" / "right after I send a prompt, it automatically
-    // shows like queued, when it is the one being processed at the moment").
+    // FORK 2026-08-28: two redundant mechanisms tracked a queued prompt, and a prompt showed as
+    // queued right after sending while it was the one being processed.
     //
     // There WAS a `state.queueDepth > 0` row here, emitting kind "queued". It is gone, on
     // purpose. ONE FACT, ONE OWNER: the browser already draws the deferred prompt it is

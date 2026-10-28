@@ -41,7 +41,7 @@ class NodeForegroundService : Service() {
     if (BuildConfig.JARVIS_APP) ai.openclaw.app.jarvis.PhotoBackup.start(applicationContext)
     // 2026-10-23 (plan "phone app self-update"): the content pack's start script, then a pack check.
     if (BuildConfig.JARVIS_APP) ai.openclaw.app.jarvis.JarvisPack.onAppStart(applicationContext)
-    // 2026-10-22 (the architect: "a message sent to you after every new installation"): the first start of
+    // 2026-10-22 (report each new installation back to the agent): the first start of
     // each build tells the Pi's door which versionCode is running; retried until the door has it.
     if (BuildConfig.JARVIS_APP) {
       scope.launch {
@@ -226,7 +226,7 @@ class NodeForegroundService : Service() {
       .build()
   }
 
-  // 2026-10-27 (the architect: "the Jarvis app keeps stopping"): 102 crashes in one day were Android refusing the start
+  // 2026-10-27 (the app kept stopping): 102 crashes in one day were Android refusing the start
   // ("Time limit already exhausted for foreground service type dataSync"). A refusal now stops the service quietly;
   // the app process stays up and reconnects on the next wake. Returns false when refused.
   private fun startForegroundWithTypes(notification: Notification): Boolean {

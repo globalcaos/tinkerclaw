@@ -1,5 +1,5 @@
-// FORK 2026-10-22 (the architect 13:17: "exaggerate the intonation, meaning higher pitch for the highs and
-// lower pitch for the lows, linearly across"). The phone renders Jarvis's line with Google's GBD voice;
+// FORK 2026-10-22: exaggerate the intonation, highs higher and lows lower, linearly across the
+// line. The phone renders Jarvis's line with Google's GBD voice;
 // before the metallic chain, this widens its pitch contour around the line's own average:
 //   f0' = mean · (f0 / mean)^k     (linear on the log-pitch scale, k > 1 exaggerates)
 // Pitch is tracked every 10 ms by autocorrelation and moved with TD-PSOLA, so timing is unchanged.
@@ -108,33 +108,32 @@ export function exaggerateIntonation(x: Float32Array, sr: number, k: number): Fl
   return out;
 }
 
-// 13:48 the architect: "only one fork should be active at any given time and its sound should be very
-// metallic". A single struck-metal "tuning fork" sings along: it snaps to the grid note (FORK_STEP) nearest the
+// 13:48: only one fork sounds at a time, and it sounds very metallic. A single struck-metal "tuning fork" sings along: it snaps to the grid note (FORK_STEP) nearest the
 // voice's current pitch (sung FORK_OCTAVE above it), switches hard (3 ms) when the voice moves to
 // another note, is driven by the voice's loudness and stops 30 ms after it (no tail, 14:23).
 // Timbre = free metal bar partials (glockenspiel, BAR_MIX) over a quiet metallic vowel (below).
-// 15:14 the architect: "more metallic": brighter inharmonic overtones (were 0.5/0.25/0.12)
+// 15:14: more metallic: brighter inharmonic overtones (were 0.5/0.25/0.12)
 const FORK_PARTIALS = fx.fork.partials as Array<[number, number]>;
 
-// 14:10 the architect: the fork should "sound like a very metallic vowel your voice would produce at that
-// pitch". So each fork is a sung "ah" (British /a:/ formants 700/1100/2600 Hz) built from the note's
+// 14:10: the fork should sound like a very metallic vowel the voice would sing at that pitch.
+// So each fork is a sung "ah" (British /a:/ formants 700/1100/2600 Hz) built from the note's
 // harmonics; narrow formants make the vowel ring like metal. Tuning history: 14:21 formants narrowed
 // to 40/50/70 Hz; 14:25 the bar clang became the main sound (BAR_MIX 1.0) and the vowel was halved.
 // 15:14: narrower again (were 40/50/70 Hz), rings rather than speaks
 const VOWEL = fx.fork.vowel as Array<[number, number, number]>;
-const BAR_MIX = fx.fork.barMix; // 15:14 the architect: "more metallic" (was 1.0)
-// 14:21 the architect: "40% at this pitch and 60% an extra octave higher".
-// 14:57 the architect: "a 40/50/10 fork split in octaves, having the 40 a lower octave than now":
+const BAR_MIX = fx.fork.barMix; // 15:14: more metallic (was 1.0)
+// 14:21: 40% at this pitch, 60% an octave higher.
+// 14:57: a 40/50/10 split across octaves, the 40 one octave lower than before:
 // 40% at the voice's own note, 50% one octave up (where the main layer was), 10% two octaves up.
 // Same total vowel level as before (0.5).
 const LAYER_BASE = fx.fork.layerBase; // vowel 30% down at 15:14 (more metal), 40/50/10 kept
 const LAYER_LOW = fx.fork.layerLow;
 const LAYER_HIGH = fx.fork.layerHigh;
 const BAR_OCTAVE = fx.fork.barOctave; // the struck-bar clang stays one octave above the voice, where it was
-// 14:31 the architect: "bring down the number of forks to half, so the effect sounds more radical":
+// 14:31: half as many forks, for a more radical effect:
 // one fork every 4 semitones (major thirds, 3 per octave) instead of every whole tone.
 const FORK_STEP = fx.fork.step;
-// 20:05 the architect: "exaggerate now only the tune forks' intonation": the fork's pitch is pushed away
+// 20:05: exaggerate only the forks' intonation: the fork's pitch is pushed away
 // from the line's average pitch by this factor before it snaps to the grid (1 = follows the voice).
 // The voice itself is not touched by this (its own widening is INTONATION in voice-in-browser.ts).
 const FORK_INTONATION = fx.fork.forkIntonation;
@@ -184,8 +183,8 @@ export function singingFork(x: Float32Array, sr: number, level: number): Float32
     for (let i = f * hop; i < f * hop + win; i++) e += x[i] * x[i];
     energy[f] = Math.sqrt(e / win);
   }
-  // 14:21 the architect: "like ... Believe from Cher": hard 3 ms note switch, the note held while the voice
-  // sounds. 14:23 the architect: "remove the reverb in the tune forks": no tail, it stops 30 ms after the voice.
+  // 14:21: a hard-tuned effect: 3 ms note switch, the note held while the voice
+  // sounds. 14:23: no reverb on the forks: no tail, it stops 30 ms after the voice.
   const ring = Math.exp(-1 / ((fx.fork.ringMs / 1000) * sr));
   const fade = Math.exp(-1 / ((fx.fork.fadeMs / 1000) * sr));
   const attack = 1 - Math.exp(-1 / ((fx.fork.attackMs / 1000) * sr));

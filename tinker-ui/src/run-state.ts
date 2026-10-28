@@ -1,6 +1,5 @@
-// FORK 2026-07-29 (the architect: "I see the tab glowing, the session row glowing and the model glowing
-// with one concurrency — but when I jump into the tab there is no thinking indicator. These
-// mechanisms should all be governed by the same trigger").
+// FORK 2026-07-29: the tab, session row and model glowed as busy while the opened tab showed
+// no thinking indicator. All of these must be driven by one trigger.
 //
 // THE LANES, as measured on the live gateway before this module existed:
 //
@@ -39,8 +38,8 @@
 // gate in app.ts that made the server lane unreachable in the very case it was written for.
 //
 // FORK 2026-08-15, SAME DAY, THIRD REPORT — ONE ORACLE AND ONE CLOCK ARE STILL NOT ENOUGH.
-// the architect: "now I have the opposite problem, the chat one is showing but the rest are mute. Again,
-// this all has to be gated from the same structure, they need to be synchronized."
+// Then the reverse: the chat indicator showed while the rest stayed silent. All of them must be
+// gated from the same structure so they stay in sync.
 //
 // Two more gaps, both of which let a surface answer a question this module never asked:
 //
@@ -66,8 +65,8 @@
 //      exclusion as "client-local knowledge about the viewed tab", and app.ts took that
 //      literally: `pending` lived in the `sending` boolean and `tabsRunningNow()` granted the
 //      glow only to `tab.id === activeTabId`, so sending a prompt and switching away blanked
-//      the tab you left for the whole 21-36s window (the architect: "when I switch tabs, the progress
-//      indicator on the tab titles that are not focused should not go away"). It is now keyed by
+//      the tab you left for the whole 21-36s window (after a tab switch, the progress
+//      indicator on unfocused tab titles must stay). It is now keyed by
 //      SESSION in pre-model-window.ts, exactly like `sessionEndedAt`, so every surface can ask
 //      about every session. Client-local, yes; viewed-local, no — those are different claims and
 //      conflating them cost a sixth report.
@@ -84,8 +83,8 @@
 // (The models-panel count is per-MODEL, so it cannot show `pending`: no model has been chosen
 //  yet. That asymmetry is honest and irreducible — do not "fix" it by inventing a model.)
 //
-// FORK 2026-10-27 (the architect: "When a background job like this one is running, we should see a
-// thinking indicator in the tab title and other panels similar as when the model is thinking").
+// FORK 2026-10-27: a running background job shows a thinking indicator in the tab title and the
+// other panels, the same as when the model is thinking.
 // A THIRD STATE, `job`: a long job (longjob worker, `/api/longjob/list?all=1`) or a Claude Code
 // background task of the chat's worker (`ccBridge.backgroundTasks`) is running for the session.
 // The state set is now {live, pending, job}, in that order of precedence. `job` lights the tab,
@@ -357,7 +356,7 @@ export function resolveSessionRunState(params: {
   const { sessionKey, row, runs, matches, now, rowsFetchedAt, endedAt } = params;
   const status = typeof row?.status === "string" ? row.status : undefined;
   const mine = runsForSession(runs, sessionKey, matches, now);
-  // FORK 2026-07-29 (the architect: "the indicator says 'working' without specifying the model").
+  // FORK 2026-07-29: the indicator said 'working' without naming the model.
   // The client map is only ONE place a model can come from, and it is the place most likely to be
   // empty: `activeRuns` entries are created with model:"" and filled later by a lifecycle event,
   // and on the run-set path there is often no client entry at all. The session row already carries
@@ -392,7 +391,7 @@ export function resolveSessionRunState(params: {
       typeof rowsFetchedAt === "number" &&
       mine.some((r) => typeof r.lastEventAt === "number" && r.lastEventAt > rowsFetchedAt);
     if (row.run.live) {
-      // FORK 2026-08-06 (the architect: "qwen 3.8 keeps thinking and Stop does nothing" — recurrence of
+      // FORK 2026-08-06 (a qwen run kept thinking and Stop did nothing — recurrence of
       // the 2026-08-05 Grok report, which only patched the LEGACY branches below). The run set
       // is authoritative about the gateway PROCESS, but `row` is still a SNAPSHOT of it taken
       // when sessions.list built the row. A Stop pressed AFTER that moment — the client's
@@ -426,15 +425,15 @@ export function resolveSessionRunState(params: {
     return { live: false, source: "run-set-idle" };
   }
 
-  // FORK 2026-07-29 (the architect: "Main shows a thinking indicator saying working, but the answer
-  // finished, even Fractal delivered"). NEWEST EVIDENCE WINS. `sessions[]` is a SNAPSHOT with no
+  // FORK 2026-07-29: Main kept a 'working' indicator after the answer and the Fractal pass
+  // had both finished. NEWEST EVIDENCE WINS. `sessions[]` is a SNAPSHOT with no
   // fetch time and no automatic refresh at turn end, so a row captured mid-turn keeps claiming
   // "running" long after this client watched the turn finish. Trusting it unconditionally is what
   // pinned a "working" row on a finished chat. A server claim is only believed while it is at
   // least as recent as the client's own knowledge that the session ended.
   //
-  // FORK 2026-07-29 (second pass — the architect: "chat thinking indicators but no tab nor sessions
-  // highlighting"). The first version compared ONLY `endedAt > rowsFetchedAt`, and an end stamp is
+  // FORK 2026-07-29 (second pass: chat indicator showed, but no tab or session-row
+  // highlight). The first version compared ONLY `endedAt > rowsFetchedAt`, and an end stamp is
   // never cleared while `rowsFetchedAt` moves only on loadSessions(). So once a session had ended
   // since the last fetch, EVERY later server claim was vetoed — across new turns, indefinitely —
   // and non-viewed tabs went dark while the chat (which reads the client map directly) still lit.
@@ -448,8 +447,8 @@ export function resolveSessionRunState(params: {
     endedAt > rowsFetchedAt &&
     !rowStartedAfterEnd;
 
-  // FORK 2026-07-29 (third pass — the architect: "no thinking indicator in the chat but yet the llm is
-  // spitting out responses"). This branch used to be UNCONDITIONAL, so a terminal status from an
+  // FORK 2026-07-29 (third pass: no chat indicator while the model was still streaming).
+  // This branch used to be UNCONDITIONAL, so a terminal status from an
   // arbitrarily old snapshot silenced a client that was streaming deltas right now. That is the
   // same mistake as the veto in the second pass, with the lanes swapped — I guarded one direction
   // and left the other. The principle is symmetric: NEWEST EVIDENCE WINS, whichever lane holds it.
@@ -512,8 +511,7 @@ type LiveRunParams = {
 /**
  * The sessions behind each live count, keyed exactly like `liveRunCountsByModel`.
  *
- * FORK 2026-10-02 (the architect: "On mouseover on them, I would like to see the names of the tabs that are
- * using them"). The count is this list's length, so the badge and its hover read one walk and can
+ * FORK 2026-10-02: hovering a badge lists the names of the tabs using it. The count is this list's length, so the badge and its hover read one walk and can
  * never name a different number of sessions than the badge shows. A session appears once per live
  * contribution; a duplicate key is a session counted twice, and stays visible as such.
  */
@@ -725,8 +723,7 @@ export function sessionJobActivity(params: {
 /**
  * Is anything ACTUALLY writing to the viewed transcript right now?
  *
- * FORK 2026-09-04 (the architect: "I see my last prompt in the Smart x cost tab is also missing,
- * as if I went back in time and the prompt never happened").
+ * FORK 2026-09-04: a tab lost its last prompt, as if it had never been sent.
  *
  * THE VETO THAT COULD NEVER EXPIRE. `loadChat` refuses to merge server history while a live writer
  * owns the screen, and it identified that writer by two raw nullability checks — `streamRunId !==

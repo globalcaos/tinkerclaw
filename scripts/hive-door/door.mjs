@@ -331,7 +331,7 @@ export function createDoor(opts) {
       return true;
     }
     const counts = acl.countsByOwner();
-    // FORK 2026-10-07 (the user: "another [button] to copy their token"). Admins only, one person per call,
+    // FORK 2026-10-07 (requested: a second button that copies a person's token). Admins only, one person per call,
     // audited, and only for a token that still opens the door.
     const tk = /^users\/([A-Za-z0-9._:-]{1,80})\/token$/.exec(sub);
     if (tk && req.method === "GET") {

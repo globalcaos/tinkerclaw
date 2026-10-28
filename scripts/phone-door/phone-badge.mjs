@@ -1,6 +1,5 @@
 // phone-badge.mjs: the Jarvis app icon's number = Tinker chats with a result the owner has not read
-// (the architect, 2026-10-28: "The phone app icon shows me numbers overlaid, it should match the number of unread
-// chat results"). Before, the launcher counted every alert still in the shade.
+// (2026-10-28: the app icon badge should equal the number of unread chats). Before, the launcher counted every alert still in the shade.
 //
 // Same rule as tinker-ui/src/tab-attention.ts, on the same data: a chat is unread when its session's last
 // final (the gateway row's endedAt, or the page's own stamp `f` if newer) is after `s`, the moment the owner

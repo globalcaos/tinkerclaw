@@ -40,8 +40,7 @@ export type PhaseChild = {
 };
 
 /**
- * The architect's rule, 2026-08-24: "If a task is in average more than 1 second it should be
- * decomposed further."
+ * Design rule, 2026-08-24: a task that averages more than one second gets decomposed further.
  *
  * Encoded here rather than left as a review habit, because the whole point of the block is to
  * decide what to optimise and an undecomposed second is exactly where that decision stalls. The
@@ -177,14 +176,14 @@ export function phaseGroupIsLive(entries: readonly PhaseEntry[]): boolean {
 }
 
 /**
- * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — cap on a derived close.
+ * FORK 2026-09-21: a tab looked stuck on a phantom running block — cap on a derived close.
  * A phantom block restored from localStorage days after its turn died would otherwise close its
  * open entry with days of "runtime"; no single stage legitimately holds an hour.
  */
 export const PHASE_CLOSE_MAX_MS = 60 * 60 * 1000;
 
 /**
- * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — close every entry a
+ * FORK 2026-09-21: a tab looked stuck on a phantom running block — close every entry a
  * terminal signal leaves open.
  *
  * A timing block is PERSISTED (client-rows.ts) and re-injected on every reload, and one entry
@@ -256,8 +255,8 @@ export function phaseGroupSpanMs(entries: readonly PhaseEntry[], nowMs: number):
 }
 
 /**
- * FORK 2026-08-24 (the architect: "The elements need to be rendered expanded initially, but when the task
- * is completed it needs to collapse into the task level") — AUTOMATIC DISCLOSURE.
+ * FORK 2026-08-24: rows start expanded and collapse to the task level when the task completes —
+ * AUTOMATIC DISCLOSURE.
  *
  * The rows exist to be watched while you wait, and to be out of the way afterwards. Collapsed-by-
  * default got the second half right and the first half exactly wrong: the breakdown was hidden

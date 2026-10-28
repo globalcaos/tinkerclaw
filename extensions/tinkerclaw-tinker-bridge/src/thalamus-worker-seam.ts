@@ -26,8 +26,8 @@ export const THALAMUS_LEAF_RESOLVER_SLOT = "openclaw.thalamus.leafModelResolver"
 
 /**
  * FORK 2026-10-03: whether Thalamus owns a model choice right now (enforce, with that site's flag on). Read by key from
- * the leaf resolver's `owns`; no resolver, an older one without `owns`, or a throw all mean no. the architect: "Make sure
- * Thalamus is owner of all those model choices when it is working."
+ * the leaf resolver's `owns`; no resolver, an older one without `owns`, or a throw all mean no. While
+ * Thalamus is working, it owns all those model choices.
  */
 export function thalamusOwnsModelChoice(site: "subagent" | "orchestrate-default"): boolean {
   const slot = (globalThis as Record<symbol, unknown>)[Symbol.for(THALAMUS_LEAF_RESOLVER_SLOT)] as

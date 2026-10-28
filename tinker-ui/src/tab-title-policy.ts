@@ -1,5 +1,4 @@
-// FORK 2026-09-15 (the architect: "if I rename manually one tab, it should not change magically
-// later") — u7-tab-naming. A tab's name has exactly one of three ORIGINS, and the origin, not
+// FORK 2026-09-15: a tab renamed by hand never changes on its own later — u7-tab-naming. A tab's name has exactly one of three ORIGINS, and the origin, not
 // the string, decides whether the turn-end auto-titler may touch it:
 //
 //   fortune — the deterministic cookie phrase minted at creation / `/clear` / server sync.

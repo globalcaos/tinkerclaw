@@ -9,11 +9,10 @@ Canonical path: `~/src/tinkerclaw/skills/build-gantt/` (the workspace copy is a 
 
 A progress bar says how much. This chart says what ran beside what, how long each piece
 really took, which phase we are in, and what is still ahead. The principal asked for it on
-2026-10-01: "In every phase of the coding, report the progress in this chat before sending
-work to your slave. The report cannot be just a progress bar, it has to have phases, in
-different colors if possible, like a gantt, where one can understand the parallelism, the
-complexity of tasks by their length and the different phases (from conception, spec
-definition, coding, to a final fully visual manual)."
+2026-10-01: a progress report in the chat at every phase, before work goes to the worker,
+shaped as a Gantt with coloured phases so the parallelism, the size of each task and the
+sequence of phases (conception, spec, coding, a final visual manual) can be read at a glance,
+not as a bare progress bar.
 
 ## When it runs
 
@@ -29,9 +28,8 @@ definition, coding, to a final fully visual manual)."
 
 ## The Gantt tab (Tinker)
 
-Since 2026-10-05 the chart also lives in its own tab. The principal asked for "a slither tab (only
-a graph icon) between master and slave … attached to the master … connected in real time to the
-ongoing process". When the master of a chain runs `render` from a Tinker chat, the plan is
+Since 2026-10-05 the chart also lives in its own tab. The principal asked for a narrow icon-only tab
+between master and worker, attached to the master and updated live from the running build. When the master of a chain runs `render` from a Tinker chat, the plan is
 attached to that chat (`$TC_SESSION_KEY`) in `~/.openclaw/data/gantt-boards.json`. Within 20 s
 an icon tab appears right after the master. It shows the plan as a live page that derives from the
 workflow journals every 15 s (`gantt.py live`, in memory, the plan file is never written).
@@ -40,8 +38,8 @@ workflow journals every 15 s (`gantt.py live`, in memory, the plan file is never
   it. A click on a lane opens what each unit was asked to do and what it reported (`gantt.py agent`).
 - The tab belongs to the master's session. Closing the pair hides it and reopening brings it
   back. Deleting the master session drops the board. Releasing the chain hides the tab.
-- The tab replaces the block in the chat. The principal, 2026-10-05 20:31: "No need to show me the
-  gantt here, it should be automatically updating the real one, right?" At a send the master still
+- The tab replaces the block in the chat. The principal pointed out on 2026-10-05 that the
+  chat copy is redundant once the tab updates itself. At a send the master still
   derives, renders and looks at the PNG (the archive below keeps one per send), and the reply says
   in one line where the build stands, without the block.
 - The tab follows the worker on its own when the plan has `worker_prompt_has` (see the plan file):
@@ -52,10 +50,9 @@ workflow journals every 15 s (`gantt.py live`, in memory, the plan file is never
 
 ### The machines panel
 
-The principal asked for it the same day: "a little section where I can see the available machines
-for this project. If only this one is necessary, the panel should be hidden … I would like to know
-in real time if we have a healthy connection to them or if the connection gets interrupted … the
-resources used by us, the available in the machine, and its current load." When the plan has a
+The principal asked for it the same day: a small section listing the machines the project uses,
+hidden when only this one is needed, showing live whether each connection is healthy, the resources
+we use there, what the machine has free, and its current load. When the plan has a
 `machines` list with at least one machine besides `"host": "local"`, the tab shows a Machines
 section under the chart and a chip in its top bar ("4 machines connected", red with the names
 when one is unreachable; a click scrolls to the section). No list, or only this machine: nothing
@@ -217,17 +214,17 @@ board), or the principal asks to see it in the chat. Before sending, the actual 
 
 ## Failures Overcome
 
-- 2026-10-05 20:31, the architect, after the turn-36 send carried the chart in the reply: "No need to show me
-  the gantt here, it should be automatically updating the real one, right?" Only half true. The tab
+- 2026-10-05: the turn-36 send carried the chart in the reply, though the real Gantt tab should update
+  by itself. That was only half true. The tab
   redrew every 15 s, but from the workflow ids the master writes in at its wakes, so a running turn's
   units stayed off the chart until the turn was over. `worker_prompt_has` lets the tab find them, and
   the block left the reply. The same check showed split units (`K36a:build`) drawn as raw labels
   beside the planned K36; they now get their own lane.
 
-- 2026-10-05 13:16, the architect, on the first machines panel: "the Fore1 and Fore2 are still missing. They
-  either are reachable or not, but we need to see them listed." The list was copied from the active
-  rows of `hosts.conf`; Fore2 (out of rotation since 10-02) and Fore1 (not onboarded) sat in its
-  comments. Hence the "list every machine" line above. The same pass found the Orins' GPU blank:
+- 2026-10-05, first machines panel: two machines were missing; every machine must be listed,
+  reachable or not. The list was copied from the active
+  rows of `hosts.conf`; one machine out of rotation and one not yet onboarded sat in its
+  comments. Hence the "list every machine" line above. The same pass found the Jetson boards' GPU blank:
   JetPack 6's nvidia-smi answers [N/A], so the probe now reads the Jetson sysfs load first.
 
 - 2026-10-05, building the Gantt tab: `derive` took 12.2 s on a 39-phase, 248-lane build, too slow
@@ -237,11 +234,11 @@ board), or the principal asks to see it in the chat. Before sending, the actual 
   segments. The live page also never writes the plan: a server-side derive that wrote the file
   would race the master's own edits.
 
-- 2026-10-04 09:02, the architect: "You still failed to show me the gantt, try again." The prior markdown-image syntax check passed but did not prove delivery. A direct image in `html-render` produced an `<img src="/tinker/diagrams/sv2-gantt-31-chat.png">` inside the live snapshot's `#messages`. Repeated delivery failures now require checking that destination element, not only reply syntax.
+- 2026-10-04: the gantt still did not reach the chat. The prior markdown-image syntax check passed but did not prove delivery. A direct image in `html-render` produced an `<img src="/tinker/diagrams/sv2-gantt-31-chat.png">` inside the live snapshot's `#messages`. Repeated delivery failures now require checking that destination element, not only reply syntax.
 
-- 2026-10-04, the architect: "You failed to show me the gantt chart." The SV2 status reply replaced the required chart block with `[embed ref="sv2-status-30" ...]`. The standalone screenshot had been inspected, but the inline-diagram procedure already forbade that delivery form. The delivery check now rejects the exact embed-only reply and requires the native chart block or served markdown image.
+- 2026-10-04: the gantt chart was not shown. A status reply replaced the required chart block with `[embed ref="sv2-status-30" ...]`. The standalone screenshot had been inspected, but the inline-diagram procedure already forbade that delivery form. The delivery check now rejects the exact embed-only reply and requires the native chart block or served markdown image.
 
-- 2026-10-01 22:34, OrbisVision 2.0 build: two planned lanes of a new phase, "I1 overview…" and "I2 a chapter…",
+- 2026-10-01 22:34, a large product build: two planned lanes of a new phase, "I1 overview…" and "I2 a chapter…",
   vanished from the chart. A label's first token is read as a unit id, and Phase B already had real units I1 and
   I2, so the planned lanes counted as done. Give planned lanes of a new phase plain names, or ids no earlier phase
   used. In the same render, `after_phase` on a lane of a phase that is already running was ignored (a running

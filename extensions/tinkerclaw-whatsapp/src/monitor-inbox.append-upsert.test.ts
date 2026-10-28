@@ -174,8 +174,8 @@ describe("append upsert handling (#20952)", () => {
     await listener.close();
   });
 
-  // 2026-09-30, the architect: "don't reply without understanding if the conversation
-  // has moved forward". A reconnect also replays messages younger than the 12h
+  // 2026-09-30: never reply before checking whether the conversation has moved
+  // on. A reconnect also replays messages younger than the 12h
   // cap, and one the agent already answered must not be answered again.
   it("skips an older message the conversation has already moved past", async () => {
     const nowSec = Math.floor(Date.now() / 1000);

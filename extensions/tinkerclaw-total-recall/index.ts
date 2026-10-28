@@ -616,7 +616,7 @@ let sharedBankSeedLoaded = false;
  */
 /**
  * FORK 2026-10-10 — no CJK text reaches the owner's chat. The bank indexed upstream's `docs/zh-CN`
- * translations and a Chinese hooks page surfaced in his prompt (owner, 16:07: "no Chinese allowed").
+ * translations and a Chinese hooks page surfaced in his prompt; the owner asked for no Chinese text in the chat.
  * The indexer now skips locale folders (jarvis-icu c5dba13); this drops any retrieved entry that
  * still carries Han, kana or Hangul, whatever store it came from.
  */
@@ -753,8 +753,8 @@ const PACK_REBUILD_MAX_AGE_MS = 30 * 60 * 1000;
  * context simply means there is nothing to attribute the phase to.
  */
 /**
- * FORK 2026-08-23 (the architect: "expand 'total recall - engram' like you did with 'preparing
- * context'"). Total Recall is the largest single plugin on the pre-model path, and until now it
+ * FORK 2026-08-23: break down the Total Recall stage the way the context-preparation stage was.
+ * Total Recall is the largest single plugin on the pre-model path, and until now it
  * reported ONE number. Its two halves are fixed by completely different changes — `storeLoad` is
  * disk and JSON.parse, `packBuild` is search and ranking — so a single total hides which to
  * attack. Emitted on the same `turn-stage` stream the runner uses, so the breakdown TILES with
@@ -1413,8 +1413,7 @@ export default definePluginEntry({
         // were both refuted by measurement. Stop guessing: `count()` is the call that forces
         // `loadCache()`, i.e. readFileSync of a 15.6MB + 6.2MB pair and a JSON.parse per line,
         // and it is the only unmeasured step before the freshness check.
-        // FORK 2026-08-24 (the architect: "If a task is in average more than 1 second it should be
-        // decomposed further") — THREE STAGES, NOT ONE.
+        // FORK 2026-08-24: a stage averaging more than 1 second is split further — THREE STAGES, NOT ONE.
         //
         // `engram-store-load` averaged 5.7s across 268 turns (gateway journal, 14 days) and was
         // the single largest measured unit on the pre-model path. It was also THREE unrelated

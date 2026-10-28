@@ -7,10 +7,9 @@ last_verified_commit: HEAD
 single_owner: yes — the unified-architecture view and the CENTRAL-MECHANISM REGISTRY live here, as does the layering direction (src/ must not import extensions/). Each mechanism's internals are owned by the optic named in its row; this file owns only the claim "this problem class has exactly ONE mechanism, and it is that one" — plus the honest record of where that claim is false. Duplicate COUNTS and their ratchets belong to canonical-derivations.md and are never restated here; this file names the SHAPE of a breach and points there.
 see_also: FOUNDATION.md (the constitution — outranks this file), INDEX.md (the map), design-principles.md#18 (one canonical derivation per concept), design-principles.md#20 (a measurement carries its provenance), canonical-derivations.md (the ledger + ratchet that make #18 executable), topology.md (what runs where, and the command-lane table), flows.md (in what order they talk), done-signals.md (turn termination), memory-layout.md (where memory lives), config-shape.md (config keys), orca-leases.md (cross-session edit arbitration), ownership.md (who may edit what)
 note: |
-  The golden rule this file serves, in the architect's words (2026-08-03):
-  "no two parts of the code should be doing things that a well orchestrated architecture could be
-  doing in the same function... similar mechanics need to be governed by a central reasoning, a
-  central mechanism, with its appropriate diagrams explaining it."
+  The golden rule this file serves (2026-08-03): no two parts of the code do what one well
+  orchestrated function could do; similar mechanics are governed by one central mechanism, with
+  diagrams that explain it.
   The diagram is not decoration. It is what lets an agent reason one level ABOVE the code —
   fractally, per FOUNDATION's pyramid — so that "where does this belong?" is answerable before a
   line is written. INDEX.md is the map, FOUNDATION.md is the constitution, this file is the

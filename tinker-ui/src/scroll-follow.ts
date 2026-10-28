@@ -1,5 +1,4 @@
-// FORK 2026-09-29 (the architect: "After sending a prompt, the chat should scroll down so one can see
-// the prompt introduced in the chat and the chat scrolls with the response after that.")
+// FORK 2026-09-29: after a send the chat scrolls to show the new prompt, then follows the response.
 //
 // The chat's follow flag (`chatFollow` in app.ts) is LATCHED INTENT (bible §5.20, reworked
 // 2026-09-06): follow only while the user has parked at the bottom, recomputed exclusively on

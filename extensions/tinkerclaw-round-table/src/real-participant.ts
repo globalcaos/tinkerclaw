@@ -56,7 +56,7 @@ export { FALLBACK_MODEL };
 export const THALAMUS_LEAF_RESOLVER_SLOT = "openclaw.thalamus.leafModelResolver";
 
 /**
- * FORK 2026-10-03 (the architect: "Make sure Thalamus is owner of all those model choices when it is working"). A Claude role on
+ * FORK 2026-10-03: while Thalamus is working, it owns these model choices. A Claude role on
  * its builtin model asks Thalamus, per call, for the model of that call; the builtin stays the fallback. A `roleModels`
  * override is a model named on purpose and is kept, and the other vendors' roles keep theirs: Thalamus picks only
  * `claude-code` models (its charter ruling C2), so it cannot own them. Read by `Symbol.for` key with no import; a throw

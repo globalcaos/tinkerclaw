@@ -40,7 +40,7 @@ vi.mock("./worker-pool.js", () => ({
 import type { CcStreamStdoutLine } from "./protocol.js";
 import { createClaudeCodeStreamFn } from "./stream.js";
 
-// FORK 2026-10-27 (the architect: "Every tool call shown in the chat says 'performing an action'").
+// FORK 2026-10-27: every tool row in the chat fell back to the generic "performing an action".
 // Journal 2026-10-27: 618 of 618 `tool.start` lines had `narration.len=0`. With partial
 // messages on, the sentence before a tool arrives as content_block_delta events; that arm
 // marked the text seen but never fed the narration buffer, so the cumulative frame found

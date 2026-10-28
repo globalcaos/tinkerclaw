@@ -1,5 +1,4 @@
-// FORK 2026-08-17 (the architect: "when I switch tabs, the progress indicator on the tab titles that are
-// not focused should not go away").
+// FORK 2026-08-17: on a tab switch, progress indicators on unfocused tab titles must stay.
 //
 // THE PRE-MODEL WINDOW: prompt accepted, no model named yet. Measured at 21-36s (turn-latency.md),
 // so it is a third of a minute in which a session is unambiguously working and the gateway's run
@@ -268,7 +267,7 @@ export function clearPreModelFor(
 /**
  * Does this chat event end the VIEWED tab's pre-model window?
  *
- * FORK 2026-09-03 (the architect: "the work tab is preparing context forever").
+ * FORK 2026-09-03: a tab stayed on "preparing context" forever.
  *
  * THE THIRD PROOF, WHICH THE VIEWED LANE NEVER HAD. Everything above keys the window by
  * session and is written for the tab glow. app.ts keeps a SECOND, viewed-only window in
@@ -315,8 +314,7 @@ export function terminalClosesPreModelWindow(params: {
 /**
  * How long the VIEWED tab's `sending` latch stays believable.
  *
- * FORK 2026-09-04 (the architect: "a few tabs like the amygdala get stuck 'preparing context' and
- * never do anything").
+ * FORK 2026-09-04: some tabs got stuck on 'preparing context' and never progressed.
  *
  * THE LAST UNBOUNDED LATCH. This module's header states the rule every lane in this area obeys —
  * "a dropped clear must degrade to 'the glow stops early', never to 'the glow never stops'" — and

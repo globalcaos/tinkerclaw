@@ -1,5 +1,5 @@
-"""Mail attachments: list them for a topic and open one with the computer's own default app (the architect, 2026-10-16: "I
-should be able to open any attachment ... the same strategy as tinkerclaw ... the native os default").
+"""Mail attachments: list them for a topic and open one with the computer's own default app (2026-10-16:
+any attachment opens, the same way TinkerClaw does it, in the operating system's default app).
 
 Listing is lazy: the first time a topic with attachments is opened, each message's list is fetched once (Outlook:
 `outlook.mjs mail attachments`; Gmail: the thread's parts) and kept in `messages.atts`. Opening downloads the file

@@ -110,7 +110,7 @@ export function promptIndexByWords(lines: string[], words: string): number {
 /**
  * Write a copy of the transcript truncated before its last user prompt, under a new session id, next to the source
  * (or in `destDir`). With `fromPrompt`, truncated before the last prompt carrying those owner's words instead, so that
- * exchange and every later one go (2026-10-22, the architect: "so I can remove from history more than one turn"). Never
+ * exchange and every later one go (2026-10-22: remove more than one turn from history at once). Never
  * modifies the source. `newId` is injectable for tests.
  */
 export function forkTruncatedTranscript(

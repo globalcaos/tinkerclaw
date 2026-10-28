@@ -3,8 +3,7 @@
 // The SMART MODELS intelligence floor, expressed as a POSITION in the catalog rather
 // than as a score.
 //
-// FORK 2026-09-05 (the architect: "in the model picker panel I only have 2 models available
-// now"). Artificial Analysis rebased its Intelligence Index overnight — every scored
+// FORK 2026-09-05: the model picker suddenly offered only 2 models. Artificial Analysis rebased its Intelligence Index overnight — every scored
 // model fell ~15-25% in one scrape (Fable 5.1 65.65 -> 56.76). The nightly refresh
 // wrote the new scores into agents.defaults.models correctly; nothing was deleted and
 // no model got dumber. But the gate reading those scores was the literal number 53, so

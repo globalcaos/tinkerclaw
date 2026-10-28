@@ -9,8 +9,8 @@ import {
   recordSupplyLimit,
 } from "./thalamus-cooling.js";
 
-// the architect, 2026-10-02: "Limits cool their supply until the reset time the error gives, or 30 minutes; the next turn
-// goes to the best supply still open; the state survives a restart."
+// 2026-10-02: a limit cools its supply until the reset time the error gives, or 30 minutes; the next turn
+// goes to the best supply still open; the state survives a restart.
 
 // 2026-10-02 10:00:00 UTC is 12:00 in Madrid (CEST, UTC+2).
 const NOW = Date.UTC(2026, 9, 2, 10, 0, 0);
