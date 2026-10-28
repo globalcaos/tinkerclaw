@@ -529,7 +529,8 @@ export function initPhoneMode(
       const r = [...sheet.querySelectorAll<HTMLElement>("[data-phone-menu]")]
         .find((b) => b.dataset.phoneMenu === hit?.id)
         ?.getBoundingClientRect();
-      closeAll();
+      // FORK 2026-10-27 (the architect: "the drop down contracts while the options are visible. It should
+      // not contract"): the sheet stays open under the menu (menu z-index 1300 > sheet 1150).
       deps.openTabMenu?.(hit.id, r ? r.left - 160 : 16, r ? r.bottom : 64);
       return;
     }

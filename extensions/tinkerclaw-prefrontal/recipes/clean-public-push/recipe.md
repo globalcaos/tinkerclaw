@@ -94,6 +94,8 @@ Stage the sanitized files by name, `git -C /tmp/clean-pub diff --name-only -z | 
 
 ## Don't-regress
 
+- **Second publish of 2026-10-27, four detours, ~25 min lost.** (1) The push script piped the hook through `tail -40`, which cut the bible failure list; naming the 9 reds meant a second 10-minute gate run. Write the push's FULL output to a file (`> push.log 2>&1`) and grep `✗` from it. (2) The MAIN worktree (Step 5) also needs `node_modules` (and `tinker-ui/node_modules`) linked, or the hook's plugin-sdk check dies with `ERR_MODULE_NOT_FOUND` and blocks as "exports out of sync". (3) Cleanup: the safety guard refuses a recursive delete, and refuses a delete or worktree removal on a `$VAR` path because it cannot see the path is under `/tmp`. Unlink the node_modules links one by one on literal `/tmp/...` paths, then `git worktree remove /tmp/...` with the path typed out. The claim dir under `~/.local/state` needs the owner's own "Delete ..." sentence: say so in the report. (4) The private sanitizer missed URL-encoded (`%2F100...`) and regex-escaped (`100\.66...`) tailnet IPs, and rewrote a test's input in one form but not its expectation in another; its IP rules now cover all three forms (2026-10-27). After sanitizing, run every test file the sanitizer touched, not just the scan.
+
 - **No force-push** of a shared branch — FF only. **Never `reset --hard` over live foreign WIP.**
 - The local branch will diverge from the squashed remote; reconcile ONLY after the WIP is committed/cleared by its owner.
 - History-clean is the point — a tip-only sanitize still leaks via `git show <old-commit>`.

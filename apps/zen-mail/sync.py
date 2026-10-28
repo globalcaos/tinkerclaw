@@ -123,6 +123,14 @@ def main():
     except Exception as err:
         log(f"[sync] streams failed: {err}")
         traceback.print_exc()
+    # Promises the owner made and has not kept come back to his list the day after they were due (promises.py,
+    # 2026-10-27); before escalate, so a card that comes back is weighed in the same run.
+    try:
+        import promises
+        promises.check_due(conn)
+    except Exception as err:
+        log(f"[sync] promises failed: {err}")
+        traceback.print_exc()
     # Urgency that grows while a topic waits, then a notification, then a call (escalate.py, 2026-10-22).
     try:
         import escalate

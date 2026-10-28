@@ -14,6 +14,8 @@ verify:
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/phone-door/door.test.mjs >/dev/null
   - name: phone content packs build and verify — scripts/phone-door/pack.test.mjs passes (2026-10-27)
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/phone-door/pack.test.mjs >/dev/null
+  - name: the phone icon's number counts unread Tinker chats only — scripts/phone-door/phone-badge.test.mjs passes (2026-10-28)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/phone-door/phone-badge.test.mjs >/dev/null
   - name: the trip watcher reads flights and renders the trip — scripts/trip node tests pass (2026-10-27)
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/trip/flight-watch.test.mjs >/dev/null && node --test scripts/trip/providers.test.mjs >/dev/null && node --test scripts/trip/trip-render.test.mjs >/dev/null
   - name: an ask-session ask draws as the purple card, stays in the feed when its group folds, and loads the woken turn through askSession.slice (§5.8AL, 2026-10-21)

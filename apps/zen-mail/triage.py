@@ -7,11 +7,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 from common import ask_model, log, now_iso, parse_json, source_of, thread_language, topic_id, unique_texts
 import merge
+import promises
 
 PROMPT_VERSION = "6"  # 6 (2026-10-22): the owner's priorities and focus, and need "seize"  # bump when SYSTEM changes: every thread is triaged again on the next run
 # Not bumped for "same_as" (2026-10-19): only a thread with candidates can use it, and the candidates are in its sig,
 # so exactly those threads are triaged again; a bump would re-run all ~500 for nothing.
 # Not bumped for "slack" and "clawhub" (2026-10-22) either: only their own new threads carry those sources.
+# Not bumped for "promise" (2026-10-27): a thread whose owner tail looks like a promise carries ":p" in its sig, so
+# exactly those are triaged again; the others pick the field up the next time their mail changes.
 
 SYSTEM = """You triage email, chats and tasks for one busy person so they never have to open their inbox.
 Every item has a "source": "email", "teams" (a Microsoft Teams chat), "whatsapp" (a WhatsApp chat or group) or
@@ -78,7 +81,20 @@ adds it. Never invent facts, dates, prices or commitments that are not in the th
 needs information the owner has not given, write a short holding reply or offer options.
 When "you_wrote_last" is true and "days_waiting" is set, the owner wrote last some days ago. If their last
 message still expects an answer (a question, a request, a pending quote), need is "reply" and the draft is a
-short, polite nudge. If it closed the matter (thanks, confirmation, "OK"), need is "none"."""
+short, polite nudge. If it closed the matter (thanks, confirmation, "OK"), need is "none".
+
+- "promise": something the OWNER promised in his own messages and has not delivered yet, judged on the whole thread:
+  "I'll send it tonight", "te lo envío mañana", "t'ho envio aquesta nit", "ho reviso i et dic", "entre avui i demà
+  ho tindré". Only his own, and only while still pending: a thing he delivered in that message or a later one is NOT
+  a promise ("et passo la versió", "here is the link": a message that carries the thing, as an attachment, a link or
+  the text itself, has delivered it; never guess that an attachment is missing), and neither is a plan he just tells
+  them ("I'll be at the airport at 9"), a question or a polite formula. Give {"what": a short phrase in thread_language ("enviar el document revisat"),
+  "due": "YYYY-MM-DD" in the owner's time zone ("tonight" or "today" = the day of that message, "tomorrow" = the next
+  day, "this week" = that Friday, no time given = two days after the message), "late_draft": a short message in the
+  other person's language for when it is late: a brief apology and that it is on its way, no new date and nothing
+  invented}; otherwise null. When the other side has written since and asks for it, need is "reply" or "act" and the
+  summary says what he owes. Items with "owner_promise_check": true come only for this check: the owner wrote last,
+  so need is "none" unless his last message also asks them something."""
 
 
 def _working_days_since(iso):
@@ -192,8 +208,17 @@ def triage(conn, acct, me, cfg, owner_about, _depth=0):
         maybe = candidates(conv)
         # The related lines and the merge candidates are part of the signature: news on another side re-triages this
         # item (mhash stays last, the new-mail test below reads it).
-        rhash = hashlib.sha1(json.dumps([related, maybe] if maybe else related, sort_keys=True).encode()).hexdigest()[:12]
-        sig = PROMPT_VERSION + ":" + rhash + ":" + mhash
+        # The signature depends on MAIL only. Hashing the candidates' titles, then their card state (merged, noise,
+        # done: all set by the model), made threads that share a person re-triage each other on every run
+        # (2026-10-27: 28, then 11 work threads every sync). The peers are the four newest threads sharing a person,
+        # from the messages; the model still gets the filtered candidates with their titles.
+        mine = people_of.get(conv) or set()
+        peers = sorted(((convs[c][-1]["date"] or "")[:10], c) for c, ppl in people_of.items() if c != conv and mine & ppl)[-4:]
+        key = [related, peers] if peers else related
+        rhash = hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()[:12]
+        # The owner wrote last and his words look like "I'll ..." (promises.py): the model judges the promise.
+        owed = msgs[-1]["from_addr"] == me and promises.shortlist(msgs, me)
+        sig = PROMPT_VERSION + ":" + rhash + ":" + mhash + (":p" if owed else "")
         old = conn.execute("SELECT sig, state, later_until, last_date FROM topics WHERE id=?", (tid,)).fetchone()
         last, last_in = msgs[-1], inbound[-1]
         you_last = last["from_addr"] == me
@@ -209,9 +234,10 @@ def triage(conn, acct, me, cfg, owner_about, _depth=0):
         state = "open" if (new_mail and not you_last) or not old else old["state"]  # new mail puts it back in the list
         if nudge_due and state in ("waiting", "approved"):
             state = "open"  # nobody answered in time: back in the list with a nudge
-        if you_last and not nudge_due:
+        if you_last and not nudge_due and not owed:
             _upsert(conn, tid, acct, conv, dict(base, title=last["subject"] or "(no subject)", who=last_in["from_name"],
                                                 need="none", state="waiting", noise=0, private=0))
+            promises.store(conn, tid, None)  # he wrote again with no promise in it: whatever he owed is settled
             continue
         labels = json.loads(last_in["labels"] or "[]")
         subject = last_in["subject"] or ""
@@ -228,13 +254,15 @@ def triage(conn, acct, me, cfg, owner_about, _depth=0):
                 facts=json.dumps([subject[:60]])))
             continue
         batch.append({
-            "id": tid, "conv": conv, "base": base, "state": state,
+            "id": tid, "conv": conv, "base": base, "state": state, "owed": owed, "nudge_due": nudge_due,
+            "made": last["date"] if you_last else "",
             "item": {
                 "id": tid, "mailbox": acct, "source": source_of(conv), "subject": subject, "you_wrote_last": you_last,
                 "thread_language": thread_language([m["body"] for m in msgs]),
                 "related_elsewhere": related,
                 "maybe_same_matter": maybe,
                 "days_waiting": waiting if you_last else None,
+                **({"owner_promise_check": True} if owed else {}),
                 "messages": [{"from": f"{m['from_name']} <{m['from_addr']}>", "is_owner": m["from_addr"] == me,
                               "date": m["date"][:16], "recipients": len(json.loads(m["rcpts"] or "[]")),
                               "has_attachments": bool(m["has_att"]), "text": text[:3000]}
@@ -276,6 +304,10 @@ def triage(conn, acct, me, cfg, owner_about, _depth=0):
                 draft = a.get("draft") or (kept[0] if worked and kept else None)
                 if need == "read" and state == "open" and not worked and not any(m["unread"] for m in convs_by_id[g["conv"]]):
                     state = "done"  # only to read, and the owner had already read it in the mailbox
+                promise = promises.clean(a.get("promise"), g["made"] or (g["base"]["last_date"] or ""))
+                if g["owed"] and not g["nudge_due"]:
+                    # Checked only for a promise: it stays out of the list, waiting, until its day passes (promises.py).
+                    need, state, draft = ("act" if promise else "none"), "waiting", (kept[0] if kept else None)
                 _upsert(conn, g["id"], acct, g["conv"], dict(
                     g["base"], title=(a.get("title") or g["item"]["subject"])[:120], who=a.get("who") or "", need=need,
                     deadline=a.get("deadline"), urgency=int(a.get("urgency") or 0), importance=int(a.get("importance") or 0),
@@ -284,6 +316,7 @@ def triage(conn, acct, me, cfg, owner_about, _depth=0):
                     options=json.dumps(a.get("options"), ensure_ascii=False) if a.get("options") else None, choice=None,
                     noise=1 if need == "none" else 0, private=0,
                     state=state))
+                promises.store(conn, g["id"], promise)
                 done += 1
                 if a.get("same_as") in {x["id"] for x in g["item"]["maybe_same_matter"]}:
                     to_merge.append((g["conv"], conv_of_tid[a["same_as"]]))

@@ -3,6 +3,7 @@ import os, sys, tempfile
 os.environ["ZEN_MAIL_DATA"] = tempfile.mkdtemp(prefix="zen-merge-test-")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import db, source_of
+assert str(sys.modules["common"].DATA).startswith(tempfile.gettempdir()), "refusing to run against " + str(sys.modules["common"].DATA)  # 2026-10-27: a test run on an already-loaded common rewrote 58 real cards
 import merge
 
 ME = "owner@example.com"

@@ -15,7 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
-private const val NOTIFICATION_CHANNEL_BASE_ID = "openclaw.system.notify"
+private const val NOTIFICATION_CHANNEL_BASE_ID = "openclaw.system.notify.v2" // 2026-10-28: badges off (JarvisBadge.kt)
 
 internal data class SystemNotifyRequest(
   val title: String,
@@ -79,8 +79,9 @@ private class AndroidSystemNotificationPoster(
     val manager = appContext.getSystemService(NotificationManager::class.java)
     val existing = manager.getNotificationChannel(channelId)
     if (existing == null) {
-      manager.createNotificationChannel(NotificationChannel(channelId, name, importance))
+      manager.createNotificationChannel(NotificationChannel(channelId, name, importance).apply { setShowBadge(false) })
     }
+    ai.openclaw.app.jarvis.JarvisNotifications.retireBadgingChannels(manager)
     return channelId
   }
 

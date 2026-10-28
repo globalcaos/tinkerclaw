@@ -86,3 +86,20 @@ export async function openPdfReader(
   const where = path ? await servePdf(path, f) : await lastPdf(f);
   showPdfReader(pdfViewerUrl(where), doc);
 }
+
+/** FORK 2026-10-28 (the architect: "When I put a comment marker, I want to be able to input a voice note that
+ *  goes into the text box ... press and hold on the lock button"). The side-key hold already ends in
+ *  window.__jarvisAssist(text); while a PDF comment box is open in the reader layer, the words go into
+ *  that box (the viewer's window.__pdfDictate, apps/pdf-review tools.js) instead of the chat.
+ *  true = the viewer took them; false = no layer, no open comment box, or a frame from elsewhere. */
+export function pdfDictate(text: string, doc: Document = document): boolean {
+  const frame = doc.querySelector<HTMLIFrameElement>(`#${LAYER_ID} iframe`);
+  try {
+    const dictate = (
+      frame?.contentWindow as (Window & { __pdfDictate?: (t: string) => boolean }) | null
+    )?.__pdfDictate;
+    return typeof dictate === "function" && dictate(text) === true;
+  } catch {
+    return false; // a cross-origin frame (Zen Mail on another host) cannot be reached
+  }
+}

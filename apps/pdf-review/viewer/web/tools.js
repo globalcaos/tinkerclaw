@@ -94,6 +94,28 @@ if (dialog) new MutationObserver(() => requestAnimationFrame(fitDialog)).observe
 addEventListener("resize", () => requestAnimationFrame(fitDialog));
 visualViewport?.addEventListener("resize", () => requestAnimationFrame(fitDialog));
 
+// Voice notes (the architect 2026-10-28: "When I put a comment marker, I want to be able to input a voice note
+// that goes into the text box ... press and hold on the lock button"). Holding the phone's side key
+// runs the Jarvis app's speech recognizer; Tinker (phone/pdf-reader.ts pdfDictate) hands the words here
+// while this viewer sits in its reader layer. With the comment box open they are added at the cursor,
+// and the input event turns Done on, as typing would. Closed box: false, and Tinker sends a chat prompt.
+const commentText = document.getElementById("commentManagerTextInput");
+window.__pdfDictate = (text) => {
+  const t = String(text ?? "").trim();
+  if (!dialog?.open || !commentText || !t) return false;
+  const v = commentText.value;
+  const at = commentText.selectionStart ?? v.length;
+  const end = commentText.selectionEnd ?? at;
+  const before = v.slice(0, at);
+  const add = (before && !/\s$/.test(before) ? " " : "") + t;
+  commentText.value = before + add + v.slice(end);
+  commentText.selectionStart = commentText.selectionEnd = at + add.length;
+  commentText.dispatchEvent(new Event("input", { bubbles: true }));
+  commentText.focus();
+  window.__clientLog?.("comment-dictate", { chars: t.length });
+  return true;
+};
+
 // ---- ↶ Undo / ↷ Redo (the architect 2026-10-23 15:00: "I mistook the drawing button for the highlight button,
 // and now I cannot undo it. We need an undo and redo button on the page.") pdf.js keeps an undo history
 // for every mark (ink, highlight, comment, note) but only Ctrl+Z / Ctrl+Y reach it; a phone has neither.

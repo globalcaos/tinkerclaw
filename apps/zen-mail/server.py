@@ -128,6 +128,9 @@ def state_payload(acct):
         status = jira_status.get(t["conv"], "")
         if status:  # the board's own column says it better than the generic "to do"
             bits = [status if b == NEED_WORD.get(t["need"], t["need"]) else b for b in bits]
+        promise = extra.get("promise") or {}  # promises.py: what he promised and has not done (2026-10-27)
+        if promise.get("what"):
+            bits.append(f"you promised: {promise['what']} by {promise.get('due', '')}")
         esc = extra.get("esc") or {}  # escalate.py: what the waiting itself added (2026-10-22)
         if esc.get("why") and (esc.get("level") or 0) > (t["urgency"] or 0):
             bits.append("↑ " + esc["why"][0])
@@ -145,7 +148,8 @@ def state_payload(acct):
     # (the architect 2026-10-18: "prioritize those at the top"); Backlog tasks keep the normal order. A reminder he asked for
     # by hand, or a card he pinned with the bonsai button, carries extra.pin and sits above all of it, lowest first
     # (a new pin takes one less than the current top, so it lands on top).
-    waiting = [{"id": t["id"], "acct": acct, "title": t["title"], "who": t["who"], "since": (t["last_date"] or "")[:10]}
+    waiting = [{"id": t["id"], "acct": acct, "title": t["title"], "who": t["who"], "since": (t["last_date"] or "")[:10],
+                "promise": (json.loads(t["extra"] or "{}").get("promise") or None)}
                for t in rows if t["state"] in ("waiting", "approved")]
     waiting.sort(key=lambda x: x["since"], reverse=True)
     senders = {}
@@ -199,7 +203,7 @@ def topic_payload(tid):
         "options": json.loads(t["options"]) if t["options"] else None, "choice": t["choice"], "need": t["need"],
         "state": t["state"], "private": t["private"], "band": band(t),
         "src": source_of(t["conv"]), "src_label": SOURCE_LABEL[source_of(t["conv"])],
-        **({k: v for k, v in json.loads(t["extra"] or "{}").items() if k in ("actions", "timid", "link", "stream", "level")}),
+        **({k: v for k, v in json.loads(t["extra"] or "{}").items() if k in ("actions", "timid", "link", "stream", "level", "promise")}),
         "chat": [{"id": c["id"], "who": c["who"], "text": c["text"], "changed": c["changed"]} for c in chat],
         "butler": butler_mod.payload(conn, tid),
         "mails": [{"id": m["id"], "att": bool(m["has_att"]), "from": m["from_name"] or m["from_addr"], "me": m["from_addr"] == me,

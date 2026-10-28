@@ -634,7 +634,7 @@ import {
   type PhaseChild,
   type PhaseEntry,
 } from "./phase-group.js";
-import { isPdfPath, openPdfReader } from "./phone/pdf-reader.js";
+import { isPdfPath, openPdfReader, pdfDictate } from "./phone/pdf-reader.js";
 import { initPhoneMode, phoneTabsChanged } from "./phone/phone-mode.js";
 import {
   clearPreModelFor as clearPreModelForIn,
@@ -20086,8 +20086,19 @@ function editPreview(s: string): string {
 function toolSummary(name: string, input: unknown): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
+  // FORK 2026-10-27 (the architect: "Every tool call shown in the chat says 'performing an action' ... If
+  // it's an inquiry or check, the tool should read like a question. If it's a change being done it
+  // should say which one"). This is the title when the model wrote no sentence before the call.
+  // Claude Code's tool names (Bash, Grep, Glob, ToolSearch, mcp__*) used to miss every case.
+  const target = fileName(shortenPath(String(a.file_path ?? a.path ?? "")));
   switch (n) {
+    case "bash":
     case "exec": {
+      // Claude Code's Bash carries the model's own plain-words description of the call.
+      const desc = String(a.description ?? "").trim();
+      if (desc) {
+        return desc;
+      }
       const cmd = shortenPath(String(a.command ?? ""));
       if (cmd.match(/^grep\b/)) {
         const target = extractGrepTarget(cmd);
@@ -20165,25 +20176,51 @@ function toolSummary(name: string, input: unknown): string {
       if (cmd.startsWith("nohup") || cmd.startsWith("setsid")) {
         return `Starting a long-running task in the background`;
       }
-      return `Performing a system operation`;
+      return `Running: ${editPreview(cmd)}`;
     }
     case "read":
-      return `Reading a section of the code to understand how it works`;
+      return target ? `What's in ${target}?` : `What's in this file?`;
     case "edit": {
       const oldStr = String(a.old_string ?? a.oldText ?? "");
       const newStr = String(a.new_string ?? a.newText ?? "");
       const oldP = editPreview(oldStr);
       const newP = editPreview(newStr);
+      const where = target ? `${target}: ` : "";
       if (oldStr && !newStr) {
-        return `Removing: "${oldP}"`;
+        return `${where}removing "${oldP}"`;
       }
       if (!oldStr && newStr) {
-        return `Adding: "${newP}"`;
+        return `${where}adding "${newP}"`;
       }
-      return `Changing "${oldP}" to "${newP}"`;
+      return `${where}"${oldP}" → "${newP}"`;
     }
     case "write":
-      return `Creating a new file with the necessary content`;
+      return target ? `Writing ${target}` : `Writing a new file`;
+    case "grep": {
+      const pattern = String(a.pattern ?? "");
+      const scope = fileName(shortenPath(String(a.path ?? a.glob ?? "")));
+      return `Where does "${editPreview(pattern)}" appear${scope ? ` in ${scope}` : ""}?`;
+    }
+    case "glob":
+      return `Which files match ${String(a.pattern ?? "")}?`;
+    case "websearch":
+      return `What does the web say about "${editPreview(String(a.query ?? ""))}"?`;
+    case "webfetch": {
+      const domain = String(a.url ?? "").match(/https?:\/\/([^/]+)/)?.[1] ?? "";
+      return domain ? `What's on ${domain}?` : `What's on this web page?`;
+    }
+    case "toolsearch": {
+      const q = String(a.query ?? "");
+      return q.startsWith("select:")
+        ? `Loading the ${q.slice(7).replace(/,/g, ", ")} tool`
+        : `Which tool fits "${editPreview(q)}"?`;
+    }
+    case "workflow": {
+      const wfName = String(a.script ?? "").match(/name:\s*['"]([^'"]+)['"]/)?.[1];
+      return wfName ? `Starting the ${wfName} workflow` : `Starting a workflow`;
+    }
+    case "monitor":
+      return `Watching for: ${editPreview(String(a.description ?? a.command ?? ""))}`;
     case "process": {
       const act = a.action ?? "?";
       if (act === "poll") {
@@ -20284,8 +20321,14 @@ function toolSummary(name: string, input: unknown): string {
       return a.prompt
         ? `Reading a PDF document to ${String(a.prompt).slice(0, 80)}`
         : `Reading a PDF document`;
-    default:
-      return `Performing an action`;
+    default: {
+      // mcp__jarvis__wiki_search → "wiki search", plus the call's first short text argument.
+      const label = n.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, "").replace(/_/g, " ");
+      const firstText = Object.values(a as Record<string, unknown>).find(
+        (v): v is string => typeof v === "string" && v.trim() !== "",
+      );
+      return firstText ? `${label}: ${editPreview(firstText)}` : `Using ${label}`;
+    }
   }
 }
 
@@ -29246,6 +29289,8 @@ function init() {
   // the app's speech recognizer calls this with the words (apps/android jarvis/JarvisAssist.kt).
   // false = not ready yet (socket closed); the app retries for 30 s.
   (window as Window & { __jarvisAssist?: (text: string) => boolean }).__jarvisAssist = (text) => {
+    // FORK 2026-10-28: with a PDF comment box open, the side-key words are that comment, not a prompt.
+    if (text.trim() && pdfDictate(text)) return true;
     if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return false;
     if (!text.trim()) return true;
     if (!tabs.some((t) => t.id === activeTabId)) $("tab-add")?.click();

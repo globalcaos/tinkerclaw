@@ -108,13 +108,13 @@ describe("keyPhrases", () => {
 describe("names are not taught", () => {
   it("finds the words that are always capitalised and never open a request", () => {
     const names = nameLikeWords([
-      "send the plan to Sasha today",
-      "ask Sasha about the trip",
-      "Sasha wants the dates",
-      "show the flights to Bryce and Sasha",
+      "send the plan to Robin today",
+      "ask Robin about the trip",
+      "Robin wants the dates",
+      "show the flights to Bryce and Robin",
     ]);
-    // "Sasha" opens one request, but is capitalised everywhere else and never seen in lower case
-    expect([...names].sort()).toEqual(["bryce", "sasha"]);
+    // "Robin" opens one request, but is capitalised everywhere else and never seen in lower case
+    expect([...names].sort()).toEqual(["bryce", "robin"]);
     expect(nameLikeWords(["Plan the trip", "plan the trip again"]).has("plan")).toBe(false);
     expect(nameLikeWords(["the Motorhome", "a motorhome"]).has("motorhome")).toBe(false);
   });
@@ -122,13 +122,13 @@ describe("names are not taught", () => {
   it("keyPhrases leaves a name out and keeps the ordinary phrase beside it", () => {
     const got = keyPhrases(
       [
-        { taskId: "a", text: "send the motorhome holiday dates to Sasha" },
-        { taskId: "b", text: "check the motorhome holiday dates with Sasha" },
-        { taskId: "c", text: "update the motorhome holiday dates for Sasha" },
+        { taskId: "a", text: "send the motorhome holiday dates to Robin" },
+        { taskId: "b", text: "check the motorhome holiday dates with Robin" },
+        { taskId: "c", text: "update the motorhome holiday dates for Robin" },
       ],
       ["rank amazon listings", "sort photos by date"],
     );
-    expect(got.join(" ")).not.toContain("sasha");
+    expect(got.join(" ")).not.toContain("robin");
     expect(got.join(" ")).toContain("motorhome holiday");
   });
 });

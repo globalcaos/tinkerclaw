@@ -1899,6 +1899,13 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               activeTextBlockIndex = key;
               pushTextDelta(ev.delta.text, "content_block_delta");
               const prev = blockTextSeen.get(key) ?? "";
+              // FORK 2026-10-27 — this arm marks the text seen, so the cumulative arm never
+              // feeds it to the narration buffer: 618 of 618 tool starts had no title that day.
+              // Same boundary rule as the cumulative arm: a fresh block starts a fresh narration.
+              if (prev === "") {
+                pendingToolNarration = "";
+              }
+              pendingToolNarration += ev.delta.text;
               blockTextSeen.set(key, prev + ev.delta.text);
             } else if (
               ev.delta.type === "thinking_delta" &&
@@ -2156,7 +2163,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         "narration leaves a useless wall of greps. Banned phrasings include",
         '"performing an action", "running a command", "reading a section',
         'of the code", "checking something", "applying a fix", or any bare',
-        "verb without an object. Required for the FIRST tool call too —",
+        "verb without an object. A call that looks or checks is phrased as",
+        "the question it answers; a call that changes something names the",
+        "change in a few words. Required for the FIRST tool call too —",
         "no silent kickoff.",
       ].join("\n");
       const userText = cliCommand === null ? rawUserText + NARRATION_USER_DIRECTIVE : cliCommand;

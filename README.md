@@ -86,9 +86,9 @@ We value people who **open PRs**, not issues. Who read the code before asking qu
 
 ## Won't This Fork Fall Behind?
 
-No. A nightly cron syncs upstream automatically, detects conflicts, and restores fork patches after every merge. Hundreds of commits ahead of vanilla OpenClaw and zero behind.
+It isn't trying to keep up. TinkerClaw started as a fork of OpenClaw and has grown into something else, so merging upstream wholesale stopped making sense in May 2026.
 
-When upstream pushes a breaking change, we know within hours — not weeks.
+Instead, a nightly Fork Scanner reads what changed upstream and in dozens of other agent harnesses. The pieces worth having get ported by hand, tested, and kept. You get the good ideas without inheriting someone else's roadmap.
 
 ### ⚡ Ride the `develop` Branch
 
@@ -220,12 +220,11 @@ Each cron job carries a META file with its own instructions. After running, the 
 
 Day 1: mediocre. Day 30: genuinely useful.
 
-### 🧹 Fork Maintenance on Autopilot
+### 🧹 Upstream Watch on Autopilot
 
-- Nightly upstream sync with conflict detection
-- Post-merge workspace cleanup (catches 20KB bloat)
-- Fork patches auto-restored after conflicts
-- Hundreds of commits ahead, zero maintenance burden
+- Nightly Fork Scanner reads upstream OpenClaw and dozens of other harnesses
+- Worth-having changes are flagged, then ported by hand and tested
+- No blind merges, so no surprise breakage
 
 ---
 

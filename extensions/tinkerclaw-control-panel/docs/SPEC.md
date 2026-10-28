@@ -565,7 +565,7 @@ Data comes from `control-panel.calendar.density` for the heat + `control-panel.t
 
 👨‍👩‍👧 Family (2)
   ⬜ Classify Ivo (friend / family / kid / adult)      T-4 10s  user ⋯
-  ⬜ Sasha-Apr-4 flowers (Day 37, firm nudge zone)     37d 2m   user ⋯
+  ⬜ Robin-Apr-4 flowers (Day 37, firm nudge zone)     37d 2m   user ⋯
 
 🏃 Me (1)
   ⬜ Sign bank loan document                           58h 3m   user ⋯
