@@ -177,7 +177,7 @@ const CATALOG_URL = "https://openrouter.ai/api/v1/models";
 const FEE_URL = "https://openrouter.ai/docs/faq.md";
 
 // ── SELLERS YOU CAN PAY WITHOUT OPENROUTER (the architect, 2026-10-02) ───────────────────
-// "Our BBVA has blocked openrouter as supplier ... do a deep dive on other online
+// "Our bank has blocked openrouter as supplier ... do a deep dive on other online
 // suppliers of chinese models, and find the cheapest." The host prices OpenRouter shows
 // are NOT always what the same host charges you directly: on 2026-10-02 Novita sold
 // GLM-5.3 at $2.156 out THROUGH OpenRouter and $4.40 on its own API, SiliconFlow

@@ -30,10 +30,15 @@ const git = (cwd: string, args: string[]) =>
 
 afterEach(() => cleanupTempDirs(tempDirs));
 
+// FORK 2026-10-28 — the roster layer: fixed strings (a made-up WhatsApp id), matched without regex.
+const ROSTER_ID = "90000000000077";
+
 function pushOf(fileBody: string, fileName = "notes.md"): number {
   const root = makeTempRepoRoot(tempDirs, "pii-pre-push-");
   const list = path.join(root, "private.re");
   writeFileSync(list, `# test list\n${TOKEN}\n`);
+  const roster = path.join(root, "roster.txt");
+  writeFileSync(roster, `${ROSTER_ID}\n\n`); // the blank line must not match every line
   const repo = path.join(root, "repo");
   git(root, ["init", "-q", "repo"]);
   writeFileSync(path.join(repo, "base.md"), "base\n");
@@ -48,7 +53,7 @@ function pushOf(fileBody: string, fileName = "notes.md"): number {
     cwd: repo,
     input: `refs/heads/develop ${tip} refs/heads/develop ${base}\n`,
     encoding: "utf8",
-    env: { ...baseEnv, HOME: root, TINKERCLAW_PII_FILE: list },
+    env: { ...baseEnv, HOME: root, TINKERCLAW_PII_FILE: list, TINKERCLAW_PII_ROSTER: roster },
   });
   return run.status ?? -1;
 }
@@ -60,6 +65,10 @@ describe("scripts/pii-pre-push.sh", () => {
 
   it("blocks a private token in the middle of an added line", () => {
     expect(pushOf(`and then ${TOKEN} said this\n`)).toBe(1);
+  });
+
+  it("blocks a roster id (a WhatsApp id no name pattern knows), even inside punctuation", () => {
+    expect(pushOf(`target \`${ROSTER_ID}@lid\` in a log line\n`)).toBe(1);
   });
 
   it("passes a clean change, and a token only in the file name is not a content hit", () => {

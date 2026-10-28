@@ -71,6 +71,15 @@ inline `(?i:…)` groups), and matches the employer's name case-insensitively an
 camelCase identifiers do not trip it. Without the file (a stranger's clone) only the generic layer
 runs, and the hook says so on every push.
 
+**Third layer, the roster (2026-10-28).** A list of names never matches a raw id. A privacy check of
+the public tips found three real WhatsApp ids in `bug-log.md` (a neighbours' group, a family member's
+id, the architect's own), while every name pattern stayed silent. The hook now also reads
+`$TINKERCLAW_PII_ROSTER` (default `~/.config/tinkerclaw/pii-roster.txt`): fixed strings, one per
+line, matched with `grep -F` against the same added lines. It holds the phone numbers, WhatsApp ids
+and emails of the architect's contacts, built from the phone book by a private script outside the
+repo, rebuilt before each publish. Without the file the hook warns and checks only the first two layers.
+Bank names and device models count as private too: they are what a phishing message would borrow.
+
 **Why it moved here from `~/src/jarvis-icu/CLAUDE.md` (2026-08-02).** The previous text named a file in the
 **private** repo as canonical for a gate that protects the **public** one. That is unsound three ways: the
 public fork must be self-contained (a contributor cloning `tinkerclaw` has no `jarvis-icu`), the gate would

@@ -1,6 +1,6 @@
 // FORK 2026-10-19 (the architect: phone app) — Tinker phone mode.
 //
-// the architect flies with only his phone (Galaxy Z Flip6: a cover screen and a ~412 CSS px inner one),
+// the architect flies with only his phone (a flip phone: a cover screen and a ~412 CSS px inner one),
 // and the Jarvis app is a WebView of this very page through the phone door. The desktop layout is
 // a three-column grid with a 420px right rail, which does not fit. Phone mode keeps every piece
 // of it and rearranges it for one hand:

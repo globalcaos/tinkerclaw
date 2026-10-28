@@ -86,6 +86,15 @@ if [[ -r "$PII_FILE" ]]; then
 else
   echo "[pii-pre-push] WARNING: no private token list at $PII_FILE; only generic patterns are checked." >&2
 fi
+# FORK 2026-10-28 — third layer: the ROSTER, fixed strings one per line (real phone numbers, WhatsApp
+# ids, emails of the owner's contacts), generated outside the repo from the phone book. A regex list of
+# names never matches a raw id: three real WhatsApp ids reached the public bug log that way.
+# Blank lines are dropped: in a grep -F list an empty pattern matches every line.
+PII_ROSTER="${TINKERCLAW_PII_ROSTER:-$HOME/.config/tinkerclaw/pii-roster.txt}"
+if [[ ! -s "$PII_ROSTER" ]]; then
+  echo "[pii-pre-push] WARNING: no roster at $PII_ROSTER; raw phone numbers and WhatsApp ids are not checked." >&2
+  PII_ROSTER=""
+fi
 
 hit_count=0
 hit_buffer=""
@@ -114,6 +123,13 @@ scan_range() {
   # token at column 0 of an added line ("+<FirstName> said …") was never matched. Found during a publish.
   local matches
   matches=$(echo "$diff_output" | grep -P "^\+(?!\+\+ (?:b/|/dev/null)).*?(${PII_RE})" || true)
+  if [[ -n "$PII_ROSTER" ]]; then
+    local roster_matches
+    roster_matches=$(echo "$diff_output" | grep -P "^\+(?!\+\+ (?:b/|/dev/null))" | grep -F -f <(grep -v '^[[:space:]]*$' "$PII_ROSTER") || true)
+    if [[ -n "$roster_matches" ]]; then
+      matches="${matches:+$matches$'\n'}$roster_matches"
+    fi
+  fi
   if [[ -n "$matches" ]]; then
     local n
     n=$(echo "$matches" | wc -l)

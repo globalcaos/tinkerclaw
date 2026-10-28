@@ -64,9 +64,9 @@ describe("parseMentions — entity refs", () => {
 // ============================================================
 describe("parseMentions — dedup by normalized", () => {
   it("collapses the same target mentioned twice (case-insensitive)", () => {
-    const out = parseMentions("[[Caixa]] then again [[caixa]]");
-    const caixa = out.filter((m) => m.normalized === "caixa");
-    expect(caixa.length).toBe(1);
+    const out = parseMentions("[[Acme]] then again [[acme]]");
+    const acme = out.filter((m) => m.normalized === "acme");
+    expect(acme.length).toBe(1);
   });
 });
 

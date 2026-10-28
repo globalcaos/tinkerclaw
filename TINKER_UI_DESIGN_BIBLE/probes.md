@@ -273,7 +273,7 @@ The **deploy boundary** (the instant after which evidence is attributable to wha
 The three U3/U4/U6 read probes above (and the embed RPC) take their args as JSON. **Pass params via a FILE, not inline** — an inline `--params '{…}'` string gets mangled by shell quoting (nested quotes, `$`, brace expansion). The proven pattern:
 
 ```bash
-echo '{"query":"caixa préstec","temporalMode":"valid-at","asOfTime":1717200000000}' > /tmp/p.json
+echo '{"query":"acme loan","temporalMode":"valid-at","asOfTime":1717200000000}' > /tmp/p.json
 openclaw gateway call fork.memory.search --json --params "$(cat /tmp/p.json)"
 ```
 
