@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { buildChatUnits } from "./chat-units.js";
 import {
   exchangeByKey,
+  exchangeFromCut,
   exchangeKey,
   hideRewound,
   newestExchange,
+  nthNewestExchange,
+  rewindCommandArg,
   placeholderRow,
   REWOUND_STORAGE_KEY,
   RewoundStore,
@@ -236,5 +239,101 @@ describe("RewoundStore", () => {
     s.invalidate();
     s.list("tab");
     expect(reads).toBe(2);
+  });
+});
+
+// 2026-11-13: a tab held the same short prompt three times, and the Rewind of the older turn acted on the newest.
+describe("exchangeByKey with the time of the prompt row", () => {
+  const view = [
+    user("go on", 1_000),
+    reply("work ONE", 1_500),
+    user("go on", 60_000),
+    reply("work TWO", 61_000),
+    user("another ask", 90_000),
+    reply("x", 91_000),
+  ];
+  const key = exchangeKey("go on");
+
+  it("the same words sent twice: the row sent at that time, with the exchanges after it", () => {
+    expect(exchangeByKey(view, key, deps, 1_000)).toMatchObject({ index: 0, at: 1_000, later: 2 });
+    expect(exchangeByKey(view, key, deps, 60_400)).toMatchObject({ index: 2, later: 1 });
+  });
+
+  it("without a time it is the newest one, as before", () => {
+    expect(exchangeByKey(view, key, deps)).toMatchObject({ index: 2, later: 1 });
+  });
+
+  it("a row with no time loses to one that has it, and no row is still null", () => {
+    const untimed = [{ role: "user", content: "go on" }, user("go on", 60_000)];
+    expect(exchangeByKey(untimed, key, deps, 5)).toMatchObject({ index: 1 });
+    expect(exchangeByKey(view, exchangeKey("never said"), deps, 5)).toBeNull();
+  });
+});
+
+describe("nthNewestExchange", () => {
+  it("counts real prompts from the end; a placeholder is not one; fewer than asked is null", () => {
+    const view = [
+      user("a", 1),
+      reply("ra", 2),
+      user("b", 3),
+      placeholderRow(record()),
+      user("c", 5),
+      reply("rc", 6),
+    ];
+    expect(nthNewestExchange(view, 1, deps)).toMatchObject({ prompt: "c", index: 4, later: 0 });
+    expect(nthNewestExchange(view, 2, deps)).toMatchObject({ prompt: "b", index: 2, later: 1 });
+    expect(nthNewestExchange(view, 3, deps)).toMatchObject({ prompt: "a", index: 0, later: 2 });
+    expect(nthNewestExchange(view, 4, deps)).toBeNull();
+  });
+});
+
+describe("exchangeFromCut: the page hides from where the gateway cut", () => {
+  it("one turn of the model drawn as two prompt rows: hiding starts at the first of them", () => {
+    // The CLI's own notice for a background task, and the gateway's line for the same turn nine seconds later.
+    const view = [
+      user("go on", 1_000),
+      reply("long work", 2_000),
+      user("<task-notification>", 100_000),
+      reply("API Error", 101_000),
+      user("Background task done", 109_000),
+    ];
+    const target = newestExchange(view, deps)!;
+    expect(target.index).toBe(4);
+    expect(exchangeFromCut(view, target, 100_000, deps)).toMatchObject({
+      index: 2,
+      prompt: "<task-notification>",
+      at: 100_000,
+      later: 1,
+    });
+  });
+
+  it("an ordinary exchange starts at its own row: the row before it was sent before the cut", () => {
+    const view = [
+      user("first", 1_000),
+      reply("a", 2_000),
+      user("second", 50_000),
+      reply("b", 51_000),
+    ];
+    const target = newestExchange(view, deps)!;
+    // The transcript's time for a typed prompt is a few seconds after the row's own.
+    expect(exchangeFromCut(view, target, 56_000, deps)).toMatchObject({ index: 2, later: 0 });
+    expect(exchangeFromCut(view, target, undefined, deps)).toMatchObject({ index: 2, later: 0 });
+  });
+
+  it("counts the exchanges after the start, so one placeholder covers them all", () => {
+    const view = [user("first", 1_000), user("second", 50_000), user("third", 90_000)];
+    const target = { ...newestExchange(view.slice(0, 2), deps)! };
+    expect(exchangeFromCut(view, target, 50_000, deps)).toMatchObject({ index: 1, later: 1 });
+  });
+});
+
+describe("rewindCommandArg", () => {
+  it("reads /rewind and its argument; anything else is not the command", () => {
+    expect(rewindCommandArg("/rewind")).toBe("");
+    expect(rewindCommandArg("  /Rewind  3 ")).toBe("3");
+    expect(rewindCommandArg("/rewind two of them")).toBe("two of them");
+    expect(rewindCommandArg("/rewinding is not it")).toBeNull();
+    expect(rewindCommandArg("please /rewind")).toBeNull();
+    expect(rewindCommandArg("/home/user/rewind")).toBeNull();
   });
 });

@@ -1,3 +1,7 @@
+import { railCapHtml, railSegmentHtml, type ChatRail, type RailModel } from "./chat-rail.js";
+import { historyRowIdentity } from "./history-reconcile.js";
+import { narrationIndices, sentBackAnswerIndices, type RunMsgKind } from "./reply-grouping.js";
+import { isFractalSectionText } from "./sectioned-reply.js";
 /**
  * The chat transcript as KEYED UNITS — the run builder that used to live inline in app.ts
  * `updateChat` (plan task 9, `docs/superpowers/plans/2026-09-23-chat-history-incremental-rehaul.md`
@@ -14,10 +18,7 @@
  * Everything app.ts owns (renderMsg, the stream cursors, the expanded set, the thinking indicator,
  * the queue) is injected, so the grouping rules are testable here with no browser entry point.
  */
-import { railCapHtml, railSegmentHtml, type ChatRail, type RailModel } from "./chat-rail.js";
-import { historyRowIdentity } from "./history-reconcile.js";
-import { narrationIndices, type RunMsgKind } from "./reply-grouping.js";
-import { isFractalSectionText } from "./sectioned-reply.js";
+import { placeStopBubbles, type StopBubble } from "./stop-bubble-placement.js";
 
 /** A transcript row as the renderer reads it: server wire JSON plus the client's `_` stamps. */
 // oxlint-disable-next-line typescript-eslint/no-explicit-any
@@ -57,7 +58,22 @@ export type ChatUnitDeps = {
    * The amygdala's window and cards for the run that just ended: `userMsg` is the prompt the run answers (null before the
    * first prompt), `nextUserMsg` the prompt that ends it (null at the end of the chat). Returns "" when nothing is drawn.
    */
-  amygdalaAfterRun?: (userMsg: unknown, nextUserMsg: unknown) => string;
+  amygdalaAfterRun?: (
+    userMsg: unknown,
+    nextUserMsg: unknown,
+    placed?: ReadonlySet<string>,
+  ) => string;
+  /** The run's stop-check bubbles, drawn between the answers (stop-bubble-placement.ts). */
+  amygdalaStopBubbles?: (userMsg: unknown, nextUserMsg: unknown) => StopBubble[];
+  /** When a row began, for placing those bubbles. */
+  rowStartedAt?: (msg: unknown) => number | undefined;
+  /**
+   * FORK 2026-11-13 — when a stop check sent a reply of the tab on screen back to the agent: one
+   * time per send-back the gateway enforced (amygdala-ui.ts `sendBackTimes`). Read with
+   * `rowStartedAt` to find the answer each one judged, which is then never folded (reply-grouping.ts
+   * `sentBackAnswerIndices`). Absent or empty: no send-back is known and nothing changes.
+   */
+  sendBackTimes?: () => readonly number[];
   /**
    * The background Fractal's card for the run that answers `userMsg` (fractal-card.ts), or "" when
    * that prompt has none. Drawn right under the run, before the amygdala's window.
@@ -65,6 +81,14 @@ export type ChatUnitDeps = {
   fractalAfterRun?: (userMsg: unknown) => string;
   /** The amygdala's cards that belong at the very end of the chat, above the thinking indicator. */
   amygdalaTail?: () => string;
+  /**
+   * FORK 2026-11-14 — the open JOB TRAILS of this chat (job-trail.ts): the work of the agents behind a long
+   * job, opened from its row under the thinking dots. `at` null: the job runs, and its trail is drawn at the
+   * end of the chat, above the amygdala's tail and the indicator. `at` a time: the job has ended, and its
+   * trail stays in the run that was going on then (found with `rowStartedAt`), so the wake that reports the
+   * job lands after it. A trail no run can hold is drawn at the end. Absent = no trails.
+   */
+  jobTrails?: () => ReadonlyArray<{ key: string; html: string; at: number | null }>;
   /**
    * FORK 2026-10-21 — the purple ask-session cards (ask-session-card.ts) of a finished run whose Reasoning group is
    * folded: `rows` are the rows the group folds. Drawn right under the group, so a woken session's question and
@@ -77,11 +101,14 @@ export type ChatUnitDeps = {
    * FORK 2026-10-05 — `tail` marks the chat's last run, the only one a turn in flight can be (a
    * prompt typed during a turn waits in the queue, outside `view`). A `model` of null is a pending
    * rail (chat-rail.ts PENDING_RAIL): its room kept, nothing painted, nothing handed to `prev`.
+   * FORK 2026-11-12 — `prompt` is the prompt row the run answers (null for a run with none): it
+   * carries the run's id, which is how the rail finds the turn's thinking effort.
    */
   runRail?: (
     rows: readonly unknown[],
     prev: RailModel | null,
     tail: boolean,
+    prompt: unknown,
   ) => { rail: ChatRail; model: RailModel | null } | null;
   /**
    * FORK 2026-10-02 (an expanded item must never collapse on its own) — asked
@@ -159,6 +186,8 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
   // itself gone (see history-reconcile.ts). The page is paper: what was written is painted, once,
   // in the order it was written. No rule here may drop a row.
   const thinkingSet = new Set<number>();
+  // FORK 2026-11-13 — the tab's send-backs, read once per paint (the mark below uses them).
+  const sendBacks = deps.rowStartedAt ? (deps.sendBackTimes?.() ?? []) : [];
   {
     let runStart = 0;
     for (let i = 0; i <= view.length; i++) {
@@ -240,6 +269,52 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
             .reduce((n: number, b: Row) => n + String(b.text ?? "").trim().length, 0),
         });
       }
+      // FORK 2026-11-13 (bug: a finished reply folded into "Reasoning" after a stop-check
+      // send-back) — MARK THE ANSWER EACH SEND-BACK JUDGED. After a send-back the run goes on with
+      // a tool call and a short result, so the answer the check judged is text with a tool after
+      // it, and narrationIndices folds it unless it is the run's largest bubble. No row inside the
+      // run marks the send-back, so its place is found by time, the way stop-bubble-placement.ts
+      // places a check of an earlier turn: the judged step is the last one that began before the
+      // check, when every step below it began after the check. A step is an answer bubble or a
+      // tool row, never a thought or a TURN TIMING block. A stop check judges a finished answer,
+      // so when that step is a tool row the rows' times are not the turn's own (a page that slept
+      // through it and drew every row on waking, 2026-11-04) and nothing is marked: the run is
+      // classified exactly as before. So is a run whose rows are not in the turn's order (a
+      // gap-fill appended older rows below newer ones), a run in which no step began after the
+      // check, and every run of a tab no check sent back.
+      const rowAt = deps.rowStartedAt;
+      if (rowAt) {
+        for (const sentBackAt of sendBacks) {
+          let judged = -1;
+          let later = false;
+          for (let k = 0; k < runKinds.length; k++) {
+            if (!runKinds[k].isAssistantText && !runKinds[k].hasTool) {
+              continue;
+            }
+            const row = view[runStart + k];
+            const at = rowAt(row);
+            // A served row with no time of its own is read at the moment this page loaded it.
+            if (at === undefined || (at === row._arrivedAt && historyRowIdentity(row) !== null)) {
+              continue;
+            }
+            if (at > sentBackAt) {
+              if (judged < 0) {
+                break; // the run began after the check
+              }
+              later = true;
+            } else if (later) {
+              judged = -1; // a step from before the check sits below one from after it
+              break;
+            } else {
+              judged = k;
+            }
+          }
+          const kind = later && judged >= 0 ? runKinds[judged] : undefined;
+          if (kind && kind.isAssistantText && !kind.hasTool) {
+            kind.sentBackAfter = true;
+          }
+        }
+      }
       // FORK 2026-08-05 (old messages were being rewritten) — FREEZE THE CLASSIFICATION. It used
       // to be recomputed from scratch on EVERY repaint, and `narrationIndices` demotes an assistant
       // text bubble as soon as a tool appears LATER in the run — so as `lastToolIdx` grew, text the
@@ -292,6 +367,16 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
         for (let k = 0; k < runMsgs.length; k++) {
           runMsgs[k]._narration = narration.has(k);
         }
+      } else if (fullyStamped) {
+        // FORK 2026-11-13 — A SEND-BACK MAY ONLY LOWER A STAMP. The page can learn of one after
+        // the freeze (on a reload the Amygdala's feed arrives after the history rows), and the
+        // rule that reads it only reveals: what the check judged becomes an answer, and nothing
+        // becomes narration. A run with no mark is read back exactly as it was stamped.
+        for (const k of sentBackAnswerIndices(runKinds)) {
+          if (runMsgs[k]._narration === true) {
+            runMsgs[k]._narration = false;
+          }
+        }
       }
       // Re-read: the block above may have just completed the stamp. Anything short of a COMPLETE
       // stamp falls back to classifying this repaint from the run itself, so no member is ever left
@@ -326,6 +411,8 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       }
     }
   }
+  const jobTrails = deps.jobTrails?.() ?? [];
+  const placedTrails = new Set<string>();
   // Render messages grouped by run. In completed runs, intermediate messages
   // (thinking + tool calls + system) collapse into an expandable reasoning group.
   {
@@ -600,7 +687,12 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       }
       const railed: { rail: ChatRail; model: RailModel | null } | null =
         deps.runRail && railedAt.length > 0
-          ? deps.runRail(view.slice(runStart, runEnd), prevRailModel, i === view.length)
+          ? deps.runRail(
+              view.slice(runStart, runEnd),
+              prevRailModel,
+              i === view.length,
+              runStart > 0 ? view[runStart - 1] : null,
+            )
           : null;
       if (railed) {
         // A pending rail names no model, so the next run cannot inherit one from it.
@@ -635,15 +727,61 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
 
       // The amygdala's Jev window and cards close the run they judged (design doc §9); "" draws nothing.
       if (deps.amygdalaAfterRun) {
-        const amy = deps.amygdalaAfterRun(
-          runStart > 0 ? view[runStart - 1] : null,
-          i < view.length ? view[i] : null,
-        );
+        const runPrompt = runStart > 0 ? view[runStart - 1] : null;
+        const runEndPrompt = i < view.length ? view[i] : null;
+        const rowAt = deps.rowStartedAt;
+        // The answers a stop check can have judged: assistant text rows, never a thought or a TURN TIMING block.
+        const stopRows = view
+          .map((m, j) => ({ m, j }))
+          .slice(runStart, runEnd)
+          .filter(
+            ({ m }) =>
+              (m as { role?: unknown }).role === "assistant" &&
+              !m._isReasoning &&
+              !m._isPhaseTiming,
+          )
+          .map(({ m, j }) => ({ key: chatRowKey(m, j), at: rowAt?.(m) }));
+        const stopList = deps.amygdalaStopBubbles?.(runPrompt, runEndPrompt) ?? [];
+        const placed = rowAt
+          ? placeStopBubbles(
+              units,
+              stopRows,
+              stopList,
+              (b) => ({
+                key: `${b.seam === "prompt" ? "amy-prompt" : "amy-stop"}:${b.key}`,
+                html: b.html,
+              }),
+              runFirstUnit,
+            )
+          : undefined;
+        // Diagnostic (bug stop-bubble-history-row): a stop bubble left for the closing block says why.
+        if (stopRows.length > 0 && stopList.some((b) => !placed?.has(b.key))) {
+          console.warn("[stop-bubble] unplaced", {
+            bubbles: stopList.map((b) => ({ key: b.key, ts: b.ts, placed: placed?.has(b.key) })),
+            rows: stopRows,
+            unitKeys: units.map((u) => u.key),
+          });
+        }
+        const amy = deps.amygdalaAfterRun(runPrompt, runEndPrompt, placed);
         if (amy) {
           units.push({
             key: `amy:${runStart > 0 ? chatRowKey(view[runStart - 1], runStart - 1) : "start"}`,
             html: amy,
           });
+        }
+      }
+
+      // FORK 2026-11-14 — a finished job's trail closes the run that was going on when the job ended.
+      if (jobTrails.length > 0 && deps.rowStartedAt) {
+        const from = runStart > 0 ? deps.rowStartedAt(view[runStart - 1]) : -Infinity;
+        const to = i < view.length ? deps.rowStartedAt(view[i]) : Infinity;
+        if (typeof from === "number" && typeof to === "number") {
+          for (const t of jobTrails) {
+            if (t.at !== null && !placedTrails.has(t.key) && t.at >= from && t.at < to) {
+              units.push({ key: t.key, html: t.html });
+              placedTrails.add(t.key);
+            }
+          }
         }
       }
 
@@ -682,6 +820,12 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
   //
   // renderThinkingIndicator() already owns the whole decision and returns "" when no branch
   // applies, so the gate was duplicated — and drifted, as duplicated predicates do.
+  // FORK 2026-11-14 — a running job's trail (and one no run could hold) sits where its row is: at the end.
+  for (const t of jobTrails) {
+    if (!placedTrails.has(t.key)) {
+      units.push({ key: t.key, html: t.html });
+    }
+  }
   const amyTail = deps.amygdalaTail?.() ?? "";
   if (amyTail) units.push({ key: "amy:tail", html: amyTail });
   units.push({ key: THINKING_UNIT_KEY, html: deps.renderThinkingIndicator() });

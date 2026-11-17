@@ -22,7 +22,7 @@ See `TINKER_UI_DESIGN_BIBLE.md` §5.76 for the full contract, the "Sam test" (fr
 
 Tinkerclaw is a personal AI assistant fork of OpenClaw with cognitive extensions:
 
-- **Total Recall** (ENGRAM) — episodic memory with SQLite + vector retrieval
+- **Total Recall** (ENGRAM) — episodic memory with SQLite + full-text (word) retrieval
 - **Learned Intuition** (AMYGDALA) — neural safety gate (ONNX or rule-based fallback)
 - **Fractal Reflection** — post-turn self-reflection framework
 - **Identity Persistence** — persona consistency across sessions
@@ -50,10 +50,10 @@ git remote add upstream https://github.com/openclaw/openclaw.git
 
 ### Optional (but recommended)
 
-- **Ollama** — for local embeddings (Total Recall memory search). Runs on CPU, no GPU needed.
+- **Ollama** — for local embeddings (semantic memory search). Without it, memory search works on words only.
   - Install: https://ollama.ai
-  - Pull embedding model: `ollama pull mxbai-embed-large` (670MB, CPU-friendly)
   - Start: `ollama serve` (runs on http://127.0.0.1:11434)
+  - No need to pull a model by hand: after the build, `openclaw embedder fit --pull` measures this machine and downloads the model that fits it, if any ([4e. Memory search](#4e-memory-search-embeddings))
 - **Claude Code** — for OAuth credential sync (if using Anthropic Claude Max subscription)
 
 ## Step 1: Install Dependencies
@@ -146,7 +146,7 @@ After onboarding, add these fork-specific settings to `~/.openclaw/openclaw.json
 }
 ```
 
-**Total Recall embedding config** (add to `plugins.entries`):
+**Total Recall** (add to `plugins.entries`):
 
 ```json
 {
@@ -155,9 +155,7 @@ After onboarding, add these fork-specific settings to `~/.openclaw/openclaw.json
       "tinkerclaw-total-recall": {
         "enabled": true,
         "config": {
-          "budgetTokens": 2000,
-          "embeddingProvider": "ollama",
-          "embeddingModel": "mxbai-embed-large"
+          "budgetTokens": 2000
         }
       }
     }
@@ -165,7 +163,7 @@ After onboarding, add these fork-specific settings to `~/.openclaw/openclaw.json
 }
 ```
 
-If Ollama is not available, Total Recall falls back to full-text search (FTS) — functional but less precise. Alternative embedding providers: set `"embeddingProvider": "openai"` (requires OpenAI API key) or `"embeddingProvider": "gemini"` (requires Google AI key).
+Total Recall finds past events by word search (full-text search over its event store), so it needs no embedding model. Its `embeddingProvider` and `embeddingModel` keys are ignored, and configs that still set them keep loading. Semantic memory search is chosen per machine: see [4e. Memory search](#4e-memory-search-embeddings).
 
 **Learned Intuition** (optional, defaults are fine):
 
@@ -218,6 +216,62 @@ Scan the QR code with your phone. Then add your phone number to the allowlist in
   }
 }
 ```
+
+### 4e. Memory search (embeddings)
+
+Memory search always works on words. An embedding model adds a vector search that also finds a note phrased differently from the question, and its CPU cost varies a lot from one machine to the next. So the model is chosen by measuring each machine, and the choice can be none.
+
+If you installed with `scripts/setup.sh`, its step 4d ("Memory search fit") already measured this machine, after asking whether it may download a model. On a manual install, run the fit once the build (Step 3) is done, with Ollama running if you use it:
+
+```bash
+openclaw embedder fit --pull   # measure this machine, download the model that fits (if any)
+openclaw embedder status       # what memory search uses here now
+```
+
+The fit picks one embedding model, or none. With none, memory search works on words only and still indexes new notes. A model is downloaded only with your yes. `--pull` gives that yes up front. Without it, the fit asks in a terminal, naming the model and its download size, and downloads nothing when no terminal is attached. The choice is stored for this machine only, in `~/.openclaw/memory/embedder-fit.json`, and `openclaw.json` is never edited.
+
+`openclaw doctor --fix` measures again. The gateway also measures by itself, in the background and at idle, when it starts and finds no measurement yet or finds the machine changed: a different CPU, more or less RAM, a new CPU quota, a GPU, or a model from the fit's list pulled or removed in Ollama. A background measurement never downloads a model.
+
+Ollama is optional. Without it, memory search runs on words. To add it later, install it (https://ollama.ai), then run `openclaw embedder fit --pull`.
+
+The fit picks a remote embedding provider (OpenAI, Gemini and others) only after an explicit yes, because your memory text would leave the machine. An API key in your config is not that yes. In a terminal the fit asks when a key exists and no local model fits, and the question says how much text would be sent and what it may cost. Otherwise, say yes with `openclaw embedder fit --allow-remote <provider>`. The yes stays recorded until `openclaw embedder fit --allow-remote none` takes it back.
+
+To pin a model, set the provider and the model yourself:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "memorySearch": {
+        "provider": "ollama",
+        "model": "granite-embedding:278m"
+      }
+    }
+  }
+}
+```
+
+The fit never changes a pinned provider; it only proposes. When the pin fails one of its checks, `openclaw doctor` and `openclaw embedder status` name the check and what the fit would choose instead. To hand the choice back to the fit:
+
+```bash
+openclaw config unset agents.defaults.memorySearch.provider
+openclaw config unset agents.defaults.memorySearch.model
+```
+
+On a slow machine the chosen model can start "dormant until demand": it starts embedding your notes in the background only once real memory searches come often enough to repay the CPU. Until then, search answers from words, plus any vectors already in the index. A pinned model is never put to sleep this way.
+
+Reference numbers, measured 2026-10-29 on a Raspberry Pi 5 with Ollama 0.40.11 in a 2-CPU container: one private corpus of 100 memory files, 40 frozen queries (30 English, 10 Spanish or Catalan), hybrid search = 0.7 cosine + 0.3 BM25 over an OR of keywords. Tokens/s is embedding speed on that board. R@5 (hybrid search for the models, words alone in the last row) is the share of queries whose target file came back in the top five.
+
+| Model                      | Download | Tokens/s | R@5   |
+| -------------------------- | -------- | -------- | ----- |
+| granite-embedding:30m      | 62 MB    | 338      | 0.850 |
+| granite-embedding:278m     | 562 MB   | 167      | 0.975 |
+| mxbai-embed-large          | 669 MB   | 96       | 0.900 |
+| Word search alone (FTS-OR) | none     | n/a      | 0.625 |
+
+On that board the fit picks granite-embedding:30m. The 278m model finds more, but it needs about twice the CPU for the same text, and there its extra recall pays for that only when memory is searched very often. On a GPU the extra cost drops to seconds a day (an estimate, no GPU was measured), and the fit steps up to granite-embedding:278m.
+
+mxbai-embed-large, which earlier versions of this guide recommended, is the slowest of the three. If you already pulled it, the fit uses it only when it passes the checks on your machine and neither granite model is installed, and it then proposes pulling granite-embedding:30m (62 MB). The fit keeps its own copy of these numbers, with their sources, in `EMBEDDER_LADDER` (`src/fork/embedder-fit.ts`).
 
 ## Step 5: Persona Setup
 
@@ -417,9 +471,9 @@ The learned-intuition extension falls back to rule-based heuristics automaticall
 
 Everything runs on CPU:
 
-- **Ollama embeddings**: `mxbai-embed-large` runs fine on CPU (~670MB)
+- **Embeddings**: `openclaw embedder fit` measures what this CPU can sustain and picks a model that fits it, or none (word search only). See [4e. Memory search](#4e-memory-search-embeddings).
 - **ONNX runtime**: Automatically falls back from CUDA to CPU
-- **Alternative**: Use cloud embeddings (`openai`, `gemini`) or FTS-only mode (no embeddings)
+- **Cloud embeddings**: only after an explicit yes (`openclaw embedder fit --allow-remote <provider>`), because memory text would leave the machine
 
 ## Architecture Reference
 
@@ -451,7 +505,7 @@ Everything runs on CPU:
 
 | Extension                       | Purpose                     | Requires                                    |
 | ------------------------------- | --------------------------- | ------------------------------------------- |
-| tinkerclaw-total-recall         | Episodic memory             | Ollama (optional, FTS fallback)             |
+| tinkerclaw-total-recall         | Episodic memory             | Nothing extra (recall is word search)       |
 | tinkerclaw-learned-intuition    | Safety gate                 | ONNX models (optional, rule-based fallback) |
 | tinkerclaw-fractal-reflection   | Post-turn reflection        | Nothing extra                               |
 | tinkerclaw-identity-persistence | Persona consistency         | Nothing extra                               |

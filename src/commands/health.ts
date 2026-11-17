@@ -123,7 +123,11 @@ const resolveAgentOrder = (cfg: OpenClawConfig) => {
 
 const buildSessionSummary = async (storePath: string) => {
   const { loadSessionStore } = await import("../config/sessions/store.js");
-  const store = loadSessionStore(storePath);
+  // FORK 2026-10-29: READ-ONLY borrow (clone:false), audited as failures.md M21 asks. This
+  // only counts keys and sorts updatedAt, yet the default load structuredCloned all of
+  // sessions.json (7.9 MB: 125-135 ms on the gateway main thread) on every health refresh.
+  // The object can be the session cache's own, so nothing here may write to it.
+  const store = loadSessionStore(storePath, { clone: false });
   const sessions = Object.entries(store)
     .filter(([key]) => key !== "global" && key !== "unknown")
     .map(([key, entry]) => ({ key, updatedAt: entry?.updatedAt ?? 0 }))

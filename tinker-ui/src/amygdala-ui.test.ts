@@ -48,6 +48,9 @@ const dec = (id: string, over: Partial<JevDecision> = {}): JevDecision => ({
   enforced: true,
   ...over,
 });
+/** How a test finds the hold card and the refusal strip, now that neither prints a title (2026-11-03). */
+const HOLD_CARD = "amy-card amy-hold amy-q";
+const REFUSAL_STRIP = 'class="amy-refstrip"';
 const hold = (over: Partial<InterventionView> = {}): InterventionView => ({
   id: "iv1",
   decisionId: "d1",
@@ -152,6 +155,63 @@ describe("inert while the gateway has no amygdala methods", () => {
   });
 });
 
+describe("the Allow bar speaks plainly", () => {
+  it("asks one specific question per held step; the row's sentence rides on hover, never the command", async () => {
+    const m = await available({
+      rules: [
+        {
+          id: "DELETE_UNREQUESTED",
+          explanation: "Deletes files the owner did not ask to delete",
+          says: "Nobody asked you to delete that.",
+          ask: "Allow deleting {target}?",
+          noun: "these files",
+        },
+      ],
+    });
+    m.ui.onHookAction(hookRow("h1", { grant: "AEGIS-ABC123", ts: Date.now() }));
+    m.ui.inlineFor("toolu_h1", "Removing the old build folder.");
+    const html = m.ui.afterRun(userRow(Date.now() - 1000), null);
+    const row = frag(html).querySelector(".amy-allow-row")!;
+    expect(row.querySelector(".amy-allow-what")!.textContent).toBe("Allow deleting build?");
+    expect(row.getAttribute("title")).toBe("Removing the old build folder.");
+    expect(html).not.toContain("rm -rf build");
+  });
+});
+
+describe("an open card with no action row (2026-10-29)", () => {
+  it("the tail draws an open card that no run drew, so it can be answered before it expires", async () => {
+    const { ui } = await available({
+      interventions: [
+        hold({
+          kind: "ask",
+          title: "Second opinion: wider than asked",
+          options: [{ id: "go", label: "Go" }],
+        }),
+      ],
+    });
+    expect(ui.tailHtml()).toContain("Second opinion: wider than asked");
+  });
+
+  it("the tail does not repeat a card a run already drew", async () => {
+    const { ui } = await available({ decisionEvents: [dec("v1")], interventions: [hold()] });
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toContain(HOLD_CARD);
+    expect(ui.tailHtml()).not.toContain(HOLD_CARD);
+  });
+
+  it("draws a card that rides on its action row only once", async () => {
+    const { ui } = await available({ decisionEvents: [dec("v1")], interventions: [hold()] });
+    const html = ui.afterRun(userRow(9_000), userRow(20_000));
+    expect(html.split(HOLD_CARD).length - 1).toBe(1);
+  });
+
+  it("draws nothing for an expired card", async () => {
+    const { ui } = await available({
+      interventions: [hold({ kind: "ask", state: "expired", title: "Gone" })],
+    });
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).not.toContain("Gone");
+  });
+});
+
 describe("available: the chat and panel hooks", () => {
   it("probes status then the feed, and draws the end-of-run bubbles after the run their time falls in", async () => {
     const { ui, calls } = await available({ decisionEvents: [dec("v1")], interventions: [hold()] });
@@ -160,7 +220,7 @@ describe("available: the chat and panel hooks", () => {
     expect(inRun).toContain('data-amy-turn="agent:main:tinker:tabX#1"');
     expect(inRun).toContain("amy-inline"); // a pink bubble, not a window
     expect(inRun).not.toContain("amy-jev");
-    expect(inRun).toContain("Held before it ran"); // the hold card rides on its action
+    expect(inRun).toContain(HOLD_CARD); // the hold card rides on its action
     expect(ui.afterRun(userRow(20_000), userRow(30_000))).toBe(""); // another run
     expect(ui.afterRun(userRow(1_000), userRow(9_000))).toBe(""); // an earlier run
   });
@@ -301,7 +361,7 @@ describe("clicks call the gateway with the right parameters", () => {
     expect(bubble()!.textContent).toContain("Sent the reply back to be finished"); // mode enforce: acted, not would
     expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-jev");
     ui.onEvent("amygdala2.intervention", hold({ decisionId: "D1" }));
-    expect(bubble()!.textContent).toContain("Held before it ran");
+    expect(bubble()!.querySelector(".amy-hold .amy-q-text")!.textContent).toBe("Allow this step?");
   });
 });
 
@@ -382,7 +442,7 @@ describe("inline bubbles per tool call", () => {
     expect(b).toHaveLength(1);
     expect(b[0]!.getAttribute("data-amy-bubble")).toBe("hook-1");
     expect(b[0]!.getAttribute("data-tool-use")).toBe("toolu_h1");
-    expect(b[0]!.textContent).toContain("AMYGDALA");
+    expect(b[0]!.querySelector(".amy-jline")!.textContent).toBe("A fixed rule stopped that.");
     expect(m.ui.inlineFor("toolu_h2")).toBe("");
     expect(m.ui.marks()).toEqual([{ id: "hook-1", ts: 10_500, toolUseId: "toolu_h1" }]);
   });
@@ -693,7 +753,7 @@ describe("rewind", () => {
             },
     );
     await m.ui.onConnected();
-    expect(m.ui.afterRun(userRow(9_000), null)).toContain("This looks like a refusal");
+    expect(m.ui.afterRun(userRow(9_000), null)).toContain(REFUSAL_STRIP);
     await m.ui.handleClick(btn({ "data-amy-act": "rewind", "data-turn": `${TAB}#1` }));
     expect(m.calls.find((c) => c[0] === "amygdala2.rewind")?.[1]).toEqual({
       sessionKey: TAB,
@@ -701,7 +761,7 @@ describe("rewind", () => {
     });
     expect(m.spies.setComposerText).toHaveBeenCalledWith("the refused request");
     const html = m.ui.afterRun(userRow(9_000), null);
-    expect(html).not.toContain("This looks like a refusal");
+    expect(html).not.toContain(REFUSAL_STRIP);
     expect(html).toContain("Rewound");
     await m.ui.handleClick(btn({ "data-amy-act": "rewind-undo", "data-turn": `${TAB}#1` }));
     expect(m.calls.filter((c) => c[0] === "amygdala2.rewind")[1]?.[1]).toEqual({
@@ -727,7 +787,7 @@ describe("rewind", () => {
     await m.ui.handleClick(btn({ "data-amy-act": "rewind", "data-turn": `${TAB}#1` }));
     expect(m.spies.setComposerText).not.toHaveBeenCalled();
     expect(m.spies.notify).toHaveBeenCalled();
-    expect(m.ui.afterRun(userRow(9_000), null)).toContain("This looks like a refusal");
+    expect(m.ui.afterRun(userRow(9_000), null)).toContain(REFUSAL_STRIP);
   });
   it("a tab on the built-in runner (Grok): amygdala says unsupported, the gateway rewinds the session", async () => {
     const m = make((method) =>
@@ -809,7 +869,7 @@ describe("rewind", () => {
     m.calls.length = 0;
     await m.ui.handleClick(btn({ "data-amy-act": "refusal-keep", "data-turn": `${TAB}#1` }));
     expect(m.calls).toEqual([]);
-    expect(m.ui.afterRun(userRow(9_000), null)).not.toContain("This looks like a refusal");
+    expect(m.ui.afterRun(userRow(9_000), null)).not.toContain(REFUSAL_STRIP);
   });
 });
 
@@ -1104,14 +1164,29 @@ describe("a partial refusal (a reply sent back for dodging part of the work) off
     });
   const shadow3 = () => status({ mode: "shadow", rewind: 3 });
 
-  it("dodged work: the strip says partial refusal and offers Rewind", async () => {
+  it("dodged work: its bubble says the question's line, and the strip offers Rewind", async () => {
     const m = await available({
+      questions: [
+        {
+          id: "dodged-work",
+          name: "Dodged work: does the reply stop short of the work?",
+          version: 2,
+          today: 0,
+          right: null,
+          status: "active",
+          says: "Are you sure you did all the work?",
+          file: "/q/double-check/dodged-work.md",
+        },
+      ],
       status: shadow3(),
       interventions: [sendBack("sb1", "d-sb")],
       decisionEvents: [why("e1", "d-sb", "dodged-work")],
     });
     const html = m.ui.afterRun(userRow(9_000), null);
-    expect(html).toContain("This looks like a partial refusal");
+    const strip = frag(html).querySelector(".amy-refstrip")!;
+    expect(strip.closest(".amy-jact")!.querySelector(".amy-jline")!.textContent).toBe(
+      "Are you sure you did all the work?",
+    );
     expect(frag(html).querySelectorAll('[data-amy-act="rewind"]')).toHaveLength(1);
   });
 
@@ -1150,8 +1225,358 @@ describe("a partial refusal (a reply sent back for dodging part of the work) off
       decisionEvents: [why("e1", "d1", "dodged-work"), why("e2", "d2", "dodged-work")],
     });
     const html = m.ui.afterRun(userRow(9_000), null);
+    // One strip for the turn; it carries no label of its own since 2026-11-03 (its bubble's line says what Jev saw).
     expect(frag(html).querySelectorAll(".amy-refstrip")).toHaveLength(1);
-    expect(html).toContain("This looks like a refusal");
-    expect(html).not.toContain("partial refusal");
+  });
+});
+
+describe("proof holds: folded, never in the tail, released with one click (2026-10-29)", () => {
+  const proofIv = (over: Partial<InterventionView> = {}): InterventionView =>
+    hold({
+      id: "ivp",
+      kind: "proof",
+      title: "Proof asked before it runs",
+      cmd: "scp paper.pdf host:/uploads/",
+      grant: "JEV-0A1B2C",
+      ...over,
+    });
+  const withSend = async (feed: object = {}, extra: Partial<AmygdalaUiDeps> = {}) => {
+    const sendPrompt = vi.fn(async () => {});
+    const m = make(
+      (method) =>
+        method === "amygdala2.status"
+          ? status()
+          : method === "amygdala2.feed"
+            ? { status: status(), ...feed }
+            : { ok: true },
+      { sendPrompt, ...extra },
+    );
+    await m.ui.onConnected();
+    return { ...m, sendPrompt };
+  };
+  // The decision and its proof share a decision id, as the gateway's feed rows do (one bubble per action).
+  const proofDec = () => dec("v1", { codeDid: "proof", decisionId: "d1" });
+  const proofFeed = { decisionEvents: [proofDec()], interventions: [proofIv()] };
+
+  it("the proof card stays folded in its bubble, and the reply ends with an Allow bar", async () => {
+    const { ui } = await withSend(proofFeed);
+    const html = ui.afterRun(userRow(9_000), userRow(20_000));
+    expect(html).toContain("amy-inline");
+    expect(html).not.toContain("Proof asked before it runs");
+    expect(html).toContain('data-code="JEV-0A1B2C"');
+    expect(html.indexOf("amy-allow")).toBeGreaterThan(html.indexOf("amy-inline"));
+  });
+
+  it("the Allow bar asks the gateway's question for the step, the plain sentence on hover", async () => {
+    const { ui } = await withSend({
+      decisionEvents: [proofDec()],
+      interventions: [
+        proofIv({
+          ask: "Allow publishing to the web?",
+          sentence:
+            "This runs pub.py, and its effect may not be reversible, because it looks hard to reverse.",
+        }),
+      ],
+    });
+    const row = frag(ui.afterRun(userRow(9_000), userRow(20_000))).querySelector(".amy-allow-row")!;
+    expect(row.querySelector(".amy-allow-what")!.textContent).toBe("Allow publishing to the web?");
+    expect(row.getAttribute("title")).toContain("This runs pub.py");
+  });
+
+  it("the bubble's ▸ opens the rule behind it; no proof card any more (2026-11-03)", async () => {
+    const { ui } = await withSend(proofFeed);
+    const key = /data-amy-act="jev-act-detail" data-action="([^"]+)"/.exec(
+      ui.afterRun(userRow(9_000), userRow(20_000)),
+    )?.[1];
+    expect(key).toBeTruthy();
+    await ui.handleClick(btn({ "data-amy-act": "jev-act-detail", "data-action": key! }));
+    const opened = ui.afterRun(userRow(9_000), userRow(20_000));
+    expect(opened).toContain("amy-jx-rule");
+    expect(opened).not.toContain("Proof asked before it runs");
+  });
+
+  it("the tail never draws a proof, even one no run drew", async () => {
+    const { ui } = await withSend({ interventions: [proofIv()] });
+    const tail = ui.tailHtml();
+    expect(tail).not.toContain("Proof asked before it runs");
+    expect(tail).not.toContain("amy-allow");
+  });
+
+  it("Allow once sends 'allow <code>' as the owner, once, and the button then says it was sent", async () => {
+    const { ui, sendPrompt } = await withSend(proofFeed);
+    ui.afterRun(userRow(9_000), userRow(20_000));
+    const el = btn({ "data-amy-act": "allow-grant", "data-code": "JEV-0A1B2C" });
+    expect(await ui.handleClick(el)).toBe(true);
+    await ui.handleClick(el);
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(sendPrompt).toHaveBeenCalledWith("allow JEV-0A1B2C");
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toContain("Allowed ✓");
+  });
+
+  it("without a send path the words go into the composer", async () => {
+    const { ui, spies } = await available(proofFeed);
+    await ui.handleClick(btn({ "data-amy-act": "allow-grant", "data-code": "JEV-0A1B2C" }));
+    expect(spies.setComposerText).toHaveBeenCalledWith("allow JEV-0A1B2C");
+  });
+
+  it("the Allow does not expire: a proof hours old still draws its button", async () => {
+    const { ui } = await withSend(proofFeed, { now: () => 6 * 3_600_000 });
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toContain('data-code="JEV-0A1B2C"');
+  });
+
+  it("a hold or an ask whose wait ran out keeps its Allow under the reply", async () => {
+    for (const kind of ["hold", "ask"] as const) {
+      const { ui } = await withSend({
+        decisionEvents: [dec("v1", { codeDid: kind === "hold" ? "held" : kind, decisionId: "d1" })],
+        interventions: [proofIv({ kind, state: "expired" })],
+      });
+      const html = ui.afterRun(userRow(9_000), userRow(20_000));
+      expect(html).toContain('data-code="JEV-0A1B2C"');
+      expect(html).not.toContain(HOLD_CARD);
+    }
+  });
+
+  it("a released proof leaves no button", async () => {
+    const { ui } = await withSend({
+      decisionEvents: [proofDec()],
+      interventions: [proofIv({ state: "released" })],
+    });
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).not.toContain("amy-allow");
+  });
+
+  it("an AEGIS deny drawn on its tool row joins its run's Allow bar; a used grant does not", async () => {
+    const { ui } = await withSend();
+    ui.onHookAction(hookRow("h1", { grant: "AEGIS-ABC123" }));
+    expect(ui.inlineFor("toolu_h1")).toContain("amy-inline");
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toContain('data-code="AEGIS-ABC123"');
+    ui.onHookAction(
+      hookRow("h2", {
+        decision: "owner-allow",
+        grant: "AEGIS-ABC123",
+        ts: 11_000,
+        toolUseId: "toolu_h2",
+      }),
+    );
+    ui.inlineFor("toolu_h1");
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).not.toContain("AEGIS-ABC123");
+  });
+
+  it("a deny first seen without its grant gets its Allow when a later copy brings the code", async () => {
+    const { ui } = await withSend();
+    ui.onHookAction(hookRow("h1"));
+    ui.inlineFor("toolu_h1");
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).not.toContain("amy-allow");
+    ui.onHookAction(hookRow("h1", { grant: "AEGIS-ABC123" }));
+    ui.inlineFor("toolu_h1");
+    expect(ui.afterRun(userRow(9_000), userRow(20_000))).toContain('data-code="AEGIS-ABC123"');
+  });
+});
+
+describe("stopBubbles hands prompt checks to the run's placement too (2026-11-04)", () => {
+  it("tags each check with its seam and turn, and marks the run's own prompt check", async () => {
+    const prompt = (id: string, turn: number, ts: number) =>
+      dec(id, {
+        ts,
+        turnId: `${TAB}#${turn}`,
+        seam: "prompt",
+        stepLabel: "prompt",
+        codeDid: "note",
+        decisionId: `d-${id}`,
+      });
+    const { ui } = await available({
+      decisionEvents: [
+        prompt("p1", 1, 10_000),
+        prompt("p2", 2, 12_000),
+        dec("s1", {
+          ts: 13_000,
+          turnId: `${TAB}#2`,
+          seam: "stop",
+          stepLabel: "stop",
+          codeDid: "sent-back",
+          decisionId: "d-s1",
+        }),
+      ],
+    });
+    const got = ui
+      .stopBubbles(userRow(9_000), userRow(20_000))
+      .map((b) => ({ seam: b.seam, turnId: b.turnId, opensRun: b.opensRun, opens: b.opens }));
+    expect(got).toEqual([
+      { seam: "prompt", turnId: `${TAB}#1`, opensRun: true, opens: false },
+      { seam: "prompt", turnId: `${TAB}#2`, opensRun: false, opens: false },
+      { seam: "stop", turnId: `${TAB}#2`, opensRun: false, opens: true },
+    ]);
+    // Placed by the run, so the closing block does not draw them a second time.
+    const placed = new Set(ui.stopBubbles(userRow(9_000), userRow(20_000)).map((b) => b.key));
+    expect(ui.afterRun(userRow(9_000), userRow(20_000), false, placed)).not.toContain("amy-inline");
+  });
+});
+
+// 2026-11-13: Rewind could not reach an older turn (same words as a newer one, a turn nobody typed, the first exchange
+// of the session), and there was no way to rewind a turn that has no refusal strip.
+describe("Rewind names its exchange by words and time, and /rewind needs no strip", () => {
+  const refusal = (): InterventionView =>
+    hold({ id: "iv-r", kind: "refusal", title: "This looks like a refusal", cmd: undefined });
+  const status4 = () => status({ mode: "shadow", rewind: 4 });
+  const setup4 = async (
+    extra: Partial<AmygdalaUiDeps> = {},
+    rewind: (params: unknown) => unknown = () => ({ ok: true, restoredPrompt: "go on" }),
+  ) => {
+    const hideExchange = vi.fn();
+    const m = make(
+      (method, params) =>
+        method === "amygdala2.rewind"
+          ? rewind(params)
+          : method === "amygdala2.status"
+            ? status4()
+            : {
+                status: status4(),
+                interventions: [refusal()],
+                decisionEvents: [dec("v1", { codeDid: "refusal", enforced: false })],
+              },
+      { exchangeKeyOf: () => "K", hideExchange, ...extra },
+    );
+    await m.ui.onConnected();
+    const rewinds = () => m.calls.filter((c) => c[0] === "amygdala2.rewind").map((c) => c[1]);
+    const click = () =>
+      m.ui.handleClick(
+        btn({
+          "data-amy-act": "rewind",
+          "data-turn": `${TAB}#1`,
+          "data-exchange": "K",
+          "data-exchange-at": "9000",
+        }),
+      );
+    return { ...m, hideExchange, rewinds, click };
+  };
+
+  it("the strip carries the time of its prompt row, and the page is asked for the exchange sent then", async () => {
+    const exchangeAt = vi.fn((k: string, _at?: number) =>
+      k === "K" ? { key: "K", prompt: "go on", at: 9_000, later: 2 } : null,
+    );
+    const m = await setup4({ exchangeAt });
+    const b = frag(m.ui.afterRun(userRow(9_000), null)).querySelector('[data-amy-act="rewind"]');
+    expect(b?.textContent).toBe("⟲ Rewind 3 exchanges");
+    expect(b?.getAttribute("data-exchange-at")).toBe("9000");
+    expect(exchangeAt).toHaveBeenLastCalledWith("K", 9_000);
+    await m.click();
+    expect(exchangeAt).toHaveBeenLastCalledWith("K", 9_000);
+    expect(m.rewinds()).toEqual([
+      { sessionKey: TAB, turnId: `${TAB}#1`, fromPrompt: "go on", fromPromptAt: 9_000 },
+    ]);
+  });
+
+  it("the newest exchange is named too, and may fall back to the last prompt", async () => {
+    const m = await setup4({
+      exchangeAt: () => ({ key: "K", prompt: "go on", at: 9_000, later: 0 }),
+    });
+    await m.click();
+    expect(m.rewinds()).toEqual([
+      {
+        sessionKey: TAB,
+        turnId: `${TAB}#1`,
+        fromPrompt: "go on",
+        fromPromptAt: 9_000,
+        orLast: true,
+      },
+    ]);
+    expect(m.spies.setComposerText).toHaveBeenCalledWith("go on");
+  });
+
+  it("the gateway cut earlier than the row clicked: every row of that exchange leaves the page", async () => {
+    const exchangeFromCut = vi.fn(() => ({
+      key: "N",
+      prompt: "<task-notification>",
+      at: 8_000,
+      later: 1,
+    }));
+    const m = await setup4(
+      {
+        exchangeAt: () => ({ key: "K", prompt: "Background task done", at: 9_000, later: 0 }),
+        exchangeFromCut,
+      },
+      () => ({ ok: true, restoredPrompt: "", cutAt: 8_000 }),
+    );
+    await m.click();
+    expect(exchangeFromCut).toHaveBeenCalledWith({ key: "K", at: 9_000 }, 8_000);
+    expect(m.hideExchange).toHaveBeenCalledWith({
+      sessionKey: TAB,
+      key: "N",
+      prompt: "<task-notification>",
+      at: 8_000,
+      rewoundAt: 50_000,
+      restored: "",
+      count: 2,
+    });
+    expect(m.spies.setComposerText).not.toHaveBeenCalled();
+  });
+
+  describe("/rewind", () => {
+    it("takes the newest exchange with no strip and no turn: rows leave, the prompt is back in the box", async () => {
+      const confirmReplaceDraft = vi.fn(() => false);
+      const m = await setup4({
+        newestExchange: () => ({ key: "K", prompt: "go on", at: 9_000 }),
+        // The box holds the command itself while it runs: that is not a draft to ask about.
+        composerDraft: () => "/rewind",
+        confirmReplaceDraft,
+      });
+      await m.ui.rewindCommand("");
+      expect(confirmReplaceDraft).not.toHaveBeenCalled();
+      expect(m.rewinds()).toEqual([
+        { sessionKey: TAB, turnId: "", fromPrompt: "go on", fromPromptAt: 9_000, orLast: true },
+      ]);
+      expect(m.hideExchange).toHaveBeenCalledWith({
+        sessionKey: TAB,
+        key: "K",
+        prompt: "go on",
+        at: 9_000,
+        rewoundAt: 50_000,
+        restored: "go on",
+      });
+      expect(m.spies.setComposerText).toHaveBeenCalledWith("go on");
+    });
+
+    it("/rewind 3 takes the last three, named by the oldest of them", async () => {
+      const nthNewestExchange = vi.fn((n: number) =>
+        n === 3 ? { key: "K3", prompt: "third from the end", at: 5_000, later: 2 } : null,
+      );
+      const m = await setup4({ nthNewestExchange }, () => ({
+        ok: true,
+        restoredPrompt: "third from the end",
+      }));
+      await m.ui.rewindCommand(" 3 ");
+      expect(m.rewinds()).toEqual([
+        { sessionKey: TAB, turnId: "", fromPrompt: "third from the end", fromPromptAt: 5_000 },
+      ]);
+      expect(m.hideExchange).toHaveBeenCalledWith(
+        expect.objectContaining({ key: "K3", count: 3, restored: "third from the end" }),
+      );
+    });
+
+    it("more than the chat holds, a reply still running, or a wrong argument: nothing is sent, the reason is said", async () => {
+      const m = await setup4({ newestExchange: () => null, nthNewestExchange: () => null });
+      await m.ui.rewindCommand("");
+      await m.ui.rewindCommand("9");
+      await m.ui.rewindCommand("all of it");
+      expect(m.rewinds()).toHaveLength(0);
+      expect(m.spies.notify).toHaveBeenCalledTimes(3);
+      expect(m.hideExchange).not.toHaveBeenCalled();
+    });
+
+    it("a refusal from the gateway is said in the gateway's words, and the page is left alone", async () => {
+      const m = await setup4(
+        { newestExchange: () => ({ key: "K", prompt: "go on", at: 9_000 }) },
+        () => ({
+          ok: false,
+          capability: "claude-fork",
+          reason: "a reply is still running in this tab",
+        }),
+      );
+      await m.ui.rewindCommand("");
+      expect(m.spies.notify).toHaveBeenCalledWith(
+        expect.stringContaining("a reply is still running in this tab"),
+      );
+      expect(m.hideExchange).not.toHaveBeenCalled();
+      expect(m.spies.setComposerText).not.toHaveBeenCalled();
+    });
   });
 });

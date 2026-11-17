@@ -9,5 +9,7 @@
     <domain includeSubdomains="false">100.64.0.10</domain>
     <domain includeSubdomains="false">100.64.0.20</domain>
     <domain includeSubdomains="true">ts.net</domain>
+    <!-- 2026-11-10: the relay on this phone (JarvisLocalDoor); pages load from it so they are a secure origin. -->
+    <domain includeSubdomains="false">127.0.0.1</domain>
   </domain-config>
 </network-security-config>

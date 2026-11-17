@@ -73,6 +73,8 @@ at a GGUF file:
 Auto-detection picks the first provider whose API key can be resolved, in the
 order shown. Set `memorySearch.provider` to override.
 
+Fork note (TinkerClaw): here an unset or `auto` provider uses the model `openclaw embedder fit` chose for this machine, or keyword search only, and picks a remote provider only after you allow it. See section 4e of `FORK_SETUP.md` in the repository root.
+
 ## How indexing works
 
 OpenClaw indexes `MEMORY.md` and `memory/*.md` into chunks (~400 tokens with

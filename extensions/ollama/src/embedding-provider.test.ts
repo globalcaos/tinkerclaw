@@ -1,3 +1,6 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/provider-auth";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -499,5 +502,120 @@ describe("ollama embedding provider", () => {
     });
 
     expect(result.runtime?.inlineBatchTimeoutMs).toBe(600_000);
+  });
+});
+
+// FORK 2026-10-30: the call's AbortSignal reaches the request. These tests send it through the real
+// fetchWithSsrFGuard to a 127.0.0.1 server: one that takes the request and never answers (an abort
+// must reject the call at once and close the connection) and one that answers.
+describe("ollama embedding provider abort", () => {
+  /** How soon an aborted call must reject; before the fix it stayed pending. */
+  const ABORT_PROMPT_MS = 200;
+
+  type Loopback = {
+    baseUrl: string;
+    state: { paths: string[]; closed: number };
+    close: () => Promise<void>;
+  };
+  type Created = Awaited<ReturnType<typeof createOllamaEmbeddingProvider>>;
+  type Entry = "embedQuery" | "embedBatch" | "client.embedBatch";
+
+  const entries: Record<Entry, (created: Created, signal: AbortSignal) => Promise<unknown>> = {
+    embedQuery: ({ provider }, signal) => provider.embedQuery("hi", { signal }),
+    embedBatch: ({ provider }, signal) => provider.embedBatch(["a", "b"], { signal }),
+    "client.embedBatch": ({ client }, signal) => client.embedBatch(["a", "b"], { signal }),
+  };
+  const loopbacks: Loopback[] = [];
+  let realFetchWithSsrFGuard: typeof import("openclaw/plugin-sdk/ssrf-runtime").fetchWithSsrFGuard;
+
+  beforeAll(async () => {
+    ({ fetchWithSsrFGuard: realFetchWithSsrFGuard } = await vi.importActual<
+      typeof import("openclaw/plugin-sdk/ssrf-runtime")
+    >("openclaw/plugin-sdk/ssrf-runtime"));
+  });
+
+  afterEach(async () => {
+    await Promise.all(loopbacks.splice(0).map((server) => server.close()));
+  });
+
+  /**
+   * A server on 127.0.0.1 and an ephemeral port. It answers every request with `reply` as JSON,
+   * or for "hold" reads the request and never answers. `state.closed` counts closed connections.
+   */
+  async function startLoopback(reply: "hold" | Record<string, unknown>): Promise<Loopback> {
+    const state = { paths: [] as string[], closed: 0 };
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        state.paths.push(req.url ?? "");
+        if (reply !== "hold") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(reply));
+        }
+      });
+    });
+    server.on("connection", (socket) => {
+      socket.once("close", () => {
+        state.closed += 1;
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    const loopback: Loopback = {
+      baseUrl: `http://127.0.0.1:${port}`,
+      state,
+      close: () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    };
+    loopbacks.push(loopback);
+    return loopback;
+  }
+
+  /** The provider's one request goes through the real guard; the tests above keep the mock. */
+  async function loopbackOllama(baseUrl: string): Promise<Created> {
+    fetchWithSsrFGuardMock.mockImplementationOnce(realFetchWithSsrFGuard);
+    return await createOllamaEmbeddingProvider({
+      config: {} as OpenClawConfig,
+      provider: "ollama",
+      model: "nomic-embed-text",
+      fallback: "none",
+      remote: { baseUrl },
+    });
+  }
+
+  it.each(["embedQuery", "embedBatch", "client.embedBatch"] as const)(
+    "%s: an abort rejects at once and closes the held request",
+    async (entry) => {
+      const server = await startLoopback("hold");
+      const created = await loopbackOllama(server.baseUrl);
+      const controller = new AbortController();
+      const outcome = entries[entry](created, controller.signal).then(
+        () => "resolved",
+        (err: unknown) => err,
+      );
+
+      await vi.waitFor(() => expect(server.state.paths).toEqual(["/api/embed"]), {
+        timeout: 5_000,
+      });
+      controller.abort();
+      // Control: before the fix the request ran on, so this race came back "still pending".
+      const settled = await Promise.race([outcome, sleep(ABORT_PROMPT_MS, "still pending")]);
+      expect(settled).toBeInstanceOf(Error);
+      await vi.waitFor(() => expect(server.state.closed).toBe(1), { timeout: 2_000 });
+    },
+  );
+
+  it("embeds as before through the real guard when the call carries no signal", async () => {
+    const server = await startLoopback({ embeddings: [[3, 4]] });
+    const { provider } = await loopbackOllama(server.baseUrl);
+
+    const vector = await provider.embedQuery("hi");
+
+    expect(server.state.paths).toEqual(["/api/embed"]);
+    expect(vector[0]).toBeCloseTo(0.6, 5);
+    expect(vector[1]).toBeCloseTo(0.8, 5);
   });
 });

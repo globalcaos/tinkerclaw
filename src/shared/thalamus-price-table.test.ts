@@ -145,6 +145,23 @@ describe("thalamus price table: xAI, tiers and nulls", () => {
     });
   });
 
+  it("prices the metered Google Gemini models without assuming a cache discount", () => {
+    expect(ratesFor("google/gemini-4-carbon", 1000)).toMatchObject({
+      inputPerMTok: 2,
+      outputPerMTok: 10,
+      cacheReadPerMTok: null,
+    });
+    expect(ratesFor("google/gemini-3.8-flash", 1000)).toMatchObject({
+      inputPerMTok: 0.75,
+      outputPerMTok: 3.75,
+    });
+    expect(ratesFor("google/gemini-3.1-pro-preview", 250_000)).toMatchObject({
+      inputPerMTok: 4,
+      outputPerMTok: 24,
+    });
+    expect(cachePolicyFor("google/gemini-4-carbon")).toBeUndefined();
+  });
+
   it("leaves providers with no per-token price unpriced and without a cache figure", () => {
     for (const k of ["openai-codex/gpt-9-unlisted", "copilot/copilot-think-deeper"]) {
       const row = priceFor(k);

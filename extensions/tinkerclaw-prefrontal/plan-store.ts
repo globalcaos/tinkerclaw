@@ -261,7 +261,9 @@ export function parsePlanMd(text: string): Plan {
   const fm: Record<string, string> = {};
   for (const line of m[1].split("\n")) {
     const kv = /^([A-Za-z][\w]*):\s*(.+)$/.exec(line);
-    if (kv) fm[kv[1]] = stripQuotes(kv[2].trim());
+    if (kv) {
+      fm[kv[1]] = kv[1] === "intent" ? decodeIntent(kv[2].trim()) : stripQuotes(kv[2].trim());
+    }
   }
   const steps: PlanStep[] = [];
   let lastStep: PlanStep | null = null;
@@ -363,4 +365,21 @@ function stripQuotes(s: string): string {
     return s.slice(1, -1);
   }
   return s;
+}
+
+/**
+ * renderPlanMd writes intent with JSON.stringify; undo exactly that. Without it every
+ * re-render escaped the already-escaped text again, doubling the backslashes per write.
+ * A legacy bare or single-quoted value (not valid JSON) keeps the old quote strip.
+ */
+function decodeIntent(s: string): string {
+  if (s.startsWith('"')) {
+    try {
+      const v: unknown = JSON.parse(s);
+      if (typeof v === "string") return v;
+    } catch {
+      // not JSON: fall back to the legacy quote strip
+    }
+  }
+  return stripQuotes(s);
 }

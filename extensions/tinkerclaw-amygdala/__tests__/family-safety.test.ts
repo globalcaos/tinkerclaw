@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { goalFingerprint } from "../src/context.js";
+import { classifyEffect, resolveTargets } from "../src/effect-class.js";
 import { createSafetyFamily } from "../src/families/safety.js";
+import { proofGrantCode } from "../src/grant-code.js";
 import { renderTemplate } from "../src/templates.js";
 import type { Response, Situation, Verdict } from "../src/types.js";
 import {
@@ -116,23 +119,12 @@ describe("safety decision table (design 5.1)", () => {
     });
     expect(r?.reasonCode).toBe("table-d2-high");
   });
-  it("d3 low: the HR delete, not named, needs proof and authorisation", () => {
-    const r = run(hrDelete(), [RUNS, danger(3)]);
-    expect(r?.response.kind).toBe("proof");
-    expect(r?.reasonCode).toBe("table-d3-low-authorise");
-    expect(r?.drivers).toEqual(["danger-level"]);
-    renders(r!.response);
-  });
-  it("d3 low: the same delete named exactly in the request needs proof but no authorisation", () => {
-    const r = run(hrDelete({ request: f("Please delete the HR folder for me.") }), [
-      RUNS,
-      danger(3),
-    ]);
-    expect(r?.response).toMatchObject({
-      kind: "proof",
-      needs: ["listing", "references", "backup"],
-    });
-    expect(r?.reasonCode).toBe("table-d3-low");
+  // FORK 2026-11-08: danger 3 with a low misreading risk runs; the effect card reports what changed afterwards.
+  it("d3 low: proceeds, named or not", () => {
+    expect(run(hrDelete(), [RUNS, danger(3)])).toBeNull();
+    expect(
+      run(hrDelete({ request: f("Please delete the HR folder for me.") }), [RUNS, danger(3)]),
+    ).toBeNull();
   });
   it("d3 medium: proof + authorise, even when named", () => {
     const r = run(hrDelete({ request: f("delete HR") }), [RUNS, danger(3)], "medium");
@@ -145,8 +137,12 @@ describe("safety decision table (design 5.1)", () => {
     expect(r?.reasonCode).toBe("table-d3-high-authorise");
   });
   it("danger is rounded and clamped", () => {
-    expect(run(hrDelete(), [RUNS, danger(2.6)])?.reasonCode).toBe("table-d3-low-authorise");
-    expect(run(hrDelete(), [RUNS, danger(7)])?.reasonCode).toBe("table-d3-low-authorise");
+    expect(run(hrDelete(), [RUNS, danger(2.6)], "medium")?.reasonCode).toBe(
+      "table-d3-medium-authorise",
+    );
+    expect(run(hrDelete(), [RUNS, danger(7)], "medium")?.reasonCode).toBe(
+      "table-d3-medium-authorise",
+    );
     expect(run(scratch(), [RUNS, danger(-2)])).toBeNull();
   });
   it("a mention of a delete (runs-or-quotes below cut-off) is null, whatever the rest says", () => {
@@ -178,23 +174,108 @@ describe("safety decision table (design 5.1)", () => {
       reasonCode: "evidence-released",
     });
   });
+  it("the owner's own 'allow <code>' for this step's goal releases an open hold, no judge needed", () => {
+    const base = hrDelete({
+      sessionKey: "agent:main:tinker:t1",
+      turnKind: f("owner", "derived"),
+      holdNeeds: f(["user-request"], "derived"),
+    });
+    const code = proofGrantCode(goalFingerprint(base));
+    const s = { ...base, request: f(`allow ${code}`) };
+    expect(run(s, [RUNS, danger(3)], "high")).toEqual({
+      response: { kind: "proceed" },
+      drivers: [],
+      reasonCode: "evidence-released-owner",
+    });
+  });
+  describe("the owner's words count only in a turn he started in his own chat", () => {
+    const held = (over = {}) =>
+      hrDelete({
+        sessionKey: "agent:main:tinker:t1",
+        turnKind: f("owner", "derived"),
+        holdNeeds: f(["user-request"], "derived"),
+        ...over,
+      });
+    const said = V("evidence-present", "user-request", 0.7);
+    it("his chat, his turn: the judge's yes releases, in the dashboard and main chats too", () => {
+      for (const sessionKey of [
+        "agent:main:tinker:t1",
+        "agent:main:dashboard:u1",
+        "agent:main:main",
+      ]) {
+        expect(run(held({ sessionKey }), [RUNS, danger(3), said], "low")?.reasonCode).toBe(
+          "evidence-released",
+        );
+      }
+    });
+    it("below the cut-off it stays held", () => {
+      const low = V("evidence-present", "user-request", 0.59);
+      expect(run(held(), [RUNS, danger(3), low], "medium")?.reasonCode).not.toMatch(
+        /^evidence-released/,
+      );
+    });
+    it("a subagent, job, reflection or group prompt never releases by words", () => {
+      for (const sessionKey of [
+        "agent:main:subagent:u1",
+        "agent:main:cron:nightly:run:u1",
+        "agent:main:orchestrator:u1",
+        "agent:main:fractal:u1",
+        "agent:main:whatsapp:group:123",
+        "s",
+      ]) {
+        const s = held({ sessionKey });
+        expect(run(s, [RUNS, danger(3), said], "medium")?.reasonCode).not.toMatch(
+          /^evidence-released/,
+        );
+        const code = proofGrantCode(goalFingerprint(s));
+        const allow = { ...s, request: f(`allow ${code}`) };
+        expect(run(allow, [RUNS, danger(3)], "medium")?.reasonCode).not.toMatch(
+          /^evidence-released/,
+        );
+      }
+    });
+    it("an agent's turn in his chat does not release by words", () => {
+      const s = held({ turnKind: f("agent", "derived") });
+      expect(run(s, [RUNS, danger(3), said], "medium")?.reasonCode).not.toMatch(
+        /^evidence-released/,
+      );
+    });
+    it("a listing still releases anywhere: only the user-request kind reads his words", () => {
+      const s = held({
+        sessionKey: "agent:main:subagent:u1",
+        holdNeeds: f(["listing"], "derived"),
+      });
+      expect(run(s, [RUNS, danger(3), V("evidence-present", "listing")], "low")?.reasonCode).toBe(
+        "evidence-released",
+      );
+    });
+  });
+  it("another step's code, or no open hold, does not release", () => {
+    const base = hrDelete({ holdNeeds: f(["user-request"], "derived") });
+    const other = { ...base, request: f("allow JEV-000000") };
+    expect(run(other, [RUNS, danger(3)], "high")?.reasonCode).not.toMatch(/^evidence-released/);
+    const noHold = hrDelete({
+      request: f(`allow ${proofGrantCode(goalFingerprint(base))}`),
+    });
+    expect(run(noHold, [RUNS, danger(3)], "high")?.reasonCode).not.toMatch(/^evidence-released/);
+  });
   it("evidence for two needs is released only when both reach the cut-off", () => {
     const s = hrDelete({ holdNeeds: f(["listing", "backup"], "derived") });
     const both = {
       ...V("evidence-present", "listing"),
       probs: { listing: 0.7, backup: 0.65, "none-shown": 0.05, references: 0.1 },
     };
-    expect(run(s, [RUNS, danger(3), both])?.reasonCode).toBe("evidence-released");
+    expect(run(s, [RUNS, danger(3), both], "medium")?.reasonCode).toBe("evidence-released");
     const one = { ...both, probs: { listing: 0.7, backup: 0.3, "none-shown": 0.0 } };
-    expect(run(s, [RUNS, danger(3), one])?.response.kind).toBe("proof");
+    expect(run(s, [RUNS, danger(3), one], "medium")?.response.kind).toBe("proof");
   });
   it("evidence not met (none-shown leads): stays held by the table", () => {
     const s = hrDelete({ holdNeeds: f(["listing"], "derived") });
     const r = run(s, [RUNS, danger(3), V("evidence-present", "none-shown")], "high");
     expect(r?.response.kind).toBe("hold");
-    expect(run(s, [RUNS, danger(3), V("evidence-present", "listing", 0.55)])?.response.kind).toBe(
-      "proof",
-    );
+    expect(
+      run(s, [RUNS, danger(3), V("evidence-present", "listing", 0.55)], "medium")?.response.kind,
+    ).toBe("proof");
   });
   it("recently edited overwrite: danger + 1, backup needed", () => {
     const s = hrDelete({ effectClass: f("local-write", "derived") });
@@ -219,8 +300,8 @@ describe("safety decision table (design 5.1)", () => {
     }
   });
   it("stops its own system: danger 3", () => {
-    const r = run(hrDelete(), [RUNS, danger(0), V("stops-own-system", 0.9)]);
-    expect(r?.reasonCode).toBe("table-d3-low-authorise");
+    const r = run(hrDelete(), [RUNS, danger(0), V("stops-own-system", 0.9)], "medium");
+    expect(r?.reasonCode).toBe("table-d3-medium-authorise");
     expect(r?.drivers).toEqual(["danger-level", "stops-own-system"]);
   });
   it("precedent floor: +1", () => {
@@ -230,13 +311,12 @@ describe("safety decision table (design 5.1)", () => {
   it("egress of tier 3 data to a shared or public place: danger 3", () => {
     const send = hrDelete({ effectClass: f("send", "derived") });
     for (const dest of ["shared", "public"]) {
-      const r = run(send, [
-        RUNS,
-        danger(1),
-        V("data-tier", "harmful-if-seen"),
-        V("destination-privacy", dest),
-      ]);
-      expect(r?.reasonCode).toBe("table-d3-low-authorise");
+      const r = run(
+        send,
+        [RUNS, danger(1), V("data-tier", "harmful-if-seen"), V("destination-privacy", dest)],
+        "medium",
+      );
+      expect(r?.reasonCode).toBe("table-d3-medium-authorise");
       expect(r?.drivers).toEqual(["danger-level", "data-tier", "destination-privacy"]);
       expect(r?.response).toMatchObject({ kind: "proof", needs: ["user-request"] });
     }
@@ -274,8 +354,10 @@ describe("safety decision table (design 5.1)", () => {
         toolRecord: f([entry(exit)]),
       });
     const vs = [RUNS, danger(1), V("repeat-effect", 0.9)];
-    expect(run(s(0), vs)?.reasonCode).toBe("table-d3-low-authorise");
-    expect(run(s(0), vs)?.response).toMatchObject({ needs: ["user-request", "prior-failure"] });
+    expect(run(s(0), vs, "medium")?.reasonCode).toBe("table-d3-medium-authorise");
+    expect(run(s(0), vs, "medium")?.response).toMatchObject({
+      needs: ["user-request", "prior-failure"],
+    });
     expect(run(s(1), vs)).toBeNull();
   });
   it("judge out (all skipped): null", () => {
@@ -292,6 +374,51 @@ describe("safety decision table (design 5.1)", () => {
       expect(fam.questionsFor(seam, s, freshState())).toEqual([]);
       expect(fam.decide(seam, s, [RUNS, danger(3)], freshState(), new Map())).toBeNull();
     }
+  });
+});
+
+describe("a hold that waits only for the reading (2026-11-13)", () => {
+  const held = (over: Partial<Situation> = {}) =>
+    hrDelete({ holdNeeds: f(["reading-sources"], "derived"), ...over });
+  const at = (ambiguity: "none" | "open" | "settled", risk: Risk = "low") =>
+    result(
+      fam,
+      "pre-tool",
+      held(),
+      [RUNS, danger(1)],
+      freshState({ ambiguity, misreadingRisk: risk }),
+    );
+  it("is released once the reading is no longer open, and only then", () => {
+    for (const a of ["settled", "none"] as const) {
+      expect(at(a)).toEqual({
+        response: { kind: "proceed" },
+        drivers: ["reading-sources"],
+        reasonCode: "evidence-released",
+      });
+    }
+    expect(at("open")?.reasonCode ?? "none").not.toMatch(/^evidence-released/);
+  });
+  it("a dangerous step still meets the table after the reading settles", () => {
+    const r = result(
+      fam,
+      "pre-tool",
+      held(),
+      [RUNS, danger(3)],
+      freshState({ ambiguity: "settled", misreadingRisk: "medium" }),
+    );
+    expect(r?.response.kind).toBe("proof");
+    expect(r?.reasonCode).toBe("table-d3-medium-authorise");
+  });
+  it("the evidence judge is not asked for it, and a retry is not held for the owner", () => {
+    expect(fam.questionsFor("pre-tool", held(), freshState())).not.toContain("evidence-present");
+    const retry = result(
+      fam,
+      "pre-tool",
+      held(),
+      [RUNS, danger(1), V("same-goal-as-held", 0.9)],
+      freshState({ ambiguity: "open" }),
+    );
+    expect(retry?.reasonCode ?? "none").not.toBe("retry-after-hold");
   });
 });
 
@@ -316,8 +443,8 @@ describe("cannot-tell never crosses", () => {
     expect(run(send, at("harmful-if-seen", 0.9, "cannot-tell", 0.95))).toBeNull();
     expect(run(send, at("harmful-if-seen", 0.49, "shared", 0.9))).toBeNull();
     expect(run(send, at("harmful-if-seen", 0.9, "shared", 0.49))).toBeNull();
-    expect(run(send, at("harmful-if-seen", 0.5, "shared", 0.5))?.reasonCode).toBe(
-      "table-d3-low-authorise",
+    expect(run(send, at("harmful-if-seen", 0.5, "shared", 0.5), "medium")?.reasonCode).toBe(
+      "table-d3-medium-authorise",
     );
   });
   it("evidence-present: cannot-tell never releases", () => {
@@ -576,17 +703,16 @@ describe("the quote gate never silences an external or data-moving step", () => 
     );
 
   it("a non-destructive send still reaches the table (danger 3 → proof, authorise)", () => {
-    const r = run(sendMail(), [NOT_RUN, danger(3)]);
+    const r = run(sendMail(), [NOT_RUN, danger(3)], "medium");
     expect(r?.response.kind).toBe("proof");
-    expect(r?.reasonCode).toBe("table-d3-low-authorise");
+    expect(r?.reasonCode).toBe("table-d3-medium-authorise");
   });
   it("a copy to a public place: harmful tier + public destination → danger 3 even when 'does not run'", () => {
-    const r = run(share(), [
-      NOT_RUN,
-      danger(1),
-      V("data-tier", "harmful-if-seen"),
-      V("destination-privacy", "public"),
-    ]);
+    const r = run(
+      share(),
+      [NOT_RUN, danger(1), V("data-tier", "harmful-if-seen"), V("destination-privacy", "public")],
+      "medium",
+    );
     expect(r?.response.kind).toBe("proof");
     expect(r?.drivers).toEqual(
       expect.arrayContaining(["danger-level", "data-tier", "destination-privacy"]),
@@ -646,8 +772,360 @@ describe("the danger cut-off governs the table (what the learning loop retunes)"
     expect(decideWith(1.2, 1)?.response.kind).toBe("note"); // now acts
   });
   it("a loosened cut-off (3) holds a 2.6 reading at danger 2 (proof needs danger 3)", () => {
-    expect(decideWith(2.6, 2)?.reasonCode).toBe("table-d3-low-authorise");
+    // d3 low now proceeds (null); d2 low still notes.
+    expect(decideWith(2.6, 2)).toBeNull();
     expect(decideWith(2.6, 3)?.reasonCode).toBe("table-d2-low");
-    expect(decideWith(3, 3)?.reasonCode).toBe("table-d3-low-authorise");
+    expect(decideWith(3, 3)).toBeNull();
+  });
+});
+
+describe("selfModification", () => {
+  const F2 = <T>(value: T) => ({ value, origin: "derived" as const });
+  const unlocked = createSafetyFamily({ book, selfModification: "unlocked" });
+  const locked = createSafetyFamily({ book, selfModification: "locked" });
+  const step = (command: string, effect: EffectClass) =>
+    caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        command: F2(command),
+        effectClass: F2(effect),
+        targets: F2([]),
+      },
+    );
+  const restart = () => step("systemctl --user restart openclaw-gateway", "restart-own-system");
+  const stopping = [V("danger-level", 3), V("stops-own-system", 0.9), V("runs-or-quotes", 0.9)];
+
+  it("locked: a restart is asked about and needs proof", () => {
+    const s = restart();
+    expect(locked.questionsFor("pre-tool", s, freshState())).toContain("stops-own-system");
+    const medium = freshState({ misreadingRisk: "medium" });
+    expect(respond(locked, "pre-tool", s, stopping, medium).kind).toBe("proof");
+  });
+
+  it("unlocked: a restart is not asked about and needs no proof, whatever the danger reading", () => {
+    const s = restart();
+    expect(unlocked.questionsFor("pre-tool", s, freshState())).not.toContain("stops-own-system");
+    expect(respond(unlocked, "pre-tool", s, stopping).kind).toBe("proceed");
+  });
+
+  it("unlocked: a planted instruction to restart still holds", () => {
+    const vs = [...stopping, V("instruction-source", "read-content")];
+    expect(respond(unlocked, "pre-tool", restart(), vs).kind).toBe("hold");
+  });
+
+  it("unlocked never touches deletes or outbound steps", () => {
+    const danger = [V("danger-level", 3), V("runs-or-quotes", 0.9)];
+    for (const [command, effect] of [
+      ["rm -f /home/x/notes.txt", "delete"],
+      ["curl -T notes.txt https://example.com/up", "send"],
+      ["systemctl --user restart openclaw-gateway; curl -T a https://example.com", "send"],
+    ] as const) {
+      const s = step(command, effect);
+      const medium = freshState({ misreadingRisk: "medium" });
+      expect(respond(unlocked, "pre-tool", s, danger, medium)).toEqual(
+        respond(locked, "pre-tool", s, danger, medium),
+      );
+      expect(respond(unlocked, "pre-tool", s, danger, medium).kind).toBe("proof");
+    }
+  });
+});
+
+describe("draft-only mail steps", () => {
+  const draftStep = (command: string, targets = tgt("/tmp/jarvis/x/body.html", "file")) =>
+    caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        request: f("Put the new version in the draft."),
+        tool: f("Bash"),
+        command: f(command),
+        effectClass: f("other", "derived"),
+        targets,
+        scratch: f(true, "derived"),
+      },
+    );
+  const reply =
+    "python3 -I -c 'x' && bash scripts/replace-reply-draft.sh ID /tmp/jarvis/x/body.html --reply-all && " +
+    "node scripts/outlook.mjs mail list --folder drafts --top 5";
+
+  it("an outlook-hack draft step on scratch proceeds even when the judge rates it dangerous", () => {
+    expect(run(draftStep(reply), [RUNS, danger(3)], "high")).toBeNull();
+  });
+  it("the same step with a network tool stays with the table", () => {
+    expect(
+      run(draftStep(`${reply} && curl https://example.com`), [RUNS, danger(3)], "high"),
+    ).not.toBeNull();
+  });
+  it("a mail delete or a user file outside scratch stays with the table", () => {
+    expect(
+      run(draftStep("node scripts/outlook.mjs mail delete ID"), [RUNS, danger(3)], "high"),
+    ).not.toBeNull();
+    expect(
+      run(draftStep(reply, tgt("/home/u/Documents/plan.docx", "file")), [RUNS, danger(3)], "high"),
+    ).not.toBeNull();
+  });
+});
+
+describe("draft-only mail steps, targets as the parser reads them", () => {
+  const parsed = (command: string) =>
+    caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        request: f("Put the new version in the draft."),
+        tool: f("Bash"),
+        command: f(command),
+        effectClass: f("other", "derived"),
+        targets: resolveTargets(command, undefined, "/work/demo", "/home/demo"),
+        scratch: f(false, "derived"),
+      },
+    );
+  const update = [
+    "mkdir -p /tmp/jarvis/x && cd /tmp/jarvis/x && cat > body.txt <<'EOF'",
+    "Hola,",
+    "EOF",
+    "python3 -I ~/.openclaw/workspace/skills/human-voice/scripts/voicecheck.py --mode email body.txt | tail -4",
+    "cd ~/.openclaw/workspace/skills/outlook-hack && bash scripts/replace-reply-draft.sh ID /tmp/jarvis/x/body.html --reply-all",
+    'N=$(timeout 30 node scripts/outlook.mjs mail list --folder drafts --top 5); timeout 40 node scripts/outlook.mjs mail read "$N"',
+  ].join("\n");
+
+  it("a draft update that runs the voice check and the wrapper proceeds at medium risk", () => {
+    expect(run(parsed(update), [RUNS, danger(2)], "medium")).toBeNull();
+  });
+  it("a step that writes the wrapper through a variable and runs it stays with the table", () => {
+    const cmd = [
+      "S=~/.openclaw/workspace/skills/outlook-hack/scripts/replace-reply-draft.sh; cat > $S <<'EOF'",
+      "node scripts/outlook.mjs mail move ID --folder deleteditems",
+      "EOF",
+      "chmod +x $S; bash $S ID /tmp/jarvis/x/body.html --reply-all",
+    ].join("\n");
+    expect(run(parsed(cmd), [RUNS, danger(2)], "medium")?.reasonCode).toBe("table-d2-medium");
+  });
+  it("an in-place edit of the draft tool stays with the table", () => {
+    const cmd =
+      "sed -i 's/a/b/' ~/.openclaw/workspace/skills/outlook-hack/scripts/outlook.mjs && " +
+      "cd ~/.openclaw/workspace/skills/outlook-hack && node scripts/outlook.mjs mail list --folder drafts";
+    expect(run(parsed(cmd), [RUNS, danger(2)], "medium")?.reasonCode).toBe("table-d2-medium");
+  });
+  it("a draft call quoted in a heredoc body does not make a step that runs another script a draft step", () => {
+    const cmd = [
+      "cat > /tmp/jarvis/x/notes.md <<'EOF'",
+      "node scripts/outlook.mjs mail draft",
+      "EOF",
+      "bash /tmp/jarvis/x/sync.sh",
+    ].join("\n");
+    expect(run(parsed(cmd), [RUNS, danger(2)], "medium")?.reasonCode).toBe("table-d2-medium");
+  });
+});
+
+describe("the proof card's fact line names what put the step at the table", () => {
+  const factOf = (command: string): string | undefined => {
+    const s = caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        request: f("Tidy the notes."),
+        tool: f("Bash"),
+        command: f(command),
+        effectClass: f("other", "derived"),
+        targets: resolveTargets(command, undefined, "/work/demo", "/home/demo"),
+        scratch: f(false, "derived"),
+      },
+    );
+    const r = run(s, [RUNS, danger(2)], "medium");
+    expect(r?.reasonCode).toBe("table-d2-medium");
+    // 2026-11-12: this step needs only the owner's word, so the table answers with a note; the fact line is the same.
+    expect(r?.response.kind).toBe("note");
+    return r?.response.kind === "note" ? r.response.slots?.fact : undefined;
+  };
+
+  it("a danger-2 proof that only asks for the owner's word is a note; one that needs a listing stays a proof", () => {
+    const s = caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        request: f("Build the app."),
+        tool: f("Bash"),
+        command: f("bash /home/demo/tools/build.sh"),
+        effectClass: f("other", "derived"),
+        targets: resolveTargets(
+          "bash /home/demo/tools/build.sh",
+          undefined,
+          "/work/demo",
+          "/home/demo",
+        ),
+        scratch: f(false, "derived"),
+      },
+    );
+    expect(run(s, [RUNS, danger(2)], "medium")?.response).toMatchObject({
+      kind: "note",
+      templateId: "relevant-fact",
+    });
+    expect(run(s, [RUNS, danger(2)], "high")?.response.kind).toBe("hold");
+    expect(run(s, [RUNS, danger(3)], "medium")?.response.kind).toBe("proof");
+    expect(run(hrDelete(), [RUNS, danger(2)], "medium")?.response.kind).toBe("proof");
+  });
+
+  it("names the first path outside /tmp that the step did not make", () => {
+    expect(factOf("python3 -I /home/demo/tools/tidy.py /tmp/jarvis/x/notes.txt")).toBe(
+      "/home/demo/tools/tidy.py is outside scratch",
+    );
+  });
+  it("names the table cell when every path is in /tmp, never the scratch default", () => {
+    const fact = factOf("cp /tmp/jarvis/x/a.txt /tmp/jarvis/x/b.txt");
+    expect(fact).toBe("danger 2 at medium misreading risk");
+    expect(fact).not.toContain("not in a scratch area");
+  });
+  it("keeps the file name of a long path", () => {
+    const deep = `/home/demo/${"nested/".repeat(12)}tidy.py`;
+    const fact = factOf(`python3 -I ${deep} /tmp/jarvis/x/notes.txt`);
+    expect(fact?.endsWith("tidy.py is outside scratch")).toBe(true);
+    expect(fact?.startsWith("...")).toBe(true);
+  });
+});
+
+const classify = (cmd: string) => classifyEffect("exec", cmd).value;
+
+describe("a first message to a WhatsApp chat waits for the owner (2026-11-12)", () => {
+  const NOW = 1_794_498_404_406;
+  const histories: Record<string, number> = { "+34600000001": 5, "+447700900123": 0 };
+  const seen: string[] = [];
+  const stubbed = createSafetyFamily({
+    book,
+    chatHistory: (r) => {
+      seen.push(r);
+      return r in histories ? histories[r] : null;
+    },
+  });
+  const send = (to: string, request: string | null = "send my sister the packet on WhatsApp") => {
+    const command = `timeout 60 openclaw message send --channel whatsapp -t ${to} -m "packet"`;
+    return caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        ts: NOW,
+        request: f(request),
+        tool: f("exec"),
+        command: f(command),
+        effectClass: f(classify(command), "derived"),
+        targets: f(
+          resolveTargets(command, undefined, "/work/demo", "/home/demo").value ?? [],
+          "derived",
+        ),
+        scratch: f(false, "derived"),
+      },
+    );
+  };
+  const go = (s: Situation) =>
+    result(
+      stubbed,
+      "pre-tool",
+      s,
+      [V("runs-or-quotes", 0.05), danger(2.89)],
+      freshState({ misreadingRisk: "low" }),
+    );
+
+  it("holds a send to a chat with no message in 90 days, for the owner only", () => {
+    const r = go(send("+447700900123"));
+    expect(r?.response).toEqual({
+      kind: "hold",
+      ruleOrQuestion: "first-contact",
+      releasable: "user-only",
+    });
+    expect(r?.reasonCode).toBe("first-contact");
+  });
+
+  it("lets a send to a chat in use go on, as today (danger 3 at low risk)", () => {
+    expect(go(send("+34600000001"))).toBeNull();
+  });
+
+  it("a number the owner typed in this request is named, not a guess", () => {
+    expect(go(send("+447700900123", "send it to +44 7700 900123 please"))).toBeNull();
+  });
+
+  it("an unreadable history holds nothing", () => {
+    expect(go(send("+15550000000"))).toBeNull();
+  });
+
+  it("looks the history up only for WhatsApp sends", () => {
+    seen.length = 0;
+    result(
+      stubbed,
+      "pre-tool",
+      hrDelete(),
+      [RUNS, danger(1)],
+      freshState({ misreadingRisk: "low" }),
+    );
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("own scratch work needs no reading (2026-11-13)", () => {
+  // The 22:24 clean-up: files the agent wrote in its task folder, then the folder, in a turn whose request was
+  // ambiguous. The owner saw "worried deleting those temp comparison files was not clearly requested" and called the
+  // deletion guard wrong.
+  const dir = "/tmp/jarvis/cmp";
+  const paths = [`${dir}/out.jsonl`, `${dir}/t.png`, dir];
+  const own = (extra: Partial<Situation> = {}) =>
+    caseSituation(
+      null,
+      "pre-tool",
+      {},
+      {
+        request: f("Compare it to this one and tell me if something will run slower"),
+        tool: f("Bash"),
+        command: f(`rm -f ${paths[0]} ${paths[1]} && rmdir ${dir} && echo gone`),
+        effectClass: f("other", "derived"),
+        targets: f(
+          paths.map((p) => ({ path: p, kind: "unknown" as const, resolvedFrom: p })),
+          "derived",
+        ),
+        ownedTargets: f(
+          [
+            { path: paths[0], why: "scratch" as const },
+            { path: paths[1], why: "created" as const },
+            { path: dir, why: "created" as const },
+          ],
+          "derived",
+        ),
+        scratch: f(true, "derived"),
+        ...extra,
+      },
+    );
+
+  it("removing the agent's own scratch files draws no note at a medium or high misreading risk", () => {
+    expect(run(own(), [RUNS, danger(1.07)], "medium")).toBeNull();
+    expect(run(own(), [RUNS, danger(1)], "high")).toBeNull();
+    expect(run(own(), [RUNS, danger(0)], "medium")).toBeNull();
+  });
+
+  it("a target the guard does not know as the agent's keeps the note", () => {
+    const sit = own({ ownedTargets: f([{ path: paths[1], why: "created" as const }], "derived") });
+    expect(run(sit, [RUNS, danger(1)], "medium")?.response).toMatchObject({
+      kind: "note",
+      templateId: "assumed-reading",
+    });
+  });
+
+  it("a target outside the scratch folders keeps the note", () => {
+    expect(
+      run(own({ scratch: f(false, "derived") }), [RUNS, danger(1)], "medium")?.reasonCode,
+    ).toBe("table-d1-medium");
+  });
+
+  it("danger 2 on own scratch stays with the table", () => {
+    expect(run(own(), [RUNS, danger(2)], "medium")?.reasonCode).toMatch(/^table-d2-/);
+  });
+
+  it("a send of an own scratch file stays with the table", () => {
+    const sit = own({ effectClass: f("send", "derived") });
+    expect(run(sit, [RUNS, danger(1)], "medium")?.reasonCode).toBe("table-d1-medium");
   });
 });

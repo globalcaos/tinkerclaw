@@ -129,6 +129,31 @@ export function chainOfSession(
   return undefined;
 }
 
+/** FORK 2026-11-14: an end whose tab is closed moves to the open tab that holds its stored
+ *  session, unless that tab is already an end of a chain. The sessions panel rebinds a pair it
+ *  reopens (`rebindChain`), but a saved list can still name dead tab ids (the SV2 pair after
+ *  its tabs were reopened on 2026-11-14 00:13: no rope, no Gantt tab). Applied on read, so every
+ *  reader sees the same pair; an open end is never moved, since a /clear rotates its key. */
+export function healChains(
+  chains: TabChain[],
+  openTabs: ReadonlyArray<{ id: string; sessionKey?: string | null }>,
+  match: KeyMatch,
+): TabChain[] {
+  const open = new Set(openTabs.map((t) => t.id));
+  const taken = new Set(chains.flatMap((c) => [c.master, c.slave]).filter((id) => open.has(id)));
+  const holder = (key: string | undefined): string | undefined => {
+    if (!key) return undefined;
+    const t = openTabs.find((o) => o.sessionKey && !taken.has(o.id) && match(o.sessionKey, key));
+    if (t) taken.add(t.id);
+    return t?.id;
+  };
+  return chains.map((c) => {
+    const master = open.has(c.master) ? c.master : (holder(c.masterKey) ?? c.master);
+    const slave = open.has(c.slave) ? c.slave : (holder(c.slaveKey) ?? c.slave);
+    return master === c.master && slave === c.slave ? c : { ...c, master, slave };
+  });
+}
+
 /** Point an existing chain at new tab ids (a reopened session gets a fresh tab). Keeps colour
  *  and keys; drops any other chain either new tab was in, as linkTabs would. */
 export function rebindChain(

@@ -28,6 +28,8 @@
 // now segments exactly like text: a text delta, a tool call or a block break closes the open
 // segment, and the next thought opens a new bubble at the bottom.
 
+import { endsInsideCard } from "./cut-card.js";
+
 /** A message as this module needs to see it: a bag of ad-hoc client fields. */
 type Row = Record<string, unknown>;
 
@@ -331,9 +333,16 @@ export function advanceCursor(
   return cur;
 }
 
-/** Close the open segment: the next write opens a new bubble below whatever came in between. */
+/**
+ * Close the open segment: the next write opens a new bubble below whatever came in between. A
+ * bubble that ends inside an open ```html-render card stays open, so the card's closing fence
+ * reaches the bubble that opened it instead of starting a new one (cut-card.ts).
+ */
 export function closeSegment(cur: SegmentCursor): SegmentCursor {
-  return cur.uid === null ? cur : { uid: null, start: cur.start, seen: cur.seen };
+  if (cur.uid === null || endsInsideCard(cur.seen.slice(cur.start))) {
+    return cur;
+  }
+  return { uid: null, start: cur.start, seen: cur.seen };
 }
 
 // ─── A turn a gateway restart froze, taken over by a run with a NEW id ────────────────────────────

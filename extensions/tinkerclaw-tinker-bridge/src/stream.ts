@@ -46,6 +46,7 @@ import {
 import { forkParentRunId, forkSourceFor, noteRunWorker, type ForkSource } from "./fork-parent.js";
 import type { FractalGuardMode } from "./fractal-guard.js";
 import { scheduleFractalLedger } from "./fractal-ledger.js";
+import { renderFreshStartRecap } from "./fresh-start-recap.js";
 import { registerInflightWorker, unregisterInflightWorker } from "./inflight-worker-registry.js";
 import { scheduleLimitResume } from "./limit-resume.js";
 import type {
@@ -1653,6 +1654,14 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         recordPush();
       };
 
+      // Separate blocks are joined into one stored message, so each new block opens a paragraph.
+      // Without it a voice line lands glued to the prose before it and stops being its own line.
+      const pushBlockSeparator = () => {
+        if (accumulatedText && !accumulatedText.endsWith("\n\n")) {
+          pushTextDelta("\n\n", "block-separator");
+        }
+      };
+
       // FORK 2026-04-20: progress heartbeat so we can tell from the gateway
       // log whether claude is silently thinking vs actually stuck. Logs
       // first-line-received and then every 30s/50 lines thereafter with a
@@ -1891,6 +1900,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               const key = streamBlockKey(blockIndex, "text");
               if (activeTextBlockIndex !== null && activeTextBlockIndex !== key) {
                 emitTextBlockBreak(activeTextBlockIndex, key);
+                pushBlockSeparator();
               }
               activeTextBlockIndex = key;
               pushTextDelta(ev.delta.text, "content_block_delta");
@@ -2015,6 +2025,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                   // advances only via this loop iteration).
                   if (activeTextBlockIndex !== null && activeTextBlockIndex !== key) {
                     emitTextBlockBreak(activeTextBlockIndex, key);
+                    pushBlockSeparator();
                   }
                   activeTextBlockIndex = key;
                 }
@@ -2253,6 +2264,14 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               thinkLevel: optionThinkLevel,
               ultracode: optionUltracode,
               ...(optionThinkSource ? { thinkSource: optionThinkSource } : {}),
+              // FORK 2026-11-13 (bug-log.md `fresh-session-no-recap`): OpenClaw sent the chat's whole history
+              // and only the last prompt goes to the CLI. A worker that could not resume the chat's session
+              // asks for the last turns as text and puts them in front of this prompt.
+              freshRecap: (why) =>
+                renderFreshStartRecap(context.messages ?? [], why, {
+                  currentUserText: rawUserText,
+                  ...(openclawSessionKey ? { sessionKey: openclawSessionKey } : {}),
+                }),
             });
           }
         } finally {
@@ -2288,7 +2307,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // result are in scope and BEFORE the is_error early-return below — so
         // the terminal tuple lands on success AND on error/max-turns terminal
         // paths (the is_error arm returns early without reaching turn end).
-        emitEffort(true, { output_tokens: usage.output, num_turns: result.num_turns });
+        // FORK 2026-11-13: the prompt side too. The page drew a turn from its output alone, while a long
+        // chat's traffic is its cache reads (one turn that day: 56,740 out, 35.6 million read from cache).
+        emitEffort(true, {
+          output_tokens: usage.output,
+          input_tokens: usage.input,
+          cache_read_tokens: usage.cacheRead,
+          cache_write_tokens: usage.cacheWrite,
+          num_turns: result.num_turns,
+        });
         // FORK 2026-10-09 (Fractal v2 M4, fractal-ledger.ts): a `fractal-<P>` run's result line
         // writes its ledger row: what it wrote and committed, and a check of every path and commit
         // its text claims (131 of 536 failed claims in the 10-09 census were never on disk). Here,

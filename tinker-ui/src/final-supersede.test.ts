@@ -11,6 +11,7 @@ import {
   runTextBubbles,
   sameTextCount,
   supersedingAppendTail,
+  mendCutCard,
 } from "./final-supersede.js";
 import { resliceSegments } from "./stream-reslice.js";
 
@@ -544,5 +545,30 @@ describe("the voice-span double (2026-09-24, work tab: every answer twice)", () 
 
   it("ignores only the voice span — other markup inside the text still has to match", () => {
     expect(supersedingAppendTail(["**Jarvis:** *hi*"], "**Jarvis:** <b>*hi*</b>")).not.toBe("");
+  });
+});
+
+describe("mendCutCard", () => {
+  const head = "Answer.\n\n```html-render\n<div>card</";
+  it("gives a card cut by the tail split its end back", () => {
+    const plan = mendCutCard([head], "div>\n```\n\nNext sentence.");
+    expect(plan.texts).toEqual([`${head}div>\n\`\`\``]);
+    expect(plan.appendTail).toBe("Next sentence.");
+  });
+  it("leaves no tail when the card was the whole remainder", () => {
+    expect(mendCutCard([head], "div>\n```").appendTail).toBe("");
+  });
+  it("skips an empty trailing bubble", () => {
+    expect(mendCutCard([head, ""], "div>\n```").texts[0]).toContain("</div>");
+  });
+  it("leaves a closed card and its tail alone", () => {
+    const closed = "```html-render\n<div></div>\n```";
+    expect(mendCutCard([closed], "More ```js\n```")).toEqual({
+      texts: [closed],
+      appendTail: "More ```js\n```",
+    });
+  });
+  it("leaves an open card alone until the tail closes it", () => {
+    expect(mendCutCard([head], "div>")).toEqual({ texts: [head], appendTail: "div>" });
   });
 });

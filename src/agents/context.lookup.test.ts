@@ -234,6 +234,30 @@ describe("lookupContextTokens", () => {
     ).toBe(false);
   });
 
+  // FORK 2026-10-29: commands whose handlers never read context tokens skip the import-time
+  // warmup (the FORK block in SKIP_EAGER_WARMUP_PRIMARY_COMMANDS, context.ts). `chat` is the
+  // control: a local agent turn reads context tokens, so it must keep warming.
+  it("does not warm eagerly for commands that never read context tokens", async () => {
+    const { shouldEagerWarmContextWindowCache } = await importContextModule();
+
+    expect(shouldEagerWarmContextWindowCache(["node", "openclaw", "chat"])).toBe(true);
+    expect(shouldEagerWarmContextWindowCache(["node", "openclaw", "nodes", "status"])).toBe(false);
+    expect(shouldEagerWarmContextWindowCache(["node", "openclaw", "cron", "list"])).toBe(false);
+    for (const argv of [
+      ["node", "openclaw", "approvals", "get"],
+      ["node", "openclaw", "channels", "status"],
+      ["node", "openclaw", "cron", "runs"],
+      ["node", "openclaw", "devices", "list"],
+      ["node", "openclaw", "message", "send", "--json"],
+      ["node", "openclaw", "node", "run"],
+      ["node", "openclaw", "nodes", "list"],
+      ["node", "openclaw", "qr"],
+      ["node", "openclaw", "system", "presence"],
+    ]) {
+      expect(shouldEagerWarmContextWindowCache(argv), argv.join(" ")).toBe(false);
+    }
+  });
+
   it("retries config loading after backoff when an initial load fails", async () => {
     vi.useFakeTimers();
     const loadConfigMock = vi

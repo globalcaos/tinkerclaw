@@ -33,7 +33,10 @@ export async function ensureExtensionRelayForProfiles(params: {
   }
   const cdpUrl = `http://127.0.0.1:${DEFAULT_RELAY_PORT}`;
   try {
-    await ensureChromeExtensionRelayServer({ cdpUrl, bindHost: "127.0.0.1" });
+    // FORK: OPENCLAW_EXTENSION_RELAY_BIND_HOST (e.g. 0.0.0.0) lets a Chrome on another machine
+    // share its tabs. The relay still demands the gateway token from any non-loopback peer.
+    const bindHost = process.env.OPENCLAW_EXTENSION_RELAY_BIND_HOST?.trim() || "127.0.0.1";
+    await ensureChromeExtensionRelayServer({ cdpUrl, bindHost });
   } catch (err) {
     params.onWarn(`extension relay: ${err instanceof Error ? err.message : String(err)}`);
   }

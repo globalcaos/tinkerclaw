@@ -38,6 +38,7 @@ import {
   PROVIDER_ID,
   PROVIDER_LABEL,
 } from "./src/defaults.js";
+import { publishEvictSeam } from "./src/evict-seam.js";
 import { resolveFractalGuardMode } from "./src/fractal-guard.js";
 import { rearmLimitResumes } from "./src/limit-resume.js";
 import {
@@ -160,6 +161,8 @@ export default definePluginEntry({
     setBridgeTransport(resolveBridgeTransport(pluginConfig.transport));
     // FORK 2026-10-22: Rewind (amygdala2.rewind) moves a tab to a truncated copy of its claude-cli session through this.
     publishRewindSeam();
+    // FORK 2026-11-03: EVICT on the claude-code lane (sessions.compact { keepFraction }) moves a chat to an evicted fork.
+    publishEvictSeam();
     // FORK 2026-10-25: each chat's live background tasks, for the page's rows and the Fractal wait.
     publishBackgroundTasksSeam(getPool);
     registerBridgeDrainParticipant(getPool);

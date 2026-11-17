@@ -223,6 +223,22 @@ function runShell(cmd) {
   });
 }
 
+/**
+ * FORK 2026-11-14 — `node scripts/test-invariants.mjs done-signals.md bug-log.md` runs the verify
+ * blocks of the named bible files only: the bible-currency gate's check of the optics a change
+ * touched, in one call, against the real bible folder (no scope folder to make and remove). The
+ * meta-verify still reads the whole bible. Names may be paths; the bible's order is kept. A name
+ * that is not a file of the bible is reported in `missing` (the runner exits 2, never a pass).
+ */
+export function selectBibleFiles(all, names) {
+  const wanted = names.map((name) => path.basename(name));
+  if (wanted.length === 0) return { files: all, missing: [] };
+  return {
+    files: all.filter((file) => wanted.includes(file)),
+    missing: wanted.filter((name) => !all.includes(name)),
+  };
+}
+
 async function main() {
   let files;
   try {
@@ -235,6 +251,15 @@ async function main() {
     console.error(`[test-invariants] no .md files in ${BIBLE_DIR}`);
     process.exit(2);
   }
+  const picked = selectBibleFiles(files, process.argv.slice(2));
+  if (picked.missing.length > 0) {
+    console.error(
+      `[test-invariants] not a file of the bible in ${BIBLE_DIR}: ${picked.missing.join(", ")}`,
+    );
+    process.exit(2);
+  }
+  // The per-file loop runs the named files; the meta-verify below keeps `files`, the whole bible.
+  const runFiles = picked.files;
 
   let totalChecks = 0;
   let totalFailed = 0;
@@ -276,11 +301,13 @@ async function main() {
     return null;
   }
 
-  console.log(BOLD(`\nJ15 invariant suite — ${files.length} bible files`));
+  const scope =
+    runFiles.length === files.length ? "" : ` (${runFiles.length} named of ${files.length})`;
+  console.log(BOLD(`\nJ15 invariant suite — ${runFiles.length} bible files${scope}`));
   console.log(DIM(`  bible: ${BIBLE_DIR}`));
   console.log("");
 
-  for (const file of files) {
+  for (const file of runFiles) {
     const filePath = path.join(BIBLE_DIR, file);
     const text = await readFile(filePath, "utf8");
     const { metadata, verify } = parseFrontmatter(text);

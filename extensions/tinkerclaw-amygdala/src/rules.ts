@@ -43,7 +43,8 @@ export interface SerializedRule {
 export const AEGIS_RULES: AegisRule[] = [
   // DELIBERATELY BROAD - do not "fix" this by narrowing it to `/` and the
   // top-level system directories. The trailing `\/` means "any ABSOLUTE path",
-  // so `rm -rf /tmp/scratch` is blocked too, on purpose: a recursive delete of
+  // so a recursive delete anywhere is matched. One exception lives in the hook
+  // (hard-rules.mjs): it passes when every target is under /tmp. Otherwise a recursive delete of
   // an absolute path is a confirm-with-the-user action, and the agent can always
   // use a relative path or ask. The rule id says ROOT for historical reasons; the
   // explanations say what is actually matched, because reading "root filesystem"
@@ -88,7 +89,9 @@ export const AEGIS_RULES: AegisRule[] = [
     pattern:
       /(?:^|[\s;&|(`])(?:rm|shred|unlink)\s|\bfind\s[^;&|]*\s-delete\b|\bgit\s+(?:rm\s|clean\s+-\S*f|worktree\s+remove\s+(?:\S+\s+)*(?:--force|-f)\b)|\b(?:pip3?|uv|conda|yarn|npm|pnpm)\s+(?:cache\s+(?:purge|clean|remove|prune|rm)|store\s+prune|clean\b)|\bdocker\s+(?:(?:system|image|volume|container|builder|network)\s+prune|rmi\b|rm\b)|\bapt(?:-get)?\s+(?:autoremove|purge|remove|clean|autoclean)\b|\bsnap\s+remove\b|\bjournalctl\s[^;&|]*--vacuum|\bhuggingface-cli\s+delete-cache\b|\btimeshift\s[^;&|]*--delete\b/,
     rule: "DELETE_UNREQUESTED",
-    explanation: "Deletes files or caches the owner did not explicitly ask to delete",
+    // 2026-11-04: the hook now lets a deletion through when it serves the owner's recent task, and
+    // holds it only when Jev reads it as unrelated to that task (a side agenda); see hard-rules.mjs.
+    explanation: "Deletes files that have nothing to do with what the owner asked for",
     enforce: true,
     scope: "exec",
     ownerIntent: "delete",
@@ -103,7 +106,7 @@ export const AEGIS_RULES: AegisRule[] = [
     rule: "SECRET_UNREQUESTED",
     explanation:
       "Reads or uses a stored password or secret the owner did not explicitly ask to use",
-    enforce: true,
+    enforce: false,
     scope: "all",
     ownerIntent: "secret",
   },
@@ -243,10 +246,137 @@ export const V2_RULES: AegisRule[] = [
     enforce: true,
     scope: "all",
   },
+  // Tightening, 2026-11-13. A held step waits for the owner's answer, and since that day the answer can also be
+  // given on another screen (Zen Mail's page posts it to its own server). Every path an answer travels is a path
+  // the agent's own shell can reach: the gateway method, that page's route, and the `allow <code>` words the Allow
+  // button sends into the chat as his prompt. A step that takes one of them is giving his answer for him. These
+  // match the plain call; a call built from pieces is not caught here, and the after-the-fact review reads it.
+  {
+    pattern: /(?:\bgateway\s+call|\b[\w.-]*rpc[\w.-]*\.m?js["']?)\s+["']?amygdala2\.answer\b/,
+    rule: "GUARD_SELF_ANSWER",
+    explanation: "Answers a question the guard put to the owner",
+    enforce: true,
+    scope: "exec",
+  },
+  {
+    pattern: /["']?method["']?\s*[:=]\s*["']amygdala2\.answer["']/,
+    rule: "GUARD_SELF_ANSWER",
+    explanation: "Answers a question the guard put to the owner",
+    enforce: true,
+    scope: "exec",
+  },
+  {
+    pattern: /https?:\/\/[^\s"'<>]*\/api\/guard\/answer\b/,
+    rule: "GUARD_SELF_ANSWER",
+    explanation: "Answers a question the guard put to the owner",
+    enforce: true,
+    scope: "exec",
+  },
+  // Tightening, 2026-11-16, with the own-files list (src/own-files.ts). A path on that list may be deleted without
+  // the owner's words, so the list is the gateway's to write. A shell step or a file tool that writes it would be
+  // the agent declaring a file its own. These match the plain write; a write built from pieces is not caught here.
+  {
+    pattern:
+      /(?:>>?\s*|\b(?:tee|cp|mv|truncate|install|ln)\b[^|;&\n]*\s|\bsed\s+-i[^|;&\n]*\s)["']?[^\s"'|;&]*own-files\.jsonl\b/,
+    rule: "GUARD_OWN_LIST_WRITE",
+    explanation: "Writes the guard's list of the agent's own files",
+    enforce: true,
+    scope: "exec",
+  },
+  {
+    pattern: /^(?:Write|Edit|MultiEdit)\s[^\n]*"(?:file_path|path)"\s*:\s*"[^"]*own-files\.jsonl"/i,
+    rule: "GUARD_OWN_LIST_WRITE",
+    explanation: "Writes the guard's list of the agent's own files",
+    enforce: true,
+    scope: "all",
+  },
+  {
+    pattern: /\bchat\.send\b[\s\S]{0,600}?\ballow\s+JEV-[0-9A-Za-z]{6}\b/,
+    rule: "GUARD_SELF_ANSWER",
+    explanation: "Sends the owner's Allow into a chat in his place",
+    enforce: true,
+    scope: "exec",
+  },
 ];
 
 /** v3.1's rules plus the v2-only ones: the floor the check and the hook policy both use. */
 export const ALL_RULES: AegisRule[] = [...AEGIS_RULES, ...V2_RULES];
+
+/**
+ * What the chat says about each rule (2026-11-03), one entry per rule id; matching stays in the arrays above.
+ * `says`: the amygdala's line to the agent when the rule fires. `ask`: the owner's Allow question; the page puts the
+ * deleted path or the secret's name in `{target}` when it can read one from the command, else `noun`.
+ */
+export const RULE_WORDS: Record<string, { says: string; ask: string; noun?: string }> = {
+  FS_DESTRUCTIVE_ROOT: {
+    says: "That deletes a whole folder for good.",
+    ask: "Allow deleting {target} and everything in it?",
+    noun: "that folder",
+  },
+  FS_FORMAT: { says: "That wipes a whole disk.", ask: "Allow formatting a disk?" },
+  DELETE_UNREQUESTED: {
+    says: "That deletion has nothing to do with what you were asked.",
+    ask: "Allow deleting {target}?",
+    noun: "these files",
+  },
+  SECRET_UNREQUESTED: {
+    says: "Nobody asked you to use that password.",
+    ask: "Allow using {target}?",
+    noun: "a stored password",
+  },
+  FS_DD_DEVICE: { says: "That writes straight over a disk.", ask: "Allow writing over a disk?" },
+  FS_REDIRECT_DEVICE: {
+    says: "That writes straight over a disk.",
+    ask: "Allow writing over a disk?",
+  },
+  FS_CHMOD_ROOT: {
+    says: "That opens every file to everyone.",
+    ask: "Allow opening every file to everyone?",
+  },
+  SQL_DROP: { says: "That destroys database data.", ask: "Allow dropping database data?" },
+  SQL_TRUNCATE: { says: "That empties a database table.", ask: "Allow emptying a database table?" },
+  SQL_DELETE_ALL: {
+    says: "That deletes every row of the table.",
+    ask: "Allow deleting every row of a table?",
+  },
+  SQL_ALTER_DROP: {
+    says: "That drops a column for good.",
+    ask: "Allow dropping a database column?",
+  },
+  CREDENTIAL_ACCESS: {
+    says: "That touches a credentials file.",
+    ask: "Allow touching a credentials file?",
+  },
+  CREDENTIAL_CONTENT: {
+    says: "That looks like a password.",
+    ask: "Allow a step that handles a password?",
+  },
+  CREDENTIAL_EXFIL: {
+    says: "That sends a password over the web.",
+    ask: "Allow sending a password over the web?",
+  },
+  GIT_FORCE_PUSH_MAIN: {
+    says: "That rewrites main for everyone.",
+    ask: "Allow force-pushing to main?",
+  },
+  GIT_RESET_MANY: {
+    says: "That throws away many commits.",
+    ask: "Allow discarding those commits?",
+  },
+  GUARD_OWN_LIST_WRITE: {
+    says: "That list says which files are yours to delete. The gateway writes it, not you.",
+    ask: "Allow the agent to write the guard's own-files list?",
+  },
+  GUARD_SELF_ANSWER: {
+    says: "That answer is the owner's to give, not yours.",
+    ask: "Allow the agent to answer a guard question itself?",
+  },
+  CREDENTIAL_FILE_PRINTED: {
+    says: "That prints a password into the chat.",
+    ask: "Allow showing {target} in the chat?",
+    noun: "a credentials file",
+  },
+};
 
 export interface RulesResult {
   decision: "hard_block" | "allow";
@@ -259,6 +389,19 @@ export interface RulesResult {
  * `evaluateRuleBased`); with `enforcedOnly` only `enforce: true` rules block
  * (v3.1's `evaluateAegisEnforced`), so observe-only credential patterns do not cry wolf.
  */
+/** True when the text's rm commands all target only paths under /tmp: scratch, free to delete, recursive or not. */
+export function rmOnlyUnderTmp(text: string): boolean {
+  // A line break ends a command, as `;` does, so it ends this rm's operands too: [^\S\n] is any space but a line break.
+  const rms = [...text.matchAll(/\brm[^\S\n]+((?:[^\s;&|"'\\]+[^\S\n]*)+)/g)];
+  return (
+    rms.length > 0 &&
+    rms.every((m) => {
+      const paths = m[1].split(/\s+/).filter((w) => w && !w.startsWith("-"));
+      return paths.length > 0 && paths.every((w) => /^\/tmp\/[^\s*?]/.test(w) && !w.includes(".."));
+    })
+  );
+}
+
 export function evaluateRules(
   toolName: string,
   argsStr: string,
@@ -269,7 +412,7 @@ export function evaluateRules(
   for (const { pattern, rule, explanation, enforce, ownerIntent } of ALL_RULES) {
     if (ownerIntent) continue; // needs the owner's words: decided by the pre-execution hook
     if (enforcedOnly && !enforce) continue;
-    if (pattern.test(combined)) {
+    if (pattern.test(combined) && !(rule === "FS_DESTRUCTIVE_ROOT" && rmOnlyUnderTmp(combined))) {
       return {
         decision: "hard_block",
         rule,

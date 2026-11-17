@@ -61,6 +61,29 @@ def comments(path):
     return out
 
 
+def open_edit(pdf):
+    """The Edit paragraph box left open on this PDF (or on the file a -marques-oscar-N copy came from), if any."""
+    import re
+    try:
+        drafts = json.loads((Path(__file__).resolve().parent / "state" / "edit-drafts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    p = Path(pdf).resolve()
+    origin = p.with_name(re.sub(r"-marques-oscar-\d+$", "", p.stem) + ".pdf")
+    return drafts.get(str(p)) or drafts.get(str(origin))
+
+
+def print_open_edit(pdf):
+    d = open_edit(pdf)
+    if not d or d.get("text") == d.get("old"):
+        return
+    import time
+    when = time.strftime("%H:%M", time.localtime((d.get("at") or 0) / 1000))
+    print(f"\nUNSAVED PARAGRAPH EDIT (box left open at {when}; it reopens in his viewer, do not apply it for him unless he asks):")
+    print(f"  was: {d.get('old')}")
+    print(f"  now: {d.get('text')}")
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
@@ -68,8 +91,16 @@ def main():
     if "--json" in sys.argv:
         print(json.dumps(found, ensure_ascii=False, indent=2))
         return
+    # A highlight with no note is one he could not delete: ignore it, never ask about it (the architect, 2026-11-14 21:00:
+    # "do not think anything of them from here on, just ignore them"). Ink marks with no text are still listed.
+    bare = [c for c in found if c["kind"] in ("Highlight", "Underline", "StrikeOut", "Squiggly") and not c["note"]]
+    found = [c for c in found if c not in bare]
+    ignored = f"({len(bare)} highlight(s) with no note ignored: marks he could not delete.)" if bare else ""
     if not found:
         print("No comments in this PDF.")
+        if ignored:
+            print(ignored)
+        print_open_edit(sys.argv[1])
         return
     for c in found:
         line = f"- p.{c['page']} · {c['kind']}"
@@ -78,6 +109,9 @@ def main():
         if c["note"]:
             line += f" → {c['note']}"
         print(line)
+    if ignored:
+        print(ignored)
+    print_open_edit(sys.argv[1])
 
 
 if __name__ == "__main__":

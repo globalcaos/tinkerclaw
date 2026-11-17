@@ -1,9 +1,11 @@
 {
   "id": "tinkerclaw-curiosity",
-  "activation": { "onStartup": true },
+  "activation": {
+    "onStartup": true
+  },
   "enabledByDefault": false,
   "name": "Curiosity",
-  "description": "Curiosity sense (J8 purposeful curiosity, first build). Each chat turn of the main agent gets the principal's passion map and a contract: do the task first, then, when a passion comes up, research it, teach one step deeper and ask one deep question in a ✨ DEEPER section (drawn as its own yellow-bordered bubble in Tinker), and keep the map current. The map is a private markdown file in the workspace.",
+  "description": "Curiosity sense (J8 purposeful curiosity, first build). Each chat turn of the main agent gets the principal's passion map and a contract: do the task first, then, when a passion comes up, research it, teach one step deeper and ask one deep question in a ✨ DEEPER section (drawn as its own yellow-bordered bubble in Tinker), and keep the map current. With an objectives file it also offers one seed per thread that links a passion to the principal's goals, and keeps a passion thread climbing (data, pattern, leap, market, goal) across turns. The map is a private markdown file in the workspace.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -19,6 +21,14 @@
       "maxProfileChars": {
         "type": "number",
         "description": "How much of the map goes into each turn. Default 3500"
+      },
+      "principalName": {
+        "type": "string",
+        "description": "The principal's name, used in the contract. Default: \"your principal\"."
+      },
+      "objectivesPath": {
+        "type": "string",
+        "description": "What the principal is working towards (goals, the projects they want time for). Its '## For the prompt' section, or the first 1200 chars, goes into each turn and switches on the bridge rule. Default: <workspace>/OBJECTIVES.md; missing file = no bridge."
       }
     }
   }

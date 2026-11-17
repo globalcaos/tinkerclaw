@@ -20,6 +20,7 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { amygdalaSettingsArgs } from "./amygdala-settings.js";
 import { bgTasksLogLine, type LiveBackgroundTask } from "./background-tasks.js";
 import { type ChildStreamsLike, guardChildStreams } from "./child-stream-guards.js";
+import { PRIMARY_SEAT, noteSeatLine, seatToken } from "./claude-seats.js";
 import { extractCliCommand } from "./cli-command.js";
 import {
   AMYGDALA_CC_HOOK_SETTINGS_PATH,
@@ -33,6 +34,7 @@ import {
   maxOutputTokensFor,
 } from "./defaults.js";
 import { type FractalGuardMode, fractalGuardEnv } from "./fractal-guard.js";
+import type { FreshStartWhy } from "./fresh-start-recap.js";
 import {
   readMaterializedMoralCode,
   resolveCorePluginDir,
@@ -46,7 +48,7 @@ import {
   parseStreamJsonLine,
   serializeStdinLine,
 } from "./protocol.js";
-import { forgetResumeSessionId, setResumeSessionId } from "./session-map.js";
+import { forgetResumeSessionId, isRewoundAllSessionId, setResumeSessionId } from "./session-map.js";
 import {
   thalamusSpawnExtras,
   leafModelOwnerText,
@@ -83,7 +85,11 @@ import {
   type WorkerTurnMeta,
   writeWorkerMeta,
 } from "./worker-transport.js";
-import { workerUnitBaseArgs } from "./worker-unit-args.js";
+import {
+  isOneShotWorker,
+  WORKER_BACKGROUND_CPU_WEIGHT,
+  workerUnitBaseArgs,
+} from "./worker-unit-args.js";
 
 /** Is a restart draining right now? (core's restart-drain.ts global key; an extension may not import it) */
 function restartDrainActive(): boolean {
@@ -366,6 +372,67 @@ function resolveForkScript(name: string, envVar: string): string {
   return "";
 }
 
+// FORK 2026-10-29: locate the bridge's own lean gateway RPC client, bin/tc-rpc.mjs, which the plan
+// calls in prompts/plan-tools.md use. It ships in this plugin's directory the way prompts/*.md do
+// (runtime-postbuild copies neither into dist/), so a fresh clone has it, and so does any install
+// that carries the plugin's prompts/. Order: explicit override → $OPENCLAW_BUNDLED_PLUGINS_DIR/
+// <plugin>/bin → the copy beside this module (a source install runs from <plugin>/src) → the
+// ~/src/tinkerclaw dev clone (for a gateway run from dist/, whose plugin dir has no bin/). Unlike
+// the prompt loader, the copy beside the running code comes before the dev clone: the script is
+// code and has to match the bridge that advertises it.
+export function resolveTcRpcPath(env: NodeJS.ProcessEnv = process.env): string {
+  const bundleRoot = env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+  const candidates = [
+    env.TINKERCLAW_TC_RPC_BIN ?? "",
+    bundleRoot ? path.join(bundleRoot, "tinkerclaw-tinker-bridge", "bin", "tc-rpc.mjs") : "",
+    path.join(__dirname, "..", "bin", "tc-rpc.mjs"),
+    path.join(
+      os.homedir(),
+      "src",
+      "tinkerclaw",
+      "extensions",
+      "tinkerclaw-tinker-bridge",
+      "bin",
+      "tc-rpc.mjs",
+    ),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        return path.resolve(p);
+      }
+    } catch {}
+  }
+  return "";
+}
+
+/**
+ * FORK 2026-10-29: whether the child gets TC_RPC. tc-rpc reads the gateway's address and token from
+ * OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN and nothing else, and the allowlist in start()
+ * forwards those only when the gateway's own environment has them: a gateway that reads its token
+ * from config has neither. Advertising the client without them would fail every plan call once
+ * before the CLI fallback, so TC_RPC is set only when the child can use it (bible #24: no seam
+ * ahead of its producer).
+ */
+export function tcRpcEnvFor(
+  childEnv: NodeJS.ProcessEnv,
+  scriptPath: string,
+): { TC_RPC: string } | { off: string } {
+  if (!scriptPath) {
+    return { off: "bin/tc-rpc.mjs was not found beside the bridge" };
+  }
+  if (!childEnv.OPENCLAW_GATEWAY_URL?.trim() || !childEnv.OPENCLAW_GATEWAY_TOKEN?.trim()) {
+    return {
+      off:
+        "the worker env has no OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN " +
+        "(the bridge forwards them only from the gateway's own environment)",
+    };
+  }
+  return { TC_RPC: scriptPath };
+}
+/** The reason tc-rpc is off goes to the log once per gateway process, not once per spawn. */
+let tcRpcOffLogged = false;
+
 // FORK 2026-04-20 (extracted to prompts/subagent-helper.md 2026-04-28 per
 // bible §5.76): one short system-prompt block teaching how to spawn
 // OpenClaw subagents from inside tinker-bridge (where the native tool set is
@@ -531,6 +598,11 @@ export type WorkerSpawnParams = {
    * on the live process (WorkerTurnParams.thinkLevel, applyTurnEffort).
    */
   thinkLevel?: string;
+  /**
+   * FORK 2026-11-03: the Claude seat the pool chose for this spawn (claude-seats.ts). Absent or
+   * `primary` keeps the CLI's own login.
+   */
+  claudeSeat?: string;
   resumeSessionId?: string;
   /**
    * FORK 2026-10-09 (fork-parent.ts): `resumeSessionId` is ANOTHER session's CLI conversation;
@@ -560,6 +632,8 @@ export type WorkerSpawnParams = {
    * `jarvis` voice binary can (a) gate speech to the home session and
    * (b) route its `**Jarvis:**` bubble via `chat.inject` — both need the
    * canonical key, NOT the worker-pool hash. See jarvis-voice SKILL.md.
+   * FORK 2026-10-29: it also decides whether the unit starts at the background CPU weight
+   * (isOneShotWorker, worker-unit-args.ts): a `temp:*` or `*:fractal:*` key does.
    */
   openclawSessionKey?: string;
   /**
@@ -588,6 +662,12 @@ export type WorkerTurnParams = {
   thinkLevel?: string;
   ultracode?: boolean;
   thinkSource?: string;
+  /**
+   * FORK 2026-11-13 (bug-log.md `fresh-session-no-recap`): builds the chat's last turns as text, for a worker whose
+   * resume guard started a NEW Claude session (fresh-start-recap.ts). Called at most once, on the first prose turn
+   * of that session, and only then: a session that resumed holds its conversation already.
+   */
+  freshRecap?: (why: FreshStartWhy) => string | null;
 };
 
 /**
@@ -660,6 +740,8 @@ export class ClaudeCodeWorker extends EventEmitter {
    */
   readonly thinkLevel?: string;
   private readonly params: WorkerSpawnParams;
+  /** The seat this process really runs on, set in start(); its rate-limit lines are filed under it. */
+  private seat: string = PRIMARY_SEAT;
   /**
    * FORK 2026-10-09 (effort per turn): the model this child runs takes Claude Code's adaptive
    * effort (isAdaptiveEffortModel), so its effort is applied per turn over stdin instead of a
@@ -684,6 +766,12 @@ export class ClaudeCodeWorker extends EventEmitter {
   private systemPromptFile: string | null = null;
   /** Moral code owed to a resumed conversation that predates tinkerclaw-core (sent once). */
   private pendingMoralCodePrefix: string | null = null;
+  /**
+   * FORK 2026-11-13 (bug-log.md `fresh-session-no-recap`): set by start() when the resume guard began a NEW Claude
+   * session for a chat that has one (its transcript is over the limit, or gone from disk). It stays owed until a
+   * prose turn takes it: that turn's prompt carries the chat's last turns in front (takeFreshStartRecap).
+   */
+  private freshStart: FreshStartWhy | null = null;
   private currentTurn: {
     resolve: (line: CcStreamStdoutResult) => void;
     reject: (err: Error) => void;
@@ -988,12 +1076,21 @@ export class ClaudeCodeWorker extends EventEmitter {
         // terminal response, and since the binding survives, every retry —
         // and every model — fails identically. Start fresh and purge the id so
         // the fallback-by-openclawSessionId lookup cannot resurrect it.
-        if (!transcriptExists(transcriptPath)) {
+        if (isRewoundAllSessionId(this.params.resumeSessionId)) {
+          // FORK 2026-11-13: the owner rewound this tab's whole conversation (amygdala rewind.ts), so there is
+          // nothing to resume. Not a dead id: the map is left alone, the fresh session's own id replaces the marker
+          // when it is reported, and until then an Undo can still point the tab back.
+          skipResume = true;
+          log.info(
+            `[rewound-all] sessionKey=${this.sessionKey} the tab's whole conversation was rewound — starting FRESH session`,
+          );
+        } else if (!transcriptExists(transcriptPath)) {
           skipResume = true;
           const purged = forgetResumeSessionId(this.params.resumeSessionId);
           log.warn(
             `[dead-resume] sessionKey=${this.sessionKey} resumeSessionId=${this.params.resumeSessionId} transcript missing (${transcriptPath}) — starting FRESH, purged ${purged} stale session-map binding(s)`,
           );
+          this.freshStart = { reason: "missing", transcriptPath };
         } else if (isTranscriptOversized(transcriptPath, RESUME_MAX_TRANSCRIPT_BYTES)) {
           skipResume = true;
           const sizeMb = (fs.statSync(transcriptPath).size / 1_000_000).toFixed(1);
@@ -1001,6 +1098,14 @@ export class ClaudeCodeWorker extends EventEmitter {
           log.warn(
             `[oversized-resume] sessionKey=${this.sessionKey} size=${sizeMb}MB threshold=${thresholdMb}MB — starting FRESH session`,
           );
+          // FORK 2026-11-13: the new session holds none of the chat. Its first prose turn carries the last turns
+          // as text (takeFreshStartRecap). Assigned last: a stat that throws here still falls open to a resume.
+          this.freshStart = {
+            reason: "oversized",
+            transcriptPath,
+            sizeBytes: fs.statSync(transcriptPath).size,
+            limitBytes: RESUME_MAX_TRANSCRIPT_BYTES,
+          };
         }
       } catch (err) {
         // Fail open: stat/path failure must NOT prevent resume.
@@ -1066,10 +1171,18 @@ export class ClaudeCodeWorker extends EventEmitter {
     const workerDir = getBridgeTransport() === "file" ? prepareWorkerDir(unitId) : null;
     // FORK 2026-10-19: both transports also start the unit with OOMScoreAdjust=500, so the kernel
     // OOM killer takes a (resumable) worker before the gateway. See worker-unit-args.ts.
-    const wrapperBaseArgs = workerUnitBaseArgs({ unitId, workerDir });
+    // FORK 2026-10-29: a one-shot worker (a `temp:*` run, a Fractal turn) also starts at the
+    // background CPU weight, so under contention it yields the CPU to chat workers, which keep the
+    // default 100. It is slowed, never frozen. The canonical session key decides: the pool key is
+    // the stream's `tinker-sp-<hash>`, which never names a one-shot. See worker-unit-args.ts.
+    const background = isOneShotWorker({
+      sessionKey: this.sessionKey,
+      openclawSessionKey: this.params.openclawSessionKey,
+    });
+    const wrapperBaseArgs = workerUnitBaseArgs({ unitId, workerDir, background });
 
     log.info(
-      `spawning claude (reparented to systemd, ${workerDir ? "file transport" : "--pipe"}, unit=${unitId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
+      `spawning claude (reparented to systemd, ${workerDir ? "file transport" : "--pipe"}, unit=${unitId}${background ? `, one-shot CPUWeight=${WORKER_BACKGROUND_CPU_WEIGHT}` : ""}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
     );
 
     // The child runs on a minimal, constructed env (allowlist below) for two
@@ -1162,6 +1275,18 @@ export class ClaudeCodeWorker extends EventEmitter {
         cleanEnv[key] = v;
       }
     }
+    // FORK 2026-10-29: TC_RPC, the lean plan-call client (bin/tc-rpc.mjs, prompts/plan-tools.md).
+    // It rides on the gateway URL and token just forwarded, so it is decided here, from the env the
+    // child really gets.
+    const tcRpc = tcRpcEnvFor(cleanEnv, resolveTcRpcPath());
+    if ("TC_RPC" in tcRpc) {
+      cleanEnv.TC_RPC = tcRpc.TC_RPC;
+    } else if (!tcRpcOffLogged) {
+      tcRpcOffLogged = true;
+      log.info(
+        `[tc-rpc] lean plan-call client off: ${tcRpc.off}; plan calls use "openclaw gateway call"`,
+      );
+    }
     // CLAUDECODE=1 is also set by interactive CC on every child shell; harmless
     // to set for the subprocess. (Not strictly necessary for billing — the
     // OPENCLAW_* strip is what matters — but keeps the subprocess's env close
@@ -1196,6 +1321,22 @@ export class ClaudeCodeWorker extends EventEmitter {
     for (const [k, v] of Object.entries(thalamusExtras.env)) {
       if (cleanEnv[k] === undefined) cleanEnv[k] = v;
     }
+    // FORK 2026-11-03 (THALAMUS seat routing, claude-seats.ts): a worker the pool placed on another
+    // Claude seat runs on that seat's token. The bridge reads it from the gateway's own auth store;
+    // the seam's provider never carries a credential. No token readable: stay on the primary login.
+    this.seat = PRIMARY_SEAT;
+    if (this.params.claudeSeat && this.params.claudeSeat !== PRIMARY_SEAT) {
+      const token = await seatToken(this.params.claudeSeat);
+      if (token) {
+        cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
+        this.seat = this.params.claudeSeat;
+      } else {
+        log.warn(
+          `[claude-seat] ${this.sessionKey}: no token for ${this.params.claudeSeat}; staying on the primary login`,
+        );
+      }
+    }
+    log.info(`[claude-seat] ${this.sessionKey}: spawning on ${this.seat}`);
     // FORK 2026-05-29: pin the output-token ceiling PER MODEL so a paid
     // response is never silently truncated by a low CLI default. The value
     // comes from the active model's `maxOutputTokens` (defaults.ts, single
@@ -1475,6 +1616,9 @@ export class ClaudeCodeWorker extends EventEmitter {
       }
       this.lastStdoutAt = Date.now();
       this.observeCallBoundary(parsed);
+      if (parsed.type === "rate_limit_event") {
+        noteSeatLine(this.seat, parsed);
+      }
       if (parsed.type === "system" && (parsed as { subtype?: string }).subtype === "init") {
         const sid = (parsed as { session_id?: string }).session_id;
         if (typeof sid === "string") {
@@ -1848,6 +1992,32 @@ export class ClaudeCodeWorker extends EventEmitter {
    * Callers should subscribe to "stream_line" events BEFORE calling send()
    * to capture in-flight assistant/thinking blocks.
    */
+  /**
+   * FORK 2026-11-13 (bug-log.md `fresh-session-no-recap`): the block for the front of this turn's prompt when the
+   * resume guard started a new session for a chat that has a conversation; null on every other turn. Owed once, to
+   * the first prose turn that can build it. Never throws: a recap that fails must not cost the turn its prompt.
+   */
+  private takeFreshStartRecap(params: WorkerTurnParams): string | null {
+    const why = this.freshStart;
+    if (!why || !params.freshRecap) {
+      return null;
+    }
+    this.freshStart = null;
+    try {
+      const recap = params.freshRecap(why);
+      const block = recap && recap.trim() ? recap : null;
+      log.info(
+        `[fresh-start-recap] sessionKey=${this.sessionKey} reason=${why.reason} recap.len=${block ? block.length : 0}`,
+      );
+      return block;
+    } catch (err) {
+      log.warn(
+        `[fresh-start-recap] sessionKey=${this.sessionKey} could not build the recap, the prompt goes without it: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
   send(params: WorkerTurnParams): Promise<CcStreamStdoutResult> {
     return new Promise((resolve, reject) => {
       const task = async () => {
@@ -1946,7 +2116,11 @@ export class ClaudeCodeWorker extends EventEmitter {
         if (cliCommand === null) {
           const moralCodePrefix = this.pendingMoralCodePrefix;
           this.pendingMoralCodePrefix = null;
-          content = moralCodePrefix ? `${moralCodePrefix}\n\n${params.userText}` : params.userText;
+          // FORK 2026-11-13 (bug-log.md `fresh-session-no-recap`): a session the resume guard started new holds
+          // none of the chat, so this prompt carries the chat's last turns in front. Null on every other turn.
+          const recap = this.takeFreshStartRecap(params);
+          const prompt = recap ? `${recap}\n\n${params.userText}` : params.userText;
+          content = moralCodePrefix ? `${moralCodePrefix}\n\n${prompt}` : prompt;
         } else {
           content = cliCommand;
           const name = cliCommand.split(/\s/, 1)[0];

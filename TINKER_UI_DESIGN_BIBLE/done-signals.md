@@ -35,6 +35,8 @@ verify:
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'import re; a=open("tinker-ui/src/app.ts").read(); r=open("tinker-ui/src/run-state.ts").read(); assert "export function sessionJobActivity(" in r and "export function jobIsFresh(" in r, "run-state.ts lost the job lane (sessionJobActivity, jobIsFresh): a background job no longer reads as busy, or reads as busy with no freshness bound (done-signals.md row 11)"; m=re.search(r"function tabsRunningNow\(\)[\s\S]*?\n\}", a); assert m and "sessionJobNow(" in m.group(0), "the tab strip no longer asks the job lane: a chat with a running job is dark in the strip (row 11)"; s=re.search(r"\nfunction renderSessionRow\([\s\S]*?\n\}", a); assert s and "sessionJobNow(" in s.group(0), "the sessions row no longer asks the job lane (row 11)"; w=re.search(r"\nfunction sendWouldDefer\([\s\S]*?\n\}", a); assert w and "sessionJobNow" not in w.group(0) and "Census" not in w.group(0), "sendWouldDefer reads the job lane: a chat with a running job would queue every prompt behind it, and a job is display-only (row 11)"; assert len(re.findall(r"document\.title\s*=", a)) == 1 and re.search(r"function refreshDocTitle\([\s\S]{0,1500}document\.title = next", a), "document.title has a second writer: the window title comes from refreshDocTitle alone, on the one clock (row 11)"'
   - name: §2c — a finished turn the owner has not seen leaves its tab unread until he looks; the one clock absorbs the chat in view, the stamps survive a reload, a Fractal counts (FORK 2026-10-27)
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'import re; a=open("tinker-ui/src/app.ts").read(); c=re.search(r"function activityTick\(\)[^{]*\{(.*?)\n\}", a, re.S); assert c and "refreshTabSeen()" in c.group(1) and "refreshDocTitle()" in c.group(1), "the one clock no longer absorbs the chat in view or refreshes the title: an open chat can stay unread, a finished job can keep the title spinning (done-signals.md §2c)"; f=re.search(r"function activityFingerprint\(\)[\s\S]*?\n\}", a); assert f and "unreadTabIds()" in f.group(0), "the unread set left the activity fingerprint: a chat turning unread waits for the 5 s backstop to show (§2c)"; n=re.search(r"function noteFractalSideChatEvent\([\s\S]*?\n\}", a); assert n and "noteChatFinal(" in n.group(0), "a finished Fractal no longer marks its chat unread (§2c)"; assert "getChoice(TAB_SEEN_CHOICE" in a and re.search(r"setChoice\(\s*TAB_SEEN_CHOICE", a), "the seen stamps are no longer in ui-state: a reload forgets every unread chat (§2c)"; t=open("tinker-ui/src/tab-attention.ts").read(); assert "export function isUnread(" in t and "final > rec.s" in t, "tab-attention.ts isUnread no longer reads unread as final > seen (§2c)"'
+  - name: §2c — a chat read on one device stops glowing on the other; tinker-prod-ui merges tab:seen per chat, pushes a raised stamp to every open page of the desk and sends the stamps when a stream connects, and the page adopts them from the push and from the re-sync read (FORK 2026-11-14, bug unread-glow-per-device)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'mergeSeenMaps(seenBefore, parseSeenMap(snapshot.choices[TAB_SEEN_CHOICE]))' scripts/tinker-prod-ui.mjs && grep -qF 'if (raised.length > 0) pushTabSeen(seatId, seenAfter, raised, req);' scripts/tinker-prod-ui.mjs && grep -qF 'if (Object.keys(seen).length > 0) res.write(tabSeenEvent(seen));' scripts/tinker-prod-ui.mjs && grep -qF 'uiEventStream = uiEvents;' tinker-ui/src/app.ts && grep -qF 'uiEventStream?.addEventListener("tab-seen"' tinker-ui/src/app.ts && grep -qF 'adoptTabSeen(server.choices[TAB_SEEN_CHOICE]);' tinker-ui/src/app.ts && grep -qF 'export function mergeSeenMaps(' tinker-ui/src/tab-attention.ts
 ---
 
 # Done-signals — the "is the turn/task finished?" methodology
@@ -245,16 +247,28 @@ more fact: when the owner last looked. tab-attention.ts holds the rule; app.ts b
 - **Unread ⇔ final > seen.** A chat never seen before is seeded at "now": nothing older is news.
 - **Durable:** ui-state choice `tab:seen` (ui-persistence.md id registry), pruned to the open tabs. A
   turn that ends while no page is open is unread on the next load; a reload forgets nothing.
+- **Shared between devices (FORK 2026-11-14, bug `unread-glow-per-device`):** the laptop and the phone
+  write one desk file, and a chat read on one stops glowing on the other within a second, with no
+  reload. tinker-prod-ui MERGES `tab:seen` on every write, per chat the later `s` and the later `f`
+  (both only rise, so no stale page can lower one, like the closed-tab tombstones), keeps the 200
+  chats seen last, and pushes a write that raised a stamp to every open page of the desk as a
+  `tab-seen` event on `/api/ui-events` (the build stream; one stream per page, so the census still
+  counts pages). A stream that connects gets the desk's stamps at once, and the live tab re-sync's
+  file read (focus, visible, every 20 s) carries them too, for a stream that slept. The page adopts
+  them in memory only (`adoptTabSeen`, `mergeSeenMaps`): the file already holds them. Journal:
+  `[ui-state] tab-seen raised [<keys>] → N open page(s)`.
 - **Surfaces**, all on the one trigger (it is in `activityFingerprint` and the tab signature): a still
   blue dot on the tab and the title at full text colour, the same dot on the sessions row of an open
   tab, a dot on the phone list row and on the phone header while it is another chat's, and "(n)" in
   front of the window title while the window is hidden or not focused. No motion: motion means working.
 
-Known limits, stated so nobody mistakes them for bugs: the stamps sync between devices only through
-ui-state's file, read at load, so a result read on the phone stays unread on an open laptop page until
-that page reloads; and a Fractal fired by ANOTHER page (the phone's) cannot be attributed by this one,
-because a `:fractal:` key names the prompt run, not the chat. Both decay safely (a dot too many,
-never a lost result).
+Known limits: a page cannot attribute a Fractal that ANOTHER page started (the phone's), because a
+`:fractal:` key names the prompt run, not the chat. Since 2026-11-14 the page that started it writes
+its `f` stamp into the shared map, so the other devices show the mark through the sharing above; only
+a Fractal whose starting page closed before it ended leaves no mark anywhere (read from the code
+path, not yet seen live). And the Vite dev server's `/api/ui-state` still replaces `tab:seen` whole
+(its page opens no event stream), so the sharing is production only. Both decay safely (a dot too
+few or too many, never a lost result).
 
 ## 3. How prefrontal derives the indicator (sequence, not mechanics)
 
@@ -308,6 +322,7 @@ Use this as the index from _symptom_ to _the disagreeing signal_:
 | Deferred prompts jump above the answer mid-turn; the tab goes dark while its turn still runs | a disposition `final` (#10) read as a SESSION terminal (C2)                                                                                                                        | app.ts: the `terminalScope?.kind === "prompt"` early return must sit above `sessionEndedAt.set`; this file's `row 10 / U3` verify |
 | A tab glows gold with ⚙ but no job is running, or a running job leaves its tab dark          | the job census (#11): a list stale or failing, or the job's worker silent                                                                                                          | console `[longjob-rows] job census`; `curl -s 127.0.0.1:18793/api/longjob/list?all=1`; the job's `state.json` `updatedAt`         |
 | A tab stays unread after it was opened, or a finished turn leaves no dot                     | §2c stamps: `localStorage["tinker.uiChoices"]` `tab:seen` vs the row's `endedAt`                                                                                                   | `JSON.parse(JSON.parse(localStorage["tinker.uiChoices"])["tab:seen"])` beside `sessions.list` `endedAt`                           |
+| A chat opened on one device still glows on the other                                         | §2c sharing: the write did not raise the desk file's stamp, or its push reached no page of that desk                                                                               | `journalctl --user -u tinker-prod-ui \| grep tab-seen` (each raise and how many open pages it reached)                            |
 
 ## 6. Standard methodology — use this to find bugs before they surface
 

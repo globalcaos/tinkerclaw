@@ -72,6 +72,55 @@ describe("evidence releases a hold", () => {
   });
 });
 
+describe("an open proof names what releases the next try (holdNeeds, 2026-10-29)", () => {
+  it("the next try of the same step sees the open hold's needs; an owner release settles it as the owner's", async () => {
+    const store = new AmygdalaStore(":memory:");
+    let n = 0;
+    const seen: unknown[] = [];
+    let step: "hold" | "owner" = "hold";
+    const spy: Family = {
+      id: "safety",
+      questionsFor: () => [],
+      decide: (_seam, s) => {
+        seen.push(s.holdNeeds.value);
+        return step === "hold"
+          ? {
+              response: { ...proof, needs: ["user-request" as const] },
+              drivers: [],
+              reasonCode: "table-d3-low",
+            }
+          : { response: { kind: "proceed" }, drivers: [], reasonCode: "evidence-released-owner" };
+      },
+    };
+    const deps: DecideDeps = {
+      jev: { ask: async () => [] },
+      book: new QuestionBook({ seedDir }),
+      store,
+      contexts: new TurnContexts({ store, now: () => 1000 }),
+      families: [spy],
+      config: { mode: "enforce", failClosedOnLevel3: false },
+      floorActive: () => true,
+      now: () => 1000,
+      idGen: () => `n${++n}`,
+    };
+    const held = await decide(deps, input);
+    expect(held.decision.response.kind).toBe("proof");
+    expect(seen[0]).toBeNull();
+
+    step = "owner";
+    const released = await decide(deps, input);
+    expect(seen[1]).toEqual(["user-request"]);
+    expect(released.decision.response.kind).toBe("proceed");
+    expect(store.listInterventions({ state: "open" })).toHaveLength(0);
+    expect(store.listInterventions({ state: "released" })).toHaveLength(1);
+    // His click is filed as his: the stored reason code ends in `[]`.
+    const db = (store as unknown as { db: { prepare(q: string): { get(): unknown } } }).db;
+    expect(db.prepare("SELECT released_by FROM holds").get()).toMatchObject({
+      released_by: "owner",
+    });
+  });
+});
+
 describe("a per-context cut-off reaches the families through `asked`", () => {
   it("cutoffFor replaces the question's own cut-off before any family sees it", async () => {
     const store = new AmygdalaStore(":memory:");

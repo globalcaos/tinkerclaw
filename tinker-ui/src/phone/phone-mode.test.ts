@@ -167,6 +167,33 @@ describe("initPhoneMode", () => {
     expect(ctl.back()).toBe(false);
   });
 
+  // 2026-11-12: the handler that opens a reader link in a layer ran on a wide page too. The layer has no
+  // close control there, so the chat was covered and the page was left with the browser's Back button.
+  const clickViewerLink = (): MouseEvent => {
+    const a = document.createElement("a");
+    a.href = "/pdf/viewer/web/viewer.html?file=%2Fpdf%2Fpapers%2Fopen%2Fx%2Fa.pdf";
+    a.target = "_blank";
+    document.body.appendChild(a);
+    const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+    a.dispatchEvent(ev);
+    return ev;
+  };
+
+  it("on a wide desktop a click on a reader link is left to open its new tab", () => {
+    ctl = initPhoneMode(deps);
+    const ev = clickViewerLink();
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.getElementById("pdf-reader-layer")).toBeNull();
+  });
+
+  it("in the phone layout a click on a reader link opens the reader layer", () => {
+    mq.matches = true;
+    ctl = initPhoneMode(deps);
+    const ev = clickViewerLink();
+    expect(ev.defaultPrevented).toBe(true);
+    expect(document.getElementById("pdf-reader-layer")).not.toBeNull();
+  });
+
   it("switches on and off live with the media query (fold / unfold)", () => {
     ctl = initPhoneMode(deps);
     mq.matches = true;

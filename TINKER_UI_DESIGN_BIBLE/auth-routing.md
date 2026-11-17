@@ -2,13 +2,15 @@
 file: auth-routing.md
 purpose: Which model gets picked, in what order, when does fallback fire, when is billing gated
 audience: AI
-last_verified: 2026-10-09
+last_verified: 2026-11-13
 last_verified_commit: HEAD
 single_owner: yes — model routing + auth profile order + billing logic live here
 see_also: config-shape.md (where these keys are read), failures.md (M1 idle watchdog, billing failures)
 verify:
   - name: an Auto turn's effort comes from the task, capped by the dial stop, with a kill switch (2026-10-09)
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'export function taskEffort' src/shared/thalamus-effort.ts && grep -qF 'taskEffort({' src/auto-reply/reply/model-selection.ts && grep -qF 'OPENCLAW_THALAMUS_TASK_EFFORT' src/auto-reply/reply/model-selection.ts
+  - name: THALAMUS in one place (2026-11-13) — the smart band keeps the stop's effort, a rival moves the stop by any measured lead at the top stop and by ten points below it, every caller of routeCall opens the reserved set by one rule, the decision that ran is appended to turn-decisions.jsonl, and pay-per-call Google is gated to second opinions when no subscription family survives
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'e=open("src/shared/thalamus-effort.ts").read(); f=open("src/shared/thalamus-frontier.ts").read(); r=open("src/shared/thalamus-route-call.ts").read(); m=open("src/auto-reply/reply/model-selection.ts").read(); t=open("src/infra/thalamus-turn-telemetry.ts").read(); sh=open("extensions/tinkerclaw-thalamus/src/shadow.ts").read(); sc=open("extensions/tinkerclaw-thalamus/src/scheduler.ts").read(); sup=open("src/shared/thalamus-supply.ts").read(); pl=open("src/shared/thalamus-plan.ts").read(); chk=open("extensions/tinkerclaw-thalamus/src/check.ts").read(); assert "export function stopEffortStands" in e and "smartEffortStands ? rungEffort" in m, "the smart band lowers the stop effort by the task again (auth-routing.md THALAMUS in one place)"; assert "export function suggestionMoves" in f and "topStop ? gain > 0 : gain >= DOMAIN_SWITCH_MIN_GAIN" in f and "(1 + SUGGESTION_PRIOR)" not in f and "(1 + SUGGESTION_PRIOR)" not in r, "the 10 % relative prior is back: nothing can beat a stop above p0.91 (auth-routing.md THALAMUS in one place)"; assert "export function reservedReasonAtStop" in r and "reservedReasonAtStop(" in sh and "reservedReasonAtStop(" in sc and "board.suggestion" in sc and "board.cooling" in sc, "the per-call record or the sub-agent pricing no longer sees the stop, cooling store and the reserved set (auth-routing.md THALAMUS in one place)"; assert "export function recordThalamusTurnDecision" in t and "recordThalamusTurnDecision(sessionKey, decision)" in t, "the turn decision that ran is no longer kept (auth-routing.md THALAMUS in one place)"; assert "google: \"metered\"" in sup and "\"google-gemini-cli\": \"google\"" in sup and "SECOND_OPINION_ONLY_SUPPLIES" in sup and "secondOpinionOnly" in m and "secondOpinionOnly" in pl and "secondOpinionRungs" in chk and "allowSecondOpinionOnly" in sc, "Google is no longer metered and gated to last-resort second opinions across plan, check and scheduler (auth-routing.md THALAMUS in one place)"'
   - name: anthropic auth order is cli-gm only (subscription, not metered api)
     cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["auth"]["order"]["anthropic"] == ["anthropic:cli-gm"]'
   - name: primary model is a flat-rate subscription model (cli-gm / claude-code), never a metered api model
@@ -97,7 +99,7 @@ Historical snapshot (2026-06-10; row 1 is superseded, the live primary is derive
 - **Driver:** upstream ollama provider.
 - **Auth profile:** `ollama:default` (`apiKey: "ollama-local"`).
 - **Base URL:** `http://127.0.0.1:11434`.
-- **Tier:** free / local. Currently used only for `mxbai-embed-large` (memorySearch embeddings), not for chat.
+- **Tier:** free / local. Used only for embeddings (memory search and the consumers that read its config), not for chat. Which model runs, if any, is decided per machine by `openclaw embedder fit` (embedder-fit.md), not by the routing rules in this file; a model set in `agents.defaults.memorySearch` is a pin the fit never changes. Embedding calls go to `memorySearch.remote.baseUrl`, else `models.providers.ollama.baseUrl`, else Ollama's default (`resolveOllamaEmbeddingBaseUrl`, `src/memory/embeddings-ollama.ts`). On the reference host Ollama runs in a Docker container capped at 2 CPU / 3 GiB.
 
 ## Thinking-level clamp — unsupported levels clamp, never reject (cross-model, FORK 2026-06-24)
 
@@ -147,6 +149,38 @@ Configured in `agents.defaults.models[<id>].billing` + `.monthlyCapUsd`. Knowled
 ### Rate-limit header capture (2026-04-03)
 
 Anthropic returns rate-limit headers; the fork captures these and uses them to project the seven-day-spent percentage for the billing gate. See bible §11.x.
+
+## THALAMUS — what it does, in one place (2026-11-13) — OWNED BY THIS FILE
+
+_Written 2026-11-13 from a five-part audit of the code, the config and seven days of live decisions, after the owner asked what Thalamus actually does. The sections below this one (v2, v4) and `tinker-ui.md` §5.8T/U/AD/AE hold history and detail; where they disagree with this section, this section is the current truth. Change it when the code changes: its verify line reads the code._
+
+**What it is.** Thalamus is the algorithm that chooses the model and the thinking effort when the model picker is on Auto. A model picked by hand is never replaced.
+
+**What the owner sets.**
+
+- **The bias**, a dial of seven positions kept in `~/.openclaw/orca-bias.json` (`biasIdx` 0 to 6). Positions 0 to 2 are the Budget band, 3 is Default, 4 to 6 are Smart (`src/infra/thalamus-tier-defaults.ts`).
+- **Three stops**, one per band, each a model and an effort, kept in `~/.openclaw/thalamus-tier-defaults.json` and set from the picker (right-click a model). The stop of the band in force is where every decision starts.
+
+**What happens on a turn (this part acts).** `createModelSelectionState` in `src/auto-reply/reply/model-selection.ts`, once, before the turn starts:
+
+1. It reads the bias, the stop of that band, the board (which models are reachable, their price, quota and cooling) and the kind of work, from a keyword read of the prompt (`classifyTaskDomain`; no cue means `general`).
+2. It starts from the stop. The stop's model runs unless it cannot (a limit, a cooling supply, a context too small, an allowlist), or another model is measured better at this kind of work (`suggestionMoves` in `src/shared/thalamus-frontier.ts`). At the top position (6) any measured lead moves the turn. Below it the lead must be 10 percentile points. The measure is the per-domain strength table `src/shared/domain-strength.generated.ts`, built nightly from public benchmarks, the same table the AI analysis page shows. A `general` task, or a stop with no measured row for the domain, stays on the stop.
+3. A rival must also sit inside the band: at Smart it is at least as smart as the anchor model; below Smart it also fits a cost cap of 5 times the stop's cost.
+4. **Effort.** In the Smart band the stop's effort stands (`stopEffortStands`, `src/shared/thalamus-effort.ts`). In Default and Budget the task chooses the effort from its difficulty, and the stop's effort is the ceiling (`taskEffort`).
+5. **Pay-per-call Google gate (2026-11-13).** Google (`google/*`) has no subscription (`SUPPLY_KIND.google = "metered"`) and bills the owner per call. Thalamus (`SECOND_OPINION_ONLY_SUPPLIES` → `supply-metered` veto) and the pre-Thalamus quota substitution never route primary turns, fallback chains, sub-agent leaves, digests, rewrites or refusal retries to Google. Google is reached only when picked by hand, when called explicitly for image generation (Nano Banana), or as a cross-family second opinion (`critic` in `thalamusPlan`, `check` in `extensions/tinkerclaw-thalamus/src/check.ts`) strictly when no subscription family outside the builder's survives (`secondOpinionRungs`). `OPENCLAW_THALAMUS_ALLOW_GOOGLE=on` lifts the gate.
+6. The decision is applied to the turn, shown on the page, and appended to `~/.openclaw/data/thalamus-v4/turn-decisions.jsonl` (one line per auto turn: model, effort, band, domain, reason).
+
+**What happens for a sub-agent (this part acts when no model is named).** A spawn or a fan-out unit with no model asks the leaf resolver (`extensions/tinkerclaw-thalamus/src/leaf-resolver.ts` → `scheduler.priceUnit`). Since 2026-11-13 it starts from the same stop and may use the reserved top model at the top position (`reservedReasonAtStop`). It is confined to `claude-code` models (`orchestrate.allowedLeafProviders`). A model named by the caller is never replaced, and most fan-out scripts name one.
+
+**What only records (this part does not act).** The per-call router (`routeCall`, v4) runs on every model call and writes a row to `thalamus.sqlite` `decisions`. Its pick is never applied: `applied` is 0 on all 39,516 rows up to 2026-11-13, and `enforce.perCall` is a switch with no code behind it. `why-model.py` printed these rows, which is why it showed a model that never ran. On a Claude Code turn there is one such row per turn, because the rounds of a turn run inside the Claude Code process.
+
+**What is not built.**
+
+- **A model change between the rounds of one turn.** On the Claude Code lane the worker's model is fixed when it starts. Two ways exist and neither is wired: a `set_model` control request that the installed Claude Code accepts (unproven between rounds), and sub-agent definitions with their own models (`enforce.workerAgents`, with nothing supplying them).
+- **A model outside Claude for a step or a sub-agent.** Grok, GPT, Gemini and Kimi run only as the whole turn's model.
+- **A Budget stop.** The stops file held no `budget` entry on 2026-11-13. With none, the Budget band falls back to the cheapest model within a set distance of the anchor.
+
+**What the numbers say (2026-11-13).** Fable 5.2, the Smart stop, leads every domain it is measured in except office work (Gemini 4 Carbon, 3 points ahead), science (22 points behind the leader) and a tie in maths. So with the bias on Smart, honest routing keeps Fable on most turns. Many colours in the EEG would come from the Default and Budget bands and from sub-agents, not from Smart.
 
 ## THALAMUS v2 — the supply axis (2026-09-04) — OWNED BY `tinker-ui.md` §5.8U
 

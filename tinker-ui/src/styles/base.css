@@ -1715,46 +1715,6 @@ code.fs-link.fs-link-error {
   color: var(--purple);
   font-style: italic;
 }
-/* FORK 2026-10-10 (plan Phase 1.4): one-tap reaction on the purple line. Quiet until hovered or pressed. */
-.msg .voice-react {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-  opacity: 0.6;
-  transition: opacity 0.15s;
-}
-.msg:hover .voice-react,
-.msg .voice-react:has(.is-on),
-.msg .voice-react.is-error {
-  opacity: 1;
-}
-.msg .voice-react.is-sending {
-  opacity: 0.6;
-  pointer-events: none;
-}
-.voice-react-chip {
-  font: inherit;
-  font-size: 10px;
-  line-height: 1;
-  padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.voice-react-chip:hover {
-  border-color: var(--purple);
-  color: var(--text);
-}
-.voice-react-chip.is-on {
-  border-color: var(--purple);
-  background: color-mix(in srgb, var(--purple) 22%, transparent);
-  color: var(--text);
-}
-.msg .voice-react.is-error .voice-react-chip {
-  border-color: var(--red);
-}
 .msg pre {
   background: var(--surface);
   padding: 4px 6px;
@@ -2568,6 +2528,81 @@ blockquote:has(> .bq-copy) {
 }
 .chat-input button.queue:hover {
   background: #b47d04;
+}
+/* FORK 2026-11-03: the record button beside Send, and the chip holding the recording that goes
+   with the next message (app.ts renderRecorder). */
+.chat-input button.rec-btn {
+  padding: 0 10px;
+  background: rgba(30, 43, 26, 0.7);
+  border: 1px solid rgba(75, 83, 56, 0.5);
+  color: #dce8cc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-input button.rec-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+.chat-input button.rec-btn:hover {
+  background: rgba(60, 80, 45, 0.9);
+}
+.chat-input button.rec-btn.recording {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  50% {
+    box-shadow: 0 0 0 4px rgba(220, 60, 60, 0.35);
+  }
+}
+.rec-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background-color: #3c4330;
+  color: #dce8cc;
+  font-size: 12px;
+}
+.rec-chip[hidden] {
+  display: none;
+}
+.rec-chip .rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: rec-blink 1s steps(2, start) infinite;
+}
+@keyframes rec-blink {
+  to {
+    visibility: hidden;
+  }
+}
+.rec-chip audio {
+  height: 28px;
+  max-width: 260px;
+}
+.rec-chip .rec-discard {
+  background: none;
+  border: none;
+  color: #dce8cc;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+}
+.rec-chip .rec-discard:hover {
+  color: var(--red);
+}
+.rec-chip .rec-notice {
+  flex-basis: 100%;
+  color: #f2c879;
 }
 
 /* FORK 2026-08-18: show background work as a progress indicator with a stop button, so it can
@@ -4522,6 +4557,19 @@ blockquote:has(> .bq-copy) {
     width 0.3s ease,
     background-color 0.3s ease;
 }
+/* FORK 2026-11-14 (the architect): a Claude row with a second subscription splits each bar in two
+   halves, the account in use on top and the one in reserve below, lighter. Halves of 2 px stay
+   sharp on a 1x screen, so a split bar is 4 px tall instead of 3. */
+.usage-bar.usage-bar-split {
+  height: 4px;
+}
+.usage-bar-split > .usage-bar-fill {
+  height: 50%;
+  border-radius: 0;
+}
+.usage-bar-split > .usage-bar-reserve {
+  opacity: 0.55;
+}
 /* FORK 2026-07-27 (the architect): the right-most column is now the EEG cost stroke
    (thickness = real €/Mtok), not a text price. Fixed width so every row's bars
    end at the same x and the strokes line up as a comparable ladder. */
@@ -4637,6 +4685,16 @@ blockquote:has(> .bq-copy) {
 .tab.tab-gantt.tab-active svg {
   opacity: 1;
 }
+/* FORK 2026-11-14: its plan file is missing. The tab stays, greyed; the chart it opens says where
+   the plan was. */
+.tab.tab-gantt.tab-gantt-missing svg {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+.tab.tab-gantt.tab-gantt-missing:hover svg,
+.tab.tab-gantt.tab-gantt-missing.tab-active svg {
+  opacity: 0.6;
+}
 /* The chart it opens covers the chat area (messages and composer); the master chat keeps running
    underneath with its scroll intact. Scoped under .chat-area so it outranks `.chat-area > *`
    (position: relative) on specificity, not on source order. */
@@ -4679,7 +4737,14 @@ blockquote:has(> .bq-copy) {
   pointer-events: none;
   flex: 0 0 2px;
 }
+/* FORK 2026-11-03 — the × floats over the end of the title instead of taking a flex slot, so
+   hovering never shortens the text. Its own backing hides the letters under it. */
 .tab-close {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--surface);
   font-size: 13px;
   opacity: 0;
   transition: opacity 0.12s;
@@ -4855,11 +4920,68 @@ blockquote:has(> .bq-copy) {
 /* FORK 2026-10-27 — JOB: no turn, but a background job of this chat runs. The SAME glow as
    thinking (.tab-thinking, coloured in the job rows' gold by app.ts) plus a gear before the title,
    so it reads as the same family and still says which kind of busy it is. */
-.tab-job-mark {
-  flex: 0 0 auto;
-  font-size: 11px;
+/* FORK 2026-11-03 — a background job turns a gold gear slowly BEHIND the tab's icon (was a still gear
+   in front of the title). */
+.tab-job-gear {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
   line-height: 1;
   color: #c9a86a;
+  opacity: 0.55;
+  z-index: 0;
+  pointer-events: none;
+  animation: tab-job-gear-spin 6s linear infinite;
+}
+.tab-icon-glyph {
+  position: relative;
+  z-index: 1;
+}
+@keyframes tab-job-gear-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* FORK 2026-11-03 — waiting for the model's first word: an hourglass behind the icon that rests,
+   then flips over, like one being turned by hand. */
+.tab-wait-glass {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  opacity: 0.6;
+  z-index: 0;
+  pointer-events: none;
+  animation: tab-wait-glass-flip 10s ease-in-out infinite;
+}
+@keyframes tab-wait-glass-flip {
+  0%,
+  85% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(180deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-job-gear,
+  .tab-wait-glass {
+    animation: none;
+  }
 }
 
 /* FORK 2026-10-27 — UNREAD: a turn finished here and the architect has not looked yet. Calm on purpose: a
@@ -4867,6 +4989,33 @@ blockquote:has(> .bq-copy) {
    brought up to full text colour. Clears when the tab is opened in a visible window. */
 .tab.tab-unread .tab-title {
   color: var(--text);
+}
+/* FORK 2026-11-03 — the icon is its own span; an unread result glows green under it (was a blue dot). */
+.tab-icon {
+  flex: 0 0 auto;
+  position: relative;
+  line-height: 1;
+}
+.tab.tab-unread .tab-icon {
+  filter: drop-shadow(0 0 3px rgba(63, 185, 80, 0.9));
+}
+.tab.tab-unread .tab-icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 16px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: #3fb950;
+  filter: blur(2px);
+  opacity: 0.9;
+}
+/* FORK 2026-11-03 — a frozen (hand-locked) name reads in a cool ice blue; an auto name that keeps
+   refreshing keeps the normal text colour. */
+.tab.tab-frozen .tab-title {
+  color: #8fc1e3;
 }
 .tab-unread-dot,
 .session-unread-dot {
@@ -12866,6 +13015,39 @@ td.sd-sorted {
 .toast-error {
   border-color: var(--red);
 }
+/* FORK 2026-11-12: the notice after a reload (showReloadNotice): the upgrade in bold, who asked under it,
+   and a dismiss button. It stays until dismissed, so it takes clicks, unlike a passing toast. */
+.toast-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  pointer-events: auto;
+}
+.toast-notice-what {
+  font-weight: 600;
+}
+.toast-notice-who {
+  margin-top: 2px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.toast-notice-x {
+  flex: none;
+  margin: -4px -8px -4px 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.toast-notice-x:hover {
+  opacity: 1;
+  background: var(--surface-2, rgba(128, 128, 128, 0.18));
+}
 /* FORK 2026-10-03: who put an injected prompt in the chat, before a word of it, with the agent's identity. */
 .msg.system-inject .inj-who {
   display: inline-block;
@@ -13033,4 +13215,60 @@ td.sd-sorted {
   cursor: pointer;
   color: var(--muted);
   font-size: 11px;
+}
+
+/* 2026-11-03: scored models nothing routes to — greyed, unpickable, hover card with the setup link. */
+.model-btn-unroutable {
+  opacity: 0.42;
+  cursor: help;
+  border-style: dashed;
+}
+.model-btn-unroutable:hover {
+  opacity: 0.7;
+}
+.model-row-unroutable {
+  opacity: 0.45;
+  cursor: help;
+}
+.model-row-unroutable:hover {
+  opacity: 0.75;
+}
+.model-unroutable-tag {
+  margin-left: 4px;
+  padding: 0 3px;
+  border: 1px dashed var(--muted);
+  border-radius: 3px;
+  font-size: 8px;
+  color: var(--muted);
+  cursor: help;
+  white-space: nowrap;
+}
+.unroutable-card {
+  position: fixed;
+  z-index: 10000;
+  max-width: 280px;
+  padding: 7px 9px;
+  /* 2026-11-13 (the architect): every model hover is this one black card, no white background. */
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: #111;
+  color: #eee;
+  font-size: 11px;
+  line-height: 1.35;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.unroutable-card-name {
+  font-weight: 700;
+}
+.unroutable-card-note {
+  margin-top: 3px;
+}
+.unroutable-card-name + .unroutable-card-note {
+  color: #cfcfcf;
+}
+.unroutable-card-link {
+  display: inline-block;
+  margin-top: 5px;
+  color: #f0a63c;
+  font-weight: 700;
 }

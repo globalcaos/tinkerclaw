@@ -118,7 +118,24 @@ function isValidBase64(value: string): boolean {
   if (value.length === 0 || value.length % 4 !== 0) {
     return false;
   }
-  return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+  // A character loop, not a regex: on a multi-megabyte payload (a long voice recording) the regex
+  // engine overflows the stack and the whole send fails with a RangeError.
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 61 /* = */ && value.length - end < 2) {
+    end--;
+  }
+  if (end === 0) {
+    return false;
+  }
+  for (let i = 0; i < end; i++) {
+    const c = value.charCodeAt(i);
+    const ok =
+      (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47;
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function verifyDecodedSize(buffer: Buffer, estimatedBytes: number, label: string): void {
@@ -262,7 +279,16 @@ export async function parseMessageWithAttachments(
       }
 
       const providedMime = normalizeMime(mime);
-      const sniffedMime = normalizeMime(await sniffMimeFromBase64(b64));
+      const rawSniffedMime = normalizeMime(await sniffMimeFromBase64(b64));
+      // A browser voice recording is audio-only WebM (or MP4 on Safari), and file-type names both
+      // containers video/*. Keep the caller's audio/* when the container is the same one, or media
+      // understanding sends a voice note down the video path and it is never transcribed.
+      const sniffedMime =
+        providedMime?.startsWith("audio/") &&
+        rawSniffedMime?.startsWith("video/") &&
+        rawSniffedMime.slice("video/".length) === providedMime.slice("audio/".length)
+          ? providedMime
+          : rawSniffedMime;
       const labelMime = normalizeMime(mimeTypeFromFilePath(label));
       const trustedProvidedMime = shouldIgnoreProvidedImageMime({ sniffedMime, providedMime })
         ? undefined

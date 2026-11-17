@@ -1,7 +1,7 @@
 /**
  * Per-turn and per-session state (design doc §3 M9): notes already given, send-back counter, recent holds with goal
  * fingerprints, standing facts, the "hurry" flag. In memory, with the send-back counter mirrored to the store so a
- * gateway restart cannot let the agent be sent back more than twice.
+ * gateway restart cannot let the agent be sent back more than once.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -15,6 +15,8 @@ export interface TurnState {
   seenNotes: Set<string>;
   notesThisCall: number;
   sendBackAttempts: number;
+  /** Lines of this turn's command output and job reports (double-check, stop seam). Memory only: never stored or sent. */
+  outputEvidence: string[];
   /** Extra danger floor from precedents for this step (0 or 1). */
   precedentFloor: number;
   /** Tools denied wholesale after a second futility warning (design doc 5.4 "stop-task"). */
@@ -24,6 +26,15 @@ export interface TurnState {
   misreadingRisk: "low" | "medium" | "high";
   /** Open readings of the request and what the evidence says of each (second-opinion). */
   readings: { id: string; label: string; status: "open" | "confirmed" | "ruled-out" }[];
+  /**
+   * Is the request's reading settled (2026-11-13, second-opinion)? `open` from the screen flagging it with the
+   * conversation in view until two independent sources and the judge settle the reading the agent picked.
+   */
+  ambiguity: "none" | "open" | "settled";
+  /** The reading the agent said it acts on (`- pick:` line), when it has said one. */
+  readingPick?: string;
+  /** The `- source:` lines that checked out: a file this turn opened, or words found in the conversation. */
+  sourcesVerified: string[];
   /** Futility warnings already given this task; a second one stops the task (efficiency). */
   futilityWarnings: number;
   /** Path of the Claude Code transcript for this turn (Stop hook payload); double-check reads only its tail. */
@@ -45,11 +56,14 @@ export function newTurnState(sessionKey: string, turnId: string, sendBackAttempt
     seenNotes: new Set(),
     notesThisCall: 0,
     sendBackAttempts,
+    outputEvidence: [],
     precedentFloor: 0,
     stopTask: false,
     scheduledJobs: [],
     misreadingRisk: "low",
     readings: [],
+    ambiguity: "none",
+    sourcesVerified: [],
     futilityWarnings: 0,
     turnHeld: false,
     hurry: false,

@@ -13,7 +13,7 @@
 //
 // On when the viewport is narrow (max-width 820px), when the Android app marked the page
 // (html.jarvis-app), or with ?phone=1 (sticky for this browser tab; ?phone=0 clears it). It
-// toggles live, so folding and unfolding the Flip6 switches layouts without a reload. Off, it
+// toggles live, so folding and unfolding the flip phone switches layouts without a reload. Off, it
 // adds nothing visible: the elements it creates carry `hidden`, every rule in phone.css is
 // scoped under body.phone, and no node is moved until it switches on.
 //
@@ -45,6 +45,29 @@ export interface PhoneModeDeps {
   resetSession?(): void;
   /** True for the chat Zen Mail hands its card prompts to: its icon stands in for the title. */
   isZenTab?(id: string): boolean;
+  /** FORK 2026-11-03 — the desktop tab's look: icon apart from the words, frozen name, job, waiting. */
+  tabLook?(id: string): TabLook | null;
+}
+
+export type TabLook = {
+  icon: string;
+  words: string;
+  frozen: boolean;
+  job: boolean;
+  pending: boolean;
+};
+
+/** Icon (with the job gear or waiting hourglass behind it) and words, as the desktop tab draws them. */
+export function tabLookHtml(look: TabLook, escape: (s: string) => string): string {
+  const behind = look.job
+    ? `<span class="tab-job-gear" aria-label="background job">⚙</span>`
+    : look.pending
+      ? `<span class="tab-wait-glass" aria-label="waiting for the model">⏳</span>`
+      : "";
+  return (
+    `<span class="tab-icon">${behind}<span class="tab-icon-glyph">${escape(look.icon)}</span></span>` +
+    `<span class="phone-title-words">${escape(look.words)}</span>`
+  );
 }
 
 export const PHONE_MEDIA_QUERY = "(max-width: 820px)";
@@ -364,9 +387,12 @@ export function initPhoneMode(
     const activeTab = tabs.find((t) => t.id === activeId);
     const titleEl = header.querySelector<HTMLElement>(".phone-chat-title");
     if (titleEl) {
+      const look = activeTab ? deps.tabLook?.(activeTab.id) : null;
       if (activeTab && deps.isZenTab?.(activeTab.id))
         titleEl.innerHTML = zenTitleHtml(activeTab.title, esc);
+      else if (look) titleEl.innerHTML = tabLookHtml(look, esc);
       else titleEl.textContent = activeTab?.title ?? "Chat";
+      titleEl.classList.toggle("phone-frozen", Boolean(look?.frozen));
     }
     const dot = header.querySelector<HTMLElement>(".phone-run-dot");
     if (dot) {
@@ -398,11 +424,18 @@ export function initPhoneMode(
       const running = deps.isRunning(t.id);
       const c = running ? runColor(t.id) : null;
       const isActive = t.id === activeId;
+      const look = deps.isZenTab?.(t.id) ? null : (deps.tabLook?.(t.id) ?? null);
+      const unread = Boolean(deps.isUnread?.(t.id));
+      const rowCls =
+        (isActive ? " active" : "") +
+        (look && unread ? " phone-unread" : "") +
+        (look?.frozen ? " phone-frozen" : "");
       rows +=
-        `<div class="phone-sheet-row${isActive ? " active" : ""}" role="option" aria-selected="${isActive}" data-phone-tab="${esc(t.id)}">` +
+        `<div class="phone-sheet-row${rowCls}" role="option" aria-selected="${isActive}" data-phone-tab="${esc(t.id)}">` +
         `<span class="phone-run-dot${running ? " on" : ""}"${c ? ` style="--run:${esc(c)}"` : ""} aria-hidden="true"></span>` +
-        `<span class="phone-sheet-title">${deps.isZenTab?.(t.id) ? zenTitleHtml(t.title, esc) : esc(t.title)}</span>` +
-        (deps.isUnread?.(t.id)
+        `<span class="phone-sheet-title">${deps.isZenTab?.(t.id) ? zenTitleHtml(t.title, esc) : look ? tabLookHtml(look, esc) : esc(t.title)}</span>` +
+        // FORK 2026-11-03 — unread is a green glow under the icon now; the dot stays only where no icon is drawn.
+        (unread && !look
           ? `<span class="phone-unread-dot" aria-label="unread result"></span>`
           : "") +
         (deps.openTabMenu
@@ -762,6 +795,9 @@ export function initPhoneMode(
       return;
     }
     if (!/^\/pdf\/viewer\/web\/viewer\.html$/.test(u.pathname)) return;
+    // Phone layout only (2026-11-12): on a wide page this took the click too and laid the reader over the
+    // whole chat, where nothing closes it but the browser's Back button. There the link opens its new tab.
+    if (!active) return;
     if (u.host !== win.location.host && u.hostname !== win.location.hostname) return;
     e.preventDefault();
     e.stopPropagation();

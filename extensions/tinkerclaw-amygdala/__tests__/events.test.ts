@@ -133,7 +133,14 @@ describe("events", () => {
       state: "open",
     });
     expect(e).toMatchObject({ id: "iv1", kind: "hold", state: "open", cmd: "rm -rf ./x" });
+    expect(e?.sentence).toMatch(/^This .*\.$/);
+    expect(e?.sentence).not.toContain("rm -rf");
+    // One specific question for the Allow, and the hold's rule so the page can show its words (2026-11-03).
+    expect(e?.ask).toMatch(/^Allow deleting .+\?$/);
+    expect(e?.rule).toBe((decision.response as { ruleOrQuestion?: string }).ruleOrQuestion);
     expect(e?.chips).toContain("effect: delete");
+    // A hold's wait runs out; the Allow under the reply does not (2026-10-31).
+    expect(e?.grant).toMatch(/^JEV-/);
   });
   it("stepLabel truncates", () => {
     const long = buildSituation(

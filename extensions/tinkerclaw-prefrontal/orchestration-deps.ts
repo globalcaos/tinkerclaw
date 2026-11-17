@@ -47,7 +47,7 @@ const ADMIN_SCOPES = ["operator.admin"];
  * bill metered). Default = sonnet: a sensible, cheaper middle. Dynamic workflows are
  * a STANDING capability (not a max-effort tier), so the default should not be the
  * priciest model — a script picks `claude-code/claude-haiku-4-5` per-unit for cheap
- * parallel scanning (separate budget) and `claude-code/claude-fable-5-1` (the flagship)
+ * parallel scanning (separate budget) and `claude-code/claude-fable-5-2` (the flagship)
  * for hard reasoning or to break out of a going-in-circles fix loop, via agent({model})
  * (coerced to claude-code/* — see coerceClaudeCodeModel).
  */

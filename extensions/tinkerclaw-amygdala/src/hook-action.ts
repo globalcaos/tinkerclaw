@@ -19,6 +19,11 @@ export interface HookActionInput {
   decision: Decision;
   interventionId?: string;
   hard?: { rule: string; explanation: string };
+  /**
+   * The step is in a subagent's session, where nobody can answer a hold: refuse it now, the five-minute wait helps nobody.
+   * Only its last message reaches the agent that started it, so a send-back there asks for the whole reply again.
+   */
+  subagent?: boolean;
 }
 
 export function toHookAction(seam: Seam, i: HookActionInput): HookAction {
@@ -48,23 +53,37 @@ export function toHookAction(seam: Seam, i: HookActionInput): HookAction {
           }),
         };
       }
-      return waitAction(i.interventionId);
+      if (i.subagent) return { kind: "deny", reason: subagentHold(r.ruleOrQuestion) };
+      return waitAction(i.interventionId, r.ruleOrQuestion);
     case "ask":
-      return seam === "pre-tool" ? waitAction(i.interventionId) : { kind: "none" };
-    case "send-back":
-      return seam === "stop"
-        ? { kind: "block", reason: renderTemplate(r.templateId, r.slots) }
-        : { kind: "none" };
+      if (seam !== "pre-tool") return { kind: "none" };
+      return i.subagent ? { kind: "deny", reason: subagentHold() } : waitAction(i.interventionId);
+    case "send-back": {
+      if (seam !== "stop") return { kind: "none" };
+      const id =
+        i.subagent && r.templateId === "send-back-unchecked"
+          ? "send-back-unchecked-subagent"
+          : r.templateId;
+      return { kind: "block", reason: renderTemplate(id, r.slots) };
+    }
   }
 }
 
-function waitAction(interventionId: string | undefined): HookAction {
-  if (!interventionId) return { kind: "deny", reason: renderTemplate("hold-timeout") };
+const onCheck = (rule?: string): string =>
+  rule === "weakens-own-check" ? ` ${renderTemplate("report-defect-how")}` : "";
+
+function subagentHold(rule?: string): string {
+  return `${renderTemplate("hold-subagent")}${onCheck(rule)}`;
+}
+
+function waitAction(interventionId: string | undefined, rule?: string): HookAction {
+  const onTimeout = `${renderTemplate("hold-timeout")}${onCheck(rule)}`;
+  if (!interventionId) return { kind: "deny", reason: onTimeout };
   return {
     kind: "wait",
     interventionId,
     timeoutMs: HOLD_WAIT_MS,
-    onKeep: renderTemplate("hold-kept"),
-    onTimeout: renderTemplate("hold-timeout"),
+    onKeep: `${renderTemplate("hold-kept")}${onCheck(rule)}`,
+    onTimeout,
   };
 }

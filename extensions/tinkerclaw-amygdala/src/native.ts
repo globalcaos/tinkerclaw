@@ -12,6 +12,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { HookAction } from "./hook-action.js";
 import type { Runtime } from "./runtime.js";
+import { runRecordOf } from "./transcript.js";
 
 type NativeRuntime = Pick<Runtime, "decide" | "waitFor" | "mode" | "noteNotesDropped">;
 type Block = { block: true; blockReason: string };
@@ -139,10 +140,15 @@ export function registerNativeHandlers(api: OpenClawPluginApi, runtime: NativeRu
   api.on("agent_end", async (event, ctx) => {
     if (internal(ctx)) return;
     try {
-      await runtime.decide("stop", {
-        session_id: sessionOf(ctx),
-        last_assistant_message: lastAssistantText(event.messages),
-      });
+      await runtime.decide(
+        "stop",
+        {
+          session_id: sessionOf(ctx),
+          last_assistant_message: lastAssistantText(event.messages),
+        },
+        undefined,
+        runRecordOf(event.messages),
+      );
     } catch (err) {
       console.error("[amygdala] native handler failed", err);
     }

@@ -214,6 +214,19 @@ board), or the principal asks to see it in the chat. Before sending, the actual 
 
 ## Failures Overcome
 
+- **2026-11-14 — the SV2 Gantt tab did not show after the move to the Pi; two causes, found one at
+  a time.** (1) The plan stayed under the laptop's `~/Documents/ORBIS/OrbisVision/sv2-build/`, and
+  the page server dropped a board whose plan file was missing. Since `e3c14b87dc7e` such a tab draws
+  greyed and its chart names the path; fetch the file from the laptop
+  (`ssh -i ~/.ssh/id_ed25519_laptop globalcaos@100.64.0.20`), never guess other mounts. (2) With
+  the plan back, the saved chain (`loop:chains` in `~/.openclaw/data/tinker-ui-state.json`) still
+  named closed tab ids, so no master was open; the page heals that by session key since
+  `f0e7360852e2`. A reply said the tab "should already be back" between the two, and it was not.
+  **One call before any claim that the tab shows or why it does not:**
+  `node ~/src/tinkerclaw/skills/build-gantt/scripts/tab_doctor.mjs [session fragment]` (read-only,
+  under a second): plan, served board, saved and healed chain, the served page's fixes, the last
+  page loads, and a VERDICT from the page's own `gantt-tab.ts` / `tab-chains.ts`.
+
 - 2026-10-05: the turn-36 send carried the chart in the reply, though the real Gantt tab should update
   by itself. That was only half true. The tab
   redrew every 15 s, but from the workflow ids the master writes in at its wakes, so a running turn's

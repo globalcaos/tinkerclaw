@@ -21,12 +21,16 @@ import { normalizeOllamaWireModelId } from "./model-id.js";
 import { readProviderBaseUrl } from "./provider-base-url.js";
 import { resolveOllamaApiBase } from "./provider-models.js";
 
+// FORK 2026-10-30: what one embedding call may carry. Only the AbortSignal is read: it reaches the
+// request, so an aborted or timed-out call stops on the wire. A call without one is unchanged.
+type OllamaEmbedCallOptions = { signal?: AbortSignal };
+
 export type OllamaEmbeddingProvider = {
   id: string;
   model: string;
   maxInputTokens?: number;
-  embedQuery: (text: string) => Promise<number[]>;
-  embedBatch: (texts: string[]) => Promise<number[][]>;
+  embedQuery: (text: string, opts?: OllamaEmbedCallOptions) => Promise<number[]>;
+  embedBatch: (texts: string[], opts?: OllamaEmbedCallOptions) => Promise<number[][]>;
 };
 
 type OllamaEmbeddingOptions = {
@@ -50,7 +54,7 @@ export type OllamaEmbeddingClient = {
   headers: Record<string, string>;
   ssrfPolicy?: SsrFPolicy;
   model: string;
-  embedBatch: (texts: string[]) => Promise<number[][]>;
+  embedBatch: (texts: string[], opts?: OllamaEmbedCallOptions) => Promise<number[][]>;
 };
 
 type OllamaEmbeddingClientConfig = Omit<OllamaEmbeddingClient, "embedBatch">;
@@ -86,6 +90,8 @@ async function withRemoteHttpResponse<T>(params: {
   url: string;
   init?: RequestInit;
   ssrfPolicy?: SsrFPolicy;
+  // FORK 2026-10-30: the call's signal; fetchWithSsrFGuard aborts the request with it.
+  signal?: AbortSignal;
   onResponse: (response: Response) => Promise<T>;
 }): Promise<T> {
   const { response, release } = await fetchWithSsrFGuard({
@@ -93,6 +99,7 @@ async function withRemoteHttpResponse<T>(params: {
     init: params.init,
     policy: params.ssrfPolicy,
     auditContext: "memory-remote",
+    signal: params.signal,
   });
   try {
     return await params.onResponse(response);
@@ -302,10 +309,11 @@ export async function createOllamaEmbeddingProvider(
   const client = resolveOllamaEmbeddingClient(options);
   const embedUrl = `${client.baseUrl.replace(/\/$/, "")}/api/embed`;
 
-  const embedMany = async (input: string | string[]): Promise<number[][]> => {
+  const embedMany = async (input: string | string[], signal?: AbortSignal): Promise<number[][]> => {
     const json = await withRemoteHttpResponse({
       url: embedUrl,
       ssrfPolicy: client.ssrfPolicy,
+      signal,
       init: {
         method: "POST",
         headers: client.headers,
@@ -335,31 +343,32 @@ export async function createOllamaEmbeddingProvider(
     });
   };
 
-  const embedOne = async (text: string): Promise<number[]> => {
-    const [embedding] = await embedMany(text);
+  const embedOne = async (text: string, signal?: AbortSignal): Promise<number[]> => {
+    const [embedding] = await embedMany(text, signal);
     if (!embedding) {
       throw new Error("Ollama embed response returned no embedding");
     }
     return embedding;
   };
 
-  const embedQuery = async (text: string): Promise<number[]> =>
-    await embedOne(applyQueryInstructionTemplate(client.model, text));
+  const embedQuery = async (text: string, opts?: OllamaEmbedCallOptions): Promise<number[]> =>
+    await embedOne(applyQueryInstructionTemplate(client.model, text), opts?.signal);
 
   const provider: OllamaEmbeddingProvider = {
     id: "ollama",
     model: client.model,
     embedQuery,
-    embedBatch: async (texts) => (texts.length === 0 ? [] : await embedMany(texts)),
+    embedBatch: async (texts, opts) =>
+      texts.length === 0 ? [] : await embedMany(texts, opts?.signal),
   };
 
   return {
     provider,
     client: {
       ...client,
-      embedBatch: async (texts) => {
+      embedBatch: async (texts, opts) => {
         try {
-          return await provider.embedBatch(texts);
+          return await provider.embedBatch(texts, opts);
         } catch (err) {
           throw new Error(formatErrorMessage(err), { cause: err });
         }

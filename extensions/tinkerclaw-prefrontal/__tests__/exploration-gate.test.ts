@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { createExplorationGate, type ExplorationGateConfig } from "../exploration-gate.js";
+import { beforeEach, describe, it, expect } from "vitest";
+import {
+  __resetExplorationGateForTest,
+  createExplorationGate,
+  type ExplorationGateConfig,
+} from "../exploration-gate.js";
 
 const BASE_CONFIG: ExplorationGateConfig = {
   enabled: true,
@@ -9,6 +13,10 @@ const BASE_CONFIG: ExplorationGateConfig = {
 };
 
 describe("ExplorationGate", () => {
+  beforeEach(() => {
+    __resetExplorationGateForTest();
+  });
+
   it("blocks Edit when no prior read-only tool call in turn", () => {
     const gate = createExplorationGate(BASE_CONFIG);
     const result = gate.checkTool("Edit");
@@ -95,9 +103,9 @@ describe("ExplorationGate", () => {
     expect(gate.checkTool("Write").blocked).toBe(false);
   });
 
-  it("unknown tools are treated as mutating (fail-closed)", () => {
+  it("unknown tools pass through: only the listed mutating tools are gated", () => {
     const gate = createExplorationGate(BASE_CONFIG);
-    expect(gate.checkTool("SomeNewTool").blocked).toBe(true);
+    expect(gate.checkTool("SomeNewTool").blocked).toBe(false);
   });
 
   it("respects minReadOnlyTools > 1", () => {
@@ -117,5 +125,49 @@ describe("ExplorationGate", () => {
     expect(gate.getTurnReadOnlyCount()).toBe(1);
     gate.recordToolCall("Grep");
     expect(gate.getTurnReadOnlyCount()).toBe(2);
+  });
+});
+
+describe("ExplorationGate counts reads per chat", () => {
+  beforeEach(() => {
+    __resetExplorationGateForTest();
+  });
+
+  it("another chat's new turn does not reset this chat's reads", () => {
+    const gate = createExplorationGate(BASE_CONFIG);
+    gate.recordToolCall("read", "agent:main:tinker:a");
+    gate.resetTurn("agent:main:orchestrator");
+    expect(gate.checkTool("exec", { sessionKey: "agent:main:tinker:a" }).blocked).toBe(false);
+  });
+
+  it("a read in one chat does not unlock exec in another", () => {
+    const gate = createExplorationGate(BASE_CONFIG);
+    gate.recordToolCall("read", "agent:main:tinker:a");
+    expect(gate.checkTool("exec", { sessionKey: "agent:main:tinker:b" }).blocked).toBe(true);
+    expect(gate.checkTool("exec", { sessionKey: "agent:main:tinker:a" }).blocked).toBe(false);
+  });
+
+  it("a gate built by a later register() sees the reads recorded through the first", () => {
+    const first = createExplorationGate(BASE_CONFIG);
+    first.recordToolCall("read", "agent:main:tinker:a");
+    const second = createExplorationGate(BASE_CONFIG);
+    expect(second.checkTool("exec", { sessionKey: "agent:main:tinker:a" }).blocked).toBe(false);
+  });
+
+  it("a chat's own new turn clears its reads", () => {
+    const gate = createExplorationGate(BASE_CONFIG);
+    gate.recordToolCall("read", "agent:main:tinker:a");
+    gate.resetTurn("agent:main:tinker:a");
+    expect(gate.checkTool("exec", { sessionKey: "agent:main:tinker:a" }).blocked).toBe(true);
+  });
+
+  it("forgets the chat that read least recently once 512 chats are tracked", () => {
+    const gate = createExplorationGate(BASE_CONFIG);
+    for (let i = 0; i <= 512; i++) {
+      gate.recordToolCall("read", `chat-${i}`);
+    }
+    expect(gate.getTurnReadOnlyCount("chat-0")).toBe(0);
+    expect(gate.getTurnReadOnlyCount("chat-1")).toBe(1);
+    expect(gate.getTurnReadOnlyCount("chat-512")).toBe(1);
   });
 });

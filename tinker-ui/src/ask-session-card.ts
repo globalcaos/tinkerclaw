@@ -328,8 +328,6 @@ export function renderAskCard(
     .map((s) => esc(String(s)))
     .join(" · ");
   const calls = slice?.status === "ready" ? countToolCalls(slice.messages) : null;
-  const toggleWord = open ? "Hide its thinking and tool calls" : "Show its thinking and tool calls";
-  const toggleCount = calls !== null ? ` (${calls} tool call${calls === 1 ? "" : "s"})` : "";
   const status = STATE_WORD[call.state];
 
   let h = `<div class="ask-card ask-card-${call.state}" data-ask-card="${esc(tid)}">`;
@@ -343,16 +341,16 @@ export function renderAskCard(
     h += `<span class="ask-card-status">${esc(status)}</span>`;
   }
   h += `<span class="ask-card-chev">${open ? "▾" : "▸"}</span></div>`;
-  h += `<div class="ask-card-field"><span class="ask-card-label">Asked</span><div class="ask-card-q">${esc(call.question ?? "(question not readable from the command)")}</div></div>`;
-  if (call.answer) {
-    h += `<div class="ask-card-field"><span class="ask-card-label">Answer</span><div class="ask-card-a">${md(call.answer)}</div></div>`;
-  } else if (call.note) {
-    h += `<div class="ask-card-field"><span class="ask-card-label">Result</span><div class="ask-card-note">${esc(call.note)}</div></div>`;
-  }
-  if (call.state !== "running") {
-    h += `<div class="ask-card-toggle" data-tid="${esc(tid)}">${open ? "▾" : "▸"} ${toggleWord}${toggleCount}</div>`;
-  }
   if (open) {
+    h += `<div class="ask-card-field"><span class="ask-card-label">Asked</span><div class="ask-card-q">${esc(call.question ?? "(question not readable from the command)")}</div></div>`;
+    if (call.answer) {
+      h += `<div class="ask-card-field"><span class="ask-card-label">Answer</span><div class="ask-card-a">${md(call.answer)}</div></div>`;
+    } else if (call.note) {
+      h += `<div class="ask-card-field"><span class="ask-card-label">Result</span><div class="ask-card-note">${esc(call.note)}</div></div>`;
+    }
+    if (calls !== null) {
+      h += `<div class="ask-card-empty">(${calls} tool call${calls === 1 ? "" : "s"})</div>`;
+    }
     h += `<div class="ask-card-trail">`;
     if (!call.range) {
       h += `<div class="ask-card-empty">No transcript range was recorded for this ask (a skill older than 2026-10-21, or a wake that never started).</div>`;

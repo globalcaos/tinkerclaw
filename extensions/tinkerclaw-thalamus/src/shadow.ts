@@ -18,9 +18,12 @@ import {
   ladderFor,
   localStepRead,
   localTaskRead,
+  reservedReasonAtStop,
   routeCallWithStuck,
+  SECOND_OPINION_ONLY_SUPPLIES,
   STUCK_AFTER_ERRORS,
   thalamusRoute,
+  UNFUNDED_BY_DEFAULT_SUPPLIES,
   type CallDecision,
   type CallRouter,
   type CallRouteCall,
@@ -214,6 +217,7 @@ export function createShadowRouter(d: ShadowDeps): {
       d.feed.noteRun(meta.runId, { conversationKey, modelKey: incumbentKey });
 
       const learnedNow = d.learned?.();
+      const reservedAtStop = reservedReasonAtStop(b.dialIdx, b.suggestion);
       const params: RouteCallParams = {
         id: `${meta.runId}:${call.callIndex}`,
         ts: nowMs,
@@ -242,7 +246,16 @@ export function createShadowRouter(d: ShadowDeps): {
         ...(learnedNow?.refusals ? { refusals: learnedNow.refusals } : {}),
         // The same suggestion and the same cooling store the per-turn router reads (the architect, 2026-10-02).
         ...(b.suggestion ? { suggestion: b.suggestion } : {}),
+        // The same reason the per-turn plan gives for opening the reserved set, so this record can name the stop.
+        ...(reservedAtStop ? { reservedReason: reservedAtStop } : {}),
         ...(b.cooling ? { cooling: b.cooling } : {}),
+        ...(process.env.OPENCLAW_THALAMUS_ALLOW_OPENROUTER === "on"
+          ? {}
+          : { unfunded: UNFUNDED_BY_DEFAULT_SUPPLIES }),
+        ...(process.env.OPENCLAW_THALAMUS_ALLOW_GOOGLE === "on"
+          ? {}
+          : { secondOpinionOnly: SECOND_OPINION_ONLY_SUPPLIES }),
+        ...(b.secondOpinionRungs?.length ? { secondOpinionRungs: b.secondOpinionRungs } : {}),
         // `enforce.midThread` off: only fresh points may switch a running thread. Shadow keeps the switch policy as
         // it was, so its record is what the policy alone would do.
         ...(cfg.mode === "enforce" ? { midThread: cfg.enforce.midThread } : {}),

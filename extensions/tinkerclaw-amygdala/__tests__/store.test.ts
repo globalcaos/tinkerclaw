@@ -4,7 +4,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { SCHEMA_VERSION } from "../src/schema.js";
-import { AmygdalaStore } from "../src/store.js";
+import { AmygdalaStore, OWNER_ORDERS_SQL } from "../src/store.js";
 import type { Change, Decision, Field, Question, Situation, Verdict } from "../src/types.js";
 
 const miss = <T>(): Field<T> => ({ value: null, origin: "missing" });
@@ -26,6 +26,62 @@ describe("deleteReplayTurn", () => {
 // synchronous SQLite: one full SCAN of verdicts per decision (measured on the live 1.34 GB store,
 // 166,865 rows: 20.4 ms per lookup, up to 400 per feed). The gateway's one event loop was blocked
 // for it, so the chat history he was waiting for came back after 15 s instead of 0.5 s.
+describe("ownerOrders", () => {
+  const DAY = 86_400_000;
+  const now = 10 * DAY;
+  const prompt = (
+    st: AmygdalaStore,
+    id: string,
+    ts: number,
+    request: string | null,
+    o: { kind?: "owner" | "agent"; session?: string } = {},
+  ): void => {
+    st.saveSituation({
+      ...situation(id, ts),
+      sessionKey: o.session ?? "tab",
+      turnId: `tab#${id}`,
+      seam: "prompt",
+      request: request === null ? miss() : { value: request, origin: "derived" },
+      turnKind: { value: o.kind ?? "owner", origin: "derived" },
+    });
+    st.saveDecision(decision(id, []), { id: `d-${id}`, seam: "prompt", ts });
+  };
+
+  it("gives his last four typed orders in the day before, oldest first, and nothing else", () => {
+    const st = new AmygdalaStore(":memory:");
+    prompt(st, "old", now - DAY - 1, "a day and a bit ago");
+    prompt(st, "a", now - 5000, "first");
+    prompt(st, "job", now - 4500, "first", { kind: "agent" });
+    prompt(st, "b", now - 4000, "second");
+    prompt(st, "c", now - 3000, "third");
+    prompt(st, "other", now - 2500, "another tab", { session: "tab2" });
+    prompt(st, "d", now - 2000, "fourth");
+    prompt(st, "e", now - 1000, "fifth");
+    prompt(st, "empty", now - 500, null);
+    prompt(st, "after", now + 1000, "after this turn");
+    expect(st.ownerOrders("tab", now)).toEqual(["second", "third", "fourth", "fifth"]);
+    expect(st.ownerOrders("tab2", now)).toEqual(["another tab"]);
+    expect(st.ownerOrders("nobody", now)).toEqual([]);
+    st.close();
+  });
+
+  it("walks by time through d_ts, so a long session costs no more than a short one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amy-orders-"));
+    try {
+      const path = join(dir, "amygdala.sqlite");
+      new AmygdalaStore(path).close();
+      const db = new Database(path, { readonly: true });
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${OWNER_ORDERS_SQL}`).all(0, 1, "x") as Array<{
+        detail: string;
+      }>;
+      expect(plan[0].detail).toContain("d_ts");
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("verdict indexes", () => {
   it("an existing store gains the situation and time indexes, and the feed's lookup uses them", () => {
     const dir = mkdtempSync(join(tmpdir(), "amy-idx-"));

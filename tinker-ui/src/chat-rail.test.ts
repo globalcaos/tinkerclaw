@@ -129,6 +129,13 @@ describe("the rail's markup", () => {
     expect(railTitle({ model: "m", provider: "" }, "")).toBe("m");
   });
 
+  it("adds the thinking effort to the title when the turn's is known", () => {
+    expect(railTitle(opus, "Opus 5.5", "Medium")).toBe(
+      "Opus 5.5 · Medium thinking — claude-code/claude-opus-5-5",
+    );
+    expect(railTitle({ model: "m", provider: "" }, "", "High")).toBe("m · High thinking");
+  });
+
   it("wraps a unit in its stretch of line, carrying the colour and the name on hover", () => {
     const html = railSegmentHtml('<div class="msg assistant">hi</div>', rail);
     expect(html.startsWith('<div class="turn-seg" style="--rail:#d97757">')).toBe(true);

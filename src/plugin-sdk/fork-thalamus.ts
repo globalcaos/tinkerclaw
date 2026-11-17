@@ -40,6 +40,7 @@ export * from "../shared/enhancement-task-rank.js";
 export * from "../shared/enhancement-triggers.js";
 export * from "../infra/thalamus-task-ranking.js";
 export {
+  reservedReasonAtStop,
   routeCall,
   topicUnsure,
   stepUnsure,
@@ -61,7 +62,14 @@ export {
   domainStrengthFor,
   type FrontierRung,
 } from "../shared/thalamus-frontier.js";
-export { supplyOfKey, type SupplyId, type SupplyState } from "../shared/thalamus-supply.js";
+export {
+  isSecondOpinionOnlyKey,
+  SECOND_OPINION_ONLY_SUPPLIES,
+  supplyOfKey,
+  UNFUNDED_BY_DEFAULT_SUPPLIES,
+  type SupplyId,
+  type SupplyState,
+} from "../shared/thalamus-supply.js";
 export type { FailureClass } from "../shared/thalamus-plan.js";
 export type * from "../shared/thalamus-v4-types.js";
 export type { ThalamusBoardLike } from "../shared/thalamus-board-like.js";
@@ -69,3 +77,6 @@ export * from "../infra/thalamus-read-provider.js";
 export * from "../infra/thalamus-call-router.js";
 // Types only: the use-attribution code itself is in `fork-thalamus-runtime`.
 export type { UsageListing, UsageMark } from "../fork/usage-attribution.js";
+// FORK 2026-11-13: what is cooling now (a spent supply, or one model's own cap such as Fable's), for the panel and
+// the model picker to strike those models out.
+export { readThalamusCooling } from "../infra/thalamus-cooling.js";

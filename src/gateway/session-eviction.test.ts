@@ -25,6 +25,7 @@ import { type AgentEventPayload, onAgentEvent } from "../infra/agent-events.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { ErrorCodes, errorShape } from "./protocol/index.js";
 import {
+  BRIDGE_EVICT_SLOT,
   EVICTION_MARKER_CUSTOM_TYPE,
   evictSessionTranscript,
   evictTranscriptTail,
@@ -671,5 +672,141 @@ describe("session-eviction's structural invariants", () => {
         `import { evictSessionTranscript } from "../session-eviction.js";\n// was: ${removedLine}\n`,
       ),
     ).toBe(false);
+  });
+});
+
+describe("evictSessionTranscript — the claude-code lane through the bridge (A11)", () => {
+  const SLOT = Symbol.for(BRIDGE_EVICT_SLOT);
+  const slots = globalThis as Record<symbol, unknown>;
+  const entry = {
+    sessionId: "sess-1",
+    updatedAt: 1,
+    modelProvider: "claude-code",
+    model: "claude-opus-5",
+  } as SessionEntry;
+
+  afterEach(() => {
+    delete slots[SLOT];
+  });
+
+  async function press(
+    evict: (id: string, f: number) => unknown,
+    run: (o: {
+      outcome: Awaited<ReturnType<typeof evictSessionTranscript>>;
+      interruptRun: ReturnType<typeof vi.fn>;
+      events: AgentEventPayload[];
+      before: string;
+      filePath: string;
+      storePath: string;
+    }) => void,
+  ): Promise<void> {
+    await withEvictionFixture(async ({ storePath, filePath, cfg }) => {
+      slots[SLOT] = { evict };
+      const before = fs.readFileSync(filePath, "utf8");
+      const interruptRun = vi.fn(() => Promise.resolve({}));
+      const { events, stop } = captureCompactionEvents();
+      const outcome = await evictSessionTranscript({
+        cfg,
+        entry,
+        agentId: "main",
+        canonicalKey: STORE_KEY,
+        storePath,
+        storeKey: STORE_KEY,
+        filePath,
+        keepFraction: 0.5,
+        interruptRun,
+      });
+      stop();
+      run({ outcome, interruptRun, events, before, filePath, storePath });
+    });
+  }
+
+  it("hands the eviction to the bridge: no interrupt, the gateway transcript untouched, one pair on lane cc-bridge", async () => {
+    const evict = vi.fn(() => ({
+      ok: true,
+      evictedPrompts: 3,
+      keptPrompts: 2,
+      tokensBefore: 1000,
+      tokensAfter: 400,
+      evictedTokens: 600,
+    }));
+    await press(evict, ({ outcome, interruptRun, events, before, filePath, storePath }) => {
+      expect(evict).toHaveBeenCalledWith("sess-1", 0.5);
+      if (outcome.kind !== "reply") {
+        throw new Error("expected a reply");
+      }
+      expect(outcome.evicted).toBe(true);
+      expect(outcome.reply).toEqual({
+        ok: true,
+        key: STORE_KEY,
+        compacted: true,
+        evicted: 3,
+        kept: 2,
+        evictedTokens: 600,
+        tokensBefore: 1000,
+        tokensAfter: 400,
+      });
+      expect(interruptRun).not.toHaveBeenCalled();
+      expect(fs.readFileSync(filePath, "utf8")).toBe(before);
+      expect(events.map((e) => [e.data.phase, e.data.trigger, e.data.lane])).toEqual([
+        ["start", "evict", "cc-bridge"],
+        ["end", "evict", "cc-bridge"],
+      ]);
+      expect(events[1].data).toMatchObject({
+        completed: true,
+        tokensDropped: 600,
+        provenance: "estimated",
+      });
+      expect(
+        loadSessionStore(storePath, { skipCache: true })[STORE_KEY]?.totalTokens,
+      ).toBeUndefined();
+    });
+  });
+
+  it("passes the bridge's decline through with no event: nothing to do is ok, a refusal is not", async () => {
+    await press(
+      () => ({ ok: false, nothingToDo: true, reason: "one turn" }),
+      ({ outcome, events, storePath }) => {
+        expect(outcome).toMatchObject({
+          kind: "reply",
+          evicted: false,
+          reply: { ok: true, compacted: false, reason: "one turn" },
+        });
+        expect(events).toEqual([]);
+        expect(loadSessionStore(storePath, { skipCache: true })[STORE_KEY]?.totalTokens).toBe(999);
+      },
+    );
+    await press(
+      () => ({ ok: false, reason: "a reply is still running in this chat" }),
+      ({ outcome, interruptRun, events }) => {
+        expect(outcome).toMatchObject({
+          kind: "reply",
+          evicted: false,
+          reply: { ok: false, compacted: false, reason: "a reply is still running in this chat" },
+        });
+        expect(interruptRun).not.toHaveBeenCalled();
+        expect(events).toEqual([]);
+      },
+    );
+  });
+
+  it("without the bridge, refuses the lane as before", async () => {
+    await withEvictionFixture(async ({ storePath, filePath, cfg }) => {
+      const outcome = await evictSessionTranscript({
+        cfg,
+        entry,
+        agentId: "main",
+        canonicalKey: STORE_KEY,
+        storePath,
+        storeKey: STORE_KEY,
+        filePath,
+        keepFraction: 0.5,
+        interruptRun: () => Promise.resolve({}),
+      });
+      expect(outcome).toMatchObject({
+        kind: "reply",
+        reply: { ok: false, reason: expect.stringContaining("claude-code") },
+      });
+    });
   });
 });

@@ -32,11 +32,30 @@ describe("templates", () => {
           "readings",
           "id",
           "p",
+          "pick",
+          "sources",
         ].map((k) => [k, "v"]),
       );
       const out = renderTemplate(id, slots);
       expect(out).not.toMatch(/\{\w+\}/);
       expect(out).not.toMatch(/\/home\//);
     }
+  });
+  it("the unchecked send-back asks for a check that stays on this machine (2026-11-11)", () => {
+    const t = renderTemplate("send-back-unchecked", { what: "the revert deletes the message" });
+    expect(t).toContain("the revert deletes the message");
+    expect(t).toContain("a tool that only reads or runs on this machine");
+    expect(t).toContain(
+      "If only a step that sends, deletes, publishes or spends could check it, do not take it",
+    );
+  });
+  it("a subagent's unchecked send-back keeps the local-only check and asks for the whole reply (2026-11-13)", () => {
+    const t = renderTemplate("send-back-unchecked-subagent", { what: "the rate" });
+    expect(t).toContain("a tool that only reads or runs on this machine");
+    expect(t).toContain(
+      "If only a step that sends, deletes, publishes or spends could check it, do not take it",
+    );
+    expect(t).toContain("only your last message reaches the agent that started you");
+    expect(t).not.toContain("do not repeat the rest of the reply");
   });
 });

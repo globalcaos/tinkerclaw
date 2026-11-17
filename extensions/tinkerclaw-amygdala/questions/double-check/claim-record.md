@@ -20,13 +20,14 @@ True if the reply claims that something was done, such as uploaded, saved, sent,
 
 ## Settings
 
-What the code reads. `seams` says when Jev is asked, `fields` which parts of the situation it sees, `cutoff` where its answer starts to act, `mustCatch` the test cases it must get right. Rewording the question or its answers? Raise `version`, so earlier verdicts stay tied to the words they answered. Edits take effect after the next rebuild (the ↻ button).
+What the code reads. `seams` says when Jev is asked, `fields` which parts of the situation it sees, `cutoff` where its answer starts to act, `mustCatch` the test cases it must get right. `says` is the line the chat shows the agent when this question acts. Rewording the question or its answers? Raise `version`, so earlier verdicts stay tied to the words they answered. Edits take effect after the next rebuild (the ↻ button).
 
 ```yaml
 id: claim-record
 version: 1
 family: double-check
 status: active
+says: "Prove that this is done."
 seams:
   - stop
 type: noul
@@ -39,8 +40,5 @@ cutoff:
 purpose: Catches a done claim with no matching action and result in this task.
 origin: pilot 2026-09-28 (claim without record), paper 6.3
 retirement: Retire if action-result matching in code catches these claims with no more false alarms.
-mustCatch:
-  - mc-dc-uploaded-no-record
-  - mc-dc-uploaded-one-of-two
-  - mc-dc-invoice-draft-only
+mustCatch: []
 ```

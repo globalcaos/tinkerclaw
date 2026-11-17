@@ -220,17 +220,30 @@ class MainViewModel(
   /** Probes the candidates; when the answering door is not the one the node uses, moves the node. */
   suspend fun resolveJarvisDoor(): String? {
     val origin = JarvisDoor.resolve(prefs.jarvisDoorCandidates.value) ?: return null
-    val (host, port) = jarvisDoorHostPort(origin) ?: return origin
+    val nodeDoor = nodeDoorFor(origin)
+    val (host, port) = jarvisDoorHostPort(nodeDoor) ?: return origin
     val nodeOnDoor = prefs.manualEnabled.value && prefs.manualHost.value == host && prefs.manualPort.value == port
     if (!nodeOnDoor && prefs.loadJarvisDeviceToken() != null) {
-      pointNodeAtDoor(origin)
+      pointNodeAtDoor(nodeDoor)
     }
     return origin
   }
 
   fun connectJarvisDoor() {
     val origin = JarvisDoor.origin.value ?: prefs.jarvisDoorCandidates.value.firstOrNull() ?: return
-    pointNodeAtDoor(origin)
+    pointNodeAtDoor(nodeDoorFor(origin))
+  }
+
+  /**
+   * 2026-11-10: an https door (tailscale serve, for the offline PDF reader) serves the pages, but the
+   * node socket stays on the plain tailnet door when the list has one. Over https the node would need
+   * a pinned TLS fingerprint (a prompt only the Connect screen shows), and WireGuard already encrypts.
+   */
+  private fun nodeDoorFor(origin: String): String {
+    if (!origin.startsWith("https://")) return origin
+    return prefs.jarvisDoorCandidates.value
+      .mapNotNull(::normalizeJarvisDoorOrigin)
+      .firstOrNull { it.startsWith("http://") } ?: origin
   }
 
   private fun pointNodeAtDoor(origin: String) {

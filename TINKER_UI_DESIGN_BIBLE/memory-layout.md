@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-10-09
 last_verified_commit: bbb34ec2530
 single_owner: yes — directory map + writer + retention + the W/R path diagrams (WHERE a turn's data lands, sync vs deferred, evictable vs not) live here (both workspace/memory/ AND ~/.openclaw/engram/). Call ORDER is flows.md; state machines are lifecycles.md; the duplicate-implementation ledger is canonical-derivations.md.
-see_also: topology.md (workspace symlinks), flows.md (sequence-of-calls — this optic owns WHERE data lands, not the call order), canonical-derivations.md (duplicate ledger + the plugin-SDK boundary crossing), crons.md (engram-consolidate writer), subagents-and-recipes.md (recipe/skill BEHAVIOR — selection, fitness scoring, never-delete), pii-boundary.md (everything under workspace/memory is PRIVATE), failures.md (what a dead vector index looks like from outside — "Faults that surface as silence")
+see_also: topology.md (workspace symlinks), flows.md (sequence-of-calls — this optic owns WHERE data lands, not the call order), canonical-derivations.md (duplicate ledger + the plugin-SDK boundary crossing), crons.md (engram-consolidate writer), subagents-and-recipes.md (recipe/skill BEHAVIOR — selection, fitness scoring, never-delete), pii-boundary.md (everything under workspace/memory is PRIVATE), failures.md (what a dead vector index looks like from outside — "Faults that surface as silence"), embedder-fit.md (which embedding model, if any, memorySearch runs on this machine, and the governor its embedding calls go through)
 verify:
   - name: workspace memory dir exists
     cmd: test -d ~/.openclaw/workspace/memory
@@ -52,6 +52,8 @@ verify:
     cmd: python3 -c 'import os,re; base=os.path.expanduser("~/src/tinkerclaw/src/memory/engram"); t=open(base + "/event-types.ts").read(); m=re.search(r"NON_EVICTABLE_KINDS[^=]*=\s*new Set\(\[(.*?)\]\)", t, re.S); assert m, "NON_EVICTABLE_KINDS not found in src/memory/engram/event-types.ts"; got=sorted(set(re.findall(r"[a-z_]{4,}", m.group(1)))); assert got == ["compaction_marker", "persona_state", "system_event"], "NON_EVICTABLE_KINDS changed to " + repr(got) + " — update the Retention and eviction table in memory-layout.md"; es=open(base + "/event-store.ts").read(); assert "Math.ceil(text.length / 4)" in es, "estimateTokens is no longer ceil of chars over 4 — the Retention and eviction section quotes that as the eviction accounting unit"; pc=open(base + "/pointer-compaction.ts").read(); assert "Compaction invariant violated" in pc and "store.readById" in pc, "the pointerCompact store-readback guard is gone — eviction is no longer provably lossless and diagram E in memory-layout.md is wrong"'
   - name: MEMORY.md index budget ships watch-only at 8000 chars, and the shipped template calls MEMORY.md an index (2026-10-25)
     cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'export const DEFAULT_MEMORY_INDEX_MAX_CHARS = 8_000;' src/agents/embedded-agent-helpers/bootstrap.ts && grep -qF 'export const DEFAULT_MEMORY_INDEX_WARNING_MODE = "watch";' src/agents/embedded-agent-helpers/bootstrap.ts && grep -qF 'It is an index, not the memory itself.' docs/reference/templates/AGENTS.md
+  - name: KEYWORD LEG — buildFtsQuery ORs the quoted keywords in both trees (an AND found no row for 40 of 40 natural-language questions, so the 0.7/0.3 hybrid ran vector-only; 2026-10-29)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'return quoted.join(" OR ");' src/memory/hybrid.ts && grep -qF 'const keywords = extractKeywords(raw);' src/memory/hybrid.ts && grep -qF 'return quoted.join(" OR ");' extensions/memory-core/src/memory/hybrid.ts && ! grep -qF 'quoted.join(" AND ")' src/memory/hybrid.ts extensions/memory-core/src/memory/hybrid.ts
 ---
 
 # Memory layout — workspace directory map
@@ -96,7 +98,7 @@ flowchart TD
   subgraph stores["WHERE IT LANDS"]
     EV[("engram/events/SESSION_KEY.jsonl<br/>append-only · event-store.ts:106 appendFileSync")]
     ART[("engram/artifacts/<br/>tool output over 1 KB · ingestion.ts:230")]
-    EMB[("engram/embeddings/<br/>async embedding worker")]
+    EMB[("engram/embeddings/<br/>REMOVED 2026-10-29 — nothing writes or reads it")]
     LK[("engram/links/SESSION_KEY.jsonl")]
     GAP[("workspace/memory/curiosity-gaps/YYYY-MM-DD.jsonl")]
     DBA[("EEG context-anatomy SQLite")]
@@ -116,7 +118,7 @@ flowchart TD
   ING --> EV
   ING -->|"externalise large tool output"| ART
   TOT --> EV
-  EV -.->|"append monkey-patched to worker.enqueue<br/>extensions.ts:276 — only once ollama resolves"| EMB
+  EV -.->|"REMOVED 2026-10-29 — the embedding worker this fed had no reader<br/>see the embeddings-lane invariant below"| EMB
   LNK --> LK
   CUR --> GAP
   EV --> CONS
@@ -128,7 +130,7 @@ flowchart TD
 - The transcript is the ONLY per-turn record with a durability guarantee. Anything that must survive a crash cannot be written from `onTurnComplete`.
 - `createIngestionPipeline` keeps an internal cursor (`ingestedCount`, `ingestion.ts:254`) so re-calling `ingest()` on a growing snapshot never double-writes — `attempt.ts` retry loops are safe.
 - Every store above is either **append-only JSONL** (events, links, curiosity gaps, reflections) or **whole-file JSON written temp-then-rename**. Nothing on the write path is mutated in place.
-- The embeddings lane is CONDITIONAL: `eventStore.append` is monkey-patched to enqueue into the embedding worker only after the ollama provider resolves (`src/agents/embedded-agent-runner/extensions.ts:276`, enqueue at `:279`). Ollama down ⇒ events still land, semantic recall silently degrades.
+- **The embeddings lane is REMOVED (2026-10-29); the WANT stays.** Until then `eventStore.append` was monkey-patched to enqueue every event into an embedding worker as soon as a hard-coded `mxbai-embed-large` provider object was built, and building it contacts no server, so the lane armed itself whether Ollama was up or not. Its `.vec` files under `engram/embeddings/` had no reader: the vector-upgraded retrieval runtime they fed is the dead inline lane under diagram R (`injectRetrievalPack` has no caller). No `.vec` file was written after 2026-10-13, and the setup line `[engram] Hybrid retrieval active: FTS + vector` was false every time it printed. The runner now keeps only the FTS retrieval runtime (`searchIndex: globalFtsSearch`). **WANT:** semantic recall over ENGRAM events, taking its model from the per-machine embedder fit and its calls through the governor (embedder-fit.md), and wired only together with a reader on the live path.
 - This whole lane is inline-ENGRAM, gated by `isInlineMode("engram")` (`attempt-hooks.ts:74`, key `fork.cognitive.engram`, absent ⇒ inline) and by `agents.defaults.compaction.mode === "engram"` at session setup (`extensions.ts:146`). Set either off and every deferred write above is silently absent — see config-shape.md.
 
 ### R. Read path — query → retrieval pack → prompt
@@ -214,7 +216,7 @@ flowchart TD
 3. **`RetrievalRuntime.pushPack`** (`retrieval-runtime.ts:57`) has ZERO readers.
 4. The `engram:retrieval-pack-inject` instrument is DECLARED at `attempt-hooks.ts:59` and FIRED at `:335` — inside the uncalled function. **It can only ever report NEVER; do not read it as evidence either way.**
 
-**Consequence — `engram-fts.db` is on the dead lane.** `globalFtsSearch` / `globalFtsMultiSearch` (`src/memory/engram/global-fts-bridge.ts:22` / `:93`) are the only readers of `~/.openclaw/engram/engram-fts.db` (`:16`), and they are wired only into the inline runtime (`extensions.ts:185` and `:262`, `retrieval-runtime.ts:197`, plus `contradiction-gate.ts:128` which is itself reached only from `buildDefaultAssemble`). Nothing in the repo WRITES that file either. The pack the model actually gets comes from a linear scan of two JSONL stores, so **recall today is lexical TF over this session plus the cc-experience store — there is no cross-session semantic recall on the live path.** `vectorSearch` (`search-index.ts:120`) exists and is session-local (`applyFilters(store.readAll(), filters)` at `:137`) but sits behind the same dead runtime.
+**Consequence — `engram-fts.db` is on the dead lane.** `globalFtsSearch` / `globalFtsMultiSearch` (`src/memory/engram/global-fts-bridge.ts:22` / `:93`) are the only readers of `~/.openclaw/engram/engram-fts.db` (`:16`), and they are wired only into the inline runtime (the FTS `setRetrievalRuntime` in `extensions.ts`, the only wiring left since its vector-upgraded twin was removed on 2026-10-29; `retrieval-runtime.ts:197`; plus `contradiction-gate.ts:128`, which is itself reached only from `buildDefaultAssemble`). Nothing in the repo WRITES that file either. The pack the model actually gets comes from a linear scan of two JSONL stores, so **recall today is lexical TF over this session plus the cc-experience store — there is no cross-session semantic recall on the live path.** `vectorSearch` (`search-index.ts:120`) exists and is session-local (`applyFilters(store.readAll(), filters)` at `:137`) but sits behind the same dead runtime.
 
 **Twin collapse — done, do not redraw it.** The 26-file vendored copy under `extensions/tinkerclaw-total-recall/src/` was deleted at HEAD `e57d22f5fcf`; `assembleRetrievalPack` now has ONE implementation — plus the `assembleRetrievalPackAsync` yielding twin beside it in the same file (FORK 2026-09-03), which is the one the live path calls — and the plugin reaches it through the plugin-SDK surface. The duplicate ledger and the "boundary rule with no crossing launders coupling into duplication" reasoning are owned by canonical-derivations.md — see there, not here.
 
@@ -485,7 +487,23 @@ The diagram above is the engram `ContextCache` engine. What the embedded runner 
 
 Writers are mostly crons + the auto-reply pipeline. Readers are mostly Jarvis context-injection at session start and memorySearch retrieval.
 
-The single highest-leverage Reader is `agents.defaults.memorySearch` (Ollama embeddings + FTS hybrid). It indexes EVERYTHING under workspace/memory/ + sessions. Any new directory added under workspace/memory/ will be picked up automatically.
+The single highest-leverage Reader is `agents.defaults.memorySearch`. It indexes the memory files (everything under workspace/memory/) plus `memorySearch.extraPaths` into a word index (FTS5), and adds a vector half only when this machine's embedder fit chose a model or the config pins one (embedder-fit.md). Session transcripts are indexed only when the config lists `sessions` in `sources` and turns on `experimental.sessionMemory`; the fit never adds them. Any new directory added under workspace/memory/ will be picked up automatically.
+
+## Keyword leg contract — memorySearch's FTS5 query (2026-10-29)
+
+`memorySearch` is a hybrid: BM25 over `chunks_fts`, plus cosine over `chunks_vec` when an embedder runs, merged at the default weights (0.7 vector, 0.3 text). The keyword half helps only if its MATCH expression finds rows.
+
+**The contract.** `buildFtsQuery` (`src/memory/hybrid.ts`) quotes each keyword that `extractKeywords` (`src/memory/query-expansion.ts`) keeps, after it drops stop words, bare numbers and Latin words under three letters, and joins them with `OR`. When no keyword survives it ORs the raw tokens; with no word characters at all it returns null. BM25 adds a score for each matched term, so a row matching more keywords still ranks first. memory-core's twin (`extensions/memory-core/src/memory/hybrid.ts`) also joins with `OR`.
+
+**Why OR.** Until 2026-10-29 both trees joined every raw token with AND. On the reference eval (100 files, 40 natural-language questions frozen before any run, 30 EN and 10 ES/CA) that AND returned zero rows for 40 of 40 questions, so the configured 0.7/0.3 hybrid was in fact vector-only, and an install without an embedder had no working search. The OR of keywords raised word-search R@5 from 0.475 (one search per keyword, best score kept) to 0.625, at 276 ms p50 and 377 ms p95 over 12 read-only queries on an 11.5 GB live index.
+
+**Known limits.**
+
+- CJK prose: the default `unicode61` tokenizer indexes a run of CJK characters without spaces as one token, so the characters and bigrams `extractKeywords` emits match only standalone tokens. Neither AND nor OR finds such prose.
+- memory-core, dormant on the reference host, still ANDs on one path and says AND in one comment: the `trigram` tokenizer path (`store.fts.tokenizer: "trigram"`, `buildMatchQueryFromTerms` in `extensions/memory-core/src/memory/manager-search.ts`), and a comment in `extensions/memory-core/src/memory/manager.ts` that still calls the keyword query an "exact AND query".
+- Precision on exact multi-word lookups may drop against AND; nothing has measured it yet.
+
+Gate: `KEYWORD LEG` in this file's frontmatter.
 
 ## Vector store contract — memorySearch's sqlite-vec index
 
@@ -504,7 +522,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
 
 `vec0` is not a plain table. Creating it also creates **shadow tables** — `chunks_vec_chunks`, `chunks_vec_info`, `chunks_vec_rowids`, `chunks_vec_vector_chunks00` (all four confirmed in `sqlite_master` on the live DB). Those are ordinary tables and they **survive a partial drop**: if `DROP TABLE chunks_vec` fails, or removes only the virtual table, the shadows remain and the next `CREATE VIRTUAL TABLE` can fail against them. `dropVectorTable()` (`src/memory/manager-sync-ops.ts:315`) therefore clears the four shadows explicitly and **returns whether the table is actually gone** (`:326`) — a failed drop must never look like a success. `chunks_vec_rowids` is also the row you COUNT: it is the honest answer to "how many vectors are in this index?", and the number that exposed the outage.
 
-**`dims` is frozen at CREATE time and must equal the embedder's output width.** It is baked into the column type and cannot be altered. Changing the embedding model therefore REQUIRES dropping and recreating the table — and the vectors already in it are **unusable**: embeddings from a different model are not comparable, so they must be discarded and recomputed, never migrated. Live values today: **`mxbai-embed-large` via ollama, 1024 dims** (`agents.defaults.memorySearch.{provider,model}`; the prior Gemini embedder was 3072).
+**`dims` is frozen at CREATE time and must equal the embedder's output width.** It is baked into the column type and cannot be altered. Changing the embedding model therefore REQUIRES dropping and recreating the table — and the vectors already in it are **unusable**: embeddings from a different model are not comparable, so they must be discarded and recomputed, never migrated. Live values are whatever this machine's embedder fit chose, or the `agents.defaults.memorySearch.{provider,model}` pin (embedder-fit.md owns which model runs where): 384 dims for granite-embedding:30m, 768 for granite-embedding:278m and nomic-embed-text, 1024 for mxbai-embed-large, and the earlier Gemini embedder wrote 3072. A re-fit that picks another model is a model change like any other: DROP + recreate + full reindex, and the old vectors are discarded.
 
 **`meta.vectorDims` is a CLAIM, not the truth.** It is what some previous run _recorded_ (one JSON blob under the `meta` key `memory_index_meta_v1`, seeded back into `this.vector.dims` at `manager.ts:298-299`); the schema is what _is_. They diverged in production: on 2026-08-04 `meta` said `vectorDims=1024` while `chunks_vec` was declared `FLOAT[3072]`. The real dimension must be read back out of `sqlite_master`:
 
@@ -519,6 +537,8 @@ That readback is `readVectorTableDims()` (`:238`) and it is called **twice**, de
 
 **Degrade honestly.** When the shape cannot be made right, `ensureVectorTable` sets `vector.available = false` (`:301`), records the mismatch in `vector.loadError`, and logs at **error** (`:306`) with the remedy: stop the gateway, drop `chunks_vec` plus its `chunks_vec_*` shadows, resync. Keyword search keeps working. The pre-fix behaviour was the opposite and is the anti-pattern — a per-insert throw surfaced as `memory sync failed (…): Expected 3072 dimensions but received 1024` at **warn**, 198 times in three days, while retrieval quietly fell back to keyword-only. Measured then: `chunks` 5,258 rows, `chunks_fts` 5,305, `chunks_vec_rowids` **0** (`bc16efe811c`, corrected by `b5d18a37b46`). Measured after the resync: `chunks` 26,978, `chunks_fts` 26,975, `chunks_vec_rowids` **24,284**, table `FLOAT[1024]`.
 
+**Word-only rows are a healthy state (2026-10-29).** When no embedder runs (no provider, a `none` decision, a dormant governor or an open breaker), the core index still chunks every file and writes its `chunks` and `chunks_fts` rows under the model key `fts-only`, with no `chunks_vec` row, and drains them to vectors later when the governor admits indexing. A zero `chunks_vec_rowids` beside a non-zero `chunks` is therefore expected on a word-only install; it is the 2026-08-04 outage only when the rows carry a real model key. Read the decision first (`openclaw embedder status`), then the count. The admission rules are embedder-fit.md's.
+
 **History (FORK 2026-06-23, `a33cc632002`).** The first version of this correction landed on the plugin copy: `ensureVectorTable` began reading the on-disk `FLOAT[N]` out of `sqlite_master` and dropping + recreating only on a **genuine** mismatch, instead of gating the correction on `this.vector.dims` being truthy — which after a gateway restart is `undefined`, so the old guard short-circuited, a stale 3072-dim table survived, and every 1024-dim insert threw (79× before a reboot). See `bug-log.md` FIXED 2026-06-23 (memory-core vec0 dim). The 2026-08-04 work is the same lesson one level deeper: reading the shape is not enough if a persisted claim can skip the read.
 
 ### Two live trees own this table, and only one has the 2026-08-04 fix
@@ -531,6 +551,8 @@ That readback is `readVectorTableDims()` (`:238`) and it is called **twice**, de
 | `extensions/memory-core/src/memory/` (plugin) | `manager.ts:61`, `manager-sync-ops.ts:71`, `manager-embedding-ops.ts:48`                               | `extensions/memory-core/index.ts:14` → `src/runtime-provider.ts:3` → `./memory/index.js` — the `memory_search` tool and the CLI |
 
 Upstream `cab4a192534` (2026-03-26, "move memory engine into memory plugin") moved the engine into the plugin; the fork's core copy is still on the live path for its own RPC, so **both trees run**. The 2026-08-04 verify-the-shape work landed **only in `src/memory/`**. The plugin twin still stands at `a33cc632002`: it sets `this.vector.dims = dimensions` unconditionally after the CREATE (`extensions/memory-core/src/memory/manager-sync-ops.ts:289`) and swallows a failed drop into `log.debug` (`:315`). **A fix to one copy leaves the other path unfixed** — and note that the 2026-06-23 `verify:` in this file's frontmatter asserts against the PLUGIN copy, so it stays green on the unfixed one; the three `VECTOR CONTRACT` gates beside it assert the copy that was actually repaired.
+
+**Both trees read the embedder decision through one seam, and only the core tree is governed (2026-10-29).** `resolveMemorySearchConfig` returns `applyEmbedderFit(resolved)` (`src/agents/memory-search.ts`), and memory-core imports that same resolver through `openclaw/plugin-sdk/memory-core-host-engine-foundation`. An unset or `"auto"` provider therefore becomes this machine's fit, or `"none"`, in both trees; memory-core answers `"none"` with no provider (`extensions/memory-core/src/memory/embeddings.ts`) and indexes words only. The embedder governor (`src/fork/embedder-governor.ts`) wraps every provider the CORE `createEmbeddingProvider` returns. memory-core builds its own providers and is NOT governed: it keeps its own 600 s / 120 s deadlines, its own `remote.nonBatchConcurrency` and its `sync.embeddingBatchTimeoutSeconds`, and it awaits its query embed outside any catch, which is why a fast-failing breaker was not bolted onto it (embedder-fit.md, rejected alternatives). It is dormant on the reference host, where `tinkerclaw-total-recall` holds `plugins.slots.memory`.
 
 The duplicate ledger and the collapse policy are owned by `canonical-derivations.md` — this seven-site derivation is not in its ledger yet and belongs there. The `--check=derivations` gate here is only a ratchet keeping the table above honest; do not collapse the sites from this optic.
 
@@ -550,6 +572,8 @@ The duplicate ledger and the collapse policy are owned by `canonical-derivations
 - A `vec0` drop is not done until its shadow tables (`chunks_vec_{chunks,info,rowids,vector_chunks00}`) are gone — they survive a partial drop and can make the next CREATE fail. `dropVectorTable()` must keep RETURNING whether the table is actually gone; a failed drop that logs at debug is the first domino of a permanently broken index.
 - A vector-index fault must DISABLE vector search loudly (`log.error` + `vector.available = false`) rather than throw on every insert at warn level. Keyword search keeps answering either way, so the only user-visible signal is quietly worse recall — the class `failures.md` calls a plausible non-error.
 - The memory engine exists in TWO live trees: `src/memory/` (the `fork.memory.search` RPC) and `extensions/memory-core/src/memory/` (the `memory_search` tool and CLI). Patch the one you measured, then CHECK THE OTHER before claiming the index is fixed — and make sure the `verify:` you add points at the copy you changed.
+- The keyword leg ORs quoted keywords in both trees (`KEYWORD LEG` gate). An AND found no row for 40 of 40 natural-language questions; going back to AND, a phrase or NEAR needs a re-run of that eval that beats the OR.
+- Word indexing never waits for the embedder: with no provider, a `none` decision, a dormant governor or an open breaker, files are still written to `chunks` and `chunks_fts` under `fts-only` (embedder-fit.md, don't-regress).
 
 ## Verify
 

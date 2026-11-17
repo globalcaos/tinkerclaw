@@ -1064,7 +1064,7 @@ export function mountContextTreemap(
       const sk = getSessionKey();
       const dump = await reqFn("forensic.getLive", { sessionKey: sk || undefined });
       currentDump = dump;
-      currentRun = dump._run ?? null;
+      _currentRun = dump._run ?? null;
       if (dump._pricing) {
         inputPricePerMTok = dump._pricing.input ?? 3;
       }
@@ -1170,7 +1170,13 @@ export function mountContextTreemap(
       Number.isFinite(reportedUsed) &&
       reportedUsed > 0 &&
       (typeof windowMax !== "number" || windowMax <= 0 || reportedUsed <= windowMax);
-    const totalTokens = reportedIsPlausible ? (reportedUsed as number) : (cs.totalTokens ?? 0);
+    // 2026-11-14 (burn review F1): the prompt's own itemised total first. usedTokens sums every
+    // call of the run, so even under the window it overstates the prompt, the fill and the cost.
+    const sent =
+      typeof cs.totalTokens === "number" && Number.isFinite(cs.totalTokens) && cs.totalTokens > 0
+        ? cs.totalTokens
+        : 0;
+    const totalTokens = sent > 0 ? sent : reportedIsPlausible ? (reportedUsed as number) : 0;
     currentDump = {
       totals: { chars: totalTokens * 4, estimated_tokens: totalTokens },
       meta: { model: ev.model },

@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -17,6 +18,7 @@ import type { RunOnce } from "../src/explain.js";
 import type { Family } from "../src/families/types.js";
 import type { JevTransport } from "../src/jev.js";
 import { createRuntime, type Runtime } from "../src/runtime.js";
+import type { Situation } from "../src/types.js";
 import type { V31ProbeInput } from "../src/v31-probe.js";
 
 const EXT = fileURLToPath(new URL("..", import.meta.url));
@@ -737,6 +739,519 @@ describe("usefulness review (2026-10-06)", () => {
     expect(prompts.filter((p) => p.includes("review flags"))).toHaveLength(1);
   });
 
+  describe("a turn a job woke", () => {
+    const FINE = JSON.stringify({
+      entries: [{ n: 1, verdict: "fine", reason: "ok" }],
+      confidence: "high",
+    });
+    const harness = (dataDir?: string) => {
+      const prompts: string[] = [];
+      const explainRun: RunOnce = async (p) => {
+        prompts.push(p);
+        return p.includes("THE TURN:") ? FINE : EXPLAIN;
+      };
+      const made = make({ families: [], explainRun, ...(dataDir ? { dataDir } : {}) });
+      made.rt.start();
+      const transcript = join(made.root, "t.jsonl");
+      writeFileSync(transcript, "");
+      const send = async (seam: Parameters<typeof made.rt.decide>[0], body: object) => {
+        made.state.t += 1000;
+        await made.rt.decide(
+          seam,
+          { session_id: "s", transcript_path: transcript, ...body },
+          "tab",
+        );
+      };
+      const say = (prompt: string) => send("prompt", { prompt });
+      const step = (id: string) =>
+        send("pre-tool", {
+          tool_name: "Bash",
+          tool_input: { command: "ls /tmp" },
+          tool_use_id: id,
+        });
+      const end = () => send("stop", { last_assistant_message: "Done." });
+      const judged = async (n: number): Promise<string[]> => {
+        const deadline = Date.now() + 3000;
+        const pass = () => prompts.filter((p) => p.includes("THE TURN:"));
+        while (pass().length < n && Date.now() < deadline)
+          await new Promise((r) => setTimeout(r, 25));
+        return pass();
+      };
+      return { ...made, say, step, end, judged };
+    };
+
+    it("reaches the pass judge with his earlier order; his own next turn reads as before", async () => {
+      const h = harness();
+      await h.say("gather the report");
+      await h.end();
+      await h.say("write the short note");
+      await h.end();
+      await h.say("⟦AGENT:⏱ Background⟧ job ended");
+      await h.step("w1");
+      await h.end();
+      const [woken] = await h.judged(1);
+      expect(woken).toContain('"runOrders": "job ended"');
+      expect(woken).toContain('"gather the report"');
+      expect(woken).toContain('"write the short note"');
+      expect(woken).not.toContain('"ownerAsked"');
+      await h.say("and the next thing");
+      await h.step("o1");
+      await h.end();
+      const own = (await h.judged(2))[1];
+      expect(own).toContain('"ownerAsked": "and the next thing"');
+      expect(own).not.toContain('"ownerOrders":');
+    });
+
+    it("his own turn reaches the pass judge with what he typed before it, oldest first", async () => {
+      const h = harness();
+      await h.say("gather the report");
+      await h.end();
+      await h.say("write the short note");
+      await h.end();
+      await h.say("carry on");
+      await h.step("o1");
+      await h.end();
+      const [own] = await h.judged(1);
+      expect(own).toContain('"ownerAsked": "carry on"');
+      expect(own).toMatch(
+        /"earlierOrders": \[\s*"gather the report",\s*"write the short note"\s*\]/,
+      );
+      expect(own).not.toContain('"ownerOrders":');
+    });
+
+    it("still has his orders after a restart, when the tracker has lost them", async () => {
+      const before = harness();
+      await before.say("gather the report");
+      await before.end();
+      before.rt.stop();
+      const after = harness(before.dataDir);
+      after.state.t = before.state.t;
+      await after.say("⟦AGENT:⏱ Background⟧ job ended");
+      await after.step("w1");
+      await after.end();
+      const [woken] = await after.judged(1);
+      expect(woken).toContain('"gather the report"');
+      expect(woken).toContain('"runOrders": "job ended"');
+      expect(woken).not.toContain('"ownerAsked"');
+    });
+
+    it("a job run where he typed nothing reads as before", async () => {
+      const h = harness();
+      await h.say("⟦AGENT:⏱ Background⟧ job ended");
+      await h.step("w1");
+      await h.end();
+      const [woken] = await h.judged(1);
+      expect(woken).not.toContain('"ownerOrders":');
+    });
+
+    // 2026-11-17: the relay never holds an order he typed. Its judge read a fan-out unit's completion event as his whole
+    // ask and called the merge of work he had ordered in a Tinker chat "missed" (`8e1f9c10`).
+    describe("on the relay", () => {
+      const RELAY = "agent:main:orchestrator";
+      const EVENT =
+        "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\n[Internal task completion event]\ntask: e-fix\nStill open: merge the branch.";
+      const relayed = () => {
+        const h = harness();
+        const send = async (key: string, seam: Parameters<typeof h.rt.decide>[0], body: object) => {
+          h.state.t += 1000;
+          await h.rt.decide(
+            seam,
+            { session_id: key, transcript_path: join(h.root, "t.jsonl"), ...body },
+            key,
+          );
+        };
+        const chat = async (key: string, prompt: string) => {
+          await send(key, "prompt", { prompt });
+          await send(key, "stop", { last_assistant_message: "Noted." });
+        };
+        const relay = async () => {
+          await send(RELAY, "prompt", { prompt: EVENT });
+          await send(RELAY, "pre-tool", {
+            tool_name: "Bash",
+            tool_input: { command: "ls /tmp" },
+            tool_use_id: "r1",
+          });
+          await send(RELAY, "stop", { last_assistant_message: "Merged." });
+          return (await h.judged(1))[0];
+        };
+        return { chat, relay };
+      };
+
+      it("reads his last orders in his own chats, and the completion event as the run's orders", async () => {
+        const h = relayed();
+        await h.chat("agent:main:tinker:t1", "finish the reviewer pages");
+        await h.chat("agent:main:whatsapp:group:g1", "a line someone typed in a group");
+        const judged = await h.relay();
+        expect(judged).toMatch(/"ownerOrders": \[\s*"finish the reviewer pages"\s*\]/);
+        expect(judged).toContain('"runOrders": "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>');
+        expect(judged).not.toContain("a line someone typed in a group");
+        expect(judged).not.toContain('"ownerAsked"');
+      });
+
+      it("never shows the completion event as his ask, also when he typed nothing in a day", async () => {
+        const judged = await relayed().relay();
+        expect(judged).toContain('"runOrders": "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>');
+        expect(judged).toContain('"ownerOrders": []');
+        expect(judged).not.toContain('"ownerAsked"');
+      });
+    });
+  });
+
+  const NATIVE = {
+    prompt: "[Job] Execute the brief.",
+    steps: [{ ran: "exec gh pr list", failed: false, at: Date.now(), result: "RESULT-MARK" }],
+  };
+
+  it("a native run's stop shows the flag judge its orders and calls, and no gate gets them", async () => {
+    const prompts: string[] = [];
+    const seen: unknown[] = [];
+    const watcher: Family = {
+      ...noter,
+      decide: (seam, s, ...rest) => {
+        seen.push(s.request.value);
+        return noter.decide(seam, s, ...rest);
+      },
+    };
+    const { rt } = make({
+      families: [watcher],
+      explainRun: async (p) => {
+        prompts.push(p);
+        return p.includes("review flags") ? REVIEW : EXPLAIN;
+      },
+    });
+    rt.start();
+    const hook = { session_id: "agent:main:cron:j" };
+    await rt.decide("pre-tool", {
+      ...hook,
+      tool_name: "exec",
+      tool_input: { command: "rm -f /tmp/mine.txt" },
+    });
+    await rt.decide("stop", { ...hook, last_assistant_message: "no new PRs" }, undefined, {
+      ...NATIVE,
+      provider: "claude-code",
+    });
+    const deadline = Date.now() + 3000;
+    while (!prompts.some((p) => p.includes("review flags")) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const flagged = prompts.find((p) => p.includes("review flags"))!;
+    expect(flagged).toContain('"runOrders": "[Job] Execute the brief."');
+    expect(flagged).toContain("RESULT-MARK");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === null)).toBe(true);
+  });
+
+  // 2026-11-13: a Claude Code stop whose reply Jev sends back does not end the turn. From 11-10 to 11-13 all 30 reviewed
+  // unchecked send-backs were judged against the reply they sent back, 19 of them before the agent's answer existed.
+  const sender: Family = {
+    id: "double-check",
+    questionsFor: () => [],
+    decide: (seam) =>
+      seam === "stop"
+        ? {
+            response: {
+              kind: "send-back",
+              templateId: "send-back-unchecked",
+              slots: { what: "the fee line" },
+              attempt: 1,
+            },
+            drivers: [],
+            reasonCode: "unchecked-admission",
+          }
+        : null,
+  };
+
+  it("a reply sent back is judged at the stop that ends the turn, with the answer and the check behind it", async () => {
+    const prompts: string[] = [];
+    const { rt, root, state } = make({
+      mode: "enforce",
+      families: [sender],
+      explainRun: async (p) => {
+        prompts.push(p);
+        return p.includes("review flags") ? REVIEW : EXPLAIN;
+      },
+    });
+    rt.start();
+    const reviews = () => prompts.filter((p) => p.includes("review flags"));
+    const transcript = join(root, "t.jsonl");
+    writeFileSync(transcript, "");
+    const t0 = state.t;
+    await rt.decide("prompt", { session_id: "s", prompt: "run the brief" }, "tab");
+    state.t = t0 + 1000;
+    const first = await rt.decide(
+      "stop",
+      {
+        session_id: "s",
+        last_assistant_message: "Quiet day. The fee line was not found. I didn't look into why.",
+        transcript_path: transcript,
+      },
+      "tab",
+    );
+    expect(first.hook.kind).toBe("block");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(reviews()).toHaveLength(0);
+    // The agent checks on this machine, then answers; that stop ends the turn.
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: "assistant",
+        timestamp: new Date(t0 + 2000).toISOString(),
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "c1",
+              name: "Bash",
+              input: { command: "grep -n FEE-CHECK prices.mjs" },
+            },
+          ],
+        },
+      }) + "\n",
+    );
+    state.t = t0 + 3000;
+    const second = await rt.decide(
+      "stop",
+      {
+        session_id: "s",
+        last_assistant_message: "Cause found: the page changed and one regex no longer matches.",
+        transcript_path: transcript,
+      },
+      "tab",
+    );
+    expect(second.hook.kind).toBe("none");
+    const deadline = Date.now() + 3000;
+    while (reviews().length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(reviews()).toHaveLength(1);
+    expect(reviews()[0]).toContain(
+      "Cause found: the page changed and one regex no longer matches.",
+    );
+    expect(reviews()[0]).toContain("FEE-CHECK");
+  });
+
+  it("a native run's stop that sends the reply back is judged at once: no answer follows it", async () => {
+    const prompts: string[] = [];
+    const { rt } = make({
+      mode: "enforce",
+      families: [sender],
+      explainRun: async (p) => {
+        prompts.push(p);
+        return p.includes("review flags") ? REVIEW : EXPLAIN;
+      },
+    });
+    rt.start();
+    await rt.decide(
+      "stop",
+      { session_id: "agent:main:cron:j", last_assistant_message: "I didn't look into why." },
+      undefined,
+      { ...NATIVE, provider: "claude-code" },
+    );
+    const deadline = Date.now() + 3000;
+    while (!prompts.some((p) => p.includes("review flags")) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(prompts.filter((p) => p.includes("review flags"))).toHaveLength(1);
+  });
+
+  // 2026-11-16: the gateway runs register() more than once, and the Claude Code hooks reach one runtime while `agent_end`
+  // reaches another (see processTracker). Each queued its own review of the turn's flags and passes. The `agent_end` copy
+  // has no transcript: it reads no call after the flag and takes the run's first line for its end. When it finished last,
+  // its save replaced the informed verdict (11-14 to 11-16: 69 flag verdicts, 22 of them changed, 8 to "harmful").
+  describe("a Claude Code turn whose agent_end reaches another runtime", () => {
+    const twoRuntimes = () => {
+      const prompts: string[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const explainRun: RunOnce = async (p) => {
+        prompts.push(p);
+        if (!p.includes("review flags")) return EXPLAIN;
+        await gate;
+        return REVIEW;
+      };
+      const hooks = make({ families: [noter], explainRun });
+      const native = make({ families: [noter], explainRun, dataDir: hooks.dataDir });
+      hooks.rt.start();
+      native.rt.start();
+      const transcript = join(hooks.root, "t.jsonl");
+      const t0 = hooks.state.t;
+      writeFileSync(
+        transcript,
+        JSON.stringify({
+          type: "assistant",
+          timestamp: new Date(t0 + 2000).toISOString(),
+          message: {
+            content: [{ type: "tool_use", id: "x2", name: "Bash", input: { command: "ls /tmp" } }],
+          },
+        }) + "\n",
+      );
+      const reviews = () => prompts.filter((p) => p.includes("review flags"));
+      return { hooks, native, transcript, reviews, release };
+    };
+    const key = "agent:main:subagent:x";
+    const settle = async (until: () => boolean) => {
+      const deadline = Date.now() + 1000;
+      while (!until() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+    };
+
+    it("is reviewed once, from its own Stop hook, with the calls after the flag", async () => {
+      const { hooks, native, transcript, reviews, release } = twoRuntimes();
+      await hooks.rt.decide("prompt", { session_id: "s", prompt: "clean up my test file" }, key);
+      await hooks.rt.decide(
+        "pre-tool",
+        {
+          session_id: "s",
+          tool_name: "Bash",
+          tool_input: { command: "rm -f /tmp/mine.txt" },
+          tool_use_id: "x1",
+          transcript_path: transcript,
+        },
+        key,
+      );
+      await hooks.rt.decide(
+        "stop",
+        {
+          session_id: "s",
+          last_assistant_message: "Done, the file is gone.",
+          transcript_path: transcript,
+        },
+        key,
+      );
+      await settle(() => reviews().length > 0);
+      await native.rt.decide(
+        "stop",
+        {
+          session_id: key,
+          last_assistant_message: "I'll start by listing the folder. Done, the file is gone.",
+        },
+        undefined,
+        NATIVE,
+      );
+      await settle(() => reviews().length > 1);
+      release();
+      expect(reviews()).toHaveLength(1);
+      expect(reviews()[0]).toContain("ls /tmp");
+      expect(reviews()[0]).not.toContain("I'll start by listing the folder.");
+    });
+
+    it("is still reviewed from agent_end when its Stop hook never reached Jev", async () => {
+      const { hooks, native, transcript, reviews, release } = twoRuntimes();
+      release();
+      await hooks.rt.decide("prompt", { session_id: "s", prompt: "clean up my test file" }, key);
+      await hooks.rt.decide(
+        "pre-tool",
+        {
+          session_id: "s",
+          tool_name: "Bash",
+          tool_input: { command: "rm -f /tmp/mine.txt" },
+          tool_use_id: "x1",
+          transcript_path: transcript,
+        },
+        key,
+      );
+      await native.rt.decide(
+        "stop",
+        { session_id: key, last_assistant_message: "Done, the file is gone." },
+        undefined,
+        NATIVE,
+      );
+      await settle(() => reviews().length > 0);
+      expect(reviews()).toHaveLength(1);
+    });
+
+    it("is still reviewed from agent_end when its last Stop hook sent the reply back", async () => {
+      const prompts: string[] = [];
+      const explainRun: RunOnce = async (p) => {
+        prompts.push(p);
+        return p.includes("review flags") ? REVIEW : EXPLAIN;
+      };
+      // Sends a reply back when it admits a line it did not check; here the run ends with no other Stop hook.
+      const admits: Family = {
+        id: "double-check",
+        questionsFor: () => [],
+        decide: (seam, s) =>
+          seam === "stop" && String(s.reply?.value ?? "").includes("not checked")
+            ? {
+                response: {
+                  kind: "send-back",
+                  templateId: "send-back-unchecked",
+                  slots: { what: "the fee line" },
+                  attempt: 1,
+                },
+                drivers: [],
+                reasonCode: "unchecked-admission",
+              }
+            : null,
+      };
+      const hooks = make({ mode: "enforce", families: [admits], explainRun });
+      const native = make({
+        mode: "enforce",
+        families: [admits],
+        explainRun,
+        dataDir: hooks.dataDir,
+      });
+      hooks.rt.start();
+      native.rt.start();
+      const transcript = join(hooks.root, "t.jsonl");
+      writeFileSync(transcript, "");
+      await hooks.rt.decide("prompt", { session_id: "s", prompt: "run the brief" }, key);
+      const first = await hooks.rt.decide(
+        "stop",
+        {
+          session_id: "s",
+          last_assistant_message: "Quiet day. The fee line is not checked.",
+          transcript_path: transcript,
+        },
+        key,
+      );
+      expect(first.hook.kind).toBe("block");
+      await native.rt.decide(
+        "stop",
+        { session_id: key, last_assistant_message: "Quiet day." },
+        undefined,
+        NATIVE,
+      );
+      await settle(() => prompts.some((p) => p.includes("review flags")));
+      expect(prompts.filter((p) => p.includes("review flags"))).toHaveLength(1);
+    });
+  });
+
+  it("the pass judge reads a native run's calls, and its output only on the run's own host", async () => {
+    const judged = async (provider: string): Promise<string> => {
+      const prompts: string[] = [];
+      const { rt } = make({
+        explainRun: async (p) => {
+          prompts.push(p);
+          return JSON.stringify({ entries: [{ n: 1, verdict: "fine", reason: "ok" }] });
+        },
+      });
+      rt.start();
+      const hook = { session_id: "agent:main:cron:j" };
+      await rt.decide("pre-tool", {
+        ...hook,
+        tool_name: "exec",
+        tool_input: { command: "printf x > state.json" },
+      });
+      await rt.decide("stop", { ...hook, last_assistant_message: "done" }, undefined, {
+        ...NATIVE,
+        provider,
+      });
+      const deadline = Date.now() + 3000;
+      // The effect judge (effects.ts) asks at the same stop; this test reads the pass judge's prompt.
+      const pass = () => prompts.find((x) => !x.startsWith("You audit what an AI agent changed"));
+      while (!pass() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      return pass() ?? "";
+    };
+    const same = await judged("claude-code");
+    expect(same).toContain('"runOrders": "[Job] Execute the brief."');
+    expect(same).toContain("RESULT-MARK");
+    const other = await judged("some-other-host");
+    expect(other).toContain("exec gh pr list");
+    expect(other).not.toContain("RESULT-MARK");
+  });
+
   it("the reviewer's own one-shots (temp:*) are never reviewed", async () => {
     const prompts: string[] = [];
     const { rt } = make({
@@ -759,5 +1274,70 @@ describe("usefulness review (2026-10-06)", () => {
     );
     await new Promise((r) => setTimeout(r, 100));
     expect(prompts).toEqual([]);
+  });
+});
+
+describe("the ambiguity context (2026-11-13)", () => {
+  it("the prompt carries the conversation; while the reading is open each step carries the turn's words and calls", async () => {
+    const seen: { seam: string; s: Situation }[] = [];
+    const spy: Family = {
+      id: "second-opinion",
+      questionsFor: (seam, s) => {
+        seen.push({ seam, s });
+        return [];
+      },
+      // Stands in for the screen flagging the request.
+      observe: (seam, _s, _v, state) => {
+        if (seam === "prompt") state.ambiguity = "open";
+      },
+      decide: () => null,
+    };
+    const { rt, root } = make({ families: [spy] });
+    rt.start();
+    const t0 = 1_700_000_000_000;
+    const transcript = join(root, "t.jsonl");
+    const line = (type: string, content: unknown, ts: number) =>
+      JSON.stringify({ type, timestamp: new Date(ts).toISOString(), message: { content } });
+    writeFileSync(
+      transcript,
+      [
+        line("user", "Rebuild the page", t0 - 60_000),
+        line("assistant", [{ type: "text", text: "The rebuild is queued." }], t0 - 50_000),
+      ].join("\n") + "\n",
+    );
+    await rt.decide(
+      "prompt",
+      { session_id: "s", prompt: "Finished yet?", transcript_path: transcript },
+      "tab",
+    );
+    expect(seen[0]?.s.exchange?.value).toBe(
+      "owner: Rebuild the page\nagent: The rebuild is queued.",
+    );
+
+    appendFileSync(
+      transcript,
+      [
+        line("user", "Finished yet?", t0),
+        line("assistant", [{ type: "text", text: "- reading: A\n- pick: A" }], t0 + 1000),
+        line(
+          "assistant",
+          [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: "/m/a.md" } }],
+          t0 + 1500,
+        ),
+      ].join("\n") + "\n",
+    );
+    await rt.decide(
+      "pre-tool",
+      {
+        session_id: "s",
+        tool_name: "Edit",
+        tool_input: { file_path: "/m/b.md" },
+        transcript_path: transcript,
+      },
+      "tab",
+    );
+    const step = seen.find((x) => x.seam === "pre-tool")?.s;
+    expect(step?.restatement.value).toBe("- reading: A\n- pick: A");
+    expect(step?.turnSteps?.value).toEqual(["Read /m/a.md"]);
   });
 });

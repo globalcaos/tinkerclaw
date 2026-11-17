@@ -9,7 +9,7 @@ export interface AaUnroutedModel {
   /** Dossier id. `openrouter/<vendor>/<slug>` where the vendor is confirmed, `unlisted/<slug>` otherwise. */
   id: string;
   name: string;
-  /** AA Intelligence Index, base row, read 2026-10-13. */
+  /** AA Intelligence Index, base row; re-read 2026-11-12 (AA re-scored five of them that day). */
   index: number;
   /** Why it has no price, in one clause. */
   why: string;
@@ -19,25 +19,25 @@ export const AA_UNROUTED_MODELS: AaUnroutedModel[] = [
   {
     id: "openrouter/meta/muse-wonder-full",
     name: "Muse Wonder Full",
-    index: 55.8021,
+    index: 50.0772,
     why: "no seller lists the Full variant; OpenRouter sells only Muse Wonder",
   },
   {
     id: "openrouter/stepfun/step-5",
     name: "Step 5",
-    index: 43.7343,
+    index: 28.5283,
     why: "OpenRouter lists only Step 5 Preview ($1/$2.70); not matched to AA's step-5 without proof",
   },
   {
     id: "openrouter/qwen/qwen3.8-flash-next",
     name: "Qwen3.8-Flash-Next",
-    index: 39.8223,
+    index: 28.575,
     why: "no catalog lists it; Qwen3.8 Flash is a different model",
   },
   {
     id: "openrouter/mistralai/mistral-large-4",
     name: "Mistral Large 4 Preview",
-    index: 38.377,
+    index: 26.125,
     why: "OpenRouter lists Mistral Large 4 ($0.68/$2.09), not the Preview AA scored; not matched without proof",
   },
   {
@@ -49,14 +49,14 @@ export const AA_UNROUTED_MODELS: AaUnroutedModel[] = [
   {
     id: "unlisted/jt-4.1-flash-236b-a21b",
     name: "JT-4.1 Flash 236B A21B",
-    index: 33.9173,
+    index: 18.9529,
     why: "no seller found; vendor reported as China Mobile by a third-party site only",
   },
   {
-    id: "unlisted/motif-3",
-    name: "Motif 3",
-    index: 33.5666,
-    why: "no seller found; vendor not confirmed",
+    id: "unlisted/inkling-2-small",
+    name: "Inkling 2 Small",
+    index: 30.6287,
+    why: "AA scored it 2026-11-06 (rank 55); OpenRouter and DeepInfra list only Inkling Small; not matched without proof",
   },
 ];
 

@@ -1,0 +1,5 @@
+# One job per line. Copy this file to ~/.local/share/token-burner/queue.jsonl and edit it.
+# A prompt job runs `claude -p` on the seat that is burning. The prompt goes in on stdin.
+{"id": "summarize-issues", "prompt": "Read ISSUES.md and write a one-page summary to SUMMARY.md.", "cwd": "~/src/myproject", "tools": ["Read", "Write"], "permission_mode": "acceptEdits", "verify": ["test", "-s", "SUMMARY.md"]}
+# A cmd job runs your own command with that seat's CLAUDE_CONFIG_DIR set. Say how many agents it runs.
+{"id": "agent-test-sweep", "cmd": ["./scripts/agent-sweep.sh"], "cwd": "~/src/myproject", "agents": 2, "timeout": 7200, "verify": ["make", "test"]}

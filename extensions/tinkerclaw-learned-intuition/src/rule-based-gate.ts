@@ -50,7 +50,7 @@ export interface AegisRule {
    * match when every target is agent scratch under /tmp/<name>, or the owner's latest message
    * asks to delete, or he typed the one-time "allow <code>".
    * "secret" (2026-10-13) → same, for reading or using a stored password: his latest message must
-   * ask for it in his own words (Jev agreeing), or the one-time code. No /tmp exemption.
+   * ask for it in his own words (Jev agreeing), or the one-time code.
    */
   ownerIntent?: "delete" | "secret";
 }
@@ -108,7 +108,7 @@ export const AEGIS_RULES: AegisRule[] = [
     pattern:
       /(?:^|[\s;&|(`])(?:rm|shred|unlink)\s|\bfind\s[^;&|]*\s-delete\b|\bgit\s+(?:rm\s|clean\s+-\S*f|worktree\s+remove\s+(?:\S+\s+)*(?:--force|-f)\b)|\b(?:pip3?|uv|conda|yarn|npm|pnpm)\s+(?:cache\s+(?:purge|clean|remove|prune|rm)|store\s+prune|clean\b)|\bdocker\s+(?:(?:system|image|volume|container|builder|network)\s+prune|rmi\b|rm\b)|\bapt(?:-get)?\s+(?:autoremove|purge|remove|clean|autoclean)\b|\bsnap\s+remove\b|\bjournalctl\s[^;&|]*--vacuum|\bhuggingface-cli\s+delete-cache\b|\btimeshift\s[^;&|]*--delete\b/,
     rule: "DELETE_UNREQUESTED",
-    explanation: "Deletes files or caches the owner did not explicitly ask to delete",
+    explanation: "Deletes files that have nothing to do with what the owner asked for",
     enforce: true,
     scope: "exec",
     ownerIntent: "delete",
@@ -295,10 +295,23 @@ export function evaluateRuleBased(toolName: string, argsStr: string): RuleBasedR
  * cry-wolf on legitimate work now that the native `before_tool_call` block is
  * actually wired through the host.
  */
+/** True when the text's rm commands all target only paths under /tmp: scratch, free to delete, recursive or not. */
+function rmOnlyUnderTmp(text: string): boolean {
+  const rms = [...text.matchAll(/\brm\s+((?:[^\s;&|"'\\]+\s*)+)/g)];
+  return (
+    rms.length > 0 &&
+    rms.every((m) => {
+      const paths = m[1].split(/\s+/).filter((w) => w && !w.startsWith("-"));
+      return paths.length > 0 && paths.every((w) => /^\/tmp\/[^\s*?]/.test(w) && !w.includes(".."));
+    })
+  );
+}
+
 export function evaluateAegisEnforced(toolName: string, argsStr: string): RuleBasedResult {
   const combined = `${toolName} ${argsStr}`;
   for (const { pattern, rule, explanation, enforce, ownerIntent } of AEGIS_RULES) {
     if (ownerIntent) continue; // needs the owner's words: decided by the pre-execution hook
+    if (rule === "FS_DESTRUCTIVE_ROOT" && rmOnlyUnderTmp(combined)) continue;
     if (enforce && pattern.test(combined)) {
       return noteAegisDecision({
         decision: "hard_block",

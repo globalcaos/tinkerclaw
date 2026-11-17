@@ -14,6 +14,11 @@ import {
 import type { PluginLoadOptions } from "./loader.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
 import { hasExplicitPluginIdScope, normalizePluginIdScope } from "./plugin-scope.js";
+// FORK 2026-10-29: inside the gateway the snapshot follows the plugin snapshot generation.
+import {
+  capturePluginSnapshotGeneration,
+  isPluginSnapshotFresh,
+} from "./plugin-snapshot-generation.js";
 import type { PluginRegistry } from "./registry.js";
 import { getActivePluginRegistryWorkspaceDir } from "./runtime.js";
 import {
@@ -24,6 +29,8 @@ import { buildWebProviderSnapshotCacheKey } from "./web-provider-resolution-shar
 
 type WebProviderSnapshotCacheEntry<TEntry> = {
   expiresAt: number;
+  // FORK 2026-10-29: the generation the snapshot was built against (set only inside the gateway).
+  generation?: string;
   providers: TEntry[];
 };
 
@@ -189,10 +196,15 @@ export function resolvePluginWebProviders<TEntry>(
     const configCache = deps.snapshotCache.get(cacheOwnerConfig);
     const envCache = configCache?.get(env);
     const cached = envCache?.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    // FORK 2026-10-29: was `cached.expiresAt > Date.now()`. Inside the gateway the generation
+    // decides instead of the 1 s TTL (plugin-snapshot-generation.ts).
+    if (cached && isPluginSnapshotFresh(cached, env)) {
       return cached.providers;
     }
   }
+  // FORK 2026-10-29: stamp the generation before building; if it moves during the build, the
+  // entry is already stale.
+  const snapshotGeneration = capturePluginSnapshotGeneration(env);
   const memoizeSnapshot = (providers: TEntry[]) => {
     if (!cacheOwnerConfig || !shouldMemoizeSnapshot) {
       return;
@@ -213,6 +225,7 @@ export function resolvePluginWebProviders<TEntry>(
     }
     envCache.set(cacheKey, {
       expiresAt: Date.now() + ttlMs,
+      generation: snapshotGeneration, // FORK 2026-10-29
       providers,
     });
   };

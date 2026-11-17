@@ -217,7 +217,7 @@ function carCard(trip, seg, { big = false } = {}) {
 }
 
 function activityRow(seg) {
-  return `<div class="row activity${seg.confirmed === false ? " tbc" : ""}" data-seg="${esc(seg.id)}"><span class="kind">★</span><div><div class="rt">${esc(seg.title || "Activity")}</div>${tbcBadge(seg)}${seg.notes ? `<div class="notes">${esc(seg.notes)}</div>` : ""}</div></div>`;
+  return `<div class="row activity${seg.confirmed === false ? " tbc" : ""}" data-seg="${esc(seg.id)}"><span class="kind">★</span><div><div class="rt">${esc(seg.title || "Activity")}</div>${tbcBadge(seg)}${seg.notes ? `<div class="notes">${esc(seg.notes)}</div>` : ""}${mapsLinks(seg)}</div></div>`;
 }
 
 function smallRow(icon, text, seg) {

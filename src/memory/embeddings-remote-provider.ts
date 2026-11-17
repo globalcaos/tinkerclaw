@@ -4,7 +4,11 @@ import {
   type RemoteEmbeddingProviderId,
 } from "./embeddings-remote-client.js";
 import { fetchRemoteEmbeddingVectors } from "./embeddings-remote-fetch.js";
-import type { EmbeddingProvider, EmbeddingProviderOptions } from "./embeddings.js";
+import type {
+  EmbedCallOptions,
+  EmbeddingProvider,
+  EmbeddingProviderOptions,
+} from "./embeddings.js";
 
 export type RemoteEmbeddingClient = {
   baseUrl: string;
@@ -22,7 +26,9 @@ export function createRemoteEmbeddingProvider(params: {
   const { client } = params;
   const url = `${client.baseUrl.replace(/\/$/, "")}/embeddings`;
 
-  const embed = async (input: string[]): Promise<number[][]> => {
+  // FORK 2026-10-30: the call's signal reaches the request (OpenAI and Mistral are built here), so
+  // an aborted or timed-out embedding stops on the wire. A call without a signal is unchanged.
+  const embed = async (input: string[], opts?: EmbedCallOptions): Promise<number[][]> => {
     if (input.length === 0) {
       return [];
     }
@@ -32,6 +38,7 @@ export function createRemoteEmbeddingProvider(params: {
       ssrfPolicy: client.ssrfPolicy,
       body: { model: client.model, input },
       errorPrefix: params.errorPrefix,
+      signal: opts?.signal,
     });
   };
 
@@ -39,8 +46,8 @@ export function createRemoteEmbeddingProvider(params: {
     id: params.id,
     model: client.model,
     ...(typeof params.maxInputTokens === "number" ? { maxInputTokens: params.maxInputTokens } : {}),
-    embedQuery: async (text) => {
-      const [vec] = await embed([text]);
+    embedQuery: async (text, opts) => {
+      const [vec] = await embed([text], opts);
       return vec ?? [];
     },
     embedBatch: embed,

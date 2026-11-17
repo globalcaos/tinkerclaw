@@ -8,6 +8,7 @@ import { resolveAgentDir } from "../agents/agent-scope.js";
 import { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
 import { type OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+import { governorFor } from "../fork/embedder-governor.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath } from "../utils.js";
@@ -35,6 +36,7 @@ import {
   runWithConcurrency,
 } from "./internal.js";
 import { type MemoryFileEntry } from "./internal.js";
+import { FTS_ONLY_MODEL } from "./manager-search.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
 import {
   buildCaseInsensitiveExtensionGlob,
@@ -76,6 +78,17 @@ const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const SESSION_DIRTY_DEBOUNCE_MS = 5000;
 const SESSION_DELTA_READ_CHUNK_BYTES = 64 * 1024;
 const VECTOR_LOAD_TIMEOUT_MS = 30_000;
+/**
+ * FORK 2026-10-29: a reindex seeds its embedding cache inside SQLite (ATTACH, then
+ * INSERT ... SELECT), 1,000 rowids per committed statement, with an event-loop yield between
+ * statements. Objective: the cache never passes through the JS heap (on the reference index it
+ * held about 171,082 rows, about 4.3 GB, both estimated) and no step holds the main thread long.
+ * Derived from: about 25 KB per row (4.3 GB / 171,082), so one step moves at most about 25 MB.
+ * Break-even: bigger steps mean fewer commits but longer stalls between yields. Changes if a step
+ * is measured holding the event loop too long.
+ */
+const SEED_ROWID_STEP = 1_000;
+const SEED_SCHEMA = "seed_src";
 const IGNORED_MEMORY_WATCH_DIR_NAMES = new Set([
   ".git",
   "node_modules",
@@ -152,6 +165,20 @@ export abstract class MemoryManagerSyncOps {
     { lastSize: number; pendingBytes: number; pendingMessages: number }
   >();
   private lastMetaSerialized: string | null = null;
+  /**
+   * FORK 2026-10-29: does the vector half have anything to scan? null means not known yet. A
+   * write that removes vectors resets it and one that stores a vector sets it; manager.ts reads it
+   * on each search, so a word-only or dormant index skips the query embed.
+   */
+  protected vectorRowsPresent: boolean | null = null;
+  /**
+   * FORK 2026-10-29: the embedder could not answer during this sync (indexFile wrote a file words
+   * only for it). It keeps the warn to one per sync and keeps the drain from asking again before
+   * the next sync. Reset when a sync starts.
+   */
+  protected embedderFailedThisSync = false;
+  /** FORK 2026-10-29: during a safe reindex, the index being replaced (its word-only backlog). */
+  protected priorIndexDb: DatabaseSync | null = null;
 
   protected abstract readonly cache: { enabled: boolean; maxEntries?: number };
   protected abstract db: DatabaseSync;
@@ -313,6 +340,7 @@ export abstract class MemoryManagerSyncOps {
 
   /** @returns true when the table is gone afterwards. A failed drop must never look like a success. */
   private dropVectorTable(): boolean {
+    this.vectorRowsPresent = null;
     try {
       this.db.exec(`DROP TABLE IF EXISTS ${VECTOR_TABLE}`);
     } catch (err) {
@@ -363,53 +391,62 @@ export abstract class MemoryManagerSyncOps {
     return db;
   }
 
-  private seedEmbeddingCache(sourceDb: DatabaseSync): void {
-    if (!this.cache.enabled) {
+  /**
+   * FORK 2026-10-29: seed the reindex's embedding cache from the index it replaces, inside
+   * SQLite: ATTACH the original file to the new handle and copy only this provider's rows
+   * (provider, model and provider_key), SEED_ROWID_STEP rowids per committed statement with a
+   * yield between them, then DETACH. Rows of other models stay behind and nothing passes through
+   * the JS heap; this used to .all() the whole cache, every provider and model, in one call.
+   */
+  private async seedEmbeddingCache(originalDbPath: string): Promise<void> {
+    const provider = this.provider;
+    if (!this.cache.enabled || !provider) {
       return;
     }
+    const db = this.db;
+    db.prepare(`ATTACH DATABASE ? AS ${SEED_SCHEMA}`).run(originalDbPath);
     try {
-      const rows = sourceDb
+      const table = db
         .prepare(
-          `SELECT provider, model, provider_key, hash, embedding, dims, updated_at FROM ${EMBEDDING_CACHE_TABLE}`,
+          `SELECT 1 AS present FROM ${SEED_SCHEMA}.sqlite_master WHERE type = 'table' AND name = ?`,
         )
-        .all() as Array<{
-        provider: string;
-        model: string;
-        provider_key: string;
-        hash: string;
-        embedding: string;
-        dims: number | null;
-        updated_at: number;
-      }>;
-      if (!rows.length) {
+        .get(EMBEDDING_CACHE_TABLE);
+      if (!table) {
         return;
       }
-      const insert = this.db.prepare(
+      const bounds = db
+        .prepare(
+          `SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM ${SEED_SCHEMA}.${EMBEDDING_CACHE_TABLE}`,
+        )
+        .get() as { lo: number | null; hi: number | null } | undefined;
+      if (bounds?.lo == null || bounds.hi == null) {
+        return;
+      }
+      const copy = db.prepare(
         `INSERT INTO ${EMBEDDING_CACHE_TABLE} (provider, model, provider_key, hash, embedding, dims, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         SELECT provider, model, provider_key, hash, embedding, dims, updated_at
+           FROM ${SEED_SCHEMA}.${EMBEDDING_CACHE_TABLE}
+          WHERE rowid >= ? AND rowid < ? AND provider = ? AND model = ? AND provider_key = ?
          ON CONFLICT(provider, model, provider_key, hash) DO UPDATE SET
            embedding=excluded.embedding,
            dims=excluded.dims,
            updated_at=excluded.updated_at`,
       );
-      this.db.exec("BEGIN");
-      for (const row of rows) {
-        insert.run(
-          row.provider,
-          row.model,
-          row.provider_key,
-          row.hash,
-          row.embedding,
-          row.dims,
-          row.updated_at,
+      for (let lo = bounds.lo; lo <= bounds.hi; lo += SEED_ROWID_STEP) {
+        // One autocommitted statement per step, so no transaction is open across the yield.
+        copy.run(lo, lo + SEED_ROWID_STEP, provider.id, provider.model, this.providerKey);
+        if (lo + SEED_ROWID_STEP <= bounds.hi) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      }
+    } finally {
+      try {
+        db.exec(`DETACH DATABASE ${SEED_SCHEMA}`);
+      } catch (err) {
+        log.warn(
+          `memory reindex: cannot detach the seed source: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      this.db.exec("COMMIT");
-    } catch (err) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {}
-      throw err;
     }
   }
 
@@ -461,6 +498,14 @@ export abstract class MemoryManagerSyncOps {
         log.warn(`fts unavailable: ${result.ftsError}`);
       }
     }
+    // FORK 2026-10-29: word-only chunks (model 'fts-only') are found through this partial index,
+    // so "is anything waiting for vectors?" (needsFullReindex, the drain, the onSearch trigger) is
+    // one index seek, not a scan of every chunk. Only word-only rows enter it, so a vectorised
+    // index pays nothing per insert; it is built once, on the first open after this change, in one
+    // pass over the chunk table. The predicate is a literal because a partial index needs one.
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_chunks_word_only ON chunks(source, updated_at, path) WHERE model = '${FTS_ONLY_MODEL}';`,
+    );
   }
 
   protected ensureWatcher() {
@@ -782,35 +827,41 @@ export abstract class MemoryManagerSyncOps {
     needsFullReindex: boolean;
     progress?: MemorySyncProgressState;
   }) {
-    // FTS-only mode: skip embedding sync (no provider)
-    if (!this.provider) {
-      log.debug("Skipping memory file sync in FTS-only mode (no embedding provider)");
-      return;
-    }
-
+    // FORK 2026-10-29: no early return without a provider. indexFile writes the words of every
+    // file (model key 'fts-only') whenever no vector can be made, so word search keeps indexing;
+    // the FTS-only mode used to return here and write nothing (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
     const files = await listMemoryFiles(
       this.workspaceDir,
       this.settings.extraPaths,
       this.settings.multimodal,
     );
+    // FORK 2026-10-29: the fast path. Outside a full reindex, a file whose mtime and size equal
+    // its files row is neither read nor hashed: it counts as active and stays as indexed. A new
+    // manager used to re-read and re-hash every memory file on its first sync.
+    const stamps = params.needsFullReindex ? null : this.readFileStamps("memory");
+    const unchanged: string[] = [];
     const fileEntries = (
       await runWithConcurrency(
-        files.map(
-          (file) => async () =>
-            await buildFileEntry(file, this.workspaceDir, this.settings.multimodal),
-        ),
+        files.map((file) => async () => {
+          if (stamps && (await this.isUnchangedFile(file, stamps, unchanged))) {
+            return null;
+          }
+          return await buildFileEntry(file, this.workspaceDir, this.settings.multimodal);
+        }),
         this.getIndexConcurrency(),
       )
     ).filter((entry): entry is MemoryFileEntry => entry !== null);
     log.debug("memory sync: indexing memory files", {
       files: fileEntries.length,
+      unchanged: unchanged.length,
       needsFullReindex: params.needsFullReindex,
       batch: this.batch.enabled,
       concurrency: this.getIndexConcurrency(),
     });
-    const activePaths = new Set(fileEntries.map((entry) => entry.path));
+    const activePaths = new Set([...fileEntries.map((entry) => entry.path), ...unchanged]);
     if (params.progress) {
-      params.progress.total += fileEntries.length;
+      params.progress.total += fileEntries.length + unchanged.length;
+      params.progress.completed += unchanged.length;
       params.progress.report({
         completed: params.progress.completed,
         total: params.progress.total,
@@ -820,9 +871,16 @@ export abstract class MemoryManagerSyncOps {
 
     const tasks = fileEntries.map((entry) => async () => {
       const record = this.db
-        .prepare(`SELECT hash FROM files WHERE path = ? AND source = ?`)
-        .get(entry.path, "memory") as { hash: string } | undefined;
+        .prepare(`SELECT hash, mtime, size FROM files WHERE path = ? AND source = ?`)
+        .get(entry.path, "memory") as { hash: string; mtime: number; size: number } | undefined;
       if (!params.needsFullReindex && record?.hash === entry.hash) {
+        // FORK 2026-10-29: same content under a new mtime or size (a checkout, a copy): refresh
+        // the stamp, so the fast path skips this file next time instead of re-reading it.
+        if (record.mtime !== entry.mtimeMs || record.size !== entry.size) {
+          this.db
+            .prepare(`UPDATE files SET mtime = ?, size = ? WHERE path = ? AND source = ?`)
+            .run(entry.mtimeMs, entry.size, entry.path, "memory");
+        }
         if (params.progress) {
           params.progress.completed += 1;
           params.progress.report({
@@ -859,11 +917,13 @@ export abstract class MemoryManagerSyncOps {
           .run(stale.path, "memory");
       } catch {}
       this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(stale.path, "memory");
+      this.vectorRowsPresent = null;
       if (this.fts.enabled && this.fts.available) {
+        const fts = this.ftsModelFilter();
         try {
           this.db
-            .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-            .run(stale.path, "memory", this.provider.model);
+            .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND ${fts.sql}`)
+            .run(stale.path, "memory", ...fts.params);
         } catch {}
       }
     }
@@ -874,12 +934,8 @@ export abstract class MemoryManagerSyncOps {
     targetSessionFiles?: string[];
     progress?: MemorySyncProgressState;
   }) {
-    // FTS-only mode: skip embedding sync (no provider)
-    if (!this.provider) {
-      log.debug("Skipping session file sync in FTS-only mode (no embedding provider)");
-      return;
-    }
-
+    // FORK 2026-10-29: no early return without a provider; session files are indexed for word
+    // search like memory files (indexFile writes the words when no vector can be made).
     const targetSessionFiles = params.needsFullReindex
       ? null
       : this.normalizeTargetSessionFiles(params.targetSessionFiles);
@@ -982,14 +1038,185 @@ export abstract class MemoryManagerSyncOps {
       this.db
         .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
         .run(stale.path, "sessions");
+      this.vectorRowsPresent = null;
       if (this.fts.enabled && this.fts.available) {
+        const fts = this.ftsModelFilter();
         try {
           this.db
-            .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-            .run(stale.path, "sessions", this.provider.model);
+            .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND ${fts.sql}`)
+            .run(stale.path, "sessions", ...fts.params);
         } catch {}
       }
     }
+  }
+
+  /**
+   * FORK 2026-10-29: does this index hold word-only chunks (model 'fts-only') waiting for
+   * vectors, in one source or in any? One seek on the idx_chunks_word_only partial index. A failed
+   * probe answers yes: a wasted drain attempt is cheap, a full reindex on every sync is not.
+   */
+  protected hasPendingFtsOnlyChunks(source?: MemorySource): boolean {
+    try {
+      const row = source
+        ? this.db
+            .prepare(
+              `SELECT 1 AS present FROM chunks WHERE model = '${FTS_ONLY_MODEL}' AND source = ? LIMIT 1`,
+            )
+            .get(source)
+        : this.db
+            .prepare(`SELECT 1 AS present FROM chunks WHERE model = '${FTS_ONLY_MODEL}' LIMIT 1`)
+            .get();
+      return row !== undefined;
+    } catch (err) {
+      log.warn(
+        `memory index: the word-only probe failed, so vectors are taken as pending: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return true;
+    }
+  }
+
+  /**
+   * FORK 2026-10-29: may background embedding run for this source now? The governor decides for
+   * a governed provider (breaker, idle gate, dormancy, step-down); an ungoverned one always may,
+   * and without a provider there is nothing to embed with.
+   */
+  protected indexAdmitted(source: MemorySource): boolean {
+    if (!this.provider) {
+      return false;
+    }
+    const governor = governorFor(this.provider);
+    return governor ? governor.admit("index", source).ok : true;
+  }
+
+  /**
+   * FORK 2026-10-29: the FTS rows that belong to this index's chunks: those of the provider's
+   * model and the word-only ones, or the word-only ones alone without a provider.
+   */
+  protected ftsModelFilter(): { sql: string; params: string[] } {
+    return this.provider
+      ? { sql: "model IN (?, ?)", params: [this.provider.model, FTS_ONLY_MODEL] }
+      : { sql: "model = ?", params: [FTS_ONLY_MODEL] };
+  }
+
+  /** FORK 2026-10-29: the (mtime, size) each file of a source had when it was last indexed. */
+  private readFileStamps(source: MemorySource): Map<string, { mtime: number; size: number }> {
+    const rows = this.db
+      .prepare(`SELECT path, mtime, size FROM files WHERE source = ?`)
+      .all(source) as Array<{ path: string; mtime: number; size: number }>;
+    return new Map(rows.map((row) => [row.path, { mtime: row.mtime, size: row.size }]));
+  }
+
+  /** FORK 2026-10-29: the fast path's test. An unchanged file is recorded as active, not read. */
+  private async isUnchangedFile(
+    absPath: string,
+    stamps: Map<string, { mtime: number; size: number }>,
+    unchanged: string[],
+  ): Promise<boolean> {
+    const relPath = path.relative(this.workspaceDir, absPath).replace(/\\/g, "/");
+    const stamp = stamps.get(relPath);
+    if (!stamp) {
+      return false;
+    }
+    let stat: { mtimeMs: number; size: number };
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      if (isFileMissingError(err)) {
+        return false;
+      }
+      throw err;
+    }
+    if (stat.mtimeMs !== stamp.mtime || stat.size !== stamp.size) {
+      return false;
+    }
+    unchanged.push(relPath);
+    return true;
+  }
+
+  /**
+   * FORK 2026-10-29: the drain (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). Re-index the files whose
+   * chunks were written words only, oldest first, while the governor admits background embedding
+   * for their source. It stops at the first file that stays word-only, and it does not start in a
+   * sync whose embedder already failed, so an embedder that still cannot answer costs one attempt
+   * per sync, not one per pending file.
+   */
+  private async drainWordOnlyFiles(): Promise<void> {
+    if (!this.provider || this.embedderFailedThisSync) {
+      return;
+    }
+    for (const source of ["memory", "sessions"] as const) {
+      if (
+        !this.sources.has(source) ||
+        !this.hasPendingFtsOnlyChunks(source) ||
+        !this.indexAdmitted(source)
+      ) {
+        continue;
+      }
+      const pending = this.db
+        .prepare(
+          `SELECT path, MIN(updated_at) AS oldest FROM chunks
+            WHERE model = '${FTS_ONLY_MODEL}' AND source = ?
+            GROUP BY path ORDER BY oldest ASC`,
+        )
+        .all(source) as Array<{ path: string }>;
+      let drained = 0;
+      for (const { path: relPath } of pending) {
+        if (this.closed || !this.indexAdmitted(source)) {
+          break;
+        }
+        const outcome = await this.reindexWordOnlyFile(relPath, source);
+        if (outcome === "words") {
+          break;
+        }
+        if (outcome === "vectors") {
+          drained += 1;
+        }
+      }
+      if (drained > 0) {
+        log.info(
+          `memory index: ${drained} of ${pending.length} word-only ${source} file(s) now have vectors`,
+        );
+      }
+    }
+  }
+
+  /** One drained file: 'vectors' when it now has them, 'words' when it stays word-only. */
+  private async reindexWordOnlyFile(
+    relPath: string,
+    source: MemorySource,
+  ): Promise<"vectors" | "words" | "gone"> {
+    if (source === "sessions") {
+      const absPath = path.join(
+        resolveSessionTranscriptsDirForAgent(this.agentId),
+        path.basename(relPath),
+      );
+      const entry = await buildSessionEntry(absPath);
+      if (!entry) {
+        return "gone";
+      }
+      await this.indexFile(entry, { source, content: entry.content });
+      this.resetSessionDelta(absPath, entry.size);
+    } else {
+      const entry = await buildFileEntry(
+        path.resolve(this.workspaceDir, relPath),
+        this.workspaceDir,
+        this.settings.multimodal,
+      );
+      if (!entry) {
+        return "gone";
+      }
+      await this.indexFile(entry, { source });
+    }
+    return this.pathHasWordOnlyChunks(relPath, source) ? "words" : "vectors";
+  }
+
+  private pathHasWordOnlyChunks(relPath: string, source: MemorySource): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS present FROM chunks WHERE source = ? AND path = ? AND model = '${FTS_ONLY_MODEL}' LIMIT 1`,
+      )
+      .get(source, relPath);
+    return row !== undefined;
   }
 
   private createSyncProgress(
@@ -1023,6 +1250,8 @@ export abstract class MemoryManagerSyncOps {
     sessionFiles?: string[];
     progress?: (update: MemorySyncProgressUpdate) => void;
   }) {
+    // FORK 2026-10-29: a new sync gives the embedder a new chance (one warn, one drain attempt).
+    this.embedderFailedThisSync = false;
     const progress = params?.progress ? this.createSyncProgress(params.progress) : undefined;
     if (progress) {
       progress.report({
@@ -1084,7 +1313,13 @@ export abstract class MemoryManagerSyncOps {
       meta.scopeHash !== configuredScopeHash ||
       meta.chunkTokens !== this.settings.chunking.tokens ||
       meta.chunkOverlap !== this.settings.chunking.overlap ||
-      (vectorReady && !meta?.vectorDims);
+      // FORK 2026-10-29: an index built before vectors could be stored is rebuilt once they can
+      // be. A word-only or dormant index is not: with no provider, or with vectors pending, a
+      // missing vectorDims is its normal state, and the old clause rebuilt it on every sync.
+      (vectorReady &&
+        this.provider !== null &&
+        !meta?.vectorDims &&
+        !this.hasPendingFtsOnlyChunks());
     try {
       if (needsFullReindex) {
         if (
@@ -1128,6 +1363,19 @@ export abstract class MemoryManagerSyncOps {
         this.sessionsDirty = true;
       } else {
         this.sessionsDirty = false;
+      }
+
+      await this.drainWordOnlyFiles();
+      // FORK 2026-10-29: an incremental sync that stored vectors records their dims, so the next
+      // sync does not take this index for one built before vectors and rebuild it (writeMeta
+      // skips an unchanged value).
+      if (
+        meta &&
+        this.vector.available &&
+        this.vector.dims &&
+        meta.vectorDims !== this.vector.dims
+      ) {
+        this.writeMeta({ ...meta, vectorDims: this.vector.dims });
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -1259,9 +1507,11 @@ export abstract class MemoryManagerSyncOps {
       this.vector.loadError = originalState.vectorLoadError;
       this.vector.dims = originalState.vectorDims;
       this.vectorReady = originalDbClosed ? null : originalState.vectorReady;
+      this.vectorRowsPresent = null;
     };
 
     this.db = tempDb;
+    this.vectorRowsPresent = null;
     this.vectorReady = null;
     this.vector.available = null;
     this.vector.loadError = undefined;
@@ -1273,8 +1523,15 @@ export abstract class MemoryManagerSyncOps {
     let nextMeta: MemoryIndexMeta | null = null;
 
     try {
-      this.seedEmbeddingCache(originalDb);
-      await this.syncSourcesForReindex(params);
+      await this.seedEmbeddingCache(dbPath);
+      // FORK 2026-10-29: indexFile reads each file's word-only backlog from the index being
+      // replaced, so the reindex does not count the same pending tokens twice.
+      this.priorIndexDb = originalDb;
+      try {
+        await this.syncSourcesForReindex(params);
+      } finally {
+        this.priorIndexDb = null;
+      }
 
       nextMeta = this.buildNextMeta();
       this.writeMeta(nextMeta);
@@ -1287,6 +1544,7 @@ export abstract class MemoryManagerSyncOps {
       await this.swapIndexFiles(dbPath, tempDbPath);
 
       this.db = this.openDatabaseAtPath(dbPath);
+      this.vectorRowsPresent = null;
       this.vectorReady = null;
       this.vector.available = null;
       this.vector.loadError = undefined;

@@ -54,6 +54,16 @@ Separately: read the card before you wake anything. `show` prints the owner prom
 reply, and that is often the answer. A fact that sits in a file `grep` would find needs no wake
 either.
 
+## Council: several past chats debate one question
+
+When several past chats worked on the same decision (a purchase, a design) and the question is "find alternatives now", wake them as a council. Use two rounds in about 3 calls; the 2026-11-10 laptop council took 8 Bash calls working this out.
+
+1. `find` with the owner's words, and take the NEWEST worker of each distinct chat. The workers of one Tinker chat share a title, so pick one per title.
+2. Round 1: write the brief to `/tmp/jarvis/<task>/brief.txt`. The brief holds the facts, the floor, what is already ruled out and the question, with "under 200 words". Ask every chat in parallel:
+   `for id in A B C; do (python3 -I $S ask $id "$(cat brief.txt)" --timeout 150 > r1-$id.txt 2>&1) & done; wait` (Bash timeout 200000).
+3. Round 2: for each chat, quote the other chats' text between `says:` and `[testimony` from their r1 files. Ask it to challenge, agree and give one ranked pick. Run this in the background, and do the live web checks beside it: a wake has no web, so its prices are stale.
+4. Synthesize: give the consensus, then the live facts that confirm it or overturn it. Delete the scratch directory.
+
 ## Commands
 
 ```bash

@@ -56,6 +56,8 @@ export const DEFAULT_EXPLORATION_GATE_CONFIG: ExplorationGateConfig = {
 export interface ExplorationGateCheckContext {
   trigger?: string;
   isSubagent?: boolean;
+  /** The chat whose turn the call belongs to: only that chat's reads count. */
+  sessionKey?: string;
 }
 
 export interface ExplorationGateResult {
@@ -65,13 +67,34 @@ export interface ExplorationGateResult {
 
 export interface ExplorationGate {
   checkTool(toolName: string, ctx?: ExplorationGateCheckContext): ExplorationGateResult;
-  recordToolCall(toolName: string): void;
-  resetTurn(): void;
-  getTurnReadOnlyCount(): number;
+  recordToolCall(toolName: string, sessionKey?: string): void;
+  resetTurn(sessionKey?: string): void;
+  getTurnReadOnlyCount(sessionKey?: string): number;
+}
+
+const READ_COUNTS = Symbol.for("tinkerclaw.prefrontal.explorationReads");
+/** Chats remembered at once; the one that read least recently goes first. Each costs one map entry. */
+const MAX_TRACKED_SESSIONS = 512;
+
+/**
+ * Read-only calls in each chat's current turn, one map per gateway process. A single counter broke on 2026-10-30:
+ * every session's `llm_input` reset it (56 resets in one hour from a pilot's orchestrator and its subagents), and
+ * the gateway runs register() several times, each building a new gate. A chat's read was gone within a minute, so
+ * every later exec in that turn was refused, 587 times in an hour, until the model gave up.
+ */
+function readCounts(): Map<string, number> {
+  const g = globalThis as { [READ_COUNTS]?: Map<string, number> };
+  return (g[READ_COUNTS] ??= new Map<string, number>());
+}
+
+/** Test seam: forget every chat's reads. */
+export function __resetExplorationGateForTest(): void {
+  readCounts().clear();
 }
 
 export function createExplorationGate(config: ExplorationGateConfig): ExplorationGate {
-  let turnReadOnlyCount = 0;
+  const counts = readCounts();
+  const keyOf = (sessionKey?: string): string => sessionKey ?? "";
 
   function isReadOnly(toolName: string): boolean {
     return READ_ONLY_TOOLS.has(toolName);
@@ -103,7 +126,7 @@ export function createExplorationGate(config: ExplorationGateConfig): Exploratio
     }
 
     // Mutating tools blocked until exploration threshold met
-    if (isMutating(toolName) && turnReadOnlyCount < config.minReadOnlyTools) {
+    if (isMutating(toolName) && getTurnReadOnlyCount(ctx?.sessionKey) < config.minReadOnlyTools) {
       return {
         blocked: true,
         message: `Exploration required: you must use at least ${config.minReadOnlyTools} read-only tool(s) (Read, Grep, Glob) before using ${toolName}. Explore the codebase first to understand the existing code.`,
@@ -113,18 +136,29 @@ export function createExplorationGate(config: ExplorationGateConfig): Exploratio
     return { blocked: false };
   }
 
-  function recordToolCall(toolName: string): void {
-    if (isReadOnly(toolName)) {
-      turnReadOnlyCount++;
+  function recordToolCall(toolName: string, sessionKey?: string): void {
+    if (!isReadOnly(toolName)) {
+      return;
+    }
+    const key = keyOf(sessionKey);
+    const n = (counts.get(key) ?? 0) + 1;
+    // Re-insert so the map's order runs from least to most recently read.
+    counts.delete(key);
+    counts.set(key, n);
+    if (counts.size > MAX_TRACKED_SESSIONS) {
+      const oldest = counts.keys().next().value;
+      if (oldest !== undefined) {
+        counts.delete(oldest);
+      }
     }
   }
 
-  function resetTurn(): void {
-    turnReadOnlyCount = 0;
+  function resetTurn(sessionKey?: string): void {
+    counts.delete(keyOf(sessionKey));
   }
 
-  function getTurnReadOnlyCount(): number {
-    return turnReadOnlyCount;
+  function getTurnReadOnlyCount(sessionKey?: string): number {
+    return counts.get(keyOf(sessionKey)) ?? 0;
   }
 
   return { checkTool, recordToolCall, resetTurn, getTurnReadOnlyCount };

@@ -4,6 +4,12 @@ import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope
 import type { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { readRawMemorySearchProvider } from "../fork/embedder-fit.js";
+import {
+  EmbedderUnavailableError,
+  governorFor,
+  type EmbedQueryCaller,
+} from "../fork/embedder-governor.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   createEmbeddingProvider,
@@ -45,6 +51,19 @@ const FTS_TABLE = "chunks_fts";
 const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const BATCH_FAILURE_LIMIT = 2;
 const HYBRID_CANDIDATES_MAX = 200;
+/**
+ * FORK 2026-10-29: how often a degraded search may say so. Objective: one log line per minute
+ * while the vector half fails, not one per turn (search runs on every turn); the governor's
+ * snapshot keeps the per-call counts. Source: the design's "at most once a minute". Changes if
+ * degraded periods need finer visibility in the log.
+ */
+const VECTOR_SKIP_WARN_INTERVAL_MS = 60_000;
+/**
+ * FORK 2026-10-29: the minScore cut needs bm25 to rank keyword hits. FTS5 floors a term's IDF,
+ * ln((N - n + 0.5) / (n + 0.5)), to 1e-6 unless n < N/2; a hit's term has n >= 1, so below 3 rows
+ * every hit scores about 1e-6 per term. Re-derive it for another tokenizer or ranking function.
+ */
+const BM25_MIN_RANKABLE_ROWS = 3;
 
 const MEMORY_INDEX_MANAGER_CACHE_KEY = "__openclawMemoryIndexManagerCache";
 type MemoryIndexManagerCacheStore = {
@@ -110,6 +129,8 @@ export async function closeAllMemoryIndexManagers(): Promise<void> {
 
 export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements MemorySearchManager {
   private readonly cacheKey: string;
+  /** FORK 2026-10-29: agent + workspace + store path + purpose: the index this manager owns. */
+  private readonly slotKey: string;
   protected readonly cfg: OpenClawConfig;
   protected readonly agentId: string;
   protected readonly workspaceDir: string;
@@ -176,6 +197,13 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private readonlyRecoverySuccesses = 0;
   private readonlyRecoveryFailures = 0;
   private readonlyRecoveryLastError?: string;
+  private lastVectorSkipWarnAt = Number.NEGATIVE_INFINITY;
+  /**
+   * FORK 2026-10-29: the word index's row count, read up to BM25_MIN_RANKABLE_ROWS; null until a
+   * search needs it. It lasts one sync generation: a sync's end clears it, and a search during a
+   * sync counts again, because syncs are what write the index.
+   */
+  private ftsRowsUpToRankable: number | null = null;
 
   private static async loadProviderResult(params: {
     cfg: OpenClawConfig;
@@ -191,6 +219,11 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       outputDimensionality: params.settings.outputDimensionality,
       fallback: params.settings.fallback,
       local: params.settings.local,
+      // FORK 2026-10-29: the index's batches go to the governor's background lane, and a provider
+      // the fit chose (memorySearch.provider unset or 'auto') may sleep while demand is below its
+      // break-even; a pinned provider is only protected (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
+      consumer: "memory-index",
+      fitDecided: readRawMemorySearchProvider(params.cfg, params.agentId) === "auto",
     });
   }
 
@@ -207,6 +240,10 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const purpose = params.purpose === "status" ? "status" : "default";
     const key = `${agentId}:${workspaceDir}:${JSON.stringify(settings)}:${purpose}`;
+    // FORK 2026-10-29: the index this manager owns. A cached manager of the same slot under
+    // another key was built for settings that have since changed (a re-fit changed the provider):
+    // it is closed and evicted before the new one opens the same file.
+    const slotKey = `${agentId}:${workspaceDir}:${settings.store.path}:${purpose}`;
     const statusOnly = params.purpose === "status";
     const existing = INDEX_CACHE.get(key);
     if (existing) {
@@ -217,8 +254,14 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       return pending;
     }
     if (statusOnly) {
+      await MemoryIndexManager.retireSupersededManagers(slotKey, key);
+      const cached = INDEX_CACHE.get(key);
+      if (cached) {
+        return cached;
+      }
       const manager = new MemoryIndexManager({
         cacheKey: key,
+        slotKey,
         cfg,
         agentId,
         workspaceDir,
@@ -238,8 +281,10 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       if (refreshed) {
         return refreshed;
       }
+      await MemoryIndexManager.retireSupersededManagers(slotKey, key);
       const manager = new MemoryIndexManager({
         cacheKey: key,
+        slotKey,
         cfg,
         agentId,
         workspaceDir,
@@ -260,8 +305,30 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     }
   }
 
+  /**
+   * FORK 2026-10-29: close and evict the cached managers of this index whose settings changed (a
+   * re-fit changed the provider). Their watchers and listeners stop and their database handle
+   * closes; a sync still running finishes first, and the caller does not wait for it.
+   */
+  private static async retireSupersededManagers(slotKey: string, key: string): Promise<void> {
+    for (const [cachedKey, manager] of [...INDEX_CACHE]) {
+      if (cachedKey === key || manager.slotKey !== slotKey) {
+        continue;
+      }
+      INDEX_CACHE.delete(cachedKey);
+      log.info("memory index: its settings changed; closing the manager built for the old ones");
+      const closing = manager.close().catch((err: unknown) => {
+        log.warn(`failed to close a superseded memory index manager: ${String(err)}`);
+      });
+      if (!manager.syncing) {
+        await closing;
+      }
+    }
+  }
+
   private constructor(params: {
     cacheKey: string;
+    slotKey: string;
     cfg: OpenClawConfig;
     agentId: string;
     workspaceDir: string;
@@ -271,6 +338,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   }) {
     super();
     this.cacheKey = params.cacheKey;
+    this.slotKey = params.slotKey;
     this.cfg = params.cfg;
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
@@ -376,14 +444,26 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       minTestCoverage?: number;
       // Upgrade 9: opt-in backlink hydration.
       backlinks?: boolean;
+      // FORK 2026-10-29: who asks (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). 'probe' (the bible's
+      // self-test) searches words only, warms nothing, starts no sync and is never demand. 'agent'
+      // and 'rpc' are real searches, the demand that arms a dormant embedder; 'internal', the
+      // default, is counted apart and is not demand either.
+      caller?: EmbedQueryCaller;
     },
   ): Promise<MemorySearchResult[]> {
+    const caller: EmbedQueryCaller = opts?.caller ?? "internal";
+    const probe = caller === "probe";
     await this.ensureProviderInitialized();
-    void this.warmSession(opts?.sessionKey);
-    if (this.settings.sync.onSearch && (this.dirty || this.sessionsDirty)) {
-      void this.sync({ reason: "search" }).catch((err) => {
-        log.warn(`memory sync failed (search): ${String(err)}`);
-      });
+    if (!probe) {
+      void this.warmSession(opts?.sessionKey);
+      if (
+        this.settings.sync.onSearch &&
+        (this.dirty || this.sessionsDirty || this.wordOnlyDrainDue())
+      ) {
+        void this.sync({ reason: "search" }).catch((err) => {
+          log.warn(`memory sync failed (search): ${String(err)}`);
+        });
+      }
     }
     const cleaned = query.trim();
     if (!cleaned) {
@@ -417,8 +497,20 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       return out;
     };
 
-    if (!this.provider) {
-      return finalize(await this.searchFtsOnly(cleaned, minScore, maxResults, candidates));
+    // FORK 2026-10-29: the keyword path when the vector half has nothing to do: no provider, a
+    // probe, no vectors stored yet (a word-only or dormant index), or a query the governor would
+    // refuse. Real searches still count as demand, so a dormant embedder can arm.
+    const provider = this.provider;
+    const governor = probe ? undefined : governorFor(provider);
+    if (!provider || probe || !(await this.vectorHalfReady(provider))) {
+      const results = finalize(
+        await this.searchFtsOnly(cleaned, minScore, maxResults, candidates, {
+          temporalMode,
+          asOfTime,
+        }),
+      );
+      governor?.noteQuery(caller);
+      return results;
     }
 
     // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
@@ -430,14 +522,29 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
           })
         : [];
 
-    const queryVec = await this.embedQueryWithTimeout(cleaned);
-    const hasVector = queryVec.some((v) => v !== 0);
-    const vectorResults = hasVector
-      ? await this.searchVector(queryVec, candidates, { temporalMode, asOfTime }).catch((err) => {
+    // FORK 2026-10-29: the query embed can fail (a deadline, an open breaker, a budget the queue
+    // cannot meet, an endpoint error). The keyword results computed above are then served, under
+    // the same score rules as any keyword-only hit below. scanMs is the vector scan's own time,
+    // t_scan in the governor's demand account.
+    let vectorResults: Array<MemorySearchResult & { id: string }> = [];
+    let scanMs: number | undefined;
+    try {
+      const queryVec = await this.embedQueryWithTimeout(cleaned);
+      if (queryVec.some((v) => v !== 0)) {
+        const scanStart = performance.now();
+        vectorResults = await this.searchVector(queryVec, candidates, {
+          temporalMode,
+          asOfTime,
+        }).catch((err) => {
           logSearchStageFailure("vector", err);
           return [];
-        })
-      : [];
+        });
+        scanMs = performance.now() - scanStart;
+      }
+    } catch (err) {
+      this.warnVectorHalfSkipped(err);
+    }
+    governor?.noteQuery(caller, scanMs);
 
     if (!hybrid.enabled || !this.fts.enabled || !this.fts.available) {
       return finalize(
@@ -453,7 +560,19 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       mmr: hybrid.mmr,
       temporalDecay: hybrid.temporalDecay,
     });
-    const strict = merged.filter((entry) => entry.score >= minScore);
+    const keywordKeys = new Set(
+      keywordResults.map(
+        (entry) => `${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`,
+      ),
+    );
+    const isKeywordHit = (entry: MemorySearchResult) =>
+      keywordKeys.has(`${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`);
+    // FORK 2026-10-29: in a word index too small for bm25 to rank (BM25_MIN_RANKABLE_ROWS), the
+    // keyword hits stay without the cut, in the merge's order; vector-only entries keep it.
+    const uncutKeywordHits = keywordResults.length > 0 && !this.bm25CanRank();
+    const strict = merged.filter(
+      (entry) => entry.score >= minScore || (uncutKeywordHits && isKeywordHit(entry)),
+    );
     if (strict.length > 0 || keywordResults.length === 0) {
       return finalize(strict.slice(0, maxResults));
     }
@@ -463,18 +582,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     // these exact lexical hits get filtered out even when they are the only
     // relevant results.
     const relaxedMinScore = Math.min(minScore, hybrid.textWeight);
-    const keywordKeys = new Set(
-      keywordResults.map(
-        (entry) => `${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`,
-      ),
-    );
     return finalize(
       merged
-        .filter(
-          (entry) =>
-            keywordKeys.has(`${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`) &&
-            entry.score >= relaxedMinScore,
-        )
+        .filter((entry) => isKeywordHit(entry) && entry.score >= relaxedMinScore)
         .slice(0, maxResults),
     );
   }
@@ -564,10 +674,26 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     minScore: number,
     maxResults: number,
     candidates: number,
+    temporal?: { temporalMode?: TemporalMode; asOfTime?: number },
   ): Promise<MemorySearchResult[]> {
     if (!this.fts.enabled || !this.fts.available) {
-      log.warn("memory search: no provider and FTS unavailable");
+      log.warn(
+        this.provider
+          ? "memory search: keyword path taken but FTS is unavailable"
+          : "memory search: no provider and FTS unavailable",
+      );
       return [];
+    }
+
+    // FORK 2026-10-29: buildFtsQuery ORs the query's keywords (src/memory/hybrid.ts), so ONE query
+    // ranks every chunk that shares any of them, BM25 putting chunks that match more terms first.
+    // The one-search-per-keyword loop below is kept as the fallback for when it finds nothing.
+    const ranked = await this.searchKeyword(query, candidates, temporal).catch((err) => {
+      logSearchStageFailure("keyword", err);
+      return [];
+    });
+    if (ranked.length > 0) {
+      return this.cutKeywordHits(ranked, minScore).slice(0, maxResults);
     }
 
     // Conversational queries like "that API thing we discussed" perform poorly
@@ -577,7 +703,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
 
     const resultSets = await Promise.all(
       searchTerms.map((term) =>
-        this.searchKeyword(term, candidates).catch((err) => {
+        this.searchKeyword(term, candidates, temporal).catch((err) => {
           logSearchStageFailure(`keyword(${JSON.stringify(term)})`, err);
           return [];
         }),
@@ -595,10 +721,48 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       }
     }
 
-    return [...bestByChunkId.values()]
-      .toSorted((a, b) => b.score - a.score)
-      .filter((entry) => entry.score >= minScore)
-      .slice(0, maxResults);
+    const best = [...bestByChunkId.values()].toSorted((a, b) => b.score - a.score);
+    return this.cutKeywordHits(best, minScore).slice(0, maxResults);
+  }
+
+  /**
+   * FORK 2026-10-29: the minScore cut for keyword hits. It is skipped while the word index is too
+   * small for bm25 to rank (BM25_MIN_RANKABLE_ROWS), where it would drop every real match; the
+   * hits keep their order either way.
+   */
+  private cutKeywordHits<T extends { score: number }>(hits: T[], minScore: number): T[] {
+    if (hits.length === 0 || !this.bm25CanRank()) {
+      return hits;
+    }
+    return hits.filter((entry) => entry.score >= minScore);
+  }
+
+  /**
+   * FORK 2026-10-29: does the word index hold BM25_MIN_RANKABLE_ROWS rows or more? N counts every
+   * row of the FTS table (all models, sources and validity windows), as bm25's IDF does. Counting
+   * stops at the bound, so a large index costs a few rows; the count is kept for the sync
+   * generation. A count that fails answers yes, and the cut applies as it always did.
+   */
+  private bm25CanRank(): boolean {
+    if (this.ftsRowsUpToRankable !== null && !this.syncing) {
+      return this.ftsRowsUpToRankable >= BM25_MIN_RANKABLE_ROWS;
+    }
+    let rows: number;
+    try {
+      const row = this.db
+        .prepare(`SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${FTS_TABLE} LIMIT ?)`)
+        .get(BM25_MIN_RANKABLE_ROWS) as { n: number } | undefined;
+      rows = Number(row?.n ?? 0);
+    } catch (err) {
+      log.warn(
+        `memory search: cannot count the word index's rows, so keyword hits keep the score cut: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      rows = BM25_MIN_RANKABLE_ROWS;
+    }
+    if (!this.syncing) {
+      this.ftsRowsUpToRankable = rows;
+    }
+    return rows >= BM25_MIN_RANKABLE_ROWS;
   }
 
   private async searchVector(
@@ -624,6 +788,87 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       asOfTime: temporal?.asOfTime,
     });
     return results.map((entry) => entry as MemorySearchResult & { id: string });
+  }
+
+  /**
+   * FORK 2026-10-29: should this search embed its query? Only when there are vectors to scan and
+   * the governor would answer a query now (its breaker is closed, the fit still names the model).
+   */
+  private async vectorHalfReady(provider: EmbeddingProvider): Promise<boolean> {
+    if (!(await this.hasVectorsToScan(provider))) {
+      return false;
+    }
+    const admission = governorFor(provider)?.admit("query");
+    return !admission || admission.ok;
+  }
+
+  /**
+   * FORK 2026-10-29: does the vector half have anything to scan? With sqlite-vec loaded that is a
+   * row in chunks_vec; without it, a chunk embedded under the provider's model (searchVector then
+   * scores the chunks' own embeddings). Cached in vectorRowsPresent until a write changes it. A
+   * probe that fails answers yes, so a broken check costs one query embed, never the vector half.
+   */
+  private async hasVectorsToScan(provider: EmbeddingProvider): Promise<boolean> {
+    if (this.vectorRowsPresent !== null) {
+      return this.vectorRowsPresent;
+    }
+    let present: boolean;
+    try {
+      if (await this.ensureVectorReady()) {
+        const table = this.db
+          .prepare(`SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?`)
+          .get(VECTOR_TABLE);
+        present =
+          table !== undefined &&
+          this.db.prepare(`SELECT 1 AS present FROM ${VECTOR_TABLE} LIMIT 1`).get() !== undefined;
+      } else {
+        present =
+          this.db
+            .prepare(`SELECT 1 AS present FROM chunks WHERE model = ? LIMIT 1`)
+            .get(provider.model) !== undefined;
+      }
+    } catch (err) {
+      log.debug(
+        `memory search: the vector-row probe failed, trying the vector half: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return true;
+    }
+    this.vectorRowsPresent = present;
+    return present;
+  }
+
+  /** FORK 2026-10-29: say, at most once a minute, that the vector half failed and words answered. */
+  private warnVectorHalfSkipped(err: unknown): void {
+    const reason =
+      err instanceof EmbedderUnavailableError
+        ? err.reason
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    const message = `memory search: vector half skipped (${reason}), keyword results served`;
+    const now = Date.now();
+    if (now - this.lastVectorSkipWarnAt < VECTOR_SKIP_WARN_INTERVAL_MS) {
+      log.debug(message);
+      return;
+    }
+    this.lastVectorSkipWarnAt = now;
+    log.warn(message);
+  }
+
+  /**
+   * FORK 2026-10-29: a search also starts the background sync when word-only files are waiting
+   * for vectors and the governor would admit their embedding now (the drain runs in that sync).
+   */
+  private wordOnlyDrainDue(): boolean {
+    if (!this.provider) {
+      return false;
+    }
+    for (const source of this.sources) {
+      if (this.hasPendingFtsOnlyChunks(source) && this.indexAdmitted(source)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private buildFtsQuery(raw: string): string | null {
@@ -710,6 +955,8 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     }
     this.syncing = this.runSyncWithReadonlyRecovery(params).finally(() => {
       this.syncing = null;
+      // FORK 2026-10-29: the sync wrote the word index; the next search counts its rows again.
+      this.ftsRowsUpToRankable = null;
     });
     return this.syncing ?? Promise.resolve();
   }
@@ -820,6 +1067,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       this.ensureSchema();
       const meta = this.readMeta();
       this.vector.dims = meta?.vectorDims;
+      this.vectorRowsPresent = null;
       try {
         await this.runSync(params);
         this.readonlyRecoverySuccesses += 1;
@@ -951,7 +1199,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       };
     }
     try {
-      await this.embedBatchWithRetry(["ping"]);
+      // FORK 2026-10-29: someone is waiting for this answer (doctor), so it asks for the governor's
+      // foreground lane; an index batch's background lane is refused while the CPU is busy.
+      await this.embedBatchWithRetry(["ping"], "foreground");
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

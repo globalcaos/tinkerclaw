@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createSecondOpinionFamily } from "../src/families/second-opinion.js";
+import { goalFingerprint } from "../src/context.js";
+import {
+  createSecondOpinionFamily,
+  parseReadingNotes,
+  redundant,
+  verifiedSources,
+} from "../src/families/second-opinion.js";
+import { proofGrantCode } from "../src/grant-code.js";
 import { readSeeds } from "../src/question-book.js";
+import { buildSituation } from "../src/situation.js";
 import { renderTemplate } from "../src/templates.js";
 import type { Response, Situation } from "../src/types.js";
 import {
@@ -33,31 +41,64 @@ function renders(r: Response) {
   if (r.kind === "note") expect(() => renderTemplate(r.templateId, r.slots)).not.toThrow();
 }
 
-describe("enrich", () => {
-  const readingsOf = (text: string) => {
-    const st = freshState();
-    fam.enrich?.("prompt", sit("prompt", { restatement: F(text) }), st);
-    return st.readings;
-  };
-  it("numbered lines become open readings", () => {
-    expect(readingsOf("1. first\n2) second")).toEqual([
-      { id: "r1", label: "first", status: "open" },
-      { id: "r2", label: "second", status: "open" },
+describe("reading notes and sources (2026-11-13)", () => {
+  it("reads the reading, pick and source lines; the last pick wins", () => {
+    const n = parseReadingNotes(
+      "Two ways to read it.\n- reading: the rebuild\n- reading: the PDF\n- pick: the PDF\n- source: /m/a.md — he asked\n- pick: the rebuild",
+    );
+    expect(n.readings).toEqual(["the rebuild", "the PDF"]);
+    expect(n.pick).toBe("the rebuild");
+    expect(n.sources).toEqual(["/m/a.md — he asked"]);
+  });
+  it("a file counts once a call in this turn opened it; a quote only when the conversation has it", () => {
+    const ran = ["Read /home/u/mem/project_x.md", "Bash grep -n bruno /home/u/mem/people/bruno.md"];
+    const heard = "owner: send the supplier quote to Bruno today\nagent: done";
+    expect(
+      verifiedSources(
+        [
+          "~/mem/project_x.md — names the supplier Bruno",
+          "/home/u/mem/people/bruno.md — the supplier",
+          '"send the supplier quote to Bruno" — his words',
+          "/home/u/never-opened.md — invented",
+          '"words nobody said at all" — invented',
+        ],
+        ran,
+        heard,
+        "/home/u",
+      ),
+    ).toEqual(["file:project_x.md", "file:bruno.md", "quote:send the supplier quote to bruno"]);
+  });
+  it("the same file twice is one source, and two quotes without a file are not redundant", () => {
+    expect(verifiedSources(["/m/a.md — x", "/m/a.md — y"], ["Read /m/a.md"], "", "/h")).toEqual([
+      "file:a.md",
     ]);
+    expect(redundant(["quote:a b c", "quote:d e f"])).toBe(false);
+    expect(redundant(["file:a.md", "quote:d e f"])).toBe(true);
+    expect(redundant(["file:a.md"])).toBe(false);
   });
-  it("bulleted lines become open readings, clipped to 80", () => {
-    const r = readingsOf(`- ${"a".repeat(200)}\n* b\n• c`);
-    expect(r).toHaveLength(3);
-    expect(r[0]?.label.length).toBeLessThanOrEqual(80);
+  it("enrich reads the agent's lines only while the reading is open", () => {
+    const text =
+      "- reading: A\n- reading: B\n- pick: B\n- source: /m/b.md — shows B\n- source: /m/c.md — shows B";
+    const s = sit("pre-tool", {
+      restatement: F(text),
+      turnSteps: F(["Read /m/b.md", "Read /m/c.md"]),
+    });
+    const open = freshState({ ambiguity: "open" });
+    fam.enrich?.("pre-tool", s, open);
+    expect(open.readings.map((r) => r.label)).toEqual(["A", "B"]);
+    expect(open.readingPick).toBe("B");
+    expect(open.sourcesVerified).toEqual(["file:b.md", "file:c.md"]);
+    const none = freshState();
+    fam.enrich?.("pre-tool", s, none);
+    expect(none.readings).toEqual([]);
   });
-  it("a single-line restatement or one bullet adds nothing", () => {
-    expect(readingsOf("Send it to Sam.")).toEqual([]);
-    expect(readingsOf("- only one")).toEqual([]);
-  });
-  it("existing readings are kept", () => {
-    const st = freshState({ readings: [{ id: "x", label: "x", status: "open" }] });
-    fam.enrich?.("prompt", sit("prompt", { restatement: F("- a\n- b") }), st);
-    expect(st.readings).toHaveLength(1);
+  it("a pick the record ruled out is no pick", () => {
+    const st = freshState({
+      ambiguity: "open",
+      readings: [{ id: "r1", label: "B", status: "ruled-out" }],
+    });
+    fam.enrich?.("pre-tool", sit("pre-tool", { restatement: F("- pick: B") }), st);
+    expect(st.readingPick).toBeUndefined();
   });
 });
 
@@ -112,16 +153,105 @@ describe("questionsFor", () => {
         { path: "/w/b.log", why: "edited" },
       ]),
     ).toEqual(["excess-scope"]);
+    // A file born minutes ago (a cache a test run left behind) is the agent's own too (2026-11-13).
+    expect(
+      del([
+        { path: "/w/a.log", why: "fresh" },
+        { path: "/w/b.log", why: "fresh" },
+      ]),
+    ).toEqual([]);
   });
-  it("evidence questions only with an open reading, at pre-tool and post-tool", () => {
-    const open = freshState({ readings: [{ id: "r1", label: "a", status: "open" }] });
-    const done = freshState({ readings: [{ id: "r1", label: "a", status: "confirmed" }] });
+  // 2026-11-13: the step that was asked about removed a cache file and its folder, then listed two folders. The listed
+  // repository folder was not the agent's, so the step never read as "all its own".
+  it("pre-tool: a path a deletion only lists or reads is not reached; a send still counts it (2026-11-13)", () => {
+    const t = (path: string, kind: "file" | "dir" = "file") => ({
+      path,
+      kind,
+      resolvedFrom: path,
+    });
+    const step = (effect: "delete" | "send", readOnly: string[], removes = true) =>
+      fam.questionsFor(
+        "pre-tool",
+        sit("pre-tool", {
+          request: F("what is the delivery date"),
+          effectClass: F(effect),
+          targets: F(
+            removes ? [t("/w/c/m.pyc"), t("/w/scripts/", "dir")] : [t("/w/scripts/", "dir")],
+          ),
+          ownedTargets: F(removes ? [{ path: "/w/c/m.pyc", why: "fresh" as const }] : []),
+          readOnlyTargets: F(readOnly),
+        }),
+        freshState(),
+      );
+    expect(step("delete", [])).toEqual(["excess-scope"]);
+    expect(step("delete", ["/w/scripts/"])).toEqual([]);
+    expect(step("send", ["/w/scripts/"])).toEqual(["excess-scope"]);
+    // Nothing the step is known to remove: the question stays.
+    expect(step("delete", ["/w/scripts/"], false)).toEqual(["excess-scope"]);
+  });
+  it("the clean-up of 2026-11-13 is not asked about: fresh cache file, its folder, scratch files, two listings", () => {
+    const command = [
+      "rm -f /home/u/src/app/scripts/__pycache__/m.cpython-313.pyc",
+      "rmdir /home/u/src/app/scripts/__pycache__",
+      "rm -f /tmp/jarvis/n1x/mm.html /tmp/jarvis/n1x/pcc128.html",
+      "ls -A /tmp/jarvis/n1x/",
+      "ls /home/u/src/app/scripts/",
+    ].join(" && ");
+    const at = (freshPath?: (p: string) => boolean) =>
+      buildSituation(
+        {
+          seam: "pre-tool",
+          sessionKey: "s",
+          turnId: "s#1",
+          now: 1_000,
+          tool: "Bash",
+          toolInput: { command },
+        },
+        {
+          workspaceRoot: "/home/u/ws",
+          homeDir: "/home/u",
+          request: "What would be the delivery date?",
+          scratchDirs: ["/tmp/jarvis"],
+          freshPath,
+        },
+      );
+    const now = at((p) => p.includes("__pycache__"));
+    expect(now.effectClass.value).toBe("delete");
+    expect(fam.questionsFor("pre-tool", now, freshState())).not.toContain("excess-scope");
+    // A cache file that is not minutes old is not the agent's own: the question is asked, as before.
+    expect(fam.questionsFor("pre-tool", at(), freshState())).toContain("excess-scope");
+  });
+  it("prompt: the screen runs on the owner's turns only", () => {
+    const owner = sit("prompt", { request: F("Carry on"), turnKind: F("owner" as const) });
+    const job = sit("prompt", { request: F("Carry on"), turnKind: F("agent" as const) });
+    expect(fam.questionsFor("prompt", owner, freshState())).toEqual(["misreading-screen"]);
+    expect(fam.questionsFor("prompt", job, freshState())).toEqual([]);
+  });
+  it("evidence questions only on an open reading with a pick; the confirmation only with two sources", () => {
+    const picked = freshState({
+      ambiguity: "open",
+      readingPick: "a",
+      sourcesVerified: ["file:x.md"],
+    });
+    const backed = freshState({
+      ambiguity: "open",
+      readingPick: "a",
+      sourcesVerified: ["file:x.md", "quote:a b c"],
+    });
+    const nopick = freshState({ ambiguity: "open" });
+    const settled = freshState({
+      ambiguity: "settled",
+      readingPick: "a",
+      sourcesVerified: ["file:x.md", "file:y.md"],
+    });
     for (const seam of ["pre-tool", "post-tool"] as const) {
-      expect(fam.questionsFor(seam, sit(seam), open)).toEqual([
-        "reading-confirmed",
+      expect(fam.questionsFor(seam, sit(seam), picked)).toEqual(["reading-ruled-out"]);
+      expect(fam.questionsFor(seam, sit(seam), backed)).toEqual([
         "reading-ruled-out",
+        "reading-confirmed",
       ]);
-      expect(fam.questionsFor(seam, sit(seam), done)).toEqual([]);
+      expect(fam.questionsFor(seam, sit(seam), nopick)).toEqual([]);
+      expect(fam.questionsFor(seam, sit(seam), settled)).toEqual([]);
     }
   });
   it("every id exists in the seed file and lists the seam; purpose-unclear is never asked", () => {
@@ -130,7 +260,12 @@ describe("questionsFor", () => {
         .map((x) => x.question as { id: string; family: string; seams: string[] })
         .filter((q) => q.family === "second-opinion"),
     };
-    const st = () => freshState({ readings: [{ id: "r1", label: "a", status: "open" }] });
+    const st = () =>
+      freshState({
+        ambiguity: "open",
+        readingPick: "a",
+        sourcesVerified: ["file:x.md", "file:y.md"],
+      });
     const full = {
       request: F("r"),
       effectClass: F("send" as const),
@@ -148,76 +283,57 @@ describe("questionsFor", () => {
   });
 });
 
-describe("observe: risk transitions", () => {
-  it("prompt: low to medium when the screen crosses, back to low when not, unchanged when unanswered", () => {
+describe("observe: the three stages (2026-11-13)", () => {
+  it("prompt: a flag opens the reading at medium risk, no flag closes it, an unanswered screen changes nothing", () => {
     const st = freshState();
     result(fam, "prompt", sit("prompt"), [V("misreading-screen", 0.9)], st);
-    expect(st.misreadingRisk).toBe("medium");
+    expect([st.ambiguity, st.misreadingRisk]).toEqual(["open", "medium"]);
     result(fam, "prompt", sit("prompt"), [V("misreading-screen", 0.3)], st);
-    expect(st.misreadingRisk).toBe("low");
-    st.misreadingRisk = "high";
+    expect([st.ambiguity, st.misreadingRisk]).toEqual(["none", "low"]);
+    st.ambiguity = "open";
     const skipped = { ...V("misreading-screen", 0.9), skipped: "error" as const };
     result(fam, "prompt", sit("prompt"), [skipped], st);
-    expect(st.misreadingRisk).toBe("high");
+    expect(st.ambiguity).toBe("open");
   });
-  it("two open readings make the risk high", () => {
+  it("two checked sources and the judge's yes settle the pick", () => {
     const st = freshState({
+      ambiguity: "open",
       misreadingRisk: "medium",
-      readings: [
-        { id: "r1", label: "a", status: "open" },
-        { id: "r2", label: "b", status: "open" },
-      ],
+      readingPick: "b",
+      sourcesVerified: ["file:x.md", "quote:a b c"],
     });
     result(
       fam,
       "pre-tool",
       sit("pre-tool"),
-      [V("reading-confirmed", 0.1), V("reading-ruled-out", 0.1)],
+      [V("reading-confirmed", 0.8), V("reading-ruled-out", 0.1)],
       st,
     );
-    expect(st.misreadingRisk).toBe("high");
+    expect([st.ambiguity, st.misreadingRisk]).toEqual(["settled", "low"]);
+    expect(st.readings.find((r) => r.label === "b")?.status).toBe("confirmed");
   });
-  it("ruling one of two out gives medium, then confirming the last gives low", () => {
+  it("a yes without two checked sources settles nothing", () => {
+    const st = freshState({ ambiguity: "open", readingPick: "b", sourcesVerified: ["file:x.md"] });
+    result(fam, "pre-tool", sit("pre-tool"), [V("reading-confirmed", 0.95)], st);
+    expect(st.ambiguity).toBe("open");
+  });
+  it("ruled out drops the pick and its sources, even with a confirmation", () => {
     const st = freshState({
-      misreadingRisk: "high",
-      readings: [
-        { id: "r1", label: "a", status: "open" },
-        { id: "r2", label: "b", status: "open" },
-      ],
+      ambiguity: "open",
+      readingPick: "b",
+      sourcesVerified: ["file:x.md", "file:y.md"],
     });
-    result(fam, "post-tool", sit("post-tool"), [V("reading-ruled-out", 0.9)], st);
-    expect(st.readings.map((r) => r.status)).toEqual(["ruled-out", "open"]);
-    expect(st.misreadingRisk).toBe("medium");
-    result(fam, "post-tool", sit("post-tool"), [V("reading-confirmed", 0.9)], st);
-    expect(st.readings.map((r) => r.status)).toEqual(["ruled-out", "confirmed"]);
-    expect(st.misreadingRisk).toBe("low");
-  });
-  it("high to low when one is confirmed and the rest are ruled out", () => {
-    const st = freshState({
-      misreadingRisk: "high",
-      readings: [
-        { id: "r1", label: "a", status: "ruled-out" },
-        { id: "r2", label: "b", status: "open" },
-      ],
-    });
-    result(fam, "pre-tool", sit("pre-tool"), [V("reading-confirmed", 0.8)], st);
-    expect(st.misreadingRisk).toBe("low");
-  });
-  it("ruled-out wins over confirmed on the same reading", () => {
-    const st = freshState({ readings: [{ id: "r1", label: "a", status: "open" }] });
     result(
       fam,
-      "pre-tool",
-      sit("pre-tool"),
+      "post-tool",
+      sit("post-tool"),
       [V("reading-confirmed", 0.9), V("reading-ruled-out", 0.9)],
       st,
     );
-    expect(st.readings[0]?.status).toBe("ruled-out");
-  });
-  it("no open reading: evidence answers change nothing", () => {
-    const st = freshState({ misreadingRisk: "medium" });
-    result(fam, "pre-tool", sit("pre-tool"), [V("reading-confirmed", 0.9)], st);
-    expect(st.misreadingRisk).toBe("medium");
+    expect(st.ambiguity).toBe("open");
+    expect(st.readingPick).toBeUndefined();
+    expect(st.sourcesVerified).toEqual([]);
+    expect(st.readings.find((r) => r.label === "b")?.status).toBe("ruled-out");
   });
   it("safety reads the risk after second-opinion at the same step", () => {
     const st = freshState();
@@ -227,15 +343,53 @@ describe("observe: risk transitions", () => {
 });
 
 describe("decide: decision table", () => {
-  it("prompt: screen crossing gives the reading-list note", () => {
+  it("prompt: screen crossing asks for the readings and two sources", () => {
     const r = result(fam, "prompt", sit("prompt"), [V("misreading-screen", 0.9)]);
-    expect(r?.response).toMatchObject({ kind: "note", templateId: "reading-list" });
+    expect(r?.response).toMatchObject({ kind: "note", templateId: "reading-evidence" });
     expect(r?.drivers).toEqual(["misreading-screen"]);
     expect(r?.reasonCode).toBe("screen-flagged");
     renders(r?.response as Response);
   });
   it("prompt: screen below the cut-off gives no opinion", () => {
     expect(result(fam, "prompt", sit("prompt"), [V("misreading-screen", 0.6)])).toBeNull();
+  });
+  describe("pre-tool: an open reading holds a step that changes something (2026-11-13)", () => {
+    const write = (over: Partial<Situation> = {}) =>
+      sit("pre-tool", {
+        tool: F("Edit"),
+        effectClass: F("local-write" as const),
+        targets: F([{ path: "/work/demo/plan.md", kind: "file" as const, resolvedFrom: "x" }]),
+        scratch: F(false),
+        ...over,
+      });
+    const open = () =>
+      freshState({ ambiguity: "open", readingPick: "b", sourcesVerified: ["file:x.md"] });
+    it("asks for one more source or the owner, needing reading-sources", () => {
+      const r = result(fam, "pre-tool", write(), [], open());
+      expect(r?.reasonCode).toBe("reading-unsettled");
+      expect(r?.response).toMatchObject({
+        kind: "proof",
+        templateId: "reading-proof",
+        needs: ["reading-sources"],
+      });
+      if (r?.response.kind !== "proof") return;
+      const t = renderTemplate(r.response.templateId, r.response.slots);
+      expect(t).toContain('pick: "b"');
+      expect(t).toContain("1 of 2");
+    });
+    it("reads, scratch and settled readings never wait", () => {
+      const read = sit("pre-tool", { tool: F("Read"), effectClass: F("read" as const) });
+      expect(result(fam, "pre-tool", read, [], open())).toBeNull();
+      expect(result(fam, "pre-tool", write({ scratch: F(true) }), [], open())).toBeNull();
+      expect(result(fam, "pre-tool", write(), [], freshState({ ambiguity: "settled" }))).toBeNull();
+      expect(result(fam, "pre-tool", write(), [], freshState())).toBeNull();
+    });
+    it("the owner's Allow for this step releases it", () => {
+      const base = write({ sessionKey: "agent:main:tinker:t1", turnKind: F("owner" as const) });
+      const code = proofGrantCode(goalFingerprint(base));
+      const r = result(fam, "pre-tool", { ...base, request: F(`allow ${code}`) }, [], open());
+      expect(r?.reasonCode).toBe("evidence-released-owner");
+    });
   });
   it("pre-tool: commitment changed asks with restore preselected", () => {
     for (const a of ["dropped-condition", "firmer", "new-commitment"]) {
@@ -268,6 +422,29 @@ describe("decide: decision table", () => {
     expect(r?.drivers).toEqual(["excess-scope"]);
     expect(r?.reasonCode).toBe("excess-scope");
   });
+  it("pre-tool: his Allow answers the ask, in his own turn and for this step only (2026-10-31)", () => {
+    const base = sit("pre-tool", {
+      sessionKey: "agent:main:tinker:t1",
+      turnKind: { value: "owner", origin: "derived" },
+    });
+    const allow = F(`allow ${proofGrantCode(goalFingerprint(base))}`);
+    const crossing = [V("excess-scope", 0.9)];
+    expect(result(fam, "pre-tool", { ...base, request: allow }, crossing)).toEqual({
+      response: { kind: "proceed" },
+      drivers: [],
+      reasonCode: "evidence-released-owner",
+    });
+    // Any Allow press covers the scope asks of the rest of his turn, not only the step its code fits.
+    expect(
+      respond(fam, "pre-tool", { ...base, request: F("allow JEV-000000") }, crossing).kind,
+    ).toBe("proceed");
+    for (const s of [
+      { ...base, request: F("please carry on") },
+      { ...base, request: allow, sessionKey: "agent:main:cron:nightly:run:u1" },
+    ]) {
+      expect(respond(fam, "pre-tool", s, crossing).kind).toBe("ask");
+    }
+  });
   it("pre-tool: standing-fact clash notes the mapped fact", () => {
     const s = sit("pre-tool", { standingFacts: F(["first fact", "second fact"]) });
     const r = result(fam, "pre-tool", s, [V("standing-fact-clash", "fact-2")]);
@@ -299,7 +476,7 @@ describe("decide: decision table", () => {
     expect(tie?.reasonCode).toBe("commitment-changed");
   });
   it("post-tool: no response, evidence only updates state", () => {
-    const st = freshState({ readings: [{ id: "r1", label: "a", status: "open" }] });
+    const st = freshState({ ambiguity: "open", readingPick: "a" });
     expect(
       result(fam, "post-tool", sit("post-tool"), [V("reading-ruled-out", 0.9)], st),
     ).toBeNull();

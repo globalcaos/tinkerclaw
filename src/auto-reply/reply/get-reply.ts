@@ -185,7 +185,8 @@ export async function getReplyFromConfig(
   try {
     return await buildReplyFromConfig(ctx, opts, configOverride);
   } finally {
-    clearPreReplyStage(ctx.SessionKey);
+    // FORK 2026-10-29: and the prompt's span state, by its run id; nothing is closed here (pre-reply-stage.ts).
+    clearPreReplyStage(ctx.SessionKey, opts?.runId);
   }
 }
 
@@ -194,7 +195,8 @@ async function buildReplyFromConfig(
   opts?: GetReplyOptions,
   configOverride?: OpenClawConfig,
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
-  const stage = (name: string) => notePreReplyStage(ctx.SessionKey, name);
+  // FORK 2026-10-29: each step also ends as a `pre:<step>` turn.span keyed by the prompt's run id.
+  const stage = (name: string) => notePreReplyStage(ctx.SessionKey, name, Date.now(), opts?.runId);
   stage("config");
   const isFastTestEnv = process.env.OPENCLAW_TEST_FAST === "1";
   const cfg = resolveGetReplyConfig({

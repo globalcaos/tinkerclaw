@@ -105,6 +105,22 @@ describe("pickChecker: another family, fed the brief", () => {
     const d = routeCall(callParams({ feedTokens: { thread: 50_000 } }))!;
     expect(pickChecker({ builderKey: OPUS, options: d.options }).reason).toBe("no-brief-option");
   });
+  it("prefers a subscription family over pay-per-call Google, and uses Google only when no subscription family exists", () => {
+    const gemRung = {
+      key: "google/gemini-3.8-flash",
+      effort: "low",
+      smart: 60,
+      cost: 0.001,
+      basis: "measured" as const,
+    };
+    const both = decision({ rungs: [R.opus, R.grok, gemRung] });
+    expect(pickChecker({ builderKey: OPUS, options: both.options }).option!.rung.key).toBe(GROK);
+
+    const onlyGoogleOther = decision({ rungs: [R.opus, R.sonnet, gemRung] });
+    const fallback = pickChecker({ builderKey: OPUS, options: onlyGoogleOther.options });
+    expect(fallback.reason).toBe("picked");
+    expect(fallback.option!.rung.key).toBe("google/gemini-3.8-flash");
+  });
 });
 
 describe("checkBrief: the work and its claim, not the thread", () => {

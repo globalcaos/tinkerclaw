@@ -7,7 +7,11 @@
  * The amygdala keeps `SendBlocked` and `redactForSend` (they are about ITS situation and questions) and imports these.
  */
 
-export type TextOpts = { contactNames?: string[]; homeDir?: string };
+/**
+ * `homeAs` is what the home directory becomes, `~` by default. A judge that reads code passes an absolute stand-in:
+ * inside quotes or a program's string `~` is a literal folder name, so `open('~/x')` reads as a path that cannot open.
+ */
+export type TextOpts = { contactNames?: string[]; homeDir?: string; homeAs?: string };
 
 const CONTENT_KEYS = new Set(["content", "new_string", "old_string"]);
 /** Keys whose (long) strings are commands or paths and keep their text. */
@@ -86,7 +90,8 @@ export function redactText(
   if (o.homeDir) {
     const home = o.homeDir.replace(/\/+$/, "");
     if (home.length > 0) {
-      s = s.replace(new RegExp(`${escapeRe(home)}(?=[/\\s"'\\\\]|$)`, "g"), "~");
+      const as = o.homeAs ?? "~";
+      s = s.replace(new RegExp(`${escapeRe(home)}(?=[/\\s"'\\\\]|$)`, "g"), () => as);
     }
   }
   const names = [...(o.contactNames ?? [])]

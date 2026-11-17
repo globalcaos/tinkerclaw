@@ -23,6 +23,14 @@
  *     in a runner folder, its disk); an unreachable machine red with ssh's reason, one behind it
  *     blamed on it; the top-bar chip names it and scrolls to the panel; a plan that uses only this
  *     machine shows no panel.
+ *  9. A plan file that goes missing (2026-11-14: the SV2 plan stayed on the laptop when Jarvis moved
+ *     to the Pi, and its tab vanished without a word): the tab stays, greyed, its hint and its chart
+ *     name where the plan was, and both recover by themselves once the file is back.
+ *
+ * PW_CHROMIUM=/usr/bin/chromium picks the browser where Playwright has none of its own (the Pi).
+ * GANTT_E2E_STALE_CHAIN=1 saves the chain under tab ids that are no longer open, as after a pair
+ * was reopened outside the sessions panel (2026-11-14); every check must still pass, because the
+ * page finds the pair's tabs by session key (tab-chains.ts healChains).
  *
  * Usage: (cd tinker-ui && npx vite build) && node tinker-ui/e2e/gantt-tab/drive.mjs [--shots DIR]
  * Exit code 1 when an assertion fails.
@@ -33,6 +41,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
   appendFileSync,
@@ -177,10 +186,17 @@ const tabsSeed = [
   { id: "tab-m", sessionKey: MASTER, title: "Master", isAttached: true },
   { id: "tab-s", sessionKey: SLAVE, title: "Worker", isAttached: true },
 ];
+const STALE = process.env.GANTT_E2E_STALE_CHAIN === "1";
 const choices = {
   "tab:active": "tab-m",
   "loop:chains": JSON.stringify([
-    { master: "tab-m", slave: "tab-s", color: 1, masterKey: MASTER, slaveKey: SLAVE },
+    {
+      master: STALE ? "tab-m-closed" : "tab-m",
+      slave: STALE ? "tab-s-closed" : "tab-s",
+      color: 1,
+      masterKey: MASTER,
+      slaveKey: SLAVE,
+    },
   ]),
 };
 writeFileSync(
@@ -245,7 +261,7 @@ const busy = spawn("node", ["-e", "for(;;){}"], { cwd: join(runnerDir, "slot"), 
 procs.push(busy);
 
 // ─── Drive ───
-const browser = await chromium.launch();
+const browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || undefined });
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
 await ctx.addInitScript(
   ([tabs, ch]) => {
@@ -520,6 +536,42 @@ check(
   "6. clicking the master goes back to its chat",
   JSON.stringify(back),
 );
+
+// 9
+renameSync(plan, `${plan}.away`);
+const greyed = page.locator('[data-gantt-for="tab-m"].tab-gantt-missing');
+await greyed.waitFor({ timeout: 25_000 }).catch(() => {});
+check((await greyed.count()) === 1, "9. a missing plan file greys the tab instead of removing it");
+const missingHint = (await gantt.getAttribute("data-hint")) ?? "";
+check(missingHint.includes(plan), "9. its hint names where the plan was", missingHint);
+await gantt.click();
+await page.waitForSelector("#gantt-view:not([hidden])", { timeout: 5_000 }).catch(() => {});
+let said = "";
+for (let i = 0; i < 20 && !said.includes(plan); i++) {
+  await page.waitForTimeout(250);
+  said = await frame
+    .locator("body")
+    .innerText()
+    .catch(() => "");
+}
+check(
+  said.includes("The plan file is missing") && said.includes(plan),
+  "9. its chart says the plan file is missing, and where",
+  said.slice(0, 160),
+);
+renameSync(`${plan}.away`, plan);
+let recovered = false;
+for (let i = 0; i < 70 && !recovered; i++) {
+  await page.waitForTimeout(500);
+  recovered =
+    (await greyed.count()) === 0 &&
+    (await frame
+      .locator(".bg")
+      .count()
+      .catch(() => 0)) > 0;
+}
+check(recovered, "9. with the file back, the tab and the open chart recover by themselves");
+await page.locator('[data-tab-id="tab-m"]').click();
 
 // 7
 await gantt.click();

@@ -80,8 +80,81 @@ const WOULD_HAVE: Record<Decision["response"]["kind"], string> = {
 
 const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/** A verdict in words: a score as its level, a yes/no as a percentage, a choice with its meaning. */
-export function plainAnswer(q: Question | undefined, v: Pick<Verdict, "answer">): string {
+/** `s` whole up to `n` characters, else its head and its last `tail` characters around the count left out. */
+export const headTail = (s: string, n: number, tail: number): string =>
+  s.length > n ? `${s.slice(0, n - tail)} […${s.length - n} chars…] ${s.slice(-tail)}` : s;
+
+/**
+ * A flagged step reaches the explainer and the flag judge whole up to this many characters, else its head and its tail,
+ * as a passed step reaches the pass judge (review.ts `PASS_STEP_MAX`, 2026-10-31). Their old 700-character head cut away
+ * the call that acts, which usually comes last: on 2026-11-03 a held step whose live web publish began at character
+ * 1,994 read to both as a local text edit, and on 2026-10-31 a held commit whose full rebuild came after character
+ * 1,000 read as a commit that restarts nothing.
+ */
+export const FLAGGED_STEP_MAX = 4000;
+const FLAGGED_STEP_TAIL = 500;
+
+/** A flagged reply reaches the explainer and the flag judge whole up to this many characters, else its head. */
+export const FLAGGED_REPLY_MAX = 1200;
+/** What a flagged reply keeps on each side of the sentence a send-back quotes, when that sentence lies past the head. */
+export const QUOTED_SIDE = 300;
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The flagged reply as both models read it (2026-11-13): whole up to FLAGGED_REPLY_MAX, else its head; and when a
+ * send-back quotes a sentence that lies past the head, the passage around that sentence follows, with the characters
+ * left out counted. Until now both read the head alone, and the sentence an unchecked send-back quotes usually comes
+ * late in a reply: from 11-10 to 11-13 the judge could not read it in 23 of the 39 reviewed ones, and called none of
+ * the 23 useful. On 11-13 it called harmful a send-back over a reply's admission that the cause of a fault was not
+ * looked for, because by its reading the reply never said so (it did, at character 2,148), and the answer the explainer
+ * recommended to the owner said the reply already explained the cause. The quote's spaces are matched loosely: `clip`
+ * folds every run of white space.
+ */
+export function replyShown(reply: string, quoted?: string): string {
+  if (reply.length <= FLAGGED_REPLY_MAX) return reply;
+  const head = cut(reply, FLAGGED_REPLY_MAX);
+  const words = quoted?.trim().split(/\s+/).filter(Boolean) ?? [];
+  const m = words.length ? new RegExp(words.map(escapeRe).join("\\s+")).exec(reply) : null;
+  const kept = FLAGGED_REPLY_MAX - 1;
+  if (!m || m.index + m[0].length <= kept) return head;
+  const from = Math.max(m.index - QUOTED_SIDE, kept);
+  const to = Math.min(m.index + m[0].length + QUOTED_SIDE, reply.length);
+  return (
+    reply.slice(0, kept) +
+    (from > kept ? ` […${from - kept} chars…] ` : "") +
+    reply.slice(from, to) +
+    (to < reply.length ? ` […${reply.length - to} chars…]` : "")
+  );
+}
+
+/**
+ * The sentence of the reply a send-back quotes, redacted: `send-back-unchecked` puts it in its `what` slot as
+ * `"<sentence>"`, clipped with `...` and followed by `, and N more like it` when there are more.
+ */
+function quotedSentence(d: Decision, red: (t: string) => string): string | undefined {
+  if (d.response.kind !== "send-back") return undefined;
+  const what = String(d.response.slots.what ?? "");
+  const m = /^"([\s\S]+?)(?:\.\.\.)?"(?:, and \d+ more like it)?$/.exec(what);
+  return m?.[1] ? red(m[1]) : undefined;
+}
+
+/**
+ * How far a choice answer leaned: " 54%, user 40%". A yes-no answer always showed its share and a choice only its
+ * winner, so on 2026-11-02 a review judge took a 36% lean, under the heading about planted instructions, for a finding.
+ */
+function leanOf(a: string, probs: Verdict["probs"]): string {
+  const share = probs?.[a];
+  if (share === undefined) return "";
+  const next = Object.entries(probs ?? {})
+    .filter(([o]) => o !== a)
+    .toSorted((x, y) => y[1] - x[1])[0];
+  const pct = (p: number): string => `${Math.round(p * 100)}%`;
+  return ` ${pct(share)}${next ? `, ${next[0]} ${pct(next[1])}` : ""}`;
+}
+
+/** A verdict in words: a score as its level, a yes/no as a percentage, a choice with its lean and its meaning. */
+export function plainAnswer(q: Question | undefined, v: Pick<Verdict, "answer" | "probs">): string {
   const a = v.answer;
   if (
     q?.type === "score" &&
@@ -98,7 +171,8 @@ export function plainAnswer(q: Question | undefined, v: Pick<Verdict, "answer">)
   if (typeof a === "boolean") return a ? "yes" : "no";
   if (q?.type === "choice" && q.criteria && !Array.isArray(q.criteria)) {
     const meaning = q.criteria[a];
-    return meaning ? `${a} (${meaning})` : a;
+    const said = `${a}${leanOf(a, v.probs)}`;
+    return meaning ? `${said} (${meaning})` : said;
   }
   return String(a);
 }
@@ -122,12 +196,16 @@ export interface BuildInputArgs {
   steps: StepSeen[];
   saidBefore?: string | null;
   homeDir: string;
+  /** What the home directory becomes, `~` when unset. The flag judge passes `JUDGE_HOME` (review.ts). */
+  homeAs?: string;
 }
 
 /** The explainer's input for one decision. Pure; every free text goes through `redactText`. */
 export function buildExplainInput(a: BuildInputArgs): ExplainInput {
   const labels = new Map<string, string>();
-  const r = (t: string, n: number): string => cut(redactText(t, { homeDir: a.homeDir }, labels), n);
+  const red = (t: string): string =>
+    redactText(t, { homeDir: a.homeDir, homeAs: a.homeAs }, labels);
+  const r = (t: string, n: number): string => cut(red(t), n);
   const s = a.situation;
   const drivers = new Set(parseDrivers(a.decision.reasonCode));
   const answered = a.verdicts.filter((v) => !v.skipped);
@@ -155,8 +233,18 @@ export function buildExplainInput(a: BuildInputArgs): ExplainInput {
     previousSteps: last.map((st) => ({ said: r(st.said, 220), ran: r(st.ran, 220) })),
     earlierStepsOnSameFiles: earlier,
     ...(a.saidBefore ? { agentSaidBefore: r(a.saidBefore, 300) } : {}),
-    ...(tool ? { flaggedStep: r(`${tool} ${what}`, 700) } : {}),
-    ...(!tool && s.reply.value ? { flaggedReply: r(s.reply.value, 1200) } : {}),
+    ...(tool
+      ? {
+          flaggedStep: headTail(
+            redactText(`${tool} ${what}`, { homeDir: a.homeDir, homeAs: a.homeAs }, labels),
+            FLAGGED_STEP_MAX,
+            FLAGGED_STEP_TAIL,
+          ),
+        }
+      : {}),
+    ...(!tool && s.reply.value
+      ? { flaggedReply: replyShown(red(s.reply.value), quotedSentence(a.decision, red)) }
+      : {}),
     jevWouldHave: WOULD_HAVE[a.decision.response.kind],
     jevFamily: a.decision.family,
     jevAnswers: shown.map((v) => {

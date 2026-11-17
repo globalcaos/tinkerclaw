@@ -28,8 +28,11 @@
  *      read shows "Loading chat history"; a scroll back shows "Loading earlier turns" at the top (2026-10-06).
  *      A dropped gateway that then starts, over a page holding its rows, draws no pill at any moment, never
  *      removes a row, reconnects soon after it listens, and reads the viewed chat before sessions.list, once.
+ *  15. Turning the phone (922x381 -> 411x922 -> 922x381) keeps the text at the pane's middle there, within one
+ *      line, and reads no older page; a tab parked at its bottom stays there (2026-11-15).
  *
  * Usage: node drive.mjs --url http://127.0.0.1:18997 [--shots <dir>]  (--shots saves check 14's screenshots)
+ * PW_CHROMIUM=/usr/bin/chromium on the Pi, where Playwright has no browser of its own.
  * Exit code 1 when an assertion fails.
  */
 import { createRequire } from "node:module";
@@ -54,7 +57,8 @@ const check = (ok, what, detail = "") => {
   if (!ok) failures.push(what);
 };
 
-const browser = await chromium.launch();
+// PW_CHROMIUM=/usr/bin/chromium picks the browser where Playwright has none of its own (the Pi).
+const browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || undefined });
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
 // Two tabs, Main viewed. Seeded once: a reload must find what the page itself wrote.
 await ctx.addInitScript(
@@ -755,6 +759,89 @@ check(
     `first viewed read #${firstHistory} (afterSeq ${viewedReads[0]?.afterSeq ?? "none"}), first list #${firstList}, ` +
     `${viewedReads.length} viewed read(s) incl. ${viewedReads.length - 1} startup retr(y/ies)`,
 );
+
+// 15 ─ FORK 2026-11-15: turning the phone between landscape and portrait keeps the text at
+// the middle of the screen in place. The flip phone WebView: 922x381 sideways, 411x922 upright.
+// Every row re-wraps at the new width; the text under the pane's middle must stay there, within one
+// line, and the turn alone must read no older page. A tab parked at its bottom stays at its bottom.
+const TURNS = [
+  [411, 922],
+  [922, 381],
+  [411, 922],
+  [922, 381],
+];
+/** Mark the smallest text block under the pane's middle; where on it the middle falls. */
+const markMiddle = () =>
+  page.evaluate(() => {
+    const el = document.getElementById("messages");
+    const mid = el.getBoundingClientRect().top + el.clientHeight / 2;
+    let best = null;
+    for (const n of el.querySelectorAll("p, li, pre, h1, h2, h3, tr, [data-oc-id]")) {
+      const r = n.getBoundingClientRect();
+      if (r.height > 0 && r.top <= mid && r.bottom > mid && (!best || r.height < best.h)) {
+        best = { n, h: r.height, top: r.top };
+      }
+    }
+    document.querySelector("[data-mid-mark]")?.removeAttribute("data-mid-mark");
+    best?.n.setAttribute("data-mid-mark", "1");
+    return best ? { text: best.n.textContent.slice(0, 24), frac: (mid - best.top) / best.h } : null;
+  });
+/** Where the marked block now sits: the middle's fraction of it, and one line's height on it. */
+const readMiddle = () =>
+  page.evaluate(() => {
+    const el = document.getElementById("messages");
+    const n = document.querySelector("[data-mid-mark]");
+    if (!n) return null;
+    const mid = el.getBoundingClientRect().top + el.clientHeight / 2;
+    const r = n.getBoundingClientRect();
+    const cs = getComputedStyle(n);
+    const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+    return { frac: (mid - r.top) / r.height, h: r.height, line };
+  });
+// Tab A, still viewed after 14d: first parked at its bottom, then read from its middle.
+await waitRows("A");
+await page.setViewportSize({ width: 922, height: 381 });
+await settle(800);
+await overChat();
+await page.mouse.wheel(0, 50000);
+await settle(800);
+const followDists = [(await viewport()).dist];
+for (const [w, h] of TURNS) {
+  await page.setViewportSize({ width: w, height: h });
+  await settle(900);
+  followDists.push((await viewport()).dist);
+}
+check(
+  followDists.every((d) => d <= 2),
+  "15a. a tab parked at its bottom stays at its bottom through a turn of the phone",
+  `dist ${followDists.join(" → ")}`,
+);
+// A scroll to the middle of the conversation: he is reading, not following. It has no input event,
+// so it waits until the last turn has settled; until then a scroll with no input is the layout's.
+await settle(1500);
+await page.evaluate(() => {
+  const el = document.getElementById("messages");
+  el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2);
+});
+await settle(800);
+const midBefore = await markMiddle();
+await fetch(`${URL_}/__mock/log`);
+const drift = [];
+for (const [w, h] of TURNS) {
+  await page.setViewportSize({ width: w, height: h });
+  await settle(900);
+  const m = await readMiddle();
+  // In lines of the block as it now wraps: 0 = the same line is at the middle.
+  drift.push(m && midBefore ? ((m.frac - midBefore.frac) * m.h) / m.line : Infinity);
+}
+const turnLog = (await (await fetch(`${URL_}/__mock/log`)).json()).log;
+const olderReads = turnLog.filter((r) => r.method === "chat.history" && r.older);
+check(
+  midBefore !== null && drift.every((d) => Math.abs(d) <= 1) && olderReads.length === 0,
+  "15b. turning the phone keeps the text at the middle of the chat there, and reads no older page",
+  `"${midBefore?.text}" drift in lines ${drift.map((d) => d.toFixed(2)).join(" → ")}, older reads ${olderReads.length}`,
+);
+await page.setViewportSize({ width: 1500, height: 1000 });
 
 check(pageErrors.length === 0, "no page errors", pageErrors.slice(0, 3).join(" | "));
 await browser.close();

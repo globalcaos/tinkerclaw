@@ -128,6 +128,13 @@ const subCliCommandCatalog = defineCommandDescriptorCatalog([
     description: "Jev, the optional judge: is it off (no token) or on",
     hasSubcommands: true,
   },
+  // FORK 2026-10-29: the embedder fit's sub-CLI (src/cli/embedder-cli.ts). Without this descriptor
+  // resolveSubCliCommandGroups drops its entry in register.subclis-core.ts.
+  {
+    name: "embedder",
+    description: "Measure this machine and choose its embedding model for memory search, or none",
+    hasSubcommands: true,
+  },
   {
     name: "pairing",
     description: "Secure DM pairing (approve inbound requests)",

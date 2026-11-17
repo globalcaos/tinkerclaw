@@ -154,3 +154,19 @@ describe("readEndpoint / postJson", () => {
     expect(await lib.postJson(null, "/p", {}, 500)).toBeNull();
   });
 });
+
+// 2026-11-07: the hook's copy of the /tmp exception read the next line's words as more paths of a remove.
+describe("evalFloor: a line break ends a remove's paths (2026-11-07)", () => {
+  const RM = ["r", "m"].join("");
+  const bash = (...l: string[]) =>
+    lib.evalFloor(policy, "Bash", { command: l.join("\n") })?.rule ?? null;
+
+  it("passes a /tmp cleanup over several lines and still denies a delete outside /tmp", () => {
+    expect(
+      bash(`${RM} -f /tmp/jarvis/t/a.txt`, `${RM} -rf /tmp/jarvis/t/venv`, "ls /tmp/jarvis/t"),
+    ).toBeNull();
+    expect(bash(`${RM} -f /tmp/jarvis/t/a.txt`, `${RM} -rf /home/u/proj`)).toBe(
+      "FS_DESTRUCTIVE_ROOT",
+    );
+  });
+});

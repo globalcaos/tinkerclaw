@@ -159,6 +159,12 @@ Prune stale worktree entries afterwards. If deletion is refused and step 4
 produced no proof, KEEP the branch and say so: a spare branch costs nothing,
 lost work costs a day.
 
+The worktree must live under `/tmp/jarvis/<task>/` from the start (created there,
+never under `~/src`). A /tmp worktree is removable without a delete approval; a
+`~/src` one is held by the delete guard and lingers. If /tmp is full when the
+worktree is created, delete the agent's own stale `/tmp/jarvis/<task>` dirs and
+retry there; never fall back to `~/src`.
+
 ### 6. Closing status line
 
 **Done when:** the reply's last line is one of the two forms below, and the same line is appended to the plan's ledger when a plan file exists under {{plans_dir}}.
@@ -209,3 +215,7 @@ The report is prose plus this line — no code.
   uncommitted edits with it. Encoded as: snapshot first, report where.
 - **Asking about pushing.** Surfaced repeatedly as an "open question" the user
   had already answered. Encoded as: never ask, merge locally and stop.
+- 2026-11-04: a feature worktree was created under `~/src` because the RAM-backed
+  /tmp was 95% full. The branch merged, but removing the worktree and branch was
+  refused twice by the delete guard, leaving both behind. Step 5 now requires the
+  worktree under /tmp from the start and freeing own /tmp scratch instead of moving it.

@@ -89,6 +89,8 @@ export type WebInboundMessage = {
   selfLid?: string | null;
   selfE164?: string | null;
   fromMe?: boolean;
+  /** WhatsApp marked this message as forwarded: someone else wrote its content. */
+  forwarded?: boolean;
   location?: NormalizedLocation;
   sendComposing: () => Promise<void>;
   reply: (text: string) => Promise<void>;

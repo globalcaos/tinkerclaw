@@ -175,3 +175,31 @@ describe("querySessionTree — subagent family expansion", () => {
     expect(tree.length).toBe(1);
   });
 });
+
+// FORK 2026-11-12: the effort column was written and never read back, so the chat could not
+// name a past turn's thinking effort.
+describe("the stored thinking effort is read back", () => {
+  test("a row's effort comes out of the query; an unrecorded one stays absent", () => {
+    const main = "agent:main:main";
+    insertAnatomyEvent({
+      turn: 1,
+      roundNumber: 0,
+      compactionCycle: 0,
+      timestamp: new Date(clock).toISOString(),
+      timestampMs: clock++,
+      model: "claude-sonnet-4-6",
+      provider: "anthropic",
+      sessionKey: main,
+      topics: [],
+      contextSent: {},
+      contextWindow: {},
+      memoriesInjected: { autoRecall: [], searched: [] },
+      effort: "medium",
+    } as unknown as ContextAnatomyEvent);
+    insert(main);
+    const efforts = querySessionEvents(main, 500).map(
+      (e) => (e as unknown as { effort?: string }).effort,
+    );
+    expect(efforts.toSorted()).toEqual(["medium", undefined]);
+  });
+});

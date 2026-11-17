@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  type EffectView,
+  renderAllowBar,
+  renderEffectCards,
   renderAskCard,
   renderExceptionalCard,
   renderHoldCard,
   renderMarker,
-  renderProofCard,
   renderRefusalStrip,
   renderRewoundMarker,
 } from "./amygdala-cards.js";
@@ -48,56 +50,41 @@ function change(over: Partial<ChangeView> = {}): ChangeView {
 }
 
 describe("renderHoldCard", () => {
-  it("open: card with cmd, chips and the three actions", () => {
-    const el = dom(renderHoldCard(iv()));
-    const root = el.querySelector(".amy-hold")!;
-    expect(root.getAttribute("data-iv")).toBe("iv1");
-    expect(el.querySelector(".amy-cmd")!.textContent).toBe("test-cmd");
-    expect(el.querySelectorAll(".amy-chip").length).toBe(2);
+  it("open: the hand, one question and its two answers, nothing else (2026-11-03)", () => {
+    const el = dom(renderHoldCard(iv({ ask: "Allow deleting /home/x/notes.txt?" })));
+    expect(el.querySelector(".amy-hold")!.getAttribute("data-iv")).toBe("iv1");
+    expect(el.querySelector(".amy-q-icon")!.textContent).toBe("✋");
+    expect(el.querySelector(".amy-q-text")!.textContent).toBe("Allow deleting /home/x/notes.txt?");
     const acts = [...el.querySelectorAll("button")].map((b) => [
       b.getAttribute("data-amy-act"),
       b.getAttribute("data-answer"),
+      b.textContent,
     ]);
     expect(acts).toEqual([
-      ["answer", "allow-once"],
-      ["answer", "keep-held"],
-      ["why", null],
+      ["answer", "allow-once", "Allow"],
+      ["answer", "keep-held", "No"],
     ]);
-    expect(el.querySelector(".amy-why")).toBeNull();
+    expect(el.textContent).not.toContain("test-cmd");
+    expect(el.textContent).not.toContain("chip-a");
   });
-  it("showWhy lists the chips again", () => {
-    const el = dom(renderHoldCard(iv(), { showWhy: true }));
-    expect(el.querySelectorAll(".amy-why li").length).toBe(2);
+  it("a gateway that sent no question still asks one", () => {
+    expect(dom(renderHoldCard(iv())).querySelector(".amy-q-text")!.textContent).toBe(
+      "Allow this step?",
+    );
   });
-  it("closed: one settled line, no buttons", () => {
-    const el = dom(renderHoldCard(iv({ state: "denied" })));
-    expect(el.textContent).toBe("✋ held · denied");
+  it("closed: the question and what became of it, no buttons", () => {
+    const el = dom(renderHoldCard(iv({ state: "denied", ask: "Allow deleting x?" })));
+    expect(el.textContent).toBe("✋ Allow deleting x? · kept held");
     expect(el.querySelector("button")).toBeNull();
+    expect(dom(renderHoldCard(iv({ state: "released" }))).textContent).toBe(
+      "✋ Allow this step? · allowed",
+    );
   });
-  it("escapes cmd and chips", () => {
-    const el = dom(renderHoldCard(iv({ cmd: EVIL, chips: [EVIL] }), { showWhy: true }));
+  it("escapes the question and the sentence", () => {
+    const el = dom(renderHoldCard(iv({ ask: EVIL, sentence: EVIL })));
     expect(el.querySelector("img")).toBeNull();
-    expect(el.querySelector(".amy-cmd")!.textContent).toBe(EVIL);
-  });
-});
-
-describe("renderProofCard", () => {
-  it("open shows cmd and chips, no buttons", () => {
-    const el = dom(renderProofCard(iv({ kind: "proof" })));
-    expect(el.querySelector(".amy-proof")!.getAttribute("data-iv")).toBe("iv1");
-    expect(el.querySelector(".amy-cmd")!.textContent).toBe("test-cmd");
-    expect(el.querySelector("button")).toBeNull();
-  });
-  it("closed released reads as a released line", () => {
-    const el = dom(renderProofCard(iv({ kind: "proof", state: "released" })));
-    expect(el.textContent).toBe("✓ released");
-  });
-  it("closed with another state names it", () => {
-    expect(dom(renderProofCard(iv({ state: "expired" }))).textContent).toContain("expired");
-  });
-  it("escapes", () => {
-    const el = dom(renderProofCard(iv({ cmd: EVIL, chips: [EVIL] })));
-    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector(".amy-q-text")!.textContent).toBe(EVIL);
+    expect(el.querySelector(".amy-hold")!.getAttribute("title")).toBe(EVIL);
   });
 });
 
@@ -176,8 +163,8 @@ describe("renderRefusalStrip", () => {
       ["rewind", "t1"],
       ["refusal-keep", "t1"],
     ]);
-    expect(el.textContent).toContain("This looks like a refusal");
-    expect(el.textContent).toContain("logged for the router");
+    // The bubble it rides in already says what Jev saw (2026-11-03): the strip is its buttons.
+    expect(el.textContent).toBe("⟲ RewindKeep");
   });
   it("no Rewind when canRewind is false", () => {
     const el = dom(renderRefusalStrip("t1", iv({ kind: "refusal" }), false));
@@ -309,7 +296,7 @@ describe("renderMarker", () => {
   });
   it("reads as the one-line marker", () => {
     const el = dom(renderMarker(m()));
-    expect(el.textContent).toBe("still unsupported after two attempts: upload B, upload C");
+    expect(el.textContent).toBe("still unsupported after one send-back: upload B, upload C");
     expect(el.querySelector(".amy-marker")!.getAttribute("data-turn")).toBe("t1");
   });
   it("handles the refusal-rewound kind", () => {
@@ -319,5 +306,80 @@ describe("renderMarker", () => {
   });
   it("escapes items", () => {
     expect(dom(renderMarker(m({ items: [EVIL] }))).querySelector("img")).toBeNull();
+  });
+});
+
+describe("the plain sentence replaces the command (2026-11-01)", () => {
+  const plain =
+    "This deletes notes.txt, and it cannot be undone, because it looks hard to reverse.";
+  const withSentence = () =>
+    iv({ sentence: plain, cmd: "rm -f notes.txt", chips: ["effect: delete"] });
+
+  it("a hold asks its question; the sentence rides on hover, never the command", () => {
+    const el = dom(renderHoldCard({ ...withSentence(), ask: "Allow deleting notes.txt?" }));
+    expect(el.querySelector(".amy-hold")!.getAttribute("title")).toBe(plain);
+    expect(el.querySelector(".amy-cmd")).toBeNull();
+    expect(el.textContent).not.toContain("rm -f");
+  });
+
+  it("the ask card shows it above its options", () => {
+    const el = dom(renderAskCard(iv({ kind: "ask", sentence: plain, options: [] }), null));
+    expect(el.querySelector(".amy-plain")!.textContent).toBe(plain);
+  });
+
+  it("the Allow bar: one line per step, the hand, the question and the button; the sentence on hover", () => {
+    const el = dom(
+      renderAllowBar([{ code: "JEV-1", ask: "Allow deleting notes.txt?", what: plain }], new Set()),
+    );
+    const row = el.querySelector(".amy-allow-row")!;
+    expect(row.querySelector(".amy-allow-icon")!.textContent).toBe("✋");
+    expect(row.querySelector(".amy-allow-what")!.textContent).toBe("Allow deleting notes.txt?");
+    expect(row.getAttribute("title")).toBe(plain);
+    expect(row.querySelector("button")!.textContent).toBe("Allow");
+    expect(el.textContent).toBe("✋Allow deleting notes.txt?Allow");
+  });
+
+  it("the Allow bar escapes its question and its sentence", () => {
+    const el = dom(renderAllowBar([{ code: "JEV-1", ask: EVIL, what: EVIL }], new Set()));
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector(".amy-allow-row")!.getAttribute("title")).toBe(EVIL);
+  });
+});
+
+describe("effect cards (2026-11-08)", () => {
+  const e = (over: Partial<EffectView> = {}): EffectView => ({
+    id: "eff-t#1-0",
+    sessionKey: "s",
+    turnId: "t#1",
+    ts: 1,
+    what: "Test page <published>",
+    where: "biz.example.test",
+    week: 1,
+    lifetime: 40,
+    revert: "ssh web rm /var/www/page.html",
+    state: "live",
+    ...over,
+  });
+  it("says what and where, the reach for the week and the lifetime, and offers Revert", () => {
+    const h = renderEffectCards([e()]);
+    expect(h).toContain('class="amy-effect"');
+    expect(h).toContain("Test page &lt;published&gt;");
+    expect(h).toContain("biz.example.test");
+    expect(h).toContain("1 person this week");
+    expect(h).toContain("40 people lifetime");
+    expect(h).toContain('data-amy-act="effect-revert" data-effect="eff-t#1-0"');
+  });
+  it("a reverted change is marked and has no button; a change with no undo says so", () => {
+    expect(renderEffectCards([e({ state: "reverted" })])).toContain("Reverted ✓");
+    expect(renderEffectCards([e({ state: "reverted" })])).not.toContain(
+      'data-amy-act="effect-revert"',
+    );
+    expect(renderEffectCards([e({ revert: null })])).toContain("Can't undo");
+    expect(renderEffectCards([e({ state: "revert-failed", output: "boom" })])).toContain(
+      "Retry revert",
+    );
+  });
+  it("nothing to show is an empty string", () => {
+    expect(renderEffectCards([])).toBe("");
   });
 });

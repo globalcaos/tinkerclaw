@@ -51,6 +51,13 @@ describe("redactText tokens", () => {
     expect(redactText("/home/user2/x", { homeDir: "/home/u" })).toBe("/home/user2/x");
   });
 
+  it("puts homeAs in place of the home directory, and leaves a ~ the text already had", () => {
+    const cmd = `python3 -c "import json; json.load(open('/home/u/.cfg/a.json'))" && ls /home/u ~/b`;
+    expect(redactText(cmd, { homeDir: "/home/u", homeAs: "/home/owner" })).toBe(
+      `python3 -c "import json; json.load(open('/home/owner/.cfg/a.json'))" && ls /home/owner ~/b`,
+    );
+  });
+
   it("numbers addresses, phones and contacts stably within one call", () => {
     const labels = new Map<string, string>();
     const out = redactText(

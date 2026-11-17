@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RewindRegistry, rewindTurn, type SessionMap } from "../src/rewind.js";
+import { REWOUND_ALL_PREFIX, RewindRegistry, rewindTurn, type SessionMap } from "../src/rewind.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -49,6 +49,7 @@ class FakeMap implements SessionMap {
     private readonly path: string | null,
     private readonly runner = "cc-bridge",
     private readonly allow = true,
+    private readonly current = S,
   ) {}
   transcriptPathFor() {
     return this.path;
@@ -57,7 +58,7 @@ class FakeMap implements SessionMap {
     return this.runner;
   }
   currentSessionId() {
-    return S;
+    return this.current;
   }
   point(key: string, id: string) {
     if (!this.allow) return false;
@@ -122,9 +123,128 @@ describe("rewind to an older turn, named by its prompt", () => {
       fromPrompt: "first question",
       now: 5,
     });
-    // "first question" is the first exchange: cutting there would leave nothing, which is a reset.
+    // "first question" is the first exchange, so nothing is left: no copy is written and the tab is released from its
+    // session under a marker id (ruling of 2026-11-13, see rewind.test.ts).
+    expect(r).toMatchObject({ ok: true, whole: true, restoredPrompt: "first question" });
+    expect(r.forkSessionId?.startsWith(REWOUND_ALL_PREFIX)).toBe(true);
+    expect(map.pointed).toEqual([["k", r.forkSessionId]]);
+  });
+
+  it("a whole conversation rewound: the original file is untouched, no copy exists, and Undo points the tab back", () => {
+    const { d, path, registry } = setup();
+    const before = sha(path);
+    const map = new FakeMap(path);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "",
+      fromPrompt: "first question",
+      now: 5,
+    });
+    expect(r.ok).toBe(true);
+    expect(sha(path)).toBe(before);
+    expect(readdirSync(d).filter((f) => f.endsWith(".jsonl"))).toEqual([`${S}.jsonl`]);
+    expect(registry.latestFor("k")).toMatchObject({
+      originalSessionId: S,
+      forkSessionId: r.forkSessionId,
+      forkPath: "",
+      prompt: "first question",
+    });
+    const u = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "",
+      undo: true,
+      now: 6,
+    });
+    expect(u).toMatchObject({ ok: true, restoredSessionId: S, restoredPrompt: "first question" });
+    expect(map.pointed.at(-1)).toEqual(["k", S]);
+  });
+
+  it("a whole rewind the tab cannot be pointed away for changes nothing", () => {
+    const { d, path, registry } = setup();
+    const map = new FakeMap(path, "cc-bridge", false);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "",
+      fromPrompt: "first question",
+      now: 5,
+    });
     expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/whole conversation/);
+    expect(registry.latestFor("k")).toBeUndefined();
+    expect(readdirSync(d).filter((f) => f.endsWith(".jsonl"))).toEqual([`${S}.jsonl`]);
+  });
+
+  it("a tab already rewound to nothing says so, and writes nothing", () => {
+    const { registry } = setup();
+    const map = new FakeMap(null, "cc-bridge", true, `${REWOUND_ALL_PREFIX}abc`);
+    const r = rewindTurn({ sessionMap: map, registry, sessionKey: "k", turnId: "", now: 5 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/already empty/);
+    expect(map.pointed).toEqual([]);
+  });
+
+  it("the time of the prompt row travels to the cut: the older of two identical prompts goes, with the newer", () => {
+    const { d, path, registry } = setup();
+    const T0 = Date.parse("2026-11-13T14:00:00.000Z");
+    const at = (uuid: string, text: string, ms: number) =>
+      line({
+        type: "user",
+        uuid,
+        timestamp: new Date(ms).toISOString(),
+        message: { content: text },
+      });
+    const said = (uuid: string, text: string) =>
+      line({ type: "assistant", uuid, message: { content: [{ type: "text", text }] } });
+    writeFileSync(
+      path,
+      [
+        at("u1", "first question", T0),
+        said("r1", "answer"),
+        at("u2", "go on", T0 + 60_000),
+        said("r2", "work ONE"),
+        at("u3", "go on", T0 + 900_000),
+        said("r3", "work TWO"),
+      ].join("\n") + "\n",
+    );
+    const map = new FakeMap(path);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "k#2",
+      newestTurnId: "k#3",
+      fromPrompt: "go on",
+      fromPromptAt: T0 + 55_000,
+      now: 5,
+    });
+    expect(r).toMatchObject({ ok: true, restoredPrompt: "go on", cutAt: T0 + 60_000 });
+    const fork = readFileSync(join(d, `${r.forkSessionId}.jsonl`), "utf-8");
+    expect(fork).toContain("first question");
+    expect(fork).not.toContain("work ONE");
+    expect(fork).not.toContain("work TWO");
+  });
+
+  it("orLast: a newest exchange the transcript cannot name still rewinds the last one", () => {
+    const { path, registry } = setup();
+    const map = new FakeMap(path);
+    const named = {
+      sessionMap: map,
+      registry,
+      sessionKey: "k",
+      turnId: "",
+      fromPrompt: "a row only the page has",
+      now: 5,
+    };
+    expect(rewindTurn(named).ok).toBe(false);
+    expect(rewindTurn({ ...named, orLast: true })).toMatchObject({
+      ok: true,
+      restoredPrompt: "the refused request",
+    });
   });
 
   it("an older turn in a longer chat rewinds, with both later exchanges gone from the fork", () => {
@@ -280,11 +400,11 @@ describe("amygdala2.rewind against an injected session map", () => {
     expect(
       rewindTurn({ sessionMap: new FakeMap(null), registry, sessionKey: "k", turnId: "t", now: 1 }),
     ).toMatchObject({ ok: false });
-    const lone = join(d, "lone.jsonl");
-    writeFileSync(lone, `${line({ type: "user", uuid: "u", message: { content: "only" } })}\n`);
+    const none = join(d, "none.jsonl");
+    writeFileSync(none, `${line({ type: "attachment", uuid: "a" })}\n`);
     expect(
-      rewindTurn({ sessionMap: new FakeMap(lone), registry, sessionKey: "k", turnId: "t", now: 1 }),
-    ).toMatchObject({ ok: false });
+      rewindTurn({ sessionMap: new FakeMap(none), registry, sessionKey: "k", turnId: "t", now: 1 }),
+    ).toMatchObject({ ok: false, reason: "no user prompt found in the transcript" });
   });
 
   it("the registry survives a restart and is written 0600", () => {

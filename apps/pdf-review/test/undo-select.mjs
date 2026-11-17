@@ -24,7 +24,7 @@ const ctx = await browser.newContext({ viewport: { width: 411, height: 820 }, de
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
-await page.goto("http://127.0.0.1:18820/viewer/web/viewer.html?file=%2Fpapers%2Fopen%2Fjarvistest%2Ft.pdf");
+await page.goto(`http://127.0.0.1:${process.env.PDF_REVIEW_PORT || 18820}/viewer/web/viewer.html?file=%2Fpapers%2Fopen%2Fjarvistest%2Ft.pdf`);
 await page.waitForSelector(".textLayer span", { state: "attached", timeout: 60000 });
 await page.waitForTimeout(1500);
 const r = {};
@@ -78,7 +78,8 @@ await page.waitForTimeout(400);
 r.barBeforeCancel = await barShown(); // control: pdf.js is still waiting for the end of the gesture
 await cancel();
 await page.waitForTimeout(500);
-r.barAfterCancel = await barShown();
+// Since 2026-11-12 the reader's own bar (tools.js #selBar) stands in for pdf.js's on a phone, for any selection.
+r.barAfterCancel = await barShown() || await page.isVisible("#selBar");
 await page.evaluate(() => getSelection().removeAllRanges());
 await page.waitForTimeout(300);
 

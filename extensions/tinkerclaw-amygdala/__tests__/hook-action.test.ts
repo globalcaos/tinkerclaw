@@ -79,3 +79,55 @@ describe("toHookAction", () => {
     expect(toHookAction("pre-tool", { decision: d(back) }).kind).toBe("none");
   });
 });
+
+describe("holds in a subagent, and the report-defect way out", () => {
+  const dec = (response: Decision["response"]): Decision =>
+    ({ response, enforced: true }) as Decision;
+  const hold = dec({ kind: "hold", ruleOrQuestion: "danger-level", releasable: "user-only" });
+  const check = dec({
+    kind: "hold",
+    ruleOrQuestion: "weakens-own-check",
+    releasable: "user-only",
+  });
+  const ask = dec({ kind: "ask", askId: "a", options: [] });
+
+  it("a subagent's hold or ask is refused at once: no five-minute wait", () => {
+    for (const decision of [hold, ask]) {
+      const a = toHookAction("pre-tool", { decision, interventionId: "i", subagent: true });
+      expect(a.kind).toBe("deny");
+      expect((a as { reason: string }).reason).toMatch(/report/);
+    }
+  });
+
+  it("an unchecked send-back in a subagent asks for the whole reply: only its last message reaches the parent", () => {
+    const back = dec({
+      kind: "send-back",
+      templateId: "send-back-unchecked",
+      slots: { what: '"Not measured: the rate."' },
+      attempt: 1,
+    });
+    const sub = toHookAction("stop", { decision: back, subagent: true }) as {
+      kind: string;
+      reason: string;
+    };
+    expect(sub.kind).toBe("block");
+    expect(sub.reason).toContain('"Not measured: the rate."');
+    expect(sub.reason).toContain("give your whole reply again");
+    expect(sub.reason).not.toContain("do not repeat the rest of the reply");
+    const main = toHookAction("stop", { decision: back }) as { reason: string };
+    expect(main.reason).toContain("do not repeat the rest of the reply");
+  });
+
+  it("outside a subagent the wait is unchanged", () => {
+    expect(toHookAction("pre-tool", { decision: hold, interventionId: "i" }).kind).toBe("wait");
+  });
+
+  it("a held check names the way to say the test is wrong, a held delete does not", () => {
+    const sub = toHookAction("pre-tool", { decision: check, interventionId: "i", subagent: true });
+    expect((sub as { reason: string }).reason).toContain("report-defect:");
+    const main = toHookAction("pre-tool", { decision: check, interventionId: "i" });
+    expect((main as { onTimeout: string }).onTimeout).toContain("report-defect:");
+    const other = toHookAction("pre-tool", { decision: hold, interventionId: "i" });
+    expect((other as { onTimeout: string }).onTimeout).not.toContain("report-defect:");
+  });
+});

@@ -294,6 +294,9 @@ export async function ensureChromeExtensionRelayServer(opts: {
     type ExtensionConnection = {
       id: string;
       ws: WebSocket;
+      // Every browser numbers its tabs tc-tab-1, tc-tab-2…; the prefix keeps two browsers'
+      // session ids apart inside the relay. Added on events, stripped before commands.
+      prefix: string;
       ownedSessions: Set<string>;
       pending: Map<
         number,
@@ -413,7 +416,18 @@ export async function ensureChromeExtensionRelayServer(opts: {
         throw new Error("Chrome extension not connected");
       }
       const id = conn.nextId++;
-      const routed = { ...payload, id };
+      const outSession = payload.params.sessionId;
+      const routed = {
+        ...payload,
+        id,
+        params: {
+          ...payload.params,
+          sessionId:
+            typeof outSession === "string" && outSession.startsWith(conn.prefix)
+              ? outSession.slice(conn.prefix.length)
+              : outSession,
+        },
+      };
       // FORK 2026-04-30 (Bible §5.81f): trace forwarded commands when the
       // OPENCLAW_RELAY_CDP_TRACE env var is set. Off by default — at steady
       // state Playwright fires hundreds of CDP messages per page-init and
@@ -572,7 +586,31 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
     };
 
+    // Playwright's newCDPSession(page) opens a browser-level session and attaches to the
+    // page's target from it. chrome.debugger has no browser target, so the relay answers
+    // both itself; the attach gets an alias so it never replaces the page's own session.
+    const BROWSER_SESSION_ID = "relay-browser";
+    const aliasSessions = new Map<string, string>();
+    let aliasSeq = 0;
+
     const routeCdpCommand = async (cmd: CdpCommand): Promise<unknown> => {
+      const aliasedSession = cmd.sessionId ? aliasSessions.get(cmd.sessionId) : undefined;
+      if (cmd.method === "Target.attachToBrowserTarget") {
+        return { sessionId: BROWSER_SESSION_ID };
+      }
+      if (cmd.method === "Target.detachFromTarget") {
+        const p = (cmd.params ?? {}) as { sessionId?: string };
+        const alias = p.sessionId ?? (aliasedSession ? cmd.sessionId : undefined);
+        if (alias && aliasSessions.delete(alias)) {
+          return {};
+        }
+      }
+      if (cmd.method === "Target.attachToTarget" || cmd.method === "Target.getTargetInfo") {
+        // Diagnostic for laptop tabs that cannot be controlled: which session asks what.
+        log.info(
+          `[relay-targetinfo] ${cmd.method} sessionId=${cmd.sessionId ?? "none"} params=${JSON.stringify(cmd.params ?? {}).slice(0, 160)}`,
+        );
+      }
       switch (cmd.method) {
         case "Browser.getVersion":
           return {
@@ -604,6 +642,12 @@ export async function ensureChromeExtensionRelayServer(opts: {
               }
             }
           }
+          if (aliasedSession) {
+            const t = connectedTargets.get(aliasedSession);
+            if (t) {
+              return { targetInfo: t.targetInfo };
+            }
+          }
           if (cmd.sessionId && connectedTargets.has(cmd.sessionId)) {
             const t = connectedTargets.get(cmd.sessionId);
             if (t) {
@@ -611,6 +655,11 @@ export async function ensureChromeExtensionRelayServer(opts: {
             }
           }
           const first = Array.from(connectedTargets.values())[0];
+          // Diagnostic: a fallback here makes every page report the first tab's id, so the
+          // browser tool cannot tell shared tabs apart.
+          log.warn(
+            `[relay-targetinfo] fallback to first target: sessionId=${cmd.sessionId ?? "none"} targetId=${targetId ?? "none"} known=${Array.from(connectedTargets.keys()).join(",")} returned=${first?.targetId ?? "none"}`,
+          );
           return { targetInfo: first?.targetInfo };
         }
         case "Target.attachToTarget": {
@@ -621,6 +670,11 @@ export async function ensureChromeExtensionRelayServer(opts: {
           }
           for (const t of connectedTargets.values()) {
             if (t.targetId === targetId) {
+              if (cmd.sessionId) {
+                const alias = `${t.sessionId}~${++aliasSeq}`;
+                aliasSessions.set(alias, t.sessionId);
+                return { sessionId: alias };
+              }
               return { sessionId: t.sessionId };
             }
           }
@@ -664,11 +718,11 @@ export async function ensureChromeExtensionRelayServer(opts: {
               method: "forwardCDPCommand",
               params: {
                 method: cmd.method,
-                sessionId: cmd.sessionId,
+                sessionId: aliasedSession ?? cmd.sessionId,
                 params: cmd.params,
               },
             },
-            cmd.sessionId,
+            aliasedSession ?? cmd.sessionId,
           );
         }
       }
@@ -782,7 +836,9 @@ export async function ensureChromeExtensionRelayServer(opts: {
           title: t.targetInfo.title ?? "",
           description: t.targetInfo.title ?? "",
           url: t.targetInfo.url ?? "",
-          webSocketDebuggerUrl: cdpWsUrl,
+          // Per-tab address: a raw client that sends commands without a session id
+          // (screenshots) reaches the browser that owns this tab, not any browser.
+          webSocketDebuggerUrl: `${cdpWsUrl}/page/${encodeURIComponent(t.targetId)}`,
           devtoolsFrontendUrl: `/devtools/inspector.html?ws=${cdpWsUrl.replace("ws://", "")}`,
         }));
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -878,7 +934,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
         return;
       }
 
-      if (pathname === "/cdp") {
+      if (pathname === "/cdp" || pathname.startsWith("/cdp/page/")) {
         // FORK 2026-04-29 (Bible §5.81): /cdp is the actual CDP command
         // channel. Upstream gates it on an HMAC token the gateway doesn't
         // currently plumb through to its existing-session WS upgrades.
@@ -916,6 +972,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
       const conn: ExtensionConnection = {
         id: connId,
         ws,
+        prefix: `${connId.slice(-6)}:`,
         ownedSessions: new Set(),
         pending: new Map(),
         nextId: 1,
@@ -996,6 +1053,15 @@ export async function ensureChromeExtensionRelayServer(opts: {
             return;
           }
           const evt = parsed as ExtensionForwardEventMessage;
+          if (evt.params) {
+            if (typeof evt.params.sessionId === "string") {
+              evt.params.sessionId = conn.prefix + evt.params.sessionId;
+            }
+            const inner = evt.params.params as { sessionId?: unknown } | undefined;
+            if (inner && typeof inner.sessionId === "string") {
+              inner.sessionId = conn.prefix + inner.sessionId;
+            }
+          }
           const method = evt.params?.method;
           const params = evt.params?.params;
           const sessionId = evt.params?.sessionId;
@@ -1141,8 +1207,12 @@ export async function ensureChromeExtensionRelayServer(opts: {
       });
     });
 
-    wssCdp.on("connection", (ws) => {
+    wssCdp.on("connection", (ws, req) => {
       cdpClients.add(ws);
+      const pageMatch = /^\/cdp\/page\/([^/?#]+)/.exec(
+        new URL(req?.url ?? "/", "http://relay").pathname,
+      );
+      const boundTargetId = pageMatch ? decodeURIComponent(pageMatch[1]) : undefined;
 
       ws.on("message", async (data) => {
         let cmd: CdpCommand | null = null;
@@ -1171,7 +1241,16 @@ export async function ensureChromeExtensionRelayServer(opts: {
         }
 
         try {
-          const result = await routeCdpCommand(cmd);
+          let routedCmd = cmd;
+          if (boundTargetId && !cmd.sessionId) {
+            const bound = Array.from(connectedTargets.values()).find(
+              (t) => t.targetId === boundTargetId,
+            );
+            if (bound) {
+              routedCmd = { ...cmd, sessionId: bound.sessionId };
+            }
+          }
+          const result = await routeCdpCommand(routedCmd);
 
           // FORK 2026-04-30 (Bible §5.81f): send the response BEFORE replaying
           // target events. Both Playwright and puppeteer set up their CDPSession
@@ -1191,7 +1270,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
               ensureTargetEventsForClient(ws, "discover");
             }
           }
-          if (cmd.method === "Target.attachToTarget") {
+          if (cmd.method === "Target.attachToTarget" && !cmd.sessionId) {
             const params = (cmd.params ?? {}) as { targetId?: string };
             const targetId = typeof params.targetId === "string" ? params.targetId : undefined;
             if (targetId) {

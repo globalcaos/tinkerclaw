@@ -7,12 +7,16 @@ import {
   buildExplainInput,
   buildExplainPrompt,
   createExplainer,
+  FLAGGED_REPLY_MAX,
+  FLAGGED_STEP_MAX,
   parseExplanation,
   plainAnswer,
+  QUOTED_SIDE,
   runLadder,
   type ExplanationEvent,
   type RunOnce,
 } from "../src/explain.js";
+import { clip } from "../src/families/common.js";
 import { buildSituation } from "../src/situation.js";
 import { AmygdalaStore } from "../src/store.js";
 import { stepsBefore } from "../src/transcript.js";
@@ -93,6 +97,16 @@ const decision: Decision = {
 };
 
 describe("plainAnswer", () => {
+  it("a choice shows how far it leaned, as a yes-no answer does", () => {
+    const probs = { user: 0.33, agent: 0.36, "cannot-tell": 0.26 };
+    expect(plainAnswer(SOURCE, { answer: "agent", probs })).toBe(
+      "agent 36%, user 33% (the agent decided by itself)",
+    );
+    expect(plainAnswer(SOURCE, { answer: "user", probs: { user: 1 } })).toBe(
+      "user 100% (the user asked)",
+    );
+    expect(plainAnswer(SOURCE, { answer: "agent" })).toBe("agent (the agent decided by itself)");
+  });
   it("puts a score on its nearest level, a yes/no as a percentage, a choice with its meaning", () => {
     expect(plainAnswer(DANGER, { answer: 1.57 })).toBe(
       "1.6 on 0–3, nearest level 2: hard to undo, or changes the user's own data",
@@ -375,5 +389,125 @@ describe("stepsBefore", () => {
     expect(stepsBefore(p, "b")).toEqual([{ id: "a", said: "Looking first.", ran: "Bash ls" }]);
     expect(stepsBefore(p).map((s) => s.ran)).toEqual(["Bash ls", "Bash rm x"]);
     expect(stepsBefore(join(dir, "missing.jsonl"))).toEqual([]);
+  });
+});
+
+describe("the flagged step the explainer and the flag judge read", () => {
+  const flagged = (command: string): string =>
+    buildExplainInput({
+      situation: buildSituation(
+        {
+          seam: "pre-tool",
+          sessionKey: "agent:main:tinker:abc",
+          turnId: "t1",
+          now: 1000,
+          tool: "Bash",
+          toolInput: { command },
+        },
+        { workspaceRoot: "/home/u/w", homeDir: "/home/u", request: "fix the chart in the post" },
+      ),
+      decision,
+      verdicts: [verdict("danger-level", 2.6)],
+      book,
+      steps: [],
+      homeDir: "/home/u",
+    }).flaggedStep ?? "";
+
+  it("arrives whole up to FLAGGED_STEP_MAX, so a publish after a long text edit is seen", () => {
+    const edit = Array.from(
+      { length: 30 },
+      (_, i) => `("old sentence ${i} of the post", "new sentence ${i} of the post"),`,
+    ).join("\n");
+    const cmd = `cd /home/u/posts/p && python3 -I - <<'E'\nR=[\n${edit}\n]\nE\nWP_ALLOW_PUBLISH=1 bash /home/u/wp/wp.sh POST posts/7 "$(cat body.json)"`;
+    expect(cmd.length).toBeGreaterThan(700);
+    expect(cmd.length).toBeLessThan(FLAGGED_STEP_MAX);
+    const step = flagged(cmd);
+    expect(step).toContain("wp.sh POST posts/7");
+    expect(step).not.toContain("…");
+  });
+
+  it("keeps the head and the tail of a longer step, with the count left out", () => {
+    const body = Array.from(
+      { length: 120 },
+      (_, i) => `echo line ${i} of a generated helper script`,
+    ).join("\n");
+    const cmd = `S=/tmp/jarvis/t/run.sh; cat > $S <<'EOF'\n${body}\nEOF\nbash $S && git push origin main`;
+    const step = flagged(cmd);
+    expect(cmd.length).toBeGreaterThan(FLAGGED_STEP_MAX);
+    expect(step.startsWith("Bash S=/tmp/jarvis/t/run.sh; cat > $S")).toBe(true);
+    expect(step.endsWith("git push origin main")).toBe(true);
+    expect(step).toMatch(/ \[…\d+ chars…\] /);
+    expect(step.length).toBeLessThanOrEqual(FLAGGED_STEP_MAX + 30);
+  });
+});
+
+describe("a flagged reply shows the sentence a send-back quotes (2026-11-13)", () => {
+  const status = (n: number, from = 0): string =>
+    Array.from(
+      { length: n },
+      (_, i) => `Status line ${from + i} of the guard repair, all fine.`,
+    ).join("\n");
+  const shown = (reply: string, response: Decision["response"]): string =>
+    buildExplainInput({
+      situation: buildSituation(
+        { seam: "stop", sessionKey: "k", turnId: "t", now: 1, reply },
+        { workspaceRoot: "/home/u/w", homeDir: "/home/u" },
+      ),
+      decision: { ...decision, family: "double-check", response },
+      verdicts: [],
+      book,
+      steps: [],
+      homeDir: "/home/u",
+    }).flaggedReply ?? "";
+  const sendBack = (sentence: string, more = 0): Decision["response"] => ({
+    kind: "send-back",
+    templateId: "send-back-unchecked",
+    slots: {
+      what: `"${clip(sentence, 200)}"` + (more > 0 ? `, and ${more} more like it` : ""),
+    },
+    attempt: 1,
+  });
+
+  it("a sentence past the head reaches both models, with the passage around it and the count left out", () => {
+    const said = "I did not look for the cause.";
+    const reply = `${status(40)}\n\n- The judge missed 46 questions. ${said}\n- Next point.\n\n${status(40, 40)}`;
+    expect(reply.indexOf(said)).toBeGreaterThan(FLAGGED_REPLY_MAX);
+    const r = shown(reply, sendBack(said));
+    expect(r).toContain(said);
+    expect(r).toContain("The judge missed 46 questions.");
+    expect(r.startsWith(reply.slice(0, FLAGGED_REPLY_MAX - 1))).toBe(true);
+    expect(r).toMatch(/ \[…\d+ chars…\] /);
+    expect(r.endsWith("chars…]")).toBe(true);
+    expect(r.length).toBeLessThanOrEqual(FLAGGED_REPLY_MAX + 2 * QUOTED_SIDE + said.length + 60);
+  });
+
+  it("finds a clipped quote with more like it, though a line break in the reply is a space in the slot", () => {
+    const long = `${"The plan lists 255 pictures for the job and ".repeat(5)}the spend is a guess (inferred).`;
+    const broken = long.replace("job and The plan", "job and\nThe plan");
+    expect(broken).not.toBe(long);
+    const reply = `${status(30)}\n\nNote:\n${broken}\n\n${status(10, 30)}`;
+    const r = shown(reply, sendBack(long, 1));
+    expect(r).toContain("The plan lists 255 pictures for the job and");
+    expect(r).toContain("(inferred).");
+  });
+
+  it("keeps the head alone for a sentence inside it, a refusal, or a quote the reply does not hold", () => {
+    const reply = `I did not test the cache. ${status(60)}`;
+    const head = `${reply.slice(0, FLAGGED_REPLY_MAX - 1)}…`;
+    expect(shown(reply, sendBack("I did not test the cache."))).toBe(head);
+    expect(shown(reply, { kind: "refusal" })).toBe(head);
+    expect(shown(reply, sendBack("A sentence that is nowhere."))).toBe(head);
+    expect(shown("Short reply. I did not test it.", sendBack("I did not test it."))).toBe(
+      "Short reply. I did not test it.",
+    );
+  });
+
+  it("finds a quote that names a home path and redacts the passage like the rest", () => {
+    const said = "I did not check /home/u/notes/plan.md.";
+    const reply = `${status(30)}\n\nAuthorization: Bearer abcdefghijklmnop was used. ${said}\n\n${status(30, 30)}`;
+    const r = shown(reply, sendBack(said));
+    expect(r).toContain("I did not check ~/notes/plan.md.");
+    expect(r).not.toContain("abcdefghijklmnop");
+    expect(r).not.toContain("/home/u/");
   });
 });

@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
+import { EMBED_CEILINGS } from "../fork/embedder-fit.js";
+import {
+  EmbedderUnavailableError,
+  governorFor,
+  httpStatusOf,
+  isEndpointFailure,
+} from "../fork/embedder-governor.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { estimateTokensFromChars } from "../utils/cjk-chars.js";
 import { runGeminiEmbeddingBatches, type GeminiBatchRequest } from "./batch-gemini.js";
 import {
   OPENAI_BATCH_ENDPOINT,
@@ -28,6 +36,7 @@ import {
   type MemoryChunk,
   type MemoryFileEntry,
 } from "./internal.js";
+import { FTS_ONLY_MODEL } from "./manager-search.js";
 import { MemoryManagerSyncOps } from "./manager-sync-ops.js";
 import type { SessionFileEntry } from "./session-files.js";
 import type { MemorySource } from "./types.js";
@@ -51,15 +60,60 @@ const BATCH_FAILURE_LIMIT = 2;
  * event loop gets it back.
  */
 const CHUNK_PERSIST_TXN_BATCH = 50;
-const EMBEDDING_QUERY_TIMEOUT_REMOTE_MS = 60_000;
-const EMBEDDING_QUERY_TIMEOUT_LOCAL_MS = 5 * 60_000;
-const EMBEDDING_BATCH_TIMEOUT_REMOTE_MS = 2 * 60_000;
-const EMBEDDING_BATCH_TIMEOUT_LOCAL_MS = 10 * 60_000;
 
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
 
 const log = createSubsystemLogger("memory");
+
+/**
+ * FORK 2026-10-29: our own deadline on an UNGOVERNED provider expired (a test double, or anything
+ * built outside createEmbeddingProvider). A governed provider never reaches it: its governor owns
+ * the deadline and the abort, and reports both as EmbedderUnavailableError.
+ */
+class EmbeddingDeadlineError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmbeddingDeadlineError";
+  }
+}
+
+/**
+ * FORK 2026-10-29: the provider's AbortError for a governed call (in the first three links of the
+ * cause chain), which isEndpointFailure leaves out. Only the governor's deadline or the caller
+ * aborts a governed call. Since 2026-10-30 the governor rethrows either as EmbedderUnavailableError
+ * with the provider's error as its cause, so the AbortError sits one link down: the same outage.
+ * An error with an HTTP status is the endpoint's answer, judged by isEndpointFailure alone.
+ */
+function isGovernedAbort(err: unknown): boolean {
+  if (httpStatusOf(err) !== undefined) {
+    return false;
+  }
+  let current: unknown = err;
+  for (let depth = 0; depth < 3 && current && typeof current === "object"; depth++) {
+    if ((current as { name?: unknown }).name === "AbortError") {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * FORK 2026-10-29: the embedder could not answer, so indexFile writes the file words only and the
+ * sync goes on (TINKER_UI_DESIGN_BIBLE/embedder-fit.md): the governor refused or abandoned the
+ * call, our own deadline on an ungoverned provider expired, or a governed endpoint failed
+ * (isEndpointFailure, the governor's own predicate) or was aborted (isGovernedAbort). Any other
+ * error is the endpoint, or this code, answering (a 4xx, a bad request, a missing model, a test
+ * double's failure) and keeps today's behaviour: it fails the sync, so a configured fallback
+ * provider can still take over.
+ */
+function isEmbedderOutage(err: unknown, governed: boolean): boolean {
+  if (err instanceof EmbedderUnavailableError || err instanceof EmbeddingDeadlineError) {
+    return true;
+  }
+  return governed && (isEndpointFailure(err) || isGovernedAbort(err));
+}
 
 export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
   protected abstract batchFailureCount: number;
@@ -68,22 +122,36 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
   protected abstract batchFailureLock: Promise<void>;
 
   private buildEmbeddingBatches(chunks: MemoryChunk[]): MemoryChunk[][] {
+    // FORK 2026-10-29: a governed provider's batches are sized in tokens by its budget (the fit's
+    // batch plan for this machine, else the ceiling), so one batch never holds a one-slot embedder
+    // longer than a foreground query can wait. A structured (multimodal) input keeps its byte
+    // estimate, which overcounts tokens and so errs small. An ungoverned provider keeps today's
+    // 8,000-byte rule.
+    const governor = governorFor(this.provider);
+    const limit = governor ? governor.budget("index").batchTokens : EMBEDDING_BATCH_MAX_TOKENS;
+    const estimateOf = (chunk: MemoryChunk): number => {
+      if (!governor) {
+        return chunk.embeddingInput
+          ? estimateStructuredEmbeddingInputBytes(chunk.embeddingInput)
+          : estimateUtf8Bytes(chunk.text);
+      }
+      return chunk.embeddingInput && hasNonTextEmbeddingParts(chunk.embeddingInput)
+        ? estimateStructuredEmbeddingInputBytes(chunk.embeddingInput)
+        : estimateTokensFromChars(chunk.text.length);
+    };
     const batches: MemoryChunk[][] = [];
     let current: MemoryChunk[] = [];
     let currentTokens = 0;
 
     for (const chunk of chunks) {
-      const estimate = chunk.embeddingInput
-        ? estimateStructuredEmbeddingInputBytes(chunk.embeddingInput)
-        : estimateUtf8Bytes(chunk.text);
-      const wouldExceed =
-        current.length > 0 && currentTokens + estimate > EMBEDDING_BATCH_MAX_TOKENS;
+      const estimate = estimateOf(chunk);
+      const wouldExceed = current.length > 0 && currentTokens + estimate > limit;
       if (wouldExceed) {
         batches.push(current);
         current = [];
         currentTokens = 0;
       }
-      if (current.length === 0 && estimate > EMBEDDING_BATCH_MAX_TOKENS) {
+      if (current.length === 0 && estimate > limit) {
         batches.push([chunk]);
         continue;
       }
@@ -209,7 +277,6 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
 
     const missingChunks = missing.map((m) => m.chunk);
     const batches = this.buildEmbeddingBatches(missingChunks);
-    const toCache: Array<{ hash: string; embedding: number[] }> = [];
     const provider = this.provider;
     if (!provider) {
       throw new Error("Cannot embed batch in FTS-only mode (no embedding provider)");
@@ -226,6 +293,10 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       const batchEmbeddings = hasStructuredInputs
         ? await this.embedBatchInputsWithRetry(inputs)
         : await this.embedBatchWithRetry(batch.map((chunk) => chunk.text));
+      // FORK 2026-10-29: cache each batch as soon as it is embedded, not once per file, so a
+      // failure later in the file (or a deadline) keeps the work already paid for; the retry, or
+      // the drain, embeds only what is still missing.
+      const toCache: Array<{ hash: string; embedding: number[] }> = [];
       for (let i = 0; i < batch.length; i += 1) {
         const item = missing[cursor + i];
         const embedding = batchEmbeddings[i] ?? [];
@@ -234,9 +305,9 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           toCache.push({ hash: item.chunk.hash, embedding });
         }
       }
+      this.upsertEmbeddingCache(toCache);
       cursor += batch.length;
     }
-    this.upsertEmbeddingCache(toCache);
     return embeddings;
   }
 
@@ -536,34 +607,74 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     });
   }
 
-  protected async embedBatchWithRetry(texts: string[]): Promise<number[][]> {
+  protected async embedBatchWithRetry(
+    texts: string[],
+    // FORK 2026-10-29: the governor lane. Index batches are background work; a check somebody is
+    // waiting for (doctor's embedding probe) asks for the foreground lane.
+    priority: "foreground" | "background" = "background",
+  ): Promise<number[][]> {
     if (texts.length === 0) {
       return [];
     }
-    if (!this.provider) {
+    const provider = this.provider;
+    if (!provider) {
       throw new Error("Cannot embed batch in FTS-only mode (no embedding provider)");
     }
+    const governor = governorFor(provider);
+    const retries5xx = governor
+      ? governor.budget("index").retries5xx
+      : EMBEDDING_RETRY_MAX_ATTEMPTS;
+    return await this.withEmbeddingRetry(retries5xx, "retrying", async () => {
+      if (governor) {
+        // FORK 2026-10-29: called directly; the governor owns the deadline and the abort.
+        log.debug("memory embeddings: batch start", {
+          provider: provider.id,
+          items: texts.length,
+          priority,
+        });
+        return await provider.embedBatch(texts, { priority });
+      }
+      const timeoutMs = EMBED_CEILINGS.batchDeadlineMs;
+      log.debug("memory embeddings: batch start", {
+        provider: provider.id,
+        items: texts.length,
+        timeoutMs,
+      });
+      return await this.withUngovernedDeadline(provider.embedBatch(texts), timeoutMs, "batch");
+    });
+  }
+
+  /**
+   * FORK 2026-10-29: today's retry loop, split by cause. A rate limit (429, quota) is retried up to
+   * EMBEDDING_RETRY_MAX_ATTEMPTS times, as before. A server error (5xx) is retried only
+   * `retries5xx` times: the governor's budget says 0 for a machine-local server (its breaker
+   * decides, and a retry would queue behind the very work that is failing) and today's 3 for a
+   * remote API; an ungoverned provider keeps 3. An EmbedderUnavailableError (deadline, abort,
+   * breaker, busy, over budget) is never retried: the caller writes words instead.
+   */
+  private async withEmbeddingRetry<T>(
+    retries5xx: number,
+    action: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
     let attempt = 0;
+    let serverRetries = 0;
     let delayMs = EMBEDDING_RETRY_BASE_DELAY_MS;
     while (true) {
       try {
-        const timeoutMs = this.resolveEmbeddingTimeout("batch");
-        log.debug("memory embeddings: batch start", {
-          provider: this.provider.id,
-          items: texts.length,
-          timeoutMs,
-        });
-        return await this.withTimeout(
-          this.provider.embedBatch(texts),
-          timeoutMs,
-          `memory embeddings batch timed out after ${Math.round(timeoutMs / 1000)}s`,
-        );
+        return await run();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
+        if (err instanceof EmbedderUnavailableError || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
           throw err;
         }
-        await this.waitForEmbeddingRetry(delayMs, "retrying");
+        const message = err instanceof Error ? err.message : String(err);
+        if (!this.isRateLimitedEmbeddingError(message)) {
+          if (!this.isServerEmbeddingError(message) || serverRetries >= retries5xx) {
+            throw err;
+          }
+          serverRetries += 1;
+        }
+        await this.waitForEmbeddingRetry(delayMs, action);
         delayMs *= 2;
         attempt += 1;
       }
@@ -574,34 +685,32 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     if (inputs.length === 0) {
       return [];
     }
-    if (!this.provider?.embedBatchInputs) {
+    const provider = this.provider;
+    if (!provider?.embedBatchInputs) {
       return await this.embedBatchWithRetry(inputs.map((input) => input.text));
     }
-    let attempt = 0;
-    let delayMs = EMBEDDING_RETRY_BASE_DELAY_MS;
-    while (true) {
-      try {
-        const timeoutMs = this.resolveEmbeddingTimeout("batch");
+    const embedInputs = provider.embedBatchInputs.bind(provider);
+    const governor = governorFor(provider);
+    const retries5xx = governor
+      ? governor.budget("index").retries5xx
+      : EMBEDDING_RETRY_MAX_ATTEMPTS;
+    return await this.withEmbeddingRetry(retries5xx, "retrying structured batch", async () => {
+      if (governor) {
+        // FORK 2026-10-29: called directly; the governor owns the deadline and the abort.
         log.debug("memory embeddings: structured batch start", {
-          provider: this.provider.id,
+          provider: provider.id,
           items: inputs.length,
-          timeoutMs,
         });
-        return await this.withTimeout(
-          this.provider.embedBatchInputs(inputs),
-          timeoutMs,
-          `memory embeddings batch timed out after ${Math.round(timeoutMs / 1000)}s`,
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
-          throw err;
-        }
-        await this.waitForEmbeddingRetry(delayMs, "retrying structured batch");
-        delayMs *= 2;
-        attempt += 1;
+        return await embedInputs(inputs, { priority: "background" });
       }
-    }
+      const timeoutMs = EMBED_CEILINGS.batchDeadlineMs;
+      log.debug("memory embeddings: structured batch start", {
+        provider: provider.id,
+        items: inputs.length,
+        timeoutMs,
+      });
+      return await this.withUngovernedDeadline(embedInputs(inputs), timeoutMs, "batch");
+    });
   }
 
   private async waitForEmbeddingRetry(delayMs: number, action: string): Promise<void> {
@@ -613,31 +722,57 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
-  private isRetryableEmbeddingError(message: string): boolean {
-    return /(rate[_ ]limit|too many requests|429|resource has been exhausted|5\d\d|cloudflare|tokens per day)/i.test(
+  private isRateLimitedEmbeddingError(message: string): boolean {
+    return /(rate[_ ]limit|too many requests|429|resource has been exhausted|tokens per day)/i.test(
       message,
     );
   }
 
-  private resolveEmbeddingTimeout(kind: "query" | "batch"): number {
-    const isLocal = this.provider?.id === "local";
-    if (kind === "query") {
-      return isLocal ? EMBEDDING_QUERY_TIMEOUT_LOCAL_MS : EMBEDDING_QUERY_TIMEOUT_REMOTE_MS;
+  // FORK 2026-10-29: with isRateLimitedEmbeddingError, exactly what the old single retry rule
+  // matched, split so a server error can be retried less than a rate limit.
+  private isServerEmbeddingError(message: string): boolean {
+    return /(5\d\d|cloudflare)/i.test(message);
+  }
+
+  /**
+   * FORK 2026-10-29: an ungoverned provider keeps today's race against a deadline, now at the
+   * EMBED_CEILINGS (10 min per batch, 60 s per query) instead of a rule keyed on the provider id.
+   * The race abandons the call but cannot cancel it; only the governor's deadline aborts one. The
+   * expiry is reported as EmbeddingDeadlineError, so indexFile writes the file words only.
+   */
+  private async withUngovernedDeadline<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    what: "batch" | "query",
+  ): Promise<T> {
+    const message = `memory embeddings ${what} timed out after ${Math.round(timeoutMs / 1000)}s`;
+    try {
+      return await this.withTimeout(promise, timeoutMs, message);
+    } catch (err) {
+      if (err instanceof Error && err.message === message) {
+        throw new EmbeddingDeadlineError(message);
+      }
+      throw err;
     }
-    return isLocal ? EMBEDDING_BATCH_TIMEOUT_LOCAL_MS : EMBEDDING_BATCH_TIMEOUT_REMOTE_MS;
   }
 
   protected async embedQueryWithTimeout(text: string): Promise<number[]> {
-    if (!this.provider) {
+    const provider = this.provider;
+    if (!provider) {
       throw new Error("Cannot embed query in FTS-only mode (no embedding provider)");
     }
-    const timeoutMs = this.resolveEmbeddingTimeout("query");
-    log.debug("memory embeddings: query start", { provider: this.provider.id, timeoutMs });
-    return await this.withTimeout(
-      this.provider.embedQuery(text),
-      timeoutMs,
-      `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s`,
-    );
+    const governor = governorFor(provider);
+    if (governor) {
+      // FORK 2026-10-29: the foreground lane under the query budget (the fit's break-even B_q, or
+      // the 60 s ceiling). The governor refuses at once a query it cannot answer in time, and
+      // aborts at its deadline one it took.
+      const budgetMs = governor.budget("query").queryDeadlineMs;
+      log.debug("memory embeddings: query start", { provider: provider.id, budgetMs });
+      return await provider.embedQuery(text, { priority: "foreground", budgetMs });
+    }
+    const timeoutMs = EMBED_CEILINGS.queryDeadlineMs;
+    log.debug("memory embeddings: query start", { provider: provider.id, timeoutMs });
+    return await this.withUngovernedDeadline(provider.embedQuery(text), timeoutMs, "query");
   }
 
   protected async withTimeout<T>(
@@ -769,7 +904,21 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
   }
 
   protected getIndexConcurrency(): number {
-    return this.batch.enabled ? this.batch.concurrency : EMBEDDING_INDEX_CONCURRENCY;
+    if (this.batch.enabled) {
+      return this.batch.concurrency;
+    }
+    // FORK 2026-10-29: a governed provider runs at its endpoint's measured concurrency (1 per
+    // local server, 2 only when the fit measured the gain beyond 2 sigma, the ceiling for a remote
+    // API), capped by remote.nonBatchConcurrency when it is set. An ungoverned one keeps today's 4.
+    const governor = governorFor(this.provider);
+    if (!governor) {
+      return EMBEDDING_INDEX_CONCURRENCY;
+    }
+    const derived = governor.budget("index").concurrency;
+    const ceiling = this.settings.remote?.nonBatchConcurrency;
+    return typeof ceiling === "number" && Number.isFinite(ceiling) && ceiling >= 1
+      ? Math.max(1, Math.min(derived, Math.floor(ceiling)))
+      : derived;
   }
 
   private clearIndexedFileData(pathname: string, source: MemorySource): void {
@@ -782,14 +931,18 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           .run(pathname, source);
       } catch {}
     }
-    if (this.fts.enabled && this.fts.available && this.provider) {
+    // FORK 2026-10-29: the file's FTS rows are its provider model's and its word-only ones, so a
+    // word-only file is cleared too, with or without a provider.
+    if (this.fts.enabled && this.fts.available) {
+      const fts = this.ftsModelFilter();
       try {
         this.db
-          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-          .run(pathname, source, this.provider.model);
+          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND ${fts.sql}`)
+          .run(pathname, source, ...fts.params);
       } catch {}
     }
     this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(pathname, source);
+    this.vectorRowsPresent = null;
   }
 
   /**
@@ -889,19 +1042,50 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     );
   }
 
+  /** FORK 2026-10-29: one warn per sync when the embedder fails; that sync's other files log at debug. */
+  private warnWordOnlyOnce(pathname: string, reason: string): void {
+    const message = `memory embeddings: embedding failed for ${pathname} (${reason}); the file is indexed words only and its vectors stay pending`;
+    if (this.embedderFailedThisSync) {
+      log.debug(message);
+      return;
+    }
+    this.embedderFailedThisSync = true;
+    log.warn(message);
+  }
+
+  /**
+   * FORK 2026-10-29: the tokens this file holds in word-only chunks, its share of the governor's
+   * pending backlog. During a safe reindex they are read from the index being replaced, so the
+   * same backlog is not counted twice.
+   */
+  private pendingWordOnlyTokens(pathname: string, source: MemorySource): number {
+    try {
+      const row = (this.priorIndexDb ?? this.db)
+        .prepare(
+          `SELECT COALESCE(SUM(LENGTH(text)), 0) AS chars FROM chunks
+            WHERE source = ? AND path = ? AND model = '${FTS_ONLY_MODEL}'`,
+        )
+        .get(source, pathname) as { chars?: number } | undefined;
+      return estimateTokensFromChars(Number(row?.chars ?? 0));
+    } catch (err) {
+      log.debug(
+        `memory embeddings: cannot read the word-only backlog of ${pathname}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
+    }
+  }
+
   protected async indexFile(
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ) {
-    // Skip embedding indexing when no provider is configured — FTS-only mode
-    // still stores text in chunks but does not produce vector embeddings.
-    if (!this.provider) {
-      log.debug("Skipping embedding indexing in FTS-only mode", {
-        path: entry.path,
-        source: options.source,
-      });
-      return;
-    }
+    // FORK 2026-10-29: a file is always indexed for word search. When no vector can be made (no
+    // provider, background embedding not admitted, or the embedder could not answer) its chunks
+    // and FTS rows are written under the model key 'fts-only', its vectors stay pending, and the
+    // sync goes on; the drain in manager-sync-ops.ts vectorises it later
+    // (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). This used to return without a provider, writing
+    // nothing, and an embedder failure threw the whole sync, and a safe reindex, away.
+    const provider = this.provider;
 
     let chunks: MemoryChunk[];
     let structuredInputBytes: number | undefined;
@@ -916,42 +1100,72 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       chunks = [multimodalChunk.chunk];
     } else {
       const content = options.content ?? (await fs.readFile(entry.absPath, "utf-8"));
-      chunks = enforceEmbeddingMaxInputTokens(
-        this.provider,
-        chunkMarkdown(content, this.settings.chunking).filter(
-          (chunk) => chunk.text.trim().length > 0,
-        ),
-        EMBEDDING_BATCH_MAX_TOKENS,
+      const textChunks = chunkMarkdown(content, this.settings.chunking).filter(
+        (chunk) => chunk.text.trim().length > 0,
       );
+      // The input-size cap is the provider's; without one there is nothing to cap for.
+      chunks = provider
+        ? enforceEmbeddingMaxInputTokens(provider, textChunks, EMBEDDING_BATCH_MAX_TOKENS)
+        : textChunks;
       if (options.source === "sessions" && "lineMap" in entry) {
         remapChunkLines(chunks, entry.lineMap);
       }
     }
-    let embeddings: number[][];
-    try {
-      embeddings = this.batch.enabled
-        ? await this.embedChunksWithBatch(chunks, entry, options.source)
-        : await this.embedChunksInBatches(chunks);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (
-        "kind" in entry &&
-        entry.kind === "multimodal" &&
-        this.isStructuredInputTooLargeError(message)
-      ) {
-        log.warn("memory embeddings: skipping multimodal file rejected as too large", {
-          path: entry.path,
-          bytes: structuredInputBytes,
-          provider: this.provider.id,
-          model: this.provider.model,
-          error: message,
-        });
-        this.clearIndexedFileData(entry.path, options.source);
-        this.upsertFileRecord(entry, options.source);
-        return;
+    // FORK 2026-10-29: make the vectors when that is allowed and possible, else write the words.
+    const governor = governorFor(provider);
+    const pendingBefore = governor ? this.pendingWordOnlyTokens(entry.path, options.source) : 0;
+    let embeddings: number[][] = [];
+    let wordOnly = !provider;
+    if (provider && chunks.length > 0) {
+      const cached = this.collectCachedEmbeddings(chunks);
+      if (cached.missing.length === 0) {
+        // Every vector is cached: no embedder time is spent, so admission does not apply.
+        embeddings = cached.embeddings;
+      } else {
+        const admission = governor?.admit("index", options.source);
+        if (admission && !admission.ok) {
+          wordOnly = true;
+          log.debug("memory embeddings: background embedding not admitted; indexing words only", {
+            path: entry.path,
+            source: options.source,
+            reason: admission.reason,
+          });
+        } else {
+          try {
+            embeddings = this.batch.enabled
+              ? await this.embedChunksWithBatch(chunks, entry, options.source)
+              : await this.embedChunksInBatches(chunks);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (isEmbedderOutage(err, governor !== undefined)) {
+              wordOnly = true;
+              this.warnWordOnlyOnce(entry.path, message);
+            } else if (
+              "kind" in entry &&
+              entry.kind === "multimodal" &&
+              this.isStructuredInputTooLargeError(message)
+            ) {
+              log.warn("memory embeddings: skipping multimodal file rejected as too large", {
+                path: entry.path,
+                bytes: structuredInputBytes,
+                provider: provider.id,
+                model: provider.model,
+                error: message,
+              });
+              this.clearIndexedFileData(entry.path, options.source);
+              this.upsertFileRecord(entry, options.source);
+              return;
+            } else {
+              throw err;
+            }
+          }
+        }
       }
-      throw err;
     }
+    if (wordOnly) {
+      embeddings = [];
+    }
+    const modelKey = provider && !wordOnly ? provider.model : FTS_ONLY_MODEL;
     const sample = embeddings.find((embedding) => embedding.length > 0);
     const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
     const now = Date.now();
@@ -1006,7 +1220,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           const chunk = chunks[i];
           const embedding = embeddings[i] ?? [];
           const chunkId = hashText(
-            `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${this.provider.model}`,
+            `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${modelKey}`,
           );
           this.persistChunk({
             chunk,
@@ -1018,6 +1232,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
             granularity,
             topicCluster,
             vectorReady,
+            modelKey,
             skipSupersede,
           });
         }
@@ -1040,6 +1255,22 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     }
 
     this.upsertFileRecord(entry, options.source);
+
+    // FORK 2026-10-29: the governor's backlog account, which feeds dormancy and keep-up. A
+    // word-only write adds what is new since this file's last word-only write; vectorising a file
+    // that was word-only drains what it held.
+    if (governor) {
+      if (wordOnly) {
+        const tokens = estimateTokensFromChars(
+          chunks.reduce((sum, chunk) => sum + chunk.text.length, 0),
+        );
+        if (tokens > pendingBefore) {
+          governor.notePending(options.source, tokens - pendingBefore);
+        }
+      } else if (pendingBefore > 0) {
+        governor.noteDrained(options.source, pendingBefore);
+      }
+    }
   }
 
   private deleteStaleChunkData(path: string, source: MemorySource, vectorReady: boolean): void {
@@ -1053,14 +1284,17 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           .run(path, source);
       } catch {}
     }
-    if (this.fts.enabled && this.fts.available && this.provider) {
+    // FORK 2026-10-29: the same FTS model rule as clearIndexedFileData.
+    if (this.fts.enabled && this.fts.available) {
+      const fts = this.ftsModelFilter();
       try {
         this.db
-          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-          .run(path, source, this.provider.model);
+          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND ${fts.sql}`)
+          .run(path, source, ...fts.params);
       } catch {}
     }
     this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(path, source);
+    this.vectorRowsPresent = null;
   }
 
   private persistChunk(params: {
@@ -1074,6 +1308,12 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     topicCluster: string;
     vectorReady: boolean;
     /**
+     * FORK 2026-10-29: the model key of the chunk row, its FTS row and its id hash: the provider's
+     * model, or 'fts-only' for a chunk written without a vector. Optional, defaulting to the
+     * provider's model ('fts-only' without one), so a caller that predates it keeps its meaning.
+     */
+    modelKey?: string;
+    /**
      * Set by indexFile when its once-per-file prior-open probe found nothing. The supersede
      * SELECT is then provably empty for every chunk of that pass (see hasPriorOpenInterval),
      * so running it per chunk only burns main-thread time — measured 56-66 ms each, ~2,800
@@ -1085,9 +1325,8 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
      */
     skipSupersede?: boolean;
   }): void {
-    if (!this.provider) {
-      return;
-    }
+    // FORK 2026-10-29: no provider guard. A chunk without a vector is persisted under the word-only
+    // key (chunk row and FTS row, no vector row), so word search works with no embedder at all.
     const {
       chunk,
       embedding,
@@ -1100,6 +1339,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       vectorReady,
       skipSupersede = false,
     } = params;
+    const modelKey = params.modelKey ?? this.provider?.model ?? FTS_ONLY_MODEL;
 
     this.db
       .prepare(
@@ -1126,7 +1366,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         chunk.startLine,
         chunk.endLine,
         chunk.hash,
-        this.provider.model,
+        modelKey,
         chunk.text,
         JSON.stringify(embedding),
         now,
@@ -1145,6 +1385,11 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         .prepare(`INSERT INTO ${VECTOR_TABLE} (id, embedding) VALUES (?, ?)`)
         .run(chunkId, vectorToBlob(embedding));
     }
+    // FORK 2026-10-29: the vector half now has something to scan (a vec0 row, or without
+    // sqlite-vec the chunk's own embedding); manager.ts skips the query embed while it has none.
+    if (modelKey !== FTS_ONLY_MODEL && embedding.length > 0) {
+      this.vectorRowsPresent = true;
+    }
 
     if (this.fts.enabled && this.fts.available) {
       this.db
@@ -1152,15 +1397,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           `INSERT INTO ${FTS_TABLE} (text, id, path, source, model, start_line, end_line)\n` +
             ` VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(
-          chunk.text,
-          chunkId,
-          entry.path,
-          source,
-          this.provider.model,
-          chunk.startLine,
-          chunk.endLine,
-        );
+        .run(chunk.text, chunkId, entry.path, source, modelKey, chunk.startLine, chunk.endLine);
     }
 
     // J14 SUPERSEDE-WRITER (Upgrade 3): the candidate chunk is now persisted (above), so
@@ -1194,7 +1431,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
             path: entry.path,
             startLine: chunk.startLine,
             endLine: chunk.endLine,
-            model: this.provider.model,
+            model: modelKey,
             hash: chunk.hash,
             validityStart: now,
           },

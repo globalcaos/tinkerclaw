@@ -13,7 +13,7 @@
  * this file as `openclaw/plugin-sdk/fork-prompt-envelope`.
  */
 
-import { APPENDED_PROMPT_BLOCKS } from "./appended-prompt-blocks.js";
+import { APPENDED_PROMPT_BLOCKS, withoutLeadingPromptBlocks } from "./appended-prompt-blocks.js";
 
 /** The web chat's header in front of a prompt it relays: `Sender (untrusted metadata):` and a fenced JSON block. */
 const SENDER_BLOCK = /^\s*Sender \(untrusted metadata\):\s*```json[\s\S]*?```\s*/;
@@ -44,11 +44,17 @@ const AGENT_OPENING =
 /** The marker a worker's own background turn carries to the chat that takes it (tinker-bridge unprompted-turn.ts). */
 const BG_TURN = /\[bg-turn bgt-[a-z0-9-]+\]/;
 
+/**
+ * The bootstrap budget's warning. With no `<turn_context>` it follows the owner's words, and it runs to the end of the
+ * prompt. On every other turn it sits inside that block, so it is cut only once the block is off.
+ */
+const BOOTSTRAP_WARNING = /\n\s*\[Bootstrap truncation warning\][\s\S]*$/;
+
 /** Takes the wrappers in front off, in whatever order they come; the agent label too when `label` is set. */
 function dropHead(prompt: string, label: boolean): string {
   let s = prompt;
   for (;;) {
-    let next = s
+    let next = withoutLeadingPromptBlocks(s)
       .replace(SENDER_BLOCK, "")
       .replace(SYSTEM_EVENT_LINES, "")
       .replace(ABORT_NOTE, "")
@@ -76,7 +82,7 @@ export function isAgentPrompt(prompt: string | undefined): boolean {
  * off. An agent's prompt keeps its words and loses only its label.
  */
 export function stripPromptEnvelope(prompt: string): string {
-  let s = prompt;
+  let s = withoutLeadingPromptBlocks(prompt).replace(BOOTSTRAP_WARNING, "");
   for (const re of APPENDED_PROMPT_BLOCKS) {
     const m = re.exec(s);
     if (m) {

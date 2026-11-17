@@ -3,6 +3,8 @@ import path from "node:path";
 import type { OpenClawConfig, MemorySearchConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { SecretInput } from "../config/types.secrets.js";
+// FORK 2026-10-29: the per-machine embedder seam, applied at the end of resolveMemorySearchConfig.
+import { applyEmbedderFit } from "../fork/embedder-fit.js";
 import {
   isMemoryMultimodalEnabled,
   normalizeMemoryMultimodalSettings,
@@ -453,7 +455,10 @@ export function resolveMemorySearchConfig(
       'agents.*.memorySearch.multimodal does not support memorySearch.fallback. Set fallback to "none".',
     );
   }
-  return resolved;
+  // FORK 2026-10-29: unset or "auto" becomes the provider and model `openclaw embedder fit`
+  // measured for this machine, or "none" (word index only) when no model fits or the machine has
+  // not been measured; an explicit provider comes back untouched (src/fork/embedder-fit.ts).
+  return applyEmbedderFit(resolved);
 }
 
 export function resolveMemorySearchSyncConfig(

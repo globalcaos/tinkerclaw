@@ -36,6 +36,11 @@ export function resolvePluginCacheMs(rawValue: string | undefined, defaultMs: nu
   return Math.max(0, parsed);
 }
 
+// FORK 2026-10-29: inside the long-lived gateway the web-provider snapshot and the capability
+// plugin-id cache no longer expire on this TTL. They follow the plugin snapshot generation
+// (plugin-snapshot-generation.ts), because embedded runs there are a median 108 s apart and a 1 s
+// TTL missed on every one. The TTL still governs CLI one-shots, tests, and any process that sets
+// one of the two cache-ms variables explicitly.
 export function resolvePluginSnapshotCacheTtlMs(env: NodeJS.ProcessEnv): number {
   const discoveryCacheMs = resolvePluginCacheMs(
     env.OPENCLAW_PLUGIN_DISCOVERY_CACHE_MS,

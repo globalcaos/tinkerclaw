@@ -275,16 +275,46 @@ export default definePluginEntry({
         reasonCode: r.decision.reasonCode,
       };
     });
-    method("amygdala2.rewind", (p) =>
-      runtime.learning().rewind({
+    method("amygdala2.rewind", (p) => {
+      const named = typeof p.fromPrompt === "string" && p.fromPrompt.trim() !== "";
+      const req = {
         sessionKey: text(p.sessionKey, "sessionKey"),
         turnId: typeof p.turnId === "string" ? p.turnId : "",
         undo: p.undo === true,
-        ...(typeof p.fromPrompt === "string" && p.fromPrompt.trim()
-          ? { fromPrompt: p.fromPrompt }
+        ...(named ? { fromPrompt: p.fromPrompt as string } : {}),
+        ...(named && typeof p.fromPromptAt === "number" && Number.isFinite(p.fromPromptAt)
+          ? { fromPromptAt: p.fromPromptAt }
           : {}),
-      }),
-    );
+        ...(named && p.orLast === true ? { orLast: true } : {}),
+      };
+      const r = runtime.learning().rewind(req);
+      // FORK 2026-11-13: a refused rewind used to answer the page and leave nothing here, so four refusals in one
+      // afternoon could only be explained by replaying them. Every outcome is one journal line; no prompt text in it.
+      api.logger.info(
+        `[amygdala] rewind session=${req.sessionKey} turn=${req.turnId || "-"} ${req.undo ? "undo" : named ? `named${req.fromPromptAt === undefined ? "" : "+time"}${req.orLast ? "+orLast" : ""}` : "last"} → ` +
+          (r.ok
+            ? `ok${r.whole ? " whole-conversation" : ""} now=${r.forkSessionId ?? r.restoredSessionId ?? "?"}`
+            : `refused: ${r.reason ?? "unknown"}`),
+      );
+      return r;
+    });
+
+    // FORK 2026-11-08: effect cards (src/effects.ts). The list feeds a reload; Revert runs the stored undo command.
+    method("amygdala2.effects", (p) => ({
+      ok: true,
+      effects:
+        runtime
+          .effects()
+          ?.list(
+            typeof p.sessionKey === "string" ? p.sessionKey : undefined,
+            typeof p.sinceTs === "number" ? p.sinceTs : undefined,
+          ) ?? [],
+    }));
+    method("amygdala2.effectRevert", async (p) => {
+      const book = runtime.effects();
+      if (!book) throw new Error("effects are not running");
+      return { ok: true, effect: await book.revert(text(p.id, "id")) };
+    });
 
     registerNativeHandlers(api, runtime);
 

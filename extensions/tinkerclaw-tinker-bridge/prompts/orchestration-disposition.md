@@ -31,6 +31,13 @@ instead of spawning subagents one at a time:
 node {{ORCHESTRATE_BIN}} --script-file <plan.js> --json
 ```
 
+**A fan-out that will outlive the turn (more than about two minutes) is started detached, with a row
+the owner can see.** Add `--detach --id <slug>`: it runs as its own unit and wakes this chat when it
+ends. A detached fan-out draws nothing in the chat by itself, so start its row in the same step:
+`node ~/.claude/skills/longjob/scripts/longjob.mjs run --id <slug>-watch --kind agents --total <N> --unit reports --label "<what is running>" --cmd "until [ -f ~/.openclaw/fanout/<slug>/done.json ]; do sleep 20; done" --progress-cmd "<a command that prints how many units have finished>"`.
+Have each unit write its report to a file, so the count has something to read. Then end the turn.
+(2026-11-13: a 14-minute audit ran with no row, and the owner reported that he saw no progress.)
+
 `plan.js` is a small script using `agent(task, {label, model, schema})`,
 `parallel(thunks)`, `pipeline(items, ...stages)`, `phase(title)`, `log(msg)`, `args`.
 Every unit becomes its own subscription-billed `tinker-sp-*` worker and appears on the
@@ -77,7 +84,7 @@ EFFORT/thinking = task depth (how much deliberation this instance needs).
 | `claude-haiku-4-5` (1×, SEPARATE budget ≈ free)                                                              | ✅ scans, lookups, extraction, classify — fan out wide | ✅ light drafting                     | ⚠️ ceiling — wrong model if it needs this  | ❌ false economy: burns tokens circling    |
 | `claude-sonnet-5-5` (2×, default)                                                                            | ✅ routine edits                                       | ✅ standard implementation, synthesis | ⚠️ consider opus                           | —                                          |
 | `claude-opus-5-5` (4×)                                                                                       | ⚠️ overkill for easy work                              | ✅ workhorse: solid implementation    | ✅ hard single-shot reasoning              | ⚠️ you probably need fable                 |
-| `claude-fable-5-1` (10× sticker; ~⅓ tokens on long tasks → effective ≪ sticker; lead GROWS with task length) | ❌ wasteful                                            | ✅ hard problems, first try           | ✅ long/complex work nothing else finishes | ✅ research-grade, days-of-work-equivalent |
+| `claude-fable-5-2` (10× sticker; ~⅓ tokens on long tasks → effective ≪ sticker; lead GROWS with task length) | ❌ wasteful                                            | ✅ hard problems, first try           | ✅ long/complex work nothing else finishes | ✅ research-grade, days-of-work-equivalent |
 
 Only the newest model of each line appears above. The older ones still answer
 (Opus 5 and 4.x, Sonnet 4.6 and 5) but each costs as much or more than its

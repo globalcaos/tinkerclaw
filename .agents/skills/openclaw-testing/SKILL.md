@@ -37,6 +37,20 @@ Prove the touched surface first. Do not reflexively run the whole suite.
 - Use `scripts/committer "<msg>" <paths...>` when committing; stage only your files.
 - If deps are missing, run `pnpm install`, retry once, then report the first actionable error.
 
+## TinkerClaw worktrees (2026-10-09)
+
+- One file: `pnpm test <path>` (since develop `6a5621a0f04`, 10-09; before that it ran the whole suite), or
+  `node_modules/.bin/vitest run <path>` from the repo root. Both route the file to its project. The per-area configs (`test/vitest/vitest.<area>.config.ts`)
+  do not cover every file: `src/wizard/session.test.ts` ran under none of wizard/unit-fast. Pin cores on the laptop
+  that hosts the gateway: `taskset -c 0-7 nice -n 10 …`.
+- A test or script that hangs with NO output (no timer fires) is blocked synchronously. Do not read code to guess:
+  start it with `node --inspect-port=127.0.0.1:9339 …`, then `kill -USR1 <node pid>` (the node pid, not a `timeout`
+  or `env` wrapper) and send CDP `Debugger.enable` + `Debugger.pause` over the `webSocketDebuggerUrl` from
+  `http://127.0.0.1:9339/json/list`; the `Debugger.paused` event lists the frames. 2026-10-09 this showed in one call
+  that two onboarding tests were loading every plugin from TypeScript through `jiti` (7+ minutes), after six calls
+  of reading code had not.
+- `git log --all -S <text>` on this repo runs past the 120 s tool timeout; scope it (`-- <paths>`) or search one ref.
+
 ## Local Test Shortcuts
 
 ```bash

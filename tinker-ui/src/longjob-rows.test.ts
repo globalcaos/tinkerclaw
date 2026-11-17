@@ -134,6 +134,33 @@ describe("long-job rows: process jobs", () => {
   });
 });
 
+describe("long-job rows: the trail they open (2026-11-14)", () => {
+  const draw = (jobs: LongjobJob[], open: Set<string>) => {
+    const host = document.createElement("div");
+    host.innerHTML = renderLongjobRows(jobs, NOW, { ...deps, trailOpen: (id) => open.has(id) });
+    return [...host.querySelectorAll<HTMLElement>(".thinking-run")];
+  };
+  const job = (id: string, kind: string): LongjobJob => ({ id, label: id, kind, ...running });
+
+  it("makes process and agents rows openable, with ▸ closed and ▾ open; a background task is not", () => {
+    const [proc, agents, bg] = draw(
+      [job("weave", "process"), job("fan", "agents"), job("b1", "background")],
+      new Set(["fan"]),
+    );
+    expect(proc.classList.contains("job-run-openable")).toBe(true);
+    expect(proc.querySelector(".job-run-chev")?.textContent).toBe("▸");
+    expect(proc.getAttribute("title")).toContain("from its start");
+    expect(agents.classList.contains("job-run-open")).toBe(true);
+    expect(agents.querySelector(".job-run-chev")?.textContent).toBe("▾");
+    expect(bg.classList.contains("job-run-openable")).toBe(false);
+    expect(bg.querySelector(".job-run-chev")).toBeNull();
+  });
+
+  it("draws exactly the old markup when the page gives no trail hook", () => {
+    expect(renderLongjobRows([job("weave", "process")], NOW, deps)).not.toContain("job-run-chev");
+  });
+});
+
 describe("long-job rows: background tasks (the architect 2026-10-25 02:43)", () => {
   // As ccBridge.backgroundTasks lists them: no progress, no updatedAt, never a percentage.
   const bg = (over: Partial<LongjobJob> = {}): LongjobJob => ({

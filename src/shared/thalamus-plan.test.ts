@@ -342,6 +342,36 @@ describe("a suggestion in the plan", () => {
     expect(p.reason).toContain("not on the board, ignored");
   });
 
+  it("is moved with cause spent (not ignored) when the model was excluded as provider-exhausted", () => {
+    // DEFECT (fixed): when a provider's weekly limit is spent, thalamusCandidates excludes its
+    // models BEFORE pricing, so the suggestion never appears in vetoes and fell to the else branch:
+    // `{ state: "ignored", reason: "not-on-board" }`. The card then showed "bias" as the why-reason
+    // with no suggestion block — hiding the real cause from the architect.
+    // Fix: check params.excluded for "provider-exhausted" before emitting "ignored".
+    const RESET_MS = NOW + 2 * HOUR;
+    const s = supplies();
+    // Spend Anthropic so Opus is excluded before pricing (simulates what thalamusCandidates does).
+    s.set("anthropic", supplyStateFrom("anthropic", [win("Weekly", 100, 2 * HOUR)], NOW));
+    // Board without Opus (mimicking exclusion before pricing — Opus never appears as a rung).
+    const boardNoOpus = BOARD.filter((r) => r.key !== OPUS);
+    const p = thalamusPlan({
+      rungs: boardNoOpus,
+      supplies: s,
+      biasIdx: 3,
+      nowMs: NOW,
+      suggestion: { key: OPUS, effort: "high" },
+      excluded: [{ key: OPUS, reason: "provider-exhausted" }],
+    })!;
+    expect(p.suggestion).toMatchObject({
+      state: "moved",
+      key: OPUS,
+      cause: "spent",
+      untilMs: RESET_MS,
+    });
+    // "bias" must NOT appear as the sole why-reason when we know the suggestion was spent.
+    expect(p.primary.key).not.toBe(OPUS);
+  });
+
   it("opens the reserved set for a reserved suggestion and names it", () => {
     const p = plan({ suggestion: { key: FABLE, effort: "high" } })!;
     expect(p.primary.key).toBe(FABLE);
@@ -366,5 +396,50 @@ describe("a suggestion in the plan", () => {
     expect(p.coolingShift).toMatchObject({ supply: "anthropic", untilMs: COOL_UNTIL });
     expect(p.coolingShift?.from.key).toBe(OPUS);
     expect(p.suggestion).toBeUndefined();
+  });
+});
+
+describe("pay-per-call Google gate — second opinions only when no subscription family survives", () => {
+  const CARBON = "google/gemini-4-carbon";
+
+  it("vetoes Google from primary turns and fallback chains, and uses subscription rivals for critic first", () => {
+    const p = plan({
+      biasIdx: 6,
+      domain: "code",
+      rungs: [...BOARD, rung(CARBON, "high", 65, 0.2)],
+      secondOpinionOnly: new Set<SupplyId>(["google"]),
+    })!;
+    expect(p.primary.key).toBe(FABLE);
+    expect(keysOf(p.chain)).not.toContain(GEMINI);
+    expect(keysOf(p.chain)).not.toContain(CARBON);
+    expect(p.vetoes.some((v) => v.key === CARBON && v.veto === "supply-metered")).toBe(true);
+    // Subscription rivals (OpenAI / xAI) are open, so critic uses a subscription model, not Google.
+    expect(p.mode).toBe("critic");
+    expect(p.panel).toHaveLength(1);
+    expect(supplyOfKey(p.panel[0])).not.toBe("google");
+  });
+
+  it("admits Google as critic strictly when every non-primary subscription supply is unavailable", () => {
+    const allSubsDown = new Map<SupplyId, SupplyState>([
+      ["anthropic", supplyStateFrom("anthropic", [win("5-hour", 20)], NOW)],
+      ["xai", supplyStateFrom("xai", [win("Weekly", 100)], NOW)],
+      ["openai", supplyStateFrom("openai", [win("5-hour", 100)], NOW)],
+      ["copilot", supplyStateFrom("copilot", [win("monthly", 100)], NOW)],
+    ]);
+    const p = thalamusPlan({
+      rungs: BOARD,
+      secondOpinionRungs: [rung(CARBON, "high", 60, 2.5)],
+      supplies: allSubsDown,
+      biasIdx: 6,
+      domain: "code",
+      unfunded: new Set<SupplyId>(["openrouter"]),
+      secondOpinionOnly: new Set<SupplyId>(["google"]),
+      nowMs: NOW,
+    })!;
+    expect(p.primary.key).toBe(FABLE);
+    expect(keysOf(p.chain)).not.toContain(CARBON);
+    expect(keysOf(p.chain)).not.toContain(GEMINI);
+    expect(p.mode).toBe("critic");
+    expect(p.panel).toEqual([CARBON]);
   });
 });

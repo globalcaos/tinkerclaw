@@ -40,6 +40,7 @@ const st = {
   wake: null,
   mark: null, // saved place, from the server
   ownFlip: false,
+  follow: true, // the view turns pages with the voice; false while you look at another page
 };
 
 
@@ -79,6 +80,130 @@ function guessLang(text) {
   if (en >= ca && en >= es) return "en-GB"; // Jarvis is British (the architect 2026-10-22)
   return ca >= es ? "ca-ES" : "es-ES";
 }
+
+// 2026-11-12 (need: listen with the screen locked, and control it from the headset and the cover
+// screen). A newer app reads by itself: readNative() hands it the reading list from the current
+// sentence to the end of the document, and the app speaks it from its own service, whether this page
+// is awake or not. The app reports each sentence as a {ev:"reader"} event; this page then only
+// highlights, turns the page and saves the place. `nat` is what the page knows of the app's reading.
+const QUEUE = Boolean(NATIVE && typeof NATIVE.JarvisNative.readQueue === "function");
+const useQueue = () => QUEUE && usePhone();
+const nat = { active: false };
+let queueSeq = 0;
+const docTitle = () => (document.title || fileName()).replace(/\.pdf$/i, "");
+// A long book: the lists of pages far from the place being read are dropped; they are rebuilt on demand.
+function forget(page) {
+  if (st.cur && Math.abs(st.cur.page - page) <= 3) return;
+  for (const m of [st.raw, st.rawReady, st.pages, st.ready, edgeCache]) m.delete(page);
+}
+async function readNative(pos) {
+  const gen = ++st.gen;
+  st.audio.pause();
+  st.wake?.();
+  st.cur = pos;
+  st.follow = true;
+  st.playing = true;
+  nat.active = true;
+  ui();
+  const first = (await sentences(pos.page)).list;
+  if (st.gen !== gen) return;
+  if (!docLang) docLang = guessLang(first.map((x) => x.text).join(" "));
+  draw();
+  save();
+  const q = `${Date.now()}-${++queueSeq}`;
+  let rows = [];
+  let para = 0;
+  let sent = false;
+  const flush = (more) => {
+    const msg = JSON.stringify({ q, doc: st.doc, title: docTitle(), rate: speed(), lang: phoneLang(), items: rows, more });
+    if (sent) NATIVE.JarvisNative.readAppend(msg);
+    else NATIVE.JarvisNative.readQueue(msg);
+    sent = true;
+    rows = [];
+  };
+  let lastPage = pos.page;
+  for (let p = pos; p && st.gen === gen; p = await after(p)) {
+    const e = (await sentences(p.page)).list[p.idx];
+    if (!e) break;
+    // [words, printed page, pause after it, paragraph number, then this sentence's place in the page's list]
+    rows.push([piece(e, p.from).text, e.page, e.pause || "", para, p.page, p.idx, p.from ?? -1]);
+    if (e.pause) para++;
+    if (p.page !== lastPage) {
+      forget(lastPage - 3);
+      lastPage = p.page;
+    }
+    // The first sentences go at once so the voice starts; the rest follows in larger parts.
+    if (rows.length >= (sent ? 120 : 6)) {
+      flush(true);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  if (st.gen === gen) flush(false);
+}
+// After a long time behind the lock screen the events of every sentence read arrive together: only
+// the newest one is acted on, so the page saves the place once, not once per missed sentence.
+let newest = null;
+let following = false;
+NATIVE?.addEventListener("jarvis-native", async (ev) => {
+  if (ev.detail?.ev !== "reader") return;
+  newest = ev.detail;
+  if (following) return;
+  following = true;
+  try {
+    while (newest) {
+      const d = newest;
+      newest = null;
+      await onNative(d);
+    }
+  } catch (err) {
+    console.error("[reader] following the app's reading failed", err);
+  } finally {
+    following = false;
+  }
+});
+async function onNative(d) {
+  // Speed changed on the notification or the cover screen: the menu here shows it.
+  if (d.rate && d.rate !== String(speed())) {
+    localStorage.setItem("reader.speed", d.rate);
+    $("readerSpeed").value = d.rate;
+  }
+  if (!st.doc || d.doc !== st.doc) {
+    if (d.active === false) nat.active = false;
+    return; // nothing kept, or the app is reading another document
+  }
+  if (!d.active) {
+    // Only a kept place (the app was closed since): take it when it is newer than the saved one.
+    nat.active = false;
+    if (st.playing && !useQueue()) return;
+    if (st.mark && !(d.ts > Date.parse(st.mark.at))) {
+      if (useQueue()) { st.playing = false; ui(); }
+      return;
+    }
+  } else nat.active = true;
+  const gen = st.gen;
+  if (Number.isInteger(d.page)) {
+    const pos = { page: d.page, idx: d.idx, ...(d.from >= 0 ? { from: d.from } : {}) };
+    await sentences(pos.page);
+    if (st.gen !== gen) return;
+    const e = entry(pos);
+    if (e) {
+      const moved = !st.cur || st.cur.page !== pos.page || st.cur.idx !== pos.idx;
+      st.cur = pos;
+      if (d.playing && st.follow && app.page !== e.page) {
+        st.ownFlip = true;
+        app.page = e.page;
+        st.ownFlip = false;
+      }
+      draw();
+      if (moved) save();
+    }
+  }
+  st.playing = Boolean(d.playing);
+  ui();
+  if (d.state === "error") showError(new Error(d.message || "the phone voice failed"));
+}
+// The page slept behind the lock screen while the app read on: ask where it is now.
+if (QUEUE) document.addEventListener("visibilitychange", () => !document.hidden && NATIVE.JarvisNative.readCtl("state", ""));
 
 // The phone voice's sentence in flight: its id and how to finish it.
 let saying = null;
@@ -122,11 +247,13 @@ NATIVE?.addEventListener("jarvis-native", (ev) => {
     o.textContent = prettyVoice(v);
     sel.append(o);
   }
-  if (voiceName() === PHONE_VOICE || !localStorage.getItem("reader.gbd")) {
-    const gbd = d.list.filter((v) => DEFAULT_PHONE.test(v.name)).sort((a, b) => b.network - a.network)[0];
+  // 2026-11-08 (need: no clipped first words, short gaps): the offline copy of the voice first. The
+  // network copy fetches every sentence before speaking it. The flag was renamed so phones pick again once.
+  if (voiceName() === PHONE_VOICE || !localStorage.getItem("reader.gbdLocal")) {
+    const gbd = d.list.filter((v) => DEFAULT_PHONE.test(v.name)).sort((a, b) => b.installed - a.installed || a.network - b.network)[0];
     if (gbd) {
       localStorage.setItem("reader.voice", "phone:" + gbd.name);
-      localStorage.setItem("reader.gbd", "1");
+      localStorage.setItem("reader.gbdLocal", "1");
     }
   }
   sel.value = voiceName();
@@ -320,15 +447,17 @@ function analyse(page) {
           }
           if (end - start >= 2) push(start, end);
         };
-        if (b.head) pushChunked(b.start, b.end);
-        else {
+        // A title block is split into sentences too (2026-11-16: always one sentence at a time): on a page
+        // with a character card the card's small type is the body size, and the story paragraph after it read as one
+        // "title" of 220 characters. A real title is one sentence, so splitting it changes nothing.
+        {
           for (const seg of segmenter.segment(text.slice(b.start, b.end))) {
             const start = b.start + seg.index + (seg.segment.length - seg.segment.trimStart().length);
             pushChunked(start, b.start + seg.index + seg.segment.trimEnd().length);
           }
           // A run-in title ("Persistent Agents and Memory. AutoGen …") is a bold first sentence.
           const lead = list[0];
-          if (lead && list.length > 1 && lead.text.length < 120 && boldShare(lead.start, lead.end) > 0.9) lead.pause = "head";
+          if (lead && !b.head && list.length > 1 && lead.text.length < 120 && boldShare(lead.start, lead.end) > 0.9) lead.pause = "head";
         }
         if (list.length && !b.open) list[list.length - 1].pause = b.head ? "head" : "para";
         return { ...b, sentences: list };
@@ -397,6 +526,10 @@ function sentences(page) {
           t = nxt.main[0].sentences[0];
         }
         else if (raw.noteSentOpen && raw.lastNote && e.start === raw.lastNote.start && nxt.notes.length) t = nxt.notes[0].sentences[0];
+        // Join only a real cut: the words overleaf go on with the sentence (a lowercase start, or the cut ends on
+        // , ; : or -). A card label at a page's foot ("CH A R A C T E R C A R D") was glued to page 25's first
+        // sentence (2026-11-16).
+        if (t && !(/^[\s"“‘(]*\p{Ll}/u.test(t.text) || /[,;:\-–—]\s*$/.test(e.text))) t = null;
         if (t) Object.assign(e, { cont: { page: t.page, start: t.start, end: t.end }, own: e.text, text: joinText(e.text, t.text), pause: t.pause });
       }
       const data = { list };
@@ -520,17 +653,23 @@ function save() {
 }
 
 async function read(pos) {
+  if (pos && useQueue()) return readNative(pos);
+  if (QUEUE && nat.active) { // another voice was picked: the app's own reading ends
+    nat.active = false;
+    NATIVE.JarvisNative.readCtl("stop", "");
+  }
   const gen = ++st.gen;
   st.audio.pause();
   st.wake?.();
   st.cur = pos;
+  st.follow = true;
   st.playing = Boolean(pos);
   ui();
   while (st.cur && st.gen === gen) {
     const pos = st.cur;
     const e = (await sentences(pos.page)).list[pos.idx];
     if (!e) break;
-    if (app.page !== e.page) {
+    if (st.follow && app.page !== e.page) {
       st.ownFlip = true;
       app.page = e.page;
       st.ownFlip = false;
@@ -585,7 +724,7 @@ async function read(pos) {
       // Turn the page about when the voice reaches the page break.
       const share = (piece(e, pos.from).own || "").length / Math.max(1, piece(e, pos.from).text.length);
       const flip = () => {
-        if (st.gen !== gen || st.cur !== pos || st.audio.paused || app.page === e.cont.page) return;
+        if (st.gen !== gen || st.cur !== pos || st.audio.paused || !st.follow || app.page === e.cont.page) return;
         st.ownFlip = true;
         app.page = e.cont.page;
         st.ownFlip = false;
@@ -615,6 +754,10 @@ async function read(pos) {
 function pause() {
   st.playing = false;
   st.audio.pause();
+  if (QUEUE && nat.active) {
+    NATIVE.JarvisNative.readCtl("pause", ""); // the app keeps the sentence; Read goes on with it
+    return ui();
+  }
   if (NATIVE) {
     // The phone voice cannot be paused mid-sentence: stop it and end this reading; ▶ Read starts
     // again from the saved sentence.
@@ -625,17 +768,51 @@ function pause() {
   ui();
 }
 
+// 2026-11-09 (need: start from the selected word, even a word that appears twice on the page, and
+// even when tapping ▶ clears the selection first). The selection is read as: its page, its text, and
+// how many times that text already appears on the page before it.
+const flat = (t) => t.replace(/\s+/g, " ");
+function selectionInfo(sel) {
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const pageDiv = sel.anchorNode?.parentElement?.closest(".page");
+  const layer = pageDiv?.querySelector(".textLayer");
+  const probe = flat(sel.toString()).trim();
+  if (!layer || !probe) return null;
+  const r = sel.getRangeAt(0);
+  const pre = document.createRange();
+  pre.setStart(layer, 0);
+  pre.setEnd(r.startContainer, r.startOffset);
+  const key = probe.slice(0, 40);
+  const before = flat(pre.toString() + probe);
+  let nth = -1;
+  for (let i = before.indexOf(key); i >= 0; i = before.indexOf(key, i + 1)) nth++;
+  return { page: Number(pageDiv.dataset.pageNumber), key, nth: Math.max(0, nth), at: Date.now() };
+}
+let lastSel = null;
+document.addEventListener("selectionchange", () => {
+  const info = selectionInfo(getSelection());
+  if (info) lastSel = info;
+});
+
 async function fromSelection() {
   const sel = getSelection();
-  const pageDiv = !sel?.isCollapsed && sel.anchorNode?.parentElement?.closest(".page");
-  if (!pageDiv) return null;
-  const page = Number(pageDiv.dataset.pageNumber);
+  const info = selectionInfo(sel) || (lastSel && Date.now() - lastSel.at < 60000 ? lastSel : null);
+  lastSel = null;
+  if (!info) return null;
+  const { page, key, nth } = info;
   await sentences(page);
-  const probe = sel.toString().replace(/\s+/g, " ").trim();
   const hay = st.rawReady.get(page).text.replace(/\s/g, " ");
-  let at = hay.indexOf(probe.slice(0, 40));
-  if (at < 0) at = hay.indexOf(probe.slice(0, 12));
-  sel.removeAllRanges();
+  const find = (k) => {
+    let at = -1;
+    for (let n = 0, i = hay.indexOf(k); i >= 0; i = hay.indexOf(k, i + 1), n++) {
+      at = i;
+      if (n === nth) break;
+    }
+    return at;
+  };
+  let at = find(key);
+  if (at < 0) at = find(key.slice(0, 12));
+  sel?.removeAllRanges();
   if (at < 0) return firstFrom(page);
   // The sentence may sit on this page's list, or (a deferred note, a joined end) on a neighbour's.
   const at1 = (list, test) => list.findIndex(test);
@@ -661,28 +838,140 @@ async function toggle() {
   const sel = await fromSelection();
   if (sel) return read(sel);
   if (st.playing) return pause();
-  if (st.cur && st.audio.src && !st.audio.ended && st.cur.page === app.page) {
+  if (QUEUE && nat.active && st.cur && useQueue()) { // the app paused on this sentence: it goes on
     st.playing = true;
+    st.follow = true;
+    ui();
+    return NATIVE.JarvisNative.readCtl("resume", "");
+  }
+  // 2026-11-09 (need: after a pause, go on from the remembered sentence wherever the view is).
+  if (st.cur && !NATIVE && st.audio.src && !st.audio.ended) {
+    st.playing = true;
+    st.follow = true;
+    const e = entry(st.cur);
+    if (e && app.page !== e.page) {
+      st.ownFlip = true;
+      app.page = e.page;
+      st.ownFlip = false;
+    }
     ui();
     return st.audio.play().catch((err) => console.error("[reader] audio play failed", err));
   }
-  if (st.mark && st.mark.page === app.page) return read(await markPos());
+  if (st.cur) return read(st.cur);
+  if (st.mark) return read(await markPos());
   return read(await firstFrom(app.page));
 }
+
+// ---- ⏮ ¶ and ¶ ⏭: move the reading by whole paragraphs (2026-11-14) -----------------------------
+// A paragraph (or a title) ends at the entry that carries `pause`; its first sentence is the entry
+// after that. A paragraph that runs over a page break has no `pause` at the end of the first page's
+// list, so the walk goes on into the page before, at most this many pages.
+const PARA_PAGES = 3;
+const entryAt = async (p) => (await sentences(p.page)).list[p.idx];
+// A tail fragment (the end of a sentence cut by a page break) stands for the entry that holds the
+// whole sentence, on the page before.
+async function whole(p) {
+  const e = await entryAt(p);
+  if (!e?.tail || p.page < 2) return p;
+  const idx = (await sentences(p.page - 1)).list.findIndex((h) => h.cont && h.cont.page === e.page && h.cont.start === e.start);
+  return idx >= 0 ? { page: p.page - 1, idx } : p;
+}
+async function before(p) {
+  let q = p.idx > 0 ? { page: p.page, idx: p.idx - 1 } : null;
+  for (let page = p.page - 1; !q && page >= 1; page--) {
+    const n = (await sentences(page)).list.length;
+    if (n) q = { page, idx: n - 1 };
+  }
+  return q && whole(q);
+}
+// The first sentence of the paragraph that holds p.
+async function paraStart(p) {
+  const floor = p.page - PARA_PAGES;
+  for (let q = await before(p); q && q.page >= floor && !(await entryAt(q)).pause; q = await before(q)) p = q;
+  return p;
+}
+// The first sentence of the paragraph after the one that holds p; null at the end of the document.
+async function nextStart(p) {
+  const from = p.page;
+  for (;;) {
+    const e = await entryAt(p);
+    const n = await after(p);
+    if (!n || e.pause || n.page > from + PARA_PAGES) return n;
+    p = n;
+  }
+}
+// Move the place without speaking (paused or not started): ▶ Read then starts at `to`, not on the old sentence's clip.
+function moveTo(to) {
+  st.gen++;
+  st.wake?.();
+  st.audio.pause();
+  st.audio.removeAttribute("src");
+  st.audio.load();
+  st.cur = to;
+  st.follow = true;
+  const e = entry(to);
+  if (e && app.page !== e.page) {
+    st.ownFlip = true;
+    app.page = e.page;
+    st.ownFlip = false;
+  }
+  draw();
+  save();
+  ui();
+}
+// ¶⏭ goes to the next paragraph. ⏮¶ goes to the start of this one; from its first sentence it goes to
+// the one before, like a player's back key (the phone app's own keys do the same). While it reads, the
+// voice goes on from there; paused or not started, only the place moves and ▶ Read starts at it.
+async function skip(dir) {
+  // The app is doing the reading: its queue holds the paragraphs and its lock-screen keys use the same call.
+  if (QUEUE && nat.active && useQueue()) return NATIVE.JarvisNative.readCtl(dir > 0 ? "next" : "prev", "");
+  const cur = st.cur || (st.mark ? await markPos() : await firstFrom(app.page));
+  if (!cur) return;
+  const p = await whole(cur);
+  let to;
+  if (dir > 0) to = await nextStart(p);
+  else {
+    const start = await paraStart(p);
+    const inside = start.page !== p.page || start.idx !== p.idx || cur.from > 0;
+    const prior = inside ? null : await before(start);
+    to = prior ? await paraStart(prior) : start;
+  }
+  if (!to) return;
+  if (st.playing) read(to);
+  else moveTo(to);
+}
+let skipping = Promise.resolve(); // two quick presses go one after the other, the second from where the first landed
+const skipTo = (dir) => (skipping = skipping.then(() => skip(dir)).catch((err) => console.error("[reader] moving by paragraph failed", err)));
 
 // ---- toolbar -------------------------------------------------------------------------------
 const bar = document.createElement("div");
 bar.id = "readerControls";
 bar.innerHTML = `
-  <button id="readerResume" class="readerBtn" hidden></button>
-  <button id="readerPlay" class="readerBtn" title="Read aloud from the selected text, your saved place, or the top of this page">▶ Read</button>
-  <select id="readerSpeed" title="Reading speed">
-    ${[0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2].map((v) => `<option value="${v}">${v}×</option>`).join("")}
-  </select>
-  <select id="readerVoice" title="Voice"></select>
+  <button id="readerResume" class="toolbarButton readerBtn" hidden></button>
+  <button id="readerPrev" class="toolbarButton readerBtn" title="Back to the start of this paragraph; from its first sentence, to the one before" aria-label="Previous paragraph">⏮ ¶</button>
+  <button id="readerPlay" class="toolbarButton readerBtn" title="Read aloud from the selected text, your saved place, or the top of this page">▶ Read</button>
+  <button id="readerNext" class="toolbarButton readerBtn" title="On to the start of the next paragraph" aria-label="Next paragraph">¶ ⏭</button>
+  <button id="readerSettings" class="toolbarButton readerBtn" title="Reading settings: speed and voice" aria-label="Reading settings">Settings</button>
   <span id="readerError" hidden></span>`;
 document.getElementById("toolbarViewerRight").prepend(bar);
 const $ = (id) => document.getElementById(id);
+// Speed and voice change rarely, so they live in a pop-up (2026-11-10). A pick applies at once and is
+// remembered: the pop-up has no save button, it closes on ✕, Esc or a click outside.
+const settings = document.createElement("dialog");
+settings.id = "readerSettingsDialog";
+settings.innerHTML = `
+  <div class="recentHead"><b>Reading settings</b><button type="button" class="recentClose" aria-label="Close">✕</button></div>
+  <label class="setRow">Speed
+    <select id="readerSpeed">${[0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2].map((v) => `<option value="${v}">${v}×</option>`).join("")}</select>
+  </label>
+  <label class="setRow">Voice <select id="readerVoice"></select></label>
+  <label class="setRow">Look
+    <select id="readerLook"><option value="auto">Automatic (as the device)</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </label>`;
+document.body.append(settings);
+$("readerSettings").addEventListener("click", () => settings.showModal());
+settings.querySelector(".recentClose").addEventListener("click", () => settings.close());
+settings.addEventListener("click", (e) => { if (e.target === settings) settings.close(); });
 $("readerSpeed").value = String(speed());
 
 function ui() {
@@ -705,7 +994,10 @@ function showError(err) {
   $("readerError").hidden = false;
 }
 
+$("readerPlay").addEventListener("pointerdown", (e) => e.preventDefault()); // keep the selection alive
 $("readerPlay").addEventListener("click", toggle);
+$("readerPrev").addEventListener("click", () => skipTo(-1));
+$("readerNext").addEventListener("click", () => skipTo(1));
 // Space plays and pauses anywhere in the document, like ▶ Read: from the selection, the marked
 // sentence on this page, or the top of the page. Typing in a field or a comment is left alone.
 window.addEventListener("keydown", (e) => {
@@ -717,9 +1009,19 @@ window.addEventListener("keydown", (e) => {
   toggle();
 }, true);
 $("readerResume").addEventListener("click", async () => st.mark && read(await markPos()));
+// Light or dark (2026-11-12): pdf.js follows the device unless told; the pick applies at once and is kept
+// (defaults.js hands it to pdf.js at the next start).
+$("readerLook").value = localStorage.getItem("reader.look") || "auto";
+$("readerLook").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (v === "auto") { localStorage.removeItem("reader.look"); document.documentElement.style.removeProperty("color-scheme"); }
+  else { localStorage.setItem("reader.look", v); document.documentElement.style.setProperty("color-scheme", v); }
+  window.readerLookApply?.(); // the page itself, dark or light (defaults.js)
+});
 $("readerSpeed").addEventListener("change", (e) => {
   localStorage.setItem("reader.speed", e.target.value);
   st.audio.playbackRate = speed();
+  if (QUEUE && nat.active) NATIVE.JarvisNative.readCtl("rate", e.target.value);
 });
 $("readerVoice").addEventListener("change", (e) => {
   localStorage.setItem("reader.voice", e.target.value);
@@ -772,12 +1074,18 @@ new MutationObserver(() => {
 // For test/reader.mjs: the sentence list of a page, with its pauses.
 window.pdfReader = {
   sentences: async (page) => (await sentences(page)).list,
+  blocks: async (page) => { const a = await analyse(page); const raw = st.rawReady.get(page); return a.main.map((b) => ({ head: b.head, open: b.open, n: b.sentences.length, raw: raw?.text?.slice(b.start, b.end) })); }, // tests
   read: (page, idx) => { read({ page, idx }); }, // fire and forget: read() resolves only when reading stops (a 10-min test hang, 2026-10-18)
+  // ▶ on the reader's own selection bar (tools.js, 2026-11-12), the same as the ▶ in pdf.js's.
+  readSelection: async () => { const pos = await fromSelection(); if (pos) read(pos); },
   audio: st.audio,
+  cur: () => st.cur && { page: st.cur.page, idx: st.cur.idx },
 };
 
 // ---- viewer events -------------------------------------------------------------------------
 async function onDocument() {
+  // 2026-11-09 (need: a rebuilt PDF that reloads under the voice does not stop the reading).
+  const wasPlaying = st.playing;
   docLang = "";
   st.gen++;
   st.audio.pause();
@@ -802,6 +1110,8 @@ async function onDocument() {
     console.error("[reader] loading the saved reading position failed", err);
   }
   ui();
+  if (wasPlaying && st.mark) return read(await markPos());
+  if (QUEUE) NATIVE.JarvisNative.readCtl("state", ""); // the app may hold a newer place, or be reading this very document
   // Reopened: show the saved page with the next sentence to read marked, ready for ▶ Read.
   if (st.mark) {
     const gen = st.gen;
@@ -821,10 +1131,80 @@ bus.on("documentloaded", onDocument);
 bus.on("pagerendered", ({ pageNumber }) => {
   if (st.cur && (entry(st.cur)?.page === pageNumber || entry(st.cur)?.cont?.page === pageNumber)) draw();
 });
+// Dark look: a picture keeps its own colours (2026-11-12, need: a dark page never shows a picture as a
+// negative). reader.css darkens a page with a veil that inverts what is under it. Inverting a picture gives
+// its negative, and inverting it back again cannot restore strong colours, so the veil gets a hole over
+// each picture instead: this finds where a page's pictures are drawn and hands the holes to the veil
+// (--pic-holes on the page). The holes stay on the page when pdf.js redraws it, so only the first drawing waits.
+const pic = { doc: null, boxes: new Map(), logged: false }; // boxes: page -> Promise<[[left, top, width, height] as fractions of the page]>
+const mul = (m, n) => [
+  m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+  m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+  m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5],
+];
+function pictureBoxes(pageNumber) {
+  const doc = app.pdfDocument;
+  if (pic.doc !== doc) { pic.doc = doc; pic.boxes.clear(); pic.logged = false; }
+  if (!pic.boxes.has(pageNumber)) {
+    pic.boxes.set(pageNumber, (async () => {
+      const OPS = globalThis.pdfjsLib?.OPS;
+      if (!OPS) return [];
+      const page = await doc.getPage(pageNumber);
+      const vp = page.getViewport({ scale: 1 });
+      const { fnArray, argsArray } = await page.getOperatorList();
+      const paints = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageXObjectRepeat].filter((x) => x != null));
+      // Follow the drawing position through the page: a picture fills the unit square of the position it is drawn at.
+      let ctm = [1, 0, 0, 1, 0, 0];
+      const stack = [];
+      const found = [];
+      for (let i = 0; i < fnArray.length; i++) {
+        const fn = fnArray[i], a = argsArray[i];
+        if (fn === OPS.save) stack.push(ctm);
+        else if (fn === OPS.restore) ctm = stack.pop() ?? ctm;
+        else if (fn === OPS.transform) ctm = mul(ctm, a);
+        else if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm); if (a?.[0]) ctm = mul(ctm, a[0]); }
+        else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() ?? ctm;
+        else if (paints.has(fn)) {
+          const m = mul(vp.transform, ctm);
+          const xs = [m[4], m[0] + m[4], m[2] + m[4], m[0] + m[2] + m[4]];
+          const ys = [m[5], m[1] + m[5], m[3] + m[5], m[1] + m[3] + m[5]];
+          const x0 = Math.max(0, Math.min(...xs)), x1 = Math.min(vp.width, Math.max(...xs));
+          const y0 = Math.max(0, Math.min(...ys)), y1 = Math.min(vp.height, Math.max(...ys));
+          if (x1 - x0 > 12 && y1 - y0 > 12) found.push([x0 / vp.width, y0 / vp.height, (x1 - x0) / vp.width, (y1 - y0) / vp.height].map((v) => +v.toFixed(4)));
+        }
+      }
+      // A picture drawn twice, or one lying inside another, is one hole: two holes on the same spot would cancel out.
+      const inside = (a, b) => a[0] >= b[0] && a[1] >= b[1] && a[0] + a[2] <= b[0] + b[2] && a[1] + a[3] <= b[1] + b[3];
+      return found.filter((a, i) => !found.some((b, j) => j !== i && inside(a, b) && (!inside(b, a) || j < i)));
+    })().catch((err) => { console.error("[reader] picture boxes failed", err); return []; }));
+  }
+  return pic.boxes.get(pageNumber);
+}
+async function keepPictures({ pageNumber, source }) {
+  const div = source?.div;
+  if (!div) return;
+  if (pageNumber < app.pagesCount) pictureBoxes(pageNumber + 1); // the next page's holes are ready before it shows
+  const boxes = await pictureBoxes(pageNumber);
+  const E = 0.001; // the hole stops a hair inside the picture, so no bright paper shows round it
+  const pt = (x, y) => `${(x * 100).toFixed(2)}% ${(y * 100).toFixed(2)}%`;
+  const holes = boxes.map(([l, t, w, h]) => [l + E, t + E, l + w - E, t + h - E])
+    .map(([a, b, c, d]) => `, ${pt(a, b)}, ${pt(c, b)}, ${pt(c, d)}, ${pt(a, d)}, ${pt(a, b)}, 0% 0%`).join("");
+  div.style.setProperty("--pic-holes", boxes.length ? `polygon(evenodd, 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%${holes})` : "none");
+  div.dataset.pictures = JSON.stringify(boxes);
+  if (boxes.length && !pic.logged) {
+    pic.logged = true;
+    window.__clientLog?.("pictures-kept", { page: pageNumber, boxes: boxes.length, dark: document.documentElement.classList.contains("pdfDark") });
+  }
+}
+bus.on("pagerender", keepPictures);
+bus.on("pagerendered", keepPictures);
 bus.on("pagechanging", ({ pageNumber }) => {
-  // You turned the page yourself while listening: carry on from the top of that page.
-  if (!st.ownFlip && st.playing && st.cur && pageNumber !== st.cur.page) {
-    firstFrom(pageNumber).then((p) => p && read(p));
+  // 2026-11-09 (need: scrolling never changes what is read): your own scrolling only decides whether
+  // the view keeps following the voice. Away from the sentence being read, the page stays where you
+  // put it; back on that page, the view follows the voice again.
+  if (!st.ownFlip && st.cur) {
+    const e = entry(st.cur);
+    st.follow = pageNumber === e?.page || pageNumber === e?.cont?.page;
   }
 });
 if (app.pdfDocument) onDocument();

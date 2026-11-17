@@ -2,6 +2,9 @@
  * Gateway events for the UI (design doc §7.2). Payloads carry the question NAME, never its instructions (U9).
  * Built here, pure, so the chat window and panel tests can replay them.
  */
+import { goalFingerprint } from "./context.js";
+import { proofGrantCode } from "./grant-code.js";
+import { plainAsk, plainStep } from "./plain.js";
 import type { QuestionBook } from "./question-book.js";
 import type { Decision, Response, Situation, Verdict } from "./types.js";
 
@@ -49,8 +52,16 @@ export interface InterventionEvent {
   title: string;
   chips: string[];
   cmd?: string;
+  /** What the owner reads for a step that waits for him: one plain sentence, never the command. */
+  sentence?: string;
+  /** The owner's Allow question for that step (2026-11-03), e.g. "Allow publishing to the web?". */
+  ask?: string;
+  /** A hold's rule or question id, so the page can show its words and open its file. */
+  rule?: string;
   options?: { id: string; label: string; hint?: string }[];
   expiresTs?: number;
+  /** A proof hold's release code: the owner's prompt `allow <grant>` lets the step run (grant-code.ts). */
+  grant?: string;
 }
 
 export function codeDidFor(kind: Response["kind"]): CodeDid {
@@ -156,6 +167,7 @@ export function buildInterventionEvent(
   const r = c.decision.response;
   if (r.kind === "proceed") return null;
   const s = c.situation;
+  const waits = r.kind === "proof" || r.kind === "hold" || r.kind === "ask";
   const chips: string[] = [];
   if (s.effectClass.value) chips.push(`effect: ${s.effectClass.value}`);
   const h = s.targetHistory.value;
@@ -172,6 +184,16 @@ export function buildInterventionEvent(
     title: TITLES[r.kind],
     chips,
     cmd: s.command.value ?? undefined,
+    ...(waits
+      ? {
+          sentence: plainStep(s, c.decision, parseDrivers(c.decision.reasonCode)),
+          ask: plainAsk(s, c.decision),
+        }
+      : {}),
+    ...(r.kind === "hold" ? { rule: r.ruleOrQuestion } : {}),
     options: r.kind === "ask" ? r.options : undefined,
+    // FORK 2026-10-29: what the owner's Allow button under the reply sends (`allow <grant>`) to release this step.
+    // Holds and asks too since 2026-10-31: their wait runs out, the button under the reply does not.
+    grant: waits ? proofGrantCode(goalFingerprint(s)) : undefined,
   };
 }

@@ -487,16 +487,41 @@ Checked at `stop`, after the reply exists.
 
 | Signal                                                                                 | Response                                                                                                                   |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| a claim with `claim-record` ≥ cut-off (or `claim-support` < 0.5)                       | send-back, slots = the missing record, attempt n                                                                           |
-| a completion-verb sentence the splitter missed, whole-sentence check yields the same   | send-back                                                                                                                  |
-| `dodged-work` non-complete ≥ cut-off (question open, placeholder, promise with no job) | send-back                                                                                                                  |
-| `stale-state-claim` ≥ cut-off                                                          | send-back                                                                                                                  |
+| a claim with `claim-record` ≥ cut-off (or `claim-support` < 0.5)                       | not asked since 2026-11-08: the owner reads the reply and the effect card (`effects.ts`)                                   |
+| a completion-verb sentence the splitter missed, whole-sentence check yields the same   | not asked since 2026-11-08                                                                                                 |
+| `dodged-work` non-complete ≥ cut-off (question open, placeholder, promise with no job) | not asked since 2026-11-08                                                                                                 |
+| `stale-state-claim` ≥ cut-off                                                          | not asked since 2026-11-08                                                                                                 |
+| the reply admits it did not check something (`uncheckedAdmissions`, code, 2026-11-10)  | send-back `send-back-unchecked`, once per turn                                                                             |
+| a statement given as fact that the turn's evidence does not carry (`fact-check.ts`)    | after the turn, in the background: `fact-check-wake` into the same chat (mode `wake`)                                      |
 | attempt 2 already sent for this turn                                                   | deliver + `amygdala2.marker` listing what is unsupported                                                                   |
 | `weakens-own-check` ≥ cut-off (pre-tool)                                               | hold                                                                                                                       |
 | `refusal` ≥ cut-off                                                                    | intervention `refusal` (strip: Rewind / Keep); event `amygdala2.refusal` always; never for a step safety itself would hold |
 
 Send-backs use the Stop-hook block; `stop_hook_active` and the `send_backs` counter cap it at 2. The claim splitter is
 code (`src/claims.ts`): sentence split + completion-verb lexicon, one claim per verb-object pair; Jev never splits.
+
+**Fact check (2026-11-14, `src/hypotheses.ts`, `src/fact-check.ts`).** The owner asked for a guard that tells apart
+what the agent knows for certain from what it only thinks it knows, and asks it to reevaluate a hypothesis stated as
+fact. Code picks the candidates: unhedged reply sentences that deny existence, access or ability ("The Pi has no ssh
+key on the laptop", 2026-11-14, false), or give a cause that names something specific. Own actions, plans, questions,
+plain negation ("nothing is merged yet"), the spoken line, code and quotes are left out. When a turn in an owner chat
+ends, its candidates go once, in the background, to a Claude model with that turn's evidence: the owner's own words
+(the prompt without its envelope) and each tool call with the output lines that name a candidate's words. The judge
+labels each statement `shown`, `told`, `beyond` (the evidence shows less), `contradicted` or `unseen`; `beyond` and
+`contradicted` act, `unseen` is only recorded (this turn's window misses what earlier turns showed). Code writes the
+message; the judge writes no text. `factCheck.mode`: `wake` sends `fact-check-wake` into the same chat as an agent
+message (`chat.send`, marker `⟦AGENT:🧠 Amygdala · fact check⟧`), so the reply it questions stays as it was; `shadow`
+logs and records only (`<dataDir>/fact-checks.jsonl`); `off`. The turn a wake starts is never checked.
+
+Why not Jev, and why not at the seam: Jev never sees tool output, and the claim checks it judged from the bare tool
+record were mostly noise (it read a gap in the record as a false claim). The evidence is tool output, so the ladder
+takes Claude rungs only, the provider that already saw the whole task. One Claude call took 4 to 7 s on the Pi before
+any evidence (2026-11-14), and the stop seam has 5 s. Why code only picks the candidates and never decides: on 84 real
+replies, word matching ("an absence is known if a tool call named the thing") passed the 00:14 sentence, because that
+turn did look (a grep of `~/.ssh/config` for a laptop Host, an ssh try). The claim went beyond what the grep showed,
+and only a reader of the evidence sees that. Measured on 20 of those replies: Sonnet with the head-and-tail digest
+labelled 37 statements 12 shown, 9 told, 12 unseen, 4 beyond, 0 contradicted (3 replies would have woken their chat),
+and the 00:14 ssh sentence `beyond`. Haiku with a word-matched digest had acted on 10, and the two traced were wrong.
 
 ### 5.3 Second opinion (§6.2)
 

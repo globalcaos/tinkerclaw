@@ -41,10 +41,13 @@ import {
   priceFor,
   vendorFamilyOf,
   ready,
+  reservedReasonAtStop,
   routeCall,
+  SECOND_OPINION_ONLY_SUPPLIES,
   sharedStartGroups,
   supplyOfKey,
   thalamusRoute,
+  UNFUNDED_BY_DEFAULT_SUPPLIES,
   unitsFor,
   withTiming,
   withinCaps,
@@ -216,6 +219,7 @@ export function createScheduler(d: SchedulerDeps) {
       conversationKey: string;
       slackSec: number;
       cooling?: ReadonlySet<SupplyId>;
+      allowSecondOpinionOnly?: boolean;
       index: number;
     },
     board: ThalamusBoardLike,
@@ -250,6 +254,26 @@ export function createScheduler(d: SchedulerDeps) {
         ?.target ?? 0;
     const tokens = Math.max(1, Math.floor(unit.estIn));
     const learnedNow = d.learned?.();
+    // A sub-agent starts from the dial's stop, like the turn does (owner, 2026-11-13: the right model for each
+    // sub-agent). Before, a unit got no suggestion and no way to the reserved set: the cheapest rung over the bar.
+    const reservedAtStop = reservedReasonAtStop(board.dialIdx, board.suggestion);
+    const mergedCooling: ReadonlySet<string> | undefined =
+      board.cooling?.size && at.cooling?.size
+        ? new Set([...board.cooling, ...at.cooling])
+        : board.cooling?.size
+          ? board.cooling
+          : at.cooling?.size
+            ? at.cooling
+            : undefined;
+    const candidateRungs =
+      at.allowSecondOpinionOnly && board.secondOpinionRungs?.length
+        ? [
+            ...board.rungs,
+            ...board.secondOpinionRungs.filter(
+              (r) => !board.rungs.some((b) => b.key === r.key && b.effort === r.effort),
+            ),
+          ]
+        : board.rungs;
     const params: RouteCallParams = {
       id: `${plan.id}:${unit.id}:${at.index}`,
       ts: at.nowMs,
@@ -257,7 +281,7 @@ export function createScheduler(d: SchedulerDeps) {
       callIndex: at.index,
       lane: "embedded",
       mode: cfg.mode === "enforce" ? "enforce" : "shadow",
-      rungs: board.rungs,
+      rungs: candidateRungs,
       supplies: board.supplies,
       cache: at.ledger,
       conversationKey: at.conversationKey,
@@ -276,7 +300,15 @@ export function createScheduler(d: SchedulerDeps) {
       freshPoint: true,
       hasLongResult: false,
       slackSec: at.slackSec,
-      ...(at.cooling && at.cooling.size > 0 ? { cooling: at.cooling } : {}),
+      ...(board.suggestion ? { suggestion: board.suggestion } : {}),
+      ...(reservedAtStop ? { reservedReason: reservedAtStop } : {}),
+      ...(mergedCooling ? { cooling: mergedCooling as ReadonlySet<SupplyId> } : {}),
+      ...(process.env.OPENCLAW_THALAMUS_ALLOW_OPENROUTER === "on"
+        ? {}
+        : { unfunded: UNFUNDED_BY_DEFAULT_SUPPLIES }),
+      ...(process.env.OPENCLAW_THALAMUS_ALLOW_GOOGLE === "on" || at.allowSecondOpinionOnly
+        ? {}
+        : { secondOpinionOnly: SECOND_OPINION_ONLY_SUPPLIES }),
       ...(d.timeFor ? { timeFor: d.timeFor } : {}),
       ...(learnedNow?.strengthFor ? { strengthFor: learnedNow.strengthFor } : {}),
       ...(learnedNow?.refusals ? { refusals: learnedNow.refusals } : {}),
@@ -565,11 +597,39 @@ export function createScheduler(d: SchedulerDeps) {
               .map((e) => placements.find((p) => p.unitId === e.from && p.copy === 0))
               .find((p): p is Placement => !!p);
             if (builder) {
-              const pick = pickChecker({
+              let pick = pickChecker({
                 builderKey: builder.routeKey,
                 options: dec.options,
                 minQuality: dec.pick.quality,
               });
+              // Pay-per-call supplies (Google) enter check units strictly when no subscription rival survives.
+              if (
+                !pick.option &&
+                board.secondOpinionRungs?.length &&
+                process.env.OPENCLAW_THALAMUS_ALLOW_GOOGLE !== "on"
+              ) {
+                const fallbackDec = priceUnit(
+                  req,
+                  unit,
+                  {
+                    ...base,
+                    ...(fullNow.includes(p0) ? { cooling: coolingOf(fullNow) } : {}),
+                    allowSecondOpinionOnly: true,
+                  },
+                  board,
+                );
+                if (fallbackDec) {
+                  const fallbackPick = pickChecker({
+                    builderKey: builder.routeKey,
+                    options: fallbackDec.options,
+                    minQuality: dec.pick.quality,
+                  });
+                  if (fallbackPick.option) {
+                    pick = fallbackPick;
+                    dec = fallbackDec;
+                  }
+                }
+              }
               checker = pick.reason;
               if (pick.option) {
                 dec = { ...dec, chosen: pick.option, pick: pick.option };

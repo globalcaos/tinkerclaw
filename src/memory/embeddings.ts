@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
 import type { OpenClawConfig } from "../config/config.js";
 import type { SecretInput } from "../config/types.secrets.js";
+import { governEmbeddingProvider, type EmbedConsumer } from "../fork/embedder-governor.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveUserPath } from "../utils.js";
 import type { EmbeddingInput } from "./embedding-inputs.js";
@@ -31,13 +32,41 @@ export type EmbeddingProvider = {
   id: string;
   model: string;
   maxInputTokens?: number;
-  embedQuery: (text: string) => Promise<number[]>;
-  embedBatch: (texts: string[]) => Promise<number[][]>;
-  embedBatchInputs?: (inputs: EmbeddingInput[]) => Promise<number[][]>;
+  // FORK 2026-10-29: per-call options for the embedder governor. The core HTTP providers forward the
+  // abort signal to their request (2026-10-30); keepAlive and numThread are Ollama's. The in-process
+  // local provider ignores them, so the governor holds its slot until that call settles.
+  embedQuery: (text: string, opts?: EmbedCallOptions) => Promise<number[]>;
+  embedBatch: (texts: string[], opts?: EmbedCallOptions) => Promise<number[][]>;
+  embedBatchInputs?: (inputs: EmbeddingInput[], opts?: EmbedCallOptions) => Promise<number[][]>;
+};
+
+/**
+ * FORK 2026-10-29: what one embedding call may carry (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). The
+ * governor reads priority and budgetMs, and hands the provider signal, keepAlive, numThread and
+ * onMeasure.
+ */
+export type EmbedCallOptions = {
+  signal?: AbortSignal;
+  priority?: "foreground" | "background";
+  budgetMs?: number;
+  keepAlive?: string;
+  numThread?: number;
+  onMeasure?: (m: EmbedMeasurement) => void;
+};
+
+/** FORK 2026-10-29: one call as the provider measured it; a number it lacks is omitted, never 0 (#20). */
+export type EmbedMeasurement = {
+  inputs: number;
+  chars: number;
+  promptEvalCount?: number;
+  totalDurationNs?: number;
+  loadDurationNs?: number;
+  wallMs: number;
 };
 
 export type EmbeddingProviderId = "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama";
-export type EmbeddingProviderRequest = EmbeddingProviderId | "auto";
+// FORK 2026-10-29: 'none' = the word index answers and no embedding call is made.
+export type EmbeddingProviderRequest = EmbeddingProviderId | "auto" | "none";
 export type EmbeddingProviderFallback = EmbeddingProviderId | "none";
 
 // Remote providers considered for auto-selection when provider === "auto".
@@ -77,7 +106,17 @@ export type EmbeddingProviderOptions = {
   outputDimensionality?: number;
   /** Gemini: override the default task type sent with embedding requests. */
   taskType?: GeminiTaskType;
+  /** FORK 2026-10-29: who embeds through the provider (its governor lane default); 'memory-index'. */
+  consumer?: EmbedConsumer;
+  /** FORK 2026-10-29: the provider came from the fit's decision ('auto'), so dormancy may apply. */
+  fitDecided?: boolean;
 };
+
+/** FORK 2026-10-29: a provider as built, before governEmbeddingProvider wraps it. */
+type CreatedEmbeddingProvider = Pick<
+  EmbeddingProviderResult,
+  "openAi" | "gemini" | "voyage" | "mistral" | "ollama"
+> & { provider: EmbeddingProvider };
 
 export const DEFAULT_LOCAL_MODEL =
   "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
@@ -172,7 +211,20 @@ export async function createEmbeddingProvider(
   const requestedProvider = options.provider;
   const fallback = options.fallback;
 
-  const createProvider = async (id: EmbeddingProviderId) => {
+  // FORK 2026-10-29: 'none' answers before any other branch, because an unknown id falls through to
+  // the OpenAI client at the end of createProvider.
+  if (requestedProvider === "none") {
+    return {
+      provider: null,
+      requestedProvider,
+      providerUnavailableReason:
+        "memorySearch.provider is none: the word index answers, no embedding calls",
+    };
+  }
+
+  const createUngovernedProvider = async (
+    id: EmbeddingProviderId,
+  ): Promise<CreatedEmbeddingProvider> => {
     if (id === "local") {
       const provider = await createLocalEmbeddingProvider(options);
       return { provider };
@@ -195,6 +247,27 @@ export async function createEmbeddingProvider(
     }
     const { provider, client } = await createOpenAiEmbeddingProvider(options);
     return { provider, openAi: client };
+  };
+
+  // FORK 2026-10-29: every provider this function returns (auto, primary and fallback) goes through
+  // the embedder governor, so no embedding call bypasses its endpoint's queue
+  // (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
+  // FORK 2026-10-30: under the base URL its client calls, for every HTTP provider. The governor
+  // keys its queue and classifies the endpoint by that URL, so a loopback OpenAI-compatible server
+  // is local-http and two servers of one provider get two queues. The fork consumers that build
+  // their own provider pass the same URL (resolveEmbeddingEndpointBaseUrl); 'local' has none.
+  const createProvider = async (id: EmbeddingProviderId): Promise<CreatedEmbeddingProvider> => {
+    const created = await createUngovernedProvider(id);
+    const client =
+      created.openAi ?? created.gemini ?? created.voyage ?? created.mistral ?? created.ollama;
+    return {
+      ...created,
+      provider: governEmbeddingProvider(created.provider, {
+        consumer: options.consumer ?? "memory-index",
+        ...(client ? { baseUrl: client.baseUrl } : {}),
+        mode: options.fitDecided ? "fit" : "pin",
+      }),
+    };
   };
 
   const formatPrimaryError = (err: unknown, provider: EmbeddingProviderId) =>

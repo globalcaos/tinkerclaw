@@ -5,7 +5,9 @@
 # personalization lands in your workspace (~/.openclaw), never in the repo.
 set -euo pipefail
 
-BOLD='\033[1m'; C='\033[38;2;0;229;204m'; W='\033[38;2;255;176;32m'; E='\033[38;2;230;57;70m'; N='\033[0m'
+# ANSI-C quoting stores real ESC characters, so the colours render both in printf
+# formats and in the summary's heredoc, which cat prints as is.
+BOLD=$'\033[1m'; C=$'\033[38;2;0;229;204m'; W=$'\033[38;2;255;176;32m'; E=$'\033[38;2;230;57;70m'; N=$'\033[0m'
 say(){ printf "${C}▸${N} %s\n" "$*"; }
 warn(){ printf "${W}!${N} %s\n" "$*"; }
 die(){ printf "${E}✗ %s${N}\n" "$*"; exit 1; }
@@ -116,6 +118,33 @@ case "$DOWNLOADER" in
     fi ;;
 esac
 
+# ---- 4d. Memory search fit (see TINKER_UI_DESIGN_BIBLE/embedder-fit.md) -------
+# Memory search always works on words. An embedding model adds a search that also
+# finds notes worded differently from the question, and what it costs depends on
+# the machine. So the fit measures this one (cores, RAM, what Ollama has, how fast
+# each candidate embeds here) and records its choice, which may be none, in
+# ~/.openclaw/memory/embedder-fit.json; it never touches openclaw.json. "yes" lets
+# it download the model it picks into your local Ollama, "no" measures only what
+# is already installed. No memory text leaves this machine either way.
+MEMFIT_DEFAULT=no
+if [ -t 0 ]; then MEMFIT_DEFAULT=yes; fi
+MEMFIT="$(ask 'Semantic memory search: measure this machine and set up the embedding model that fits it (may download 62-562 MB; nothing leaves the machine)? [yes/no]' "$MEMFIT_DEFAULT")"
+MEMFIT_PULL=""
+case "$MEMFIT" in yes|y) MEMFIT_PULL=yes ;; esac
+if [ -n "$MEMFIT_PULL" ]; then
+  say "Measuring this machine for memory search (a download can take a few minutes)…"
+else
+  say "Measuring this machine for memory search with what is already installed (no download)…"
+fi
+# Non-fatal, like step 4c: whatever stopped the fit (exit 1 failed, 75 busy, 130
+# interrupted), memory search keeps working on words and the fit can run again.
+if OPENCLAW_HIDE_BANNER=1 node openclaw.mjs embedder fit --installer ${MEMFIT_PULL:+"--pull"}; then :; else
+  warn "The memory search fit did not finish (exit $?, see the message above); memory search works on words until it runs again."
+fi
+# The summary shows the first line of `embedder status`, minus its "memory search: " prefix.
+MEMFIT_STATUS="$(node openclaw.mjs embedder status 2>/dev/null | sed -n 's/^memory search: //p' | head -n 1)" || true
+[ -n "$MEMFIT_STATUS" ] || MEMFIT_STATUS="unknown (check: node openclaw.mjs embedder status)"
+
 # ---- 5. Structural crons (the habits, not just the engine) -------------------
 # These are the jobs that make the fork maintain ITSELF overnight: consolidate
 # memory, tidy the workspace, sweep for security updates, refresh model ranks,
@@ -161,6 +190,8 @@ $(printf "${BOLD}Setup complete.${N}")
   Workspace     : $WS
   Multi-user    : ${HIVE_DOOR:-no}
   Downloader    : ${DOWNLOADER:-no}
+  Memory search : $MEMFIT_STATUS
+                  Re-measure any time: ${BOLD}openclaw doctor --fix${N} (also automatic when the machine changes)
 
 Start the gateway:   ${BOLD}openclaw gateway start${N}     (or: node openclaw.mjs)
 Open the UI:         the address the gateway prints on start.

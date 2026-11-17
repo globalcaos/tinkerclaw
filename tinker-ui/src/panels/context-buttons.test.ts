@@ -19,6 +19,8 @@ import {
   CLI_COMPACT_BUSY_REASON,
   CLI_COMPACT_COMMAND,
   CLI_COMPACT_DESCRIPTION,
+  CLI_EVICT_BUSY_REASON,
+  CLI_EVICT_DESCRIPTION,
   cliCompactionToast,
   COMPACTION_LIVE_MAX_MS,
   compactionIsLive,
@@ -92,16 +94,27 @@ describe("buttonState — disabled, with the reason in the tooltip", () => {
     }
   });
 
-  it("EVICT on the claude-code lane: the gateway's own refusal, before the gateway is asked", () => {
+  it("EVICT on the claude-code lane (A11): the bridge's cut of the CLI transcript, on an idle session", () => {
     const s = buttonState(idle("evict", { provider: "claude-code" }));
+    expect(s).toMatchObject({
+      disabled: false,
+      confirm: false,
+      label: "evict",
+      title: CLI_EVICT_DESCRIPTION,
+    });
+  });
+
+  it("EVICT on the claude-code lane is off while a turn runs: no interrupt, no confirm", () => {
+    const s = buttonState(idle("evict", { provider: "claude-code", busy: true, armed: true }));
     expect(s.disabled).toBe(true);
-    expect(s.reason).toBe(
-      "the claude-code runtime keeps its own copy of this session's context, so evicting the gateway transcript would not shrink the next call",
-    );
+    expect(s.reason).toBe(CLI_EVICT_BUSY_REASON);
+    expect(s.title).toBe(`${CLI_EVICT_DESCRIPTION}\n\nUnavailable: ${CLI_EVICT_BUSY_REASON}.`);
   });
 
   it("the lane check ignores case and surrounding space", () => {
-    expect(buttonState(idle("evict", { provider: " Claude-Code " })).disabled).toBe(true);
+    expect(buttonState(idle("evict", { provider: " Claude-Code " })).title).toBe(
+      CLI_EVICT_DESCRIPTION,
+    );
     expect(buttonState(idle("compact", { provider: " Claude-Code " })).title).toBe(
       CLI_COMPACT_DESCRIPTION,
     );
@@ -155,7 +168,7 @@ describe("buttonState — disabled, with the reason in the tooltip", () => {
     const reasonOf = (over: Partial<CacheButtonInputs>) =>
       buttonState(idle("evict", { ...all, ...over })).reason;
     expect(reasonOf({})).toMatch(/^no session/);
-    expect(reasonOf({ sessionKey: KEY })).toMatch(/^the claude-code runtime/);
+    expect(reasonOf({ sessionKey: KEY })).toMatch(/^a compaction is already running/);
     expect(reasonOf({ sessionKey: KEY, provider: "anthropic" })).toMatch(
       /^a compaction is already running/,
     );
@@ -527,15 +540,12 @@ describe("buttonState — COMPACT on the claude-code lane is the CLI's own /comp
     expect(cc({ sessionKey: "" }).reason).toBe("no session is attached to this tab");
   });
 
-  it("EVICT on the same lane stays disabled exactly as before, idle or busy", () => {
-    for (const busy of [false, true]) {
-      const s = buttonState(idle("evict", { provider: "claude-code", busy }));
-      expect(s.disabled).toBe(true);
-      expect(s.reason).toBe(
-        "the claude-code runtime keeps its own copy of this session's context, so evicting the gateway transcript would not shrink the next call",
-      );
-      expect(s.title.startsWith(CACHE_ACT_DESCRIPTION.evict)).toBe(true);
-    }
+  it("EVICT on the same lane is the bridge's (A11): an RPC, on only while the session is idle", () => {
+    expect(cacheActRoute("evict", "claude-code")).toBe("rpc");
+    expect(buttonState(idle("evict", { provider: "claude-code" })).disabled).toBe(false);
+    const busy = buttonState(idle("evict", { provider: "claude-code", busy: true }));
+    expect(busy).toMatchObject({ disabled: true, reason: CLI_EVICT_BUSY_REASON });
+    expect(busy.title.startsWith(CLI_EVICT_DESCRIPTION)).toBe(true);
   });
 });
 

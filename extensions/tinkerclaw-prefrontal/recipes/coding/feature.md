@@ -209,6 +209,11 @@ dumps — the code is in the commits.
 - Commits follow `git-instructions`: one hop, tests travel, what/why/impact, no
   "and" in the subject. ORCA is the executor, not the slicer.
 - The final report contains no code.
+- A limit the owner will meet in his own daily use (the phone and the laptop
+  open at once, two windows, a reload to see the truth) is in scope: build it,
+  or log it as a Ruling with its cost and name it as open in step 8. Never file
+  it in the bible or a README as a "known limit"; that wording is only for
+  limits he will not meet.
 
 ## Safety Notes
 
@@ -224,6 +229,12 @@ dumps — the code is in the commits.
 
 ## Failures Overcome
 
+- **A daily-use gap filed as a known limit** (2026-11-14): the unread mark on
+  Tinker tabs (built 2026-10-27) reached the other device only at page load,
+  and its design note filed that as a known limit, although the live tab
+  re-sync of 2026-10-19 already re-read the same file every 20 s. The owner
+  asked for the fix 18 days later (bug `unread-glow-per-device`). Constraint
+  added: such a limit is built, or an open item in the report.
 - **Pattern mismatch** (v1.0, undated): a module got built in a style unlike
   the rest of the codebase. The interview step now requires reading at least
   two similar files before any design is proposed.

@@ -2,41 +2,35 @@
 #readerControls {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-inline-end: 8px;
+  height: 100%;
+  margin-inline-end: 4px;
 }
-.readerBtn,
-#readerControls select {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--field-border-color, #b5b5b5);
-  border-radius: 4px;
-  background: var(--field-bg-color, #fff);
-  color: var(--field-color, #222);
-  font: inherit;
-  font-size: 12px;
+/* Icon buttons (2026-11-10: "no words when an icon is present, narrow buttons, all icons one style").
+   Every button of ours is a pdf.js .toolbarButton: it takes the theme's icon colour, hover and toggled
+   look. The words stay in the DOM (they carry state, phone.js copies them to aria-label) but are hidden.
+   Icons are one set: 16 px, 1.5 px round stroke, images/reader-*.svg. */
+.readerBtn {
+  font-size: 0;
   cursor: pointer;
 }
-#readerControls select {
-  padding: 0 2px;
+.readerBtn::before {
+  -webkit-mask-image: var(--rb-icon);
+  mask-image: var(--rb-icon);
 }
-.readerBtn:hover {
-  background: var(--button-hover-color, #ddd);
+#toolbarViewer .toolbarButton:not(.labeled) {
+  width: 28px;
+  aspect-ratio: auto;
 }
-.readerBtn.on {
-  background: #f2c94c;
-  border-color: #c9a227;
-  color: #222;
-}
-.readerBtn.dim {
-  opacity: 0.55;
-}
-/* While the AI applies comments the button is disabled: dimmed, no hover, no clicks (2026-10-16). */
-.readerBtn:disabled {
-  opacity: 0.6;
-  cursor: progress;
-  pointer-events: none;
-}
+.readerBtn.on { background-color: #f2c94c; }
+.readerBtn.on::before { background-color: #222; }
+.readerBtn.dim { opacity: 0.55; }
+/* While the AI applies comments the button is disabled: no clicks, its icon turns (2026-10-16). */
+.readerBtn:disabled { cursor: progress; }
+#redoDocument:disabled::before { animation: rbspin 1.2s linear infinite; }
+body.tapComment .textLayer { cursor: text; }
+/* Reading settings pop-up (speed, voice): no save button, every pick applies at once. */
+#readerSettingsDialog .setRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border-bottom: 1px solid #efe4cf; }
+#readerSettingsDialog select { min-width: 150px; max-width: 60vw; height: 32px; font: inherit; border: 1px solid #c9b48a; border-radius: 6px; background: #fffdf8; color: #3b2a14; }
 #readerError {
   color: #b3261e;
   font-size: 12px;
@@ -59,8 +53,6 @@
 }
 
 /* ✏️ Edit text (2026-10-16). Kept here, not inline: the viewer's CSP is style-src 'self'. */
-.paraPick { position: absolute; z-index: 30; cursor: pointer; border-radius: 4px; transition: background .08s; }
-.paraPick:hover { background: rgba(185,112,64,.18); outline: 2px solid rgba(185,112,64,.55); }
 .epWrap { position: fixed; inset: 0; z-index: 100001; background: rgba(40,25,10,.35); display: flex; align-items: center; justify-content: center; }
 .epBox { background: #f6efe2; border: 1px solid #c9b48a; border-radius: 10px; padding: 16px 18px; width: min(760px, 92vw); box-shadow: 0 8px 30px #0005; font: 14px Georgia, serif; color: #3b2a14; }
 .epTitle { font-weight: 700; color: #7A3921; margin-bottom: 8px; }
@@ -92,8 +84,8 @@
   mask-image: url(images/reader-play.svg);
 }
 /* 🕘 Recent (2026-10-21): the PDFs opened with this viewer, newest first. */
-#recentDialog { width: min(560px, 94vw); max-height: 80vh; padding: 0; border: 1px solid #c9b48a; border-radius: 10px; background: #f6efe2; color: #3b2a14; font: 14px Georgia, serif; box-shadow: 0 8px 30px #0005; }
-#recentDialog::backdrop { background: rgba(40,25,10,.35); }
+#recentDialog, #readerSettingsDialog { width: min(560px, 94vw); max-height: 80vh; padding: 0; border: 1px solid #c9b48a; border-radius: 10px; background: #f6efe2; color: #3b2a14; font: 14px Georgia, serif; box-shadow: 0 8px 30px #0005; }
+#recentDialog::backdrop, #readerSettingsDialog::backdrop { background: rgba(40,25,10,.35); }
 .recentHead { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #e2d3b5; color: #7A3921; }
 .recentClose { border: 0; background: transparent; font-size: 18px; color: #7A3921; cursor: pointer; padding: 4px 8px; }
 .recentList { overflow-y: auto; max-height: calc(80vh - 48px); padding: 4px 0; }
@@ -111,46 +103,233 @@
 #phoneBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 6px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow-x: auto; background: var(--toolbar-bg-color, #f9f9fa); border-top: 1px solid var(--toolbar-border-color, #b8b8b8); scrollbar-width: none; }
 #phoneBar[hidden] { display: none; }
 #phoneBar > *, #phoneBar #readerControls { flex: none; }
-#phoneBar #readerControls { margin: 0; gap: 6px; }
-#phoneBar .readerBtn, #phoneBar #readerControls select { height: 36px; font-size: 14px; }
-body.withPhoneBar #viewerContainer { bottom: calc(49px + env(safe-area-inset-bottom)); }
+#phoneBar #readerControls { margin: 0; }
+#phoneBar #readerControls { height: auto; }
+#phoneBar .toolbarButton { width: 40px; height: 40px; }
 /* Pinch zooms on a phone, so − / + and the zoom menu go; pages sit 10 px apart, without the
    desktop's thick transparent border, with a light shadow so their edges still show. */
 body.withPhoneBar #toolbarViewerMiddle { display: none; }
 body.withPhoneBar .pdfViewer { --page-margin: 0 auto 10px; --page-border: none; padding-top: 10px; }
 body.withPhoneBar .pdfViewer .page { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
 /* 💬 Comment tap tool (tools.js, 2026-10-23): pressed state, and a text cursor hint while on. */
-#tapComment.on { background: #7A3921; color: #fff; border-color: #7A3921; }
-body.tapComment .textLayer { cursor: text; }
-#toolbarViewerLeft > #tapComment { margin-inline: 4px; }
+
 /* Phone top row (2026-10-23): it scrolls sideways by itself; the page underneath does not move,
    and nothing makes the whole document wider than the screen. */
 html, body { overflow-x: hidden; }
 body.withPhoneBar #toolbarViewer { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; touch-action: pan-x; flex-wrap: nowrap; scrollbar-width: none; }
 body.withPhoneBar #toolbarViewer::-webkit-scrollbar { display: none; }
 body.withPhoneBar #toolbarViewerLeft, body.withPhoneBar #toolbarViewerRight { flex: none; }
-body.withPhoneBar #tapComment { height: 32px; font-size: 14px; }
-/* Landscape phone (the architect 2026-10-24): every pixel of height for the page. The pdf.js toolbar becomes
-   a column of icons on the left that scrolls up and down (phone.js sets body.sideRail). Our buttons keep
-   their full labels but show only the leading emoji, so labels that change (▶/⏸, Saving…) still work. */
-body.sideRail { --rail: 46px; }
-body.sideRail #toolbarContainer { position: fixed; top: 0; left: 0; bottom: 0; width: var(--rail); height: auto; padding: 4px 0; z-index: 30; border-bottom: 0; border-right: 1px solid var(--toolbar-border-color, #b8b8b8); }
-body.sideRail #toolbarContainer #toolbarViewer { flex-direction: column; justify-content: flex-start; align-items: center; height: 100%; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; touch-action: pan-y; scrollbar-width: none; gap: 2px; }
-body.sideRail #toolbarViewer::-webkit-scrollbar { display: none; }
-body.sideRail #toolbarViewerLeft, body.sideRail #toolbarViewerRight, body.sideRail #readerControls, body.sideRail #toolbarViewerLeft > *, body.sideRail #toolbarViewerRight > * { flex-direction: column; flex: none; align-items: center; gap: 2px; margin: 0; }
-body.sideRail #toolbarViewerMiddle, body.sideRail .verticalToolbarSeparator, body.sideRail #numPages { display: none; }
-body.sideRail .readerBtn, body.sideRail #toolbarViewer select { width: 38px; min-width: 38px; max-width: 38px; height: 34px; padding: 0 0 0 9px; overflow: hidden; white-space: nowrap; text-overflow: clip; text-align: left; font-size: 16px; }
-body.sideRail #toolbarViewer input#pageNumber { width: 36px; }
-body.sideRail #viewerContainer { inset: 0 0 0 var(--rail); }
-body.sideRail #sidebarContent { inset-block-start: 0; }
-/* Pop-up panels (highlight colours, ink thickness, the ⋯ menu) open beside the column, not inside it. */
-body.sideRail .doorHanger, body.sideRail .doorHangerRight, body.sideRail .editorParamsToolbar { position: fixed; left: calc(var(--rail) + 4px); right: auto; top: 6px; inset-inline-end: auto; }
-body.sideRail .doorHanger::before, body.sideRail .doorHanger::after, body.sideRail .doorHangerRight::before, body.sideRail .doorHangerRight::after { display: none; }
-/* pdf.js sizes its buttons from the toolbar height, which in the column is the screen height (332×332
-   squares, 2026-10-24 render): pin them to 34 px and stack every group. */
-body.sideRail #toolbarViewer :is(.toolbarHorizontalGroup, .toolbarButtonWithContainer) { width: auto; height: auto; flex-direction: column; align-items: center; }
-body.sideRail #toolbarViewer .toolbarButton { width: 34px !important; height: 34px !important; min-width: 34px; flex: none; }
-body.sideRail #toolbarViewer .toolbarButtonSpacer { display: none; }
-/* Icon only: phone.js copies each button's first symbol into data-icon; the words are hidden. */
-body.sideRail .readerBtn[data-icon] { font-size: 0; padding: 0; text-align: center; overflow: hidden; }
-body.sideRail .readerBtn[data-icon]::before { content: attr(data-icon); font-size: 18px; line-height: 34px; }
+/* Select tool (tools.js, 2026-11-10): while on, a drag selects text instead of scrolling. While our bar is up
+   (any selection on a phone, 2026-11-12), pdf.js's own selection bar steps aside; while it shows a tapped
+   highlight's tools, so do pdf.js's own bar for that highlight and its Highlight tool panel. */
+body.selectTool .textLayer { cursor: text; touch-action: pinch-zoom; -webkit-touch-callout: none; }
+body.selBarOn .editToolbar:has(.highlightButton) { display: none !important; }
+body.hlTools :is(.highlightEditor .editToolbar, #editorHighlightParamsToolbar) { display: none !important; }
+.selHandle[hidden], .selBar[hidden] { display: none; }
+.selHandle { position: fixed; z-index: 60; width: 14px; height: 14px; margin: 2px 0 0 -7px; background: #7A3921; border: 2px solid #fff; border-radius: 50% 50% 50% 50%; box-shadow: 0 1px 4px rgba(0,0,0,.4); touch-action: none; cursor: grab; }
+.selHandle::before { content: ""; position: absolute; inset: -14px; } /* a finger-sized target */
+.selHandle::after { content: ""; position: absolute; left: 50%; top: -7px; width: 2px; height: 8px; margin-left: -1px; background: #7A3921; }
+.selBar { position: fixed; z-index: 61; display: flex; gap: 2px; padding: 4px; background: #3b2a1c; border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.4); --hl: #FFFF98; }
+.selBtn { width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.selBtn::before { content: ""; width: 18px; height: 18px; background-color: #f6efe2; -webkit-mask: var(--sb-icon) center / contain no-repeat; mask: var(--sb-icon) center / contain no-repeat; }
+.selBtn:active { background: #5a4331; }
+#selComment { --sb-icon: url(images/reader-comment.svg); }
+#selHighlight { --sb-icon: url(images/toolbarButton-editorHighlight.svg); }
+#selHighlight::before { background-color: var(--hl); }
+#selColor::before { width: 20px; height: 20px; background-color: var(--hl); border-radius: 50%; -webkit-mask: none; mask: none; box-shadow: 0 0 0 2px #f6efe2; }
+#selClear { --sb-icon: url(images/reader-close.svg); }
+#selRead { --sb-icon: url(images/reader-play.svg); }
+#selDelete { --sb-icon: url(images/editor-toolbar-delete.svg); }
+/* ⧉ Copy (2026-11-15): the phone's own copy menu no longer comes up; a tick shows for a moment once copied. */
+#selCopy { --sb-icon: url(images/reader-copy.svg); }
+#selCopy.done { --sb-icon: url(images/reader-check.svg); }
+.selBar.forHighlight :is(#selHighlight, #selRead, #selCopy), .selBar:not(.forHighlight) #selDelete { display: none; }
+
+/* Offline (2026-11-10): the connection note keeps its words (Online / ✈ Offline · n waiting), unlike the icons. */
+#toolbarViewer #syncState { font-size: 11px; width: auto; padding: 0 8px; white-space: nowrap; border-radius: 10px; color: #2e5d2e; background: #e4f1dc; }
+#syncState::before { display: none; }
+#syncState[data-online="0"] { color: #fff; background: #7a3921; }
+#syncDialog { max-width: min(92vw, 520px); border: 1px solid #c9b48a; border-radius: 10px; padding: 0; color: #3b2a14; background: #fffdf8; }
+#syncDialog .syncBody { padding: 8px 14px 14px; font: 14px sans-serif; }
+#syncDialog ul { padding-left: 18px; margin: 6px 0; }
+#syncDialog li { margin: 6px 0; }
+#syncDialog button { font: inherit; margin: 2px 4px 2px 0; }
+#syncDialog .syncErr { color: #b3261e; }
+.recentRow.kept .recentName::before { content: "📥 "; }
+
+/* ---- Toolbar, 2026-11-12 --------------------------------------------------------------------------
+   One order on every screen, colour icons, and on a phone a bar that wraps into rows.
+   What it is for: the buttons came from pdf.js's three boxes plus five scripts that each pushed theirs
+   in front, so related tools sat far apart, the phone showed half of them (a row that scrolled sideways,
+   a column that ran below the screen), and three different tools all wore a pencil.
+   How it works: the boxes are flattened (display: contents) and every button gets its place with
+   `order`, in five groups: 10s mark up, 20s read, 30s listen, 40s send and state, 50s the rest.
+   A new button needs one `order` line and one icon line here, nothing else. */
+#toolbarViewerLeft, #toolbarViewerMiddle, #toolbarViewerRight, #editorModeButtons, #readerControls,
+#toolbarViewerLeft > .toolbarHorizontalGroup, #toolbarViewerMiddle > .toolbarHorizontalGroup,
+#toolbarViewerRight > .toolbarHorizontalGroup { display: contents; }
+#toolbarViewerLeft > .toolbarHorizontalGroup.hiddenSmallView { display: contents !important; }
+#toolbarContainer #toolbarViewer { justify-content: flex-start; gap: 0; }
+#toolbarViewer :is(.verticalToolbarSeparator, .toolbarButtonSpacer, .splitToolbarButtonSeparator) { display: none !important; }
+.tbBreak { display: none; }
+#selectTool { order: 10; } #tapComment { order: 11; } #editorHighlight { order: 12; } #editorFreeText { order: 13; }
+#editorInk { order: 14; } #editorStamp { order: 15; } #editUndo { order: 16; } #editRedo { order: 17; } #editorComment { order: 18; }
+.tbBreak[data-after="mark"] { order: 19; }
+#recentFiles { order: 20; margin-inline-start: 10px; } #viewsManagerToggleButton { order: 21; }
+#toolbarViewer .toolbarButtonWithContainer:has(> #viewFindButton) { order: 22; }
+#previous { order: 23; } #toolbarViewer .loadingInput { order: 24; } #numPages { order: 25; } #next { order: 26; } #viewMode { order: 27; }
+#zoomOutButton { order: 28; } #zoomInButton { order: 29; } #scaleSelectContainer { order: 30; }
+#readerPrev { order: 31; margin-inline-start: 10px; } #readerPlay { order: 32; } #readerNext { order: 33; }
+#readerResume { order: 34; } #readerSettings { order: 35; } #readerError { order: 36; }
+.tbBreak[data-after="listen"] { order: 39; }
+#syncState { order: 40; margin-inline-start: auto; } #editSource { order: 41; } #redoDocument { order: 42; }
+#showInFolder { order: 43; } #saveState { order: 44; }
+#printButton { order: 50; margin-inline-start: 10px; } #downloadButton { order: 51; } #secondaryToolbarToggle { order: 52; } #closeReader { order: 59; }
+#signatureProperties, #signaturePropertiesSeparator, #editorSignature { order: 60; }
+
+/* Colour icons (images/tb-*.svg): a picture, not a one-colour mask. Each tool has its own shape and
+   colour: orange bubble = comment, yellow band = highlight, teal scribble = draw, purple T = text note,
+   paragraph sign = edit the text, robot = send the comments to the agent. */
+#toolbarViewer .toolbarButton:not(.labeled):not(#syncState) { width: 32px; }
+#toolbarViewer :is(#selectTool, #tapComment, #editorHighlightButton, #editorFreeTextButton, #editorInkButton, #editorStampButton,
+  #editUndo, #editRedo, #editorCommentButton, #recentFiles, #viewsManagerToggleButton, #viewFindButton, #previous, #next, #viewMode,
+  #zoomOutButton, #zoomInButton, #readerPrev, #readerPlay, #readerNext, #readerResume, #readerSettings, #editSource, #redoDocument, #showInFolder, #saveState,
+  #printButton, #secondaryToolbarToggleButton, #closeReader)::before {
+  -webkit-mask-image: none !important; mask-image: none !important;
+  background: var(--tb-img) center / contain no-repeat !important;
+  opacity: 1; width: var(--tb-ico, 20px); height: var(--tb-ico, 20px);
+}
+#selectTool { --tb-img: url(images/tb-select.svg); } #tapComment { --tb-img: url(images/tb-comment.svg); }
+#editorHighlightButton { --tb-img: url(images/tb-highlight.svg); } #editorFreeTextButton { --tb-img: url(images/tb-freetext.svg); }
+#editorInkButton { --tb-img: url(images/tb-ink.svg); } #editorStampButton { --tb-img: url(images/tb-stamp.svg); }
+#editUndo { --tb-img: url(images/tb-undo.svg); } #editRedo { --tb-img: url(images/tb-redo.svg); }
+#editorCommentButton { --tb-img: url(images/tb-comments.svg); } #recentFiles { --tb-img: url(images/tb-recent.svg); }
+#viewsManagerToggleButton { --tb-img: url(images/tb-sidebar.svg); } #viewFindButton { --tb-img: url(images/tb-find.svg); }
+#previous { --tb-img: url(images/tb-prev.svg); } #next { --tb-img: url(images/tb-next.svg); }
+#viewMode { --tb-img: url(images/tb-scroll.svg); } #viewMode[data-mode="page"] { --tb-img: url(images/tb-pages.svg); }
+#zoomOutButton { --tb-img: url(images/tb-zoomout.svg); } #zoomInButton { --tb-img: url(images/tb-zoomin.svg); }
+#readerPlay { --tb-img: url(images/tb-play.svg); } #readerPlay.on { --tb-img: url(images/tb-pause.svg); }
+#readerPrev { --tb-img: url(images/tb-para-prev.svg); } #readerNext { --tb-img: url(images/tb-para-next.svg); }
+#readerResume { --tb-img: url(images/tb-resume.svg); } #readerSettings { --tb-img: url(images/tb-voice.svg); }
+#editSource { --tb-img: url(images/tb-edit.svg); } #redoDocument { --tb-img: url(images/tb-apply.svg); }
+#showInFolder { --tb-img: url(images/tb-folder.svg); } #printButton { --tb-img: url(images/tb-print.svg); }
+#saveState { --tb-img: url(images/tb-sync.svg); } #saveState[data-state="ok"] { --tb-img: url(images/tb-check.svg); }
+#toolbarViewer .readerBtn[data-state="warn"] { --tb-img: url(images/tb-warn.svg); }
+#secondaryToolbarToggleButton { --tb-img: url(images/tb-more.svg); } #closeReader { --tb-img: url(images/tb-close.svg); }
+#toolbarViewer .toolbarButton:disabled::before { opacity: .35; }
+#toolbarViewer #redoDocument:disabled::before { opacity: 1; }
+/* A tool that is switched on: a clear frame in the bar's own accent, since the icon keeps its colours. */
+#toolbarViewer .toolbarButton.toggled:not(.labeled), #toolbarViewer .readerBtn.on { background-color: #fbe3a6; box-shadow: inset 0 0 0 2px #c98a16; border-radius: 8px; }
+
+/* Phone, upright or sideways (phone.js sets body.tbRows): the whole toolbar at the bottom, in thumb
+   reach, wrapped into rows so every tool shows at once. Upright the rows are the groups (mark up /
+   read and listen / send and the rest); sideways the bar is wide and wraps by itself. phone.js writes
+   the bar's height into --tbh, and the page ends above it. */
+body.tbRows { --tbb: 40px; --tbw: 38px; --tbh: 124px; --tb-ico: 24px; }
+body.tbRows.tbWide { --tbb: 36px; --tbw: 34px; --tb-ico: 22px; }
+/* Sideways every pixel of height counts: the state note is cut short so the bar stays one row. */
+body.tbRows.tbWide #toolbarViewer #syncState { font-size: 0; width: 20px; min-width: 20px; height: 20px; padding: 0; border-radius: 50%; background: #3a9a4b; box-shadow: inset 0 0 0 2px #fff; }
+body.tbRows.tbWide #toolbarViewer #syncState[data-online="0"] { background: #7a3921; }
+body.tbRows #toolbarContainer { position: fixed; top: auto; left: 0; right: 0; bottom: 0; height: auto; padding: 2px 2px calc(2px + env(safe-area-inset-bottom)); z-index: 30; border-bottom: 0; border-top: 1px solid var(--toolbar-border-color, #b8b8b8); box-sizing: border-box; }
+body.tbRows #toolbarContainer #toolbarViewer { flex-wrap: wrap; height: auto; align-content: flex-start; justify-content: center; row-gap: 0; }
+body.tbRows:not(.tbWide) #toolbarViewer > .tbBreak { display: block; width: 100%; height: 0; }
+body.tbRows #toolbarViewer .toolbarButton:not(.labeled):not(#syncState) { width: var(--tbw) !important; height: var(--tbb) !important; flex: none; }
+body.tbRows #toolbarViewer :is(.toolbarButtonWithContainer, #syncState) { height: var(--tbb); }
+body.tbRows #toolbarViewer :is(#recentFiles, #readerPrev, #printButton) { margin-inline-start: 0; }
+body.tbRows #toolbarViewer #syncState { margin-inline: 4px; align-self: center; height: 24px; }
+body.tbRows #toolbarViewer :is(#previous, #next) { display: flex !important; }
+body.tbRows #toolbarViewer input#pageNumber { width: 38px; height: 30px; align-self: center; margin: 0 2px; }
+body.tbRows #numPages, body.tbRows #printButton, body.tbRows #downloadButton, body.tbRows #showInFolder,
+body.tbRows #zoomOutButton, body.tbRows #zoomInButton, body.tbRows #scaleSelectContainer { display: none !important; }
+body.tbRows #viewerContainer { top: 0; bottom: var(--tbh); }
+/* 2026-11-15: the page area takes its new size at once when the phone turns. pdf.js animates every change of
+   #viewerContainer for 200 ms while the outline is closed; pdf.js and phone.js fitted the zoom at the start of
+   that slide, so the zoom fitted the old screen for minutes. Only the outline's slide (the left edge) stays. */
+body.tbRows #viewerContainer:not(.pdfPresentationMode) { transition-property: inset-inline-start; }
+body.tbRows #sidebarContent { inset-block-start: 0; }
+/* Pop-up panels (find, highlight colours, ink width, the ... menu) open upward from the bar. */
+body.tbRows :is(.doorHanger, .doorHangerRight, .editorParamsToolbar, #findbar) { position: fixed; top: auto; bottom: calc(var(--tbh) + 6px); left: auto; right: 6px; inset-inline-end: 6px; max-height: calc(100vh - var(--tbh) - 16px); overflow-y: auto; }
+body.tbRows :is(.doorHanger, .doorHangerRight)::before, body.tbRows :is(.doorHanger, .doorHangerRight)::after { display: none; }
+
+/* Phone sideways (2026-11-12, need: sideways the buttons sit on the right): the bar is a rail on the
+   right edge, under the thumb. It fills top to bottom in the groups' order and starts another column when
+   one is full. phone.js writes the rail's width into --tbr, and the page ends left of it. */
+body.tbRows.tbWide #toolbarContainer { top: 0; left: auto; width: auto; height: 100%; padding: 2px calc(2px + env(safe-area-inset-right)) 2px 2px; border-top: 0; border-inline-start: 1px solid var(--toolbar-border-color, #b8b8b8); }
+body.tbRows.tbWide #toolbarContainer #toolbarViewer { display: grid; grid-auto-flow: column; grid-template-rows: repeat(auto-fill, var(--tbb)); grid-auto-columns: var(--tbw); width: auto; height: 100%; place-items: center; align-content: start; }
+body.tbRows.tbWide #toolbarViewer #syncState { margin: 0; }
+body.tbRows.tbWide #toolbarViewer input#pageNumber { width: 30px; height: 26px; margin: 0; padding: 0 1px; box-sizing: border-box; text-align: center; }
+body.tbRows.tbWide #viewerContainer { bottom: 0; right: var(--tbr, 110px); }
+body.tbRows.tbWide :is(.doorHanger, .doorHangerRight, .editorParamsToolbar, #findbar) { bottom: 6px; right: calc(var(--tbr, 110px) + 6px); inset-inline-end: calc(var(--tbr, 110px) + 6px); max-height: calc(100vh - 12px); }
+
+/* Dark look, dark page (2026-11-12, need: a dark look shows the PDF dark as well): defaults.js sets
+   html.pdfDark. A veil over each page inverts what is under it and turns the hues back, so paper goes near
+   black, text near white, and highlights and the reading mark keep their colours roughly. A picture would
+   come out as its negative, so reader.js cuts a hole in the veil over each picture (--pic-holes) and the
+   picture shows exactly as drawn. The veil lies over the page, its text and its marks, and under a comment
+   pop-up. Never on paper (print). */
+@media screen {
+  html.pdfDark .pdfViewer .page::before { content: ""; position: absolute; inset: 0; z-index: 100001; pointer-events: none;
+    -webkit-backdrop-filter: invert(0.88) hue-rotate(180deg); backdrop-filter: invert(0.88) hue-rotate(180deg); clip-path: var(--pic-holes, none); }
+  html.pdfDark .readerMark > div { background: rgba(255, 150, 0, 0.5); }
+}
+
+/* ✏️ Write (writer.js, 2026-11-15): a paragraph turns into its own editor, in the print's face and size. Inside
+   .page and under the dark veil (z-index 100001), so a dark page darkens it too. */
+body.writeMode #viewer .page { cursor: text; }
+.wrEd { position: absolute; z-index: 22; margin: 0; padding: 0; border: 0; outline: none; white-space: normal;
+  overflow-wrap: normal; text-align: left; box-sizing: content-box; caret-color: #7A3921; }
+.wrEd:not([contenteditable="true"]) { pointer-events: none; }
+.wrEd.wrOpen { box-shadow: 0 0 0 3px rgba(122,57,33,.28); border-radius: 2px; }
+.wrEd.wrBad { box-shadow: 0 0 0 2px #c0392b; }
+.wrShift { position: absolute; left: 0; z-index: 21; pointer-events: none; }
+/* ✓ Done: big enough for a finger, and above the dark veil (z-index 100001) so it keeps its own colours */
+.wrDone { position: absolute; z-index: 100002; font: 600 15px/1 system-ui, sans-serif; padding: 9px 16px; min-height: 36px;
+  border: 0; border-radius: 9px; background: #7A3921; color: #fff; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.35); white-space: nowrap; }
+.wrNote { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 100002;
+  max-width: min(92vw, 520px); background: #3b2a1c; color: #f6efe2; padding: 10px 14px; border-radius: 10px;
+  font: 14px/1.4 system-ui, sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+.wrNote .wrTyped { display: block; margin-top: 6px; padding: 6px 8px; background: rgba(255,255,255,.1); border-radius: 6px;
+  user-select: text; -webkit-user-select: text; white-space: pre-wrap; max-height: 30vh; overflow: auto; }
+.wrNote button { margin: 8px 8px 0 0; padding: 5px 10px; border: 0; border-radius: 6px; background: #f6efe2; color: #3b2a1c; font: 600 13px system-ui, sans-serif; }
+/* the still copy of the page while a rebuilt PDF loads under it */
+.wrFrame { position: fixed; z-index: 4; pointer-events: none; overflow: hidden; transition: opacity .18s; }
+.wrFramePage { position: absolute; background: #fff; overflow: hidden; }
+html.pdfDark .wrFramePage::before { content: ""; position: absolute; inset: 0; z-index: 100001; pointer-events: none;
+  -webkit-backdrop-filter: invert(0.88) hue-rotate(180deg); backdrop-filter: invert(0.88) hue-rotate(180deg); clip-path: var(--pic-holes, none); }
+
+/* ✓ Approve (approve.js, 2026-11-15): after the last word of each paragraph printed blue; pressed, it goes and the
+   paragraph turns black. Quiet, in the new-text blue (16:03: "less prominent, in the same color as the text"), and
+   under the dark look's veil (z-index 100001), so the veil turns it the same colour it turns the text.
+   --ap: the button's height, from the printed line's (approve.js place), 13 to 19 px */
+.apBtn { position: absolute; z-index: 23; box-sizing: border-box; margin: 0; padding: 0 calc(var(--ap, 18px) * .35);
+  height: var(--ap, 18px); border: 1px solid rgba(30,144,255,.5); border-radius: calc(var(--ap, 18px) / 2);
+  background: transparent; color: #1e90ff; font: 500 calc(var(--ap, 18px) * .58)/calc(var(--ap, 18px) - 2px) system-ui, sans-serif;
+  white-space: nowrap; cursor: pointer; }
+.apBtn:hover { background: rgba(30,144,255,.08); }
+.apBtn::after { content: ""; position: absolute; inset: -8px -6px; } /* a finger gets a larger target than the eye sees */
+.apBtn.apIcon { width: var(--ap, 18px); padding: 0; border-radius: 50%; }
+.apBtn.apBelow { transform: translateX(-100%); }
+/* ✓ Approve all (2026-11-17): in page 1's top margin, centred on the middle of the margin; one press, then a note
+   with ↶ Undo (approve.js undoNote) */
+.apBtn.apAll { transform: translateY(-50%); font-weight: 600; }
+/* a paragraph typed in with ✏️ Write moves the text under it: its page's buttons wait for the rebuilt PDF */
+#viewer .page:has(.wrEd) > .apBtn { display: none; }
+
+/* 🤖 An Apply round locks the comments it takes (tools.js applyLock, 2026-11-15): their icon is the Apply button's
+   robot, breathing while the AI works; their card opens to be read, without Edit and Delete; a selected locked
+   marking shows no colour or delete bar. */
+:is(.annotationLayer, .annotationEditorLayer) :is(.annotationCommentButton.applyLocked, .applyLocked > .annotationCommentButton) {
+  background-color: #fff !important; padding: 1px;
+}
+:is(.annotationLayer, .annotationEditorLayer) :is(.annotationCommentButton.applyLocked, .applyLocked > .annotationCommentButton)::before {
+  -webkit-mask-image: none; mask-image: none;
+  background: url(images/tb-apply.svg) center / contain no-repeat;
+  animation: applyLockBreath 1.6s ease-in-out infinite;
+}
+@keyframes applyLockBreath { 50% { opacity: .45; } }
+.applyLocked + .commentPopup .commentPopupButtons, .applyLocked > .editToolbar { display: none !important; }
+#applyLockNote { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 100001; max-width: calc(100vw - 32px);
+  background: #3b2a1a; color: #fff8e8; font: 14px sans-serif; padding: 8px 12px; border-radius: 8px; box-shadow: 0 4px 16px #0004; }
+/* Apply in the comment box, between Cancel and Done (autoreload.js): the robot before the word. */
+#commentManagerApplyButton::before { content: ""; display: inline-block; width: 16px; height: 16px; margin-inline-end: 6px;
+  vertical-align: -3px; background: url(images/tb-apply.svg) center / contain no-repeat; }

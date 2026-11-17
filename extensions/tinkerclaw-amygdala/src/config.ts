@@ -3,8 +3,16 @@ import { join } from "node:path";
 import { DEFAULT_EARNED, type EarnedConfig } from "./earned.js";
 import type { FamilyId } from "./types.js";
 
+export type SelfModification = "locked" | "unlocked";
+
 export interface AmygdalaConfig {
   mode: "shadow" | "enforce";
+  /**
+   * May the agent work on its own system? Locked (the default, what a clone gets): restarting itself needs proof and
+   * weakening a check over its own code is held. Unlocked lifts exactly those two. Deletes, secrets and anything that
+   * leaves the machine never read this.
+   */
+  selfModification: SelfModification;
   families: Record<FamilyId, boolean>;
   /**
    * Families whose NOTES act while `mode` is shadow (2026-10-03, personality first). A note only adds a line to the
@@ -31,9 +39,26 @@ export interface AmygdalaConfig {
    * bounds the pass review, which judges the steps Jev let through: one call per turn, so the cap counts turns.
    */
   review: { enabled: boolean; dailyCap: number; passDailyCap: number; ladder: string[] };
+  /**
+   * Fact check (2026-11-14, fact-check.ts): a statement given as fact that the turn's own evidence does not carry.
+   * `wake` asks the agent in the same chat to recheck it; `shadow` only records; the ladder takes Claude models only.
+   */
+  factCheck: {
+    mode: "off" | "shadow" | "wake";
+    ladder: string[];
+    timeoutMs: number;
+    dailyCap: number;
+  };
   /** Progressive activation (2026-10-15): a rule Sonnet's reviews find worth it acts on its own (earned.ts). */
   earned: EarnedConfig;
 }
+
+/** Claude only: the fact check reads tool output, which no other provider may see. */
+export const DEFAULT_FACT_CHECK_LADDER = [
+  "claude-code/claude-sonnet-5-5",
+  "claude-code/claude-haiku-4-5",
+];
+export const DEFAULT_FACT_CHECK_MODE: "off" | "shadow" | "wake" = "wake";
 
 /**
  * The reviewer's models (2026-10-15: Sonnet, not Grok, judges automatically whether a call was right or
@@ -93,6 +118,12 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
   const explain = obj(r.explain);
   const review = obj(r.review);
   const earned = obj(r.earned);
+  const factCheck = obj(r.factCheck);
+  const factLadder = Array.isArray(factCheck.ladder)
+    ? factCheck.ladder.filter(
+        (x): x is string => typeof x === "string" && x.startsWith("claude-code/"),
+      )
+    : [];
   const reviewLadder = Array.isArray(review.ladder)
     ? review.ladder.filter((x): x is string => typeof x === "string" && x.includes("/"))
     : [];
@@ -101,6 +132,7 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
     : [];
   return {
     mode: r.mode === "enforce" ? "enforce" : "shadow",
+    selfModification: r.selfModification === "unlocked" ? "unlocked" : "locked",
     families: {
       safety: bool(fam.safety, true),
       "second-opinion": bool(fam.secondOpinion, true),
@@ -138,6 +170,15 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
       dailyCap: num(review.dailyCap, 150),
       passDailyCap: num(review.passDailyCap, 150),
       ladder: reviewLadder.length ? reviewLadder : [...DEFAULT_REVIEW_LADDER],
+    },
+    factCheck: {
+      mode:
+        factCheck.mode === "off" || factCheck.mode === "shadow" || factCheck.mode === "wake"
+          ? factCheck.mode
+          : DEFAULT_FACT_CHECK_MODE,
+      ladder: factLadder.length ? factLadder : [...DEFAULT_FACT_CHECK_LADDER],
+      timeoutMs: num(factCheck.timeoutMs, 120_000),
+      dailyCap: num(factCheck.dailyCap, 120),
     },
     earned: {
       enabled: bool(earned.enabled, DEFAULT_EARNED.enabled),

@@ -255,6 +255,33 @@ describe("runForget", () => {
     await expect(runForget({ fact: FACT, confirm: preview.confirm }, e)).rejects.toThrow(FactError);
   });
 
+  it("moves the forget epoch only when an apply or a follow-up rewrote files", async () => {
+    // total-recall reads this epoch and drops its memoised stores and packs when it moves.
+    const key = Symbol.for("openclaw.memory.forget-epoch");
+    const epoch = () => (globalThis as Record<symbol, number | undefined>)[key] ?? 0;
+    world();
+    const e = env("apply", null);
+    const start = epoch();
+    const preview = await runForget({ fact: FACT }, e);
+    expect(epoch()).toBe(start);
+    await runForget({ fact: FACT, confirm: preview.confirm }, e);
+    expect(epoch()).toBe(start + 1);
+    const job = {
+      matcher: buildMatcher(FACT),
+      token: "[forgotten 2026-10-25]",
+      fact: FACT,
+      startedMs: Date.now() - 60_000,
+    };
+    await followUpPass(e, job);
+    expect(epoch()).toBe(start + 1);
+    appendFileSync(
+      join(state, "agents", "main", "sessions", "s1.jsonl"),
+      userLine(`again ${SPELLED}`),
+    );
+    await followUpPass(e, job);
+    expect(epoch()).toBe(start + 2);
+  });
+
   it("the follow-up pass cleans the copies the request itself added after the apply", async () => {
     world();
     const e = env("apply", null);

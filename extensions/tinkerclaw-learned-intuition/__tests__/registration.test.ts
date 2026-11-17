@@ -169,6 +169,23 @@ describe("Learned Intuition registration", () => {
     expect(out).toMatchObject({ block: true });
   });
 
+  // The host sends the tool input as `params` (src/plugins/hook-types.ts PluginHookBeforeToolCallEvent,
+  // built in src/agents/pi-tools.before-tool-call.ts). Reading only `args` left the gate, AEGIS
+  // included, with the bare tool name ("exec exec") for every native call.
+  it("feeds the gate the tool input the host sends as params", async () => {
+    const { api, hooks } = createMockApi();
+    const broadcast = vi.fn();
+    (api as { broadcast?: Function }).broadcast = broadcast;
+
+    const mod = await import("../index.js");
+    mod.default.register(api as any);
+
+    const [{ handler }] = hooks.get("before_tool_call")!;
+    await handler({ toolName: "exec", params: { command: "ls /srv/data" } });
+    const record = broadcast.mock.calls.find((c) => c[0] === "amygdala-decision")?.[1];
+    expect(record?.target).toBe("ls /srv/data");
+  });
+
   it("registers no personality-nudge writer output unless opted in", async () => {
     const { api, hooks } = createMockApi();
     (api as { pluginConfig: Record<string, unknown> }).pluginConfig = {};

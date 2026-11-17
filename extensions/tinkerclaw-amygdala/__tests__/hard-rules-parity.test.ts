@@ -6,7 +6,9 @@ import { serializeRules } from "../src/rules.js";
 // tinkerclaw-learned-intuition still reads its own list; this test fails the moment the two drift apart.
 // CREDENTIAL_FILE_PRINTED is a v2-only tightening (authorized 2026-09-29). One id can carry several patterns, so the
 // lists are compared pattern by pattern, never by id alone.
-const V2_ONLY = new Set(["CREDENTIAL_FILE_PRINTED"]);
+// GUARD_SELF_ANSWER is a v2-only tightening too (2026-11-13: the agent must not answer the guard's question itself).
+// GUARD_OWN_LIST_WRITE is a v2-only tightening (2026-11-16: the agent must not write the list of its own files).
+const V2_ONLY = new Set(["CREDENTIAL_FILE_PRINTED", "GUARD_SELF_ANSWER", "GUARD_OWN_LIST_WRITE"]);
 
 type R = {
   id: string;

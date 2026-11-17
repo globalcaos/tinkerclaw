@@ -1,6 +1,6 @@
 import type { proto } from "@whiskeysockets/baileys";
 import { describe, expect, it } from "vitest";
-import { extractMentionedJids } from "./extract.js";
+import { extractIsForwarded, extractMentionedJids } from "./extract.js";
 
 describe("extractMentionedJids", () => {
   const botJid = "5511999999999@s.whatsapp.net";
@@ -99,5 +99,32 @@ describe("extractMentionedJids", () => {
       },
     };
     expect(extractMentionedJids(message)).toEqual([botJid]);
+  });
+});
+
+// 2026-11-14 burn review b1113-s8 F1: the forward mark of the message itself.
+describe("extractIsForwarded", () => {
+  it("reads the mark of the current message, not of a quoted one", () => {
+    const forwardedText: proto.IMessage = {
+      extendedTextMessage: { text: "x", contextInfo: { isForwarded: true, forwardingScore: 1 } },
+    };
+    const forwardedAudio: proto.IMessage = {
+      audioMessage: { contextInfo: { forwardingScore: 3 } },
+    };
+    const replyToForward: proto.IMessage = {
+      extendedTextMessage: {
+        text: "my reply",
+        contextInfo: {
+          quotedMessage: {
+            extendedTextMessage: { text: "q", contextInfo: { isForwarded: true } },
+          },
+        },
+      },
+    };
+    expect(extractIsForwarded(forwardedText)).toBe(true);
+    expect(extractIsForwarded(forwardedAudio)).toBe(true);
+    expect(extractIsForwarded({ conversation: "typed" })).toBe(false);
+    expect(extractIsForwarded(replyToForward)).toBe(false);
+    expect(extractIsForwarded(undefined)).toBe(false);
   });
 });

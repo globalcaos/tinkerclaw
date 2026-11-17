@@ -151,28 +151,29 @@ class JarvisTts(
     }
   }
 
-  /** The best installed voice for the language: highest quality, one that works offline first. */
-  private fun pickVoice(
-    tts: TextToSpeech,
-    locale: Locale,
-  ) {
-    val voices: Set<Voice> = runCatching { tts.voices }.getOrNull().orEmpty()
-    val sameLang = voices.filter { it.locale.language == locale.language && !it.features.contains("notInstalled") }
-    val pool = sameLang.filter { it.locale.country == locale.country }.ifEmpty { sameLang }
-    val best =
-      pool.maxWithOrNull(
-        // Male British names first (Google: gbb, gbd, rjs), then quality; an online voice is allowed,
-        // its prosody is better than the offline one's.
-        compareBy<Voice> { v -> MALE_GB.any { v.name.contains(it) } }.thenBy { it.quality }.thenBy { -it.latency },
-      )
-    if (best != null) {
-      tts.voice = best
-    } else {
-      tts.language = locale
-    }
-  }
+  // 2026-11-12: internal, so the locked-screen reader (JarvisReader.kt) picks its voice the same way.
+  internal companion object {
+    private val MALE_GB = listOf("x-gbb", "x-gbd", "x-rjs")
 
-  private companion object {
-    val MALE_GB = listOf("x-gbb", "x-gbd", "x-rjs")
+    /** The best installed voice for the language: highest quality, one that works offline first. */
+    fun pickVoice(
+      tts: TextToSpeech,
+      locale: Locale,
+    ) {
+      val voices: Set<Voice> = runCatching { tts.voices }.getOrNull().orEmpty()
+      val sameLang = voices.filter { it.locale.language == locale.language && !it.features.contains("notInstalled") }
+      val pool = sameLang.filter { it.locale.country == locale.country }.ifEmpty { sameLang }
+      val best =
+        pool.maxWithOrNull(
+          // Male British names first (Google: gbb, gbd, rjs), then quality; an online voice is allowed,
+          // its prosody is better than the offline one's.
+          compareBy<Voice> { v -> MALE_GB.any { v.name.contains(it) } }.thenBy { it.quality }.thenBy { -it.latency },
+        )
+      if (best != null) {
+        tts.voice = best
+      } else {
+        tts.language = locale
+      }
+    }
   }
 }

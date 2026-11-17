@@ -192,6 +192,48 @@ describe("buildChatUnits", () => {
     expect(empty).toEqual(bare);
   });
 
+  // FORK 2026-11-14 — job trails (job-trail.ts).
+  it("draws a running job's trail at the end, above the amygdala's tail and the indicator", () => {
+    const units = buildChatUnits(
+      turn(),
+      deps({
+        amygdalaTail: () => `<div class="amy-tail"></div>`,
+        jobTrails: () => [{ key: "jobtrail:j", html: `<div class="job-trail"></div>`, at: null }],
+      }),
+    );
+    expect(units.slice(-3).map((u) => u.key)).toEqual([
+      "jobtrail:j",
+      "amy:tail",
+      THINKING_UNIT_KEY,
+    ]);
+  });
+
+  it("keeps a finished job's trail in the run that was going on when it ended, before the wake", () => {
+    const at = new Map<string, number>([
+      ["u1", 100],
+      ["w1", 300],
+    ]);
+    const rows = [...turn(), user("w1", "⏳ the job ended"), say("a3", "the job is done")];
+    const units = buildChatUnits(
+      rows,
+      deps({
+        rowStartedAt: (m) => at.get(String((m as Row)._uid)),
+        jobTrails: () => [{ key: "jobtrail:j", html: `<div class="job-trail"></div>`, at: 250 }],
+      }),
+    );
+    const keys = units.map((u) => u.key);
+    expect(keys.indexOf("jobtrail:j")).toBe(keys.indexOf("u:w1") - 1);
+    expect(keys.indexOf("jobtrail:j")).toBeGreaterThan(keys.indexOf("u:a2"));
+    // A trail no run holds (no row times) falls back to the end.
+    const fallback = buildChatUnits(
+      rows,
+      deps({
+        jobTrails: () => [{ key: "jobtrail:j", html: `<div class="job-trail"></div>`, at: 250 }],
+      }),
+    );
+    expect(fallback.slice(-2).map((u) => u.key)).toEqual(["jobtrail:j", THINKING_UNIT_KEY]);
+  });
+
   it("carries a prompt's skill chips in the prompt's own unit", () => {
     const units = buildChatUnits(
       turn(),

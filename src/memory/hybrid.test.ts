@@ -1,13 +1,80 @@
 import { describe, expect, it } from "vitest";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
+import { ensureMemoryIndexSchema } from "./memory-schema.js";
+import { requireNodeSqlite } from "./sqlite.js";
 
 describe("memory hybrid helpers", () => {
-  it("buildFtsQuery tokenizes and AND-joins", () => {
-    expect(buildFtsQuery("hello world")).toBe('"hello" AND "world"');
-    expect(buildFtsQuery("FOO_bar baz-1")).toBe('"FOO_bar" AND "baz" AND "1"');
-    expect(buildFtsQuery("金银价格")).toBe('"金银价格"');
-    expect(buildFtsQuery("価格 2026年")).toBe('"価格" AND "2026年"');
+  it("buildFtsQuery ORs the query's keywords", () => {
+    expect(buildFtsQuery("hello world")).toBe('"hello" OR "world"');
+    // extractKeywords lowercases, splits on punctuation (the underscore too), drops bare numbers.
+    expect(buildFtsQuery("FOO_bar baz-1")).toBe('"foo" OR "bar" OR "baz"');
+    // Stop words leave a natural-language question; quotes in the input never reach FTS5.
+    expect(buildFtsQuery("how did we fix the backup cron timeout?")).toBe(
+      '"fix" OR "backup" OR "cron" OR "timeout"',
+    );
+    expect(buildFtsQuery('say "cheese" now')).toBe('"say" OR "cheese"');
+    // CJK: extractKeywords emits every character and every bigram of a run.
+    expect(buildFtsQuery("金银价格")).toBe(
+      '"金" OR "银" OR "价" OR "格" OR "金银" OR "银价" OR "价格"',
+    );
+    expect(buildFtsQuery("価格 2026年")).toBe('"価" OR "格" OR "価格" OR "年"');
     expect(buildFtsQuery("   ")).toBeNull();
+    expect(buildFtsQuery("?!")).toBeNull();
+  });
+
+  it("buildFtsQuery ORs the raw tokens when no keyword survives", () => {
+    expect(buildFtsQuery("what is that")).toBe('"what" OR "is" OR "that"');
+    expect(buildFtsQuery("hi")).toBe('"hi"');
+    expect(buildFtsQuery("2026")).toBe('"2026"');
+  });
+
+  it("buildFtsQuery finds rows an AND of every token misses, fullest match first", () => {
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(":memory:");
+    try {
+      // The real schema, so the tokenizer under test is the one the index uses.
+      const { ftsAvailable } = ensureMemoryIndexSchema({
+        db,
+        embeddingCacheTable: "embedding_cache",
+        cacheEnabled: false,
+        ftsTable: "chunks_fts",
+        ftsEnabled: true,
+      });
+      expect(ftsAvailable).toBe(true);
+      const insert = db.prepare(
+        "INSERT INTO chunks_fts (text, id, path, source, model, start_line, end_line) VALUES (?, ?, ?, 'memory', 'm', 1, 1)",
+      );
+      const rows: Array<[string, string]> = [
+        ["target", "The backup cron hit its timeout; the fix raised the limit."],
+        ["cron-only", "The cron schedule for the weather digest runs at seven."],
+        ["backup-only", "Backup photos go to the external disk on Sundays."],
+        ["unrelated", "Release notes for the documentation site."],
+      ];
+      for (const [id, text] of rows) {
+        insert.run(text, id, `memory/${id}.md`);
+      }
+      const match = (query: string) =>
+        (
+          db
+            .prepare("SELECT id FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts)")
+            .all(query) as Array<{ id: string }>
+        ).map((row) => row.id);
+
+      const question = "how did we fix the backup cron timeout?";
+      // What this builder returned before 2026-10-29: every raw token, ANDed. No row has all 8.
+      const andQuery =
+        '"how" AND "did" AND "we" AND "fix" AND "the" AND "backup" AND "cron" AND "timeout"';
+      expect(match(andQuery)).toEqual([]);
+
+      const orQuery = buildFtsQuery(question);
+      expect(orQuery).not.toBeNull();
+      const ids = match(orQuery ?? "");
+      // The row with all four keywords ranks first; rows with one keyword still come back.
+      expect(ids[0]).toBe("target");
+      expect(ids.slice(1).toSorted()).toEqual(["backup-only", "cron-only"]);
+    } finally {
+      db.close();
+    }
   });
 
   it("bm25RankToScore is monotonic and clamped", () => {

@@ -37,7 +37,7 @@ For tab-main and any other OpenClaw session driven by cc-bridge / claude-cli, tw
 
 > ⚠️ **There are TWO archive locations, and the filenames differ.** The `sessions/` archives above are renamed with a `.reset/.new/.delete.<ts>` suffix. The nightly `cleaning-lady` cron _moves_ stale subagent/cron transcripts into a **separate `sessions-archive/` directory keeping the plain `<sessionId>.jsonl` name** — no reason suffix, so every reason-suffix glob in this skill misses them entirely. Always search both directories before telling the operator a transcript is gone. (Noted 2026-08-07: 114 files were already sitting there unsearchable; the move had additionally been silently broken by a wrong field name since the cron was written, so this pile will now grow as designed rather than staying frozen.)
 
-For the default single-agent setup `<agentId>` is `main`. For a typical Linux cwd of `~/src/tinkerclaw`, `<cwd-slug>` is `-home-globalcaos-src-tinkerclaw`.
+For the default single-agent setup `<agentId>` is `main`. For a typical Linux cwd of `~/src/tinkerclaw`, `<cwd-slug>` is `-home-user-src-tinkerclaw`.
 
 The archive filename always carries the **reason** (`reset` = `/clear`, `new` = `/new`, `delete` = `sessions.delete`) and an **ISO-8601 timestamp** with colons rewritten to dashes (e.g. `1a498388-...jsonl.reset.2026-05-22T06-20-24.567Z`).
 

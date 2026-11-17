@@ -183,15 +183,17 @@ describe("the card", () => {
     { content: okOut, isError: false },
   )!;
 
-  it("shows who was woken, the question and the answer while closed", () => {
+  it("shows only the title row while closed, and the answer once opened", () => {
     const h = renderAskCard(call, "ask:t", undefined, deps());
     expect(h).toContain('class="ask-card ask-card-answered"');
     expect(h).toContain("OpenRAMAN build plan");
     expect(h).toContain("4e4c3737 · 2026-10-12 · 41.3 s");
-    expect(h).toContain("Where is the &quot;parked&quot; plan?");
-    expect(h).toContain("<p>**Short answer:** the plan is parked.</p>");
     expect(h).toContain('data-tid="ask:t"');
+    expect(h).not.toContain("Where is the &quot;parked&quot; plan?");
     expect(h).not.toContain("ask-card-trail");
+    const opened = renderAskCard(call, "ask:t", undefined, deps(["ask:t"]));
+    expect(opened).toContain("Where is the &quot;parked&quot; plan?");
+    expect(opened).toContain("<p>**Short answer:** the plan is parked.</p>");
   });
 
   it("loads the slice once when opened, then draws it inside the frame", async () => {

@@ -22,6 +22,11 @@
 // (`compactionTokenCount`), forwarding whatever a call site wrote, so a figure that was not a finite
 // number >= 0 would have shipped instead of being omitted. The wire payload is otherwise unchanged:
 // buildCompactionEventData writes the same keys from the same values.
+//
+// FORK 2026-11-03 (context-window-panel.md A11) — the claude-code lane is no longer only refused. With
+// the tinker-bridge loaded, EVICT there is the bridge's: it writes an evicted fork of the CLI's own
+// transcript and moves the chat onto it (BRIDGE_EVICT_SLOT below). Without the bridge, P8's refusal
+// stands as before.
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -357,6 +362,118 @@ export type SessionEvictionOutcome =
   | { kind: "reply"; reply: SessionEvictionReply; evicted: boolean };
 
 /**
+ * FORK 2026-11-03 (A11) — the tinker-bridge's eviction for the claude-code lane, on a global slot
+ * because core cannot import an extension. Must equal `BRIDGE_EVICT_SLOT` in
+ * extensions/tinkerclaw-tinker-bridge/src/evict-seam.ts; a test there compares them.
+ */
+export const BRIDGE_EVICT_SLOT = "openclaw.bridgeEvict";
+
+/** The part of the bridge's answer this file reads (evict-seam.ts `CliEvictResult`). */
+type BridgeEvictResult =
+  | {
+      ok: true;
+      evictedPrompts: number;
+      keptPrompts: number;
+      tokensBefore: number;
+      tokensAfter: number;
+      evictedTokens: number;
+    }
+  | { ok: false; reason: string; nothingToDo?: boolean };
+
+type BridgeEvictSeam = {
+  evict(openclawSessionId: string, keepFraction: number): BridgeEvictResult;
+};
+
+function bridgeEvictSeam(): BridgeEvictSeam | undefined {
+  const seam = (globalThis as Record<symbol, unknown>)[Symbol.for(BRIDGE_EVICT_SLOT)] as
+    | { evict?: unknown }
+    | undefined;
+  return seam && typeof seam.evict === "function" ? (seam as BridgeEvictSeam) : undefined;
+}
+
+/**
+ * A11 — EVICT on the claude-code lane, through the bridge; undefined when it does not apply (another
+ * lane, no bridge loaded, no session id), and the caller goes on to P8's refusal. No interrupt: the
+ * bridge declines while a reply runs, since a fork cut under a live worker would miss that turn.
+ */
+async function evictOnClaudeCodeLane(params: {
+  cfg: OpenClawConfig;
+  entry: SessionEntry | undefined;
+  agentId: string;
+  canonicalKey: string;
+  storePath: string;
+  storeKey: string;
+  keepFraction: number;
+}): Promise<SessionEvictionOutcome | undefined> {
+  const { provider } = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
+  const seam = bridgeEvictSeam();
+  const openclawSessionId = normalizeOptionalString(params.entry?.sessionId);
+  if (normalizeProviderId(provider) !== CLAUDE_CODE_PROVIDER_ID || !seam || !openclawSessionId) {
+    return undefined;
+  }
+  const key = params.canonicalKey;
+  const startedAt = Date.now();
+  const res = seam.evict(openclawSessionId, params.keepFraction);
+  if (!res.ok) {
+    return {
+      kind: "reply",
+      evicted: false,
+      reply: { ok: res.nothingToDo === true, key, compacted: false, reason: res.reason },
+    };
+  }
+  // P7: one start / end pair per real eviction and none on a decline, so the pair follows the
+  // bridge's answer. Lane "cc-bridge": what shrank is the CLI's own context. Provenance
+  // "estimated": the bridge counts ceil(chars / 3.5), the embedded branch's ladder (P11).
+  const runId = `evict:${randomUUID()}`;
+  const target = { runId, sessionKey: key };
+  emitCompactionTelemetry(target, {
+    phase: "start",
+    trigger: "evict",
+    lane: "cc-bridge",
+    provenance: "estimated",
+  });
+  emitCompactionTelemetry(target, {
+    phase: "end",
+    trigger: "evict",
+    lane: "cc-bridge",
+    completed: true,
+    tokensBefore: res.tokensBefore,
+    tokensAfter: res.tokensAfter,
+    tokensDropped: res.evictedTokens,
+    durationMs: Date.now() - startedAt,
+    provenance: "estimated",
+  });
+  clearAgentRunContext(runId);
+  // The cached counts describe a context that is gone; the estimate is not banked (see the
+  // embedded branch below for why).
+  await updateSessionStore(params.storePath, (store) => {
+    const entryToUpdate = store[params.storeKey];
+    if (!entryToUpdate) {
+      return;
+    }
+    delete entryToUpdate.inputTokens;
+    delete entryToUpdate.outputTokens;
+    delete entryToUpdate.totalTokens;
+    delete entryToUpdate.totalTokensFresh;
+    entryToUpdate.updatedAt = Date.now();
+  });
+  return {
+    kind: "reply",
+    evicted: true,
+    reply: {
+      ok: true,
+      key,
+      compacted: true,
+      evicted: res.evictedPrompts,
+      evictedTokens: res.evictedTokens,
+      tokensBefore: res.tokensBefore,
+      tokensAfter: res.tokensAfter,
+      kept: res.keptPrompts,
+    },
+  };
+}
+
+/**
  * The whole `sessions.compact { keepFraction }` branch. Returns what to reply; the caller owns
  * the wire (sessions.ts is tier-1 and stays a delegation).
  */
@@ -379,6 +496,11 @@ export async function evictSessionTranscript(params: {
   // P8 — refuse BEFORE the interrupt. On a lane whose runtime owns the context the eviction
   // cannot help, so it must not abort a live turn to accomplish nothing (F1's silent side
   // effect), and the transcript is not even opened.
+  // A11 — the claude-code lane with the bridge loaded: the bridge evicts from the CLI's own transcript.
+  const onClaudeLane = await evictOnClaudeCodeLane(params);
+  if (onClaudeLane) {
+    return onClaudeLane;
+  }
   const refusal = resolveEvictionRefusal(params);
   if (refusal) {
     return {
@@ -425,7 +547,7 @@ export async function evictSessionTranscript(params: {
   //
   // The three constants A1's type demands of every executor, stated once for this producer:
   // trigger "evict" is the EVICT button (`sessions.compact { keepFraction }`); lane "embedded"
-  // because every other lane is REFUSED above, before an eviction can start (P8), so an emit here
+  // because the claude-code lane went to the bridge above (A11) and every other lane is REFUSED there, before an eviction can start (P8), so an emit here
   // always followed a rewrite of the gateway's own transcript; provenance "estimated" because
   // nothing re-tokenises an evicted transcript, so every figure below is context-anatomy's
   // ceil(chars / 3.5) and must never read as billed (P11, F4).

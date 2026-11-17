@@ -105,6 +105,7 @@ export function createWebOnMessageHandler(params: {
     const decision = decideTrigger({
       body: msg.body ?? "",
       fromMe: msg.fromMe === true,
+      forwarded: msg.forwarded === true,
       chatJid,
       noPrefixChats: wa.noPrefixChats ?? [],
       triggerPrefix: (wa.triggerPrefix ?? "").trim(),

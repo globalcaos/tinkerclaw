@@ -25,7 +25,7 @@ import {
 // the router cannot disagree. The retired routing card keeps its own 3; its golden file pins it byte for byte.
 import { THALAMUS_DEFAULT_BIAS_IDX as BIAS_DEFAULT_IDX } from "../../src/shared/thalamus-frontier.js";
 import { renderExchangeRewound } from "./amygdala-cards.js";
-import { createAmygdalaUi } from "./amygdala-ui.js";
+import { createAmygdalaUi, rowTime } from "./amygdala-ui.js";
 import { createAskSessionUi } from "./ask-session-card.js";
 // FORK 2026-08-18. The ATTACHED ACTIVITY strip's pure rules — live age, row
 // order, button verb, and success-vs-refused classification — live in their own unit-tested module
@@ -80,8 +80,15 @@ import {
   encodeViewportMemory,
   FOLLOWING,
   isProgrammaticEcho,
+  htmlFrameHeight,
   lateGrowthAdjustment,
+  middleFraction,
+  PANE_SETTLE_MS,
+  paneResizeSettles,
+  paneResizeStep,
   pendingRestoreStep,
+  scrollIsResizeLayout,
+  scrollTopForMiddle,
   viewportChoiceId,
   viewportMemory,
   type ViewportAnchor,
@@ -93,6 +100,7 @@ import {
   recordClientRow,
   updateClientRow,
 } from "./client-rows.js";
+import { cardCarryLength } from "./cut-card.js";
 // FORK 2026-08-24: the single predicate that decides whether an assistant bubble is an
 // error report and whether that error is one the system can ride out. Both render paths and
 // the retry lifecycle read it, so bubble colour and countdown cannot disagree — and a marker
@@ -115,7 +123,13 @@ import { pageIsRemote, viewerBlob, type ReadFileReply } from "./file-in-browser.
 // user has already read) lives in a pure, unit-tested module. See stream-reslice.ts.
 // FORK 2026-10-03 — and so does the choice of WHICH bubbles a final reconciles (finalTextBubbles)
 // together with the write (planFinalWrite): selecting inline here took reasoning bubbles too.
-import { bubbleText, finalTextBubbles, planFinalWrite, runTextBubbles } from "./final-supersede.js";
+import {
+  bubbleSegStart,
+  bubbleText,
+  finalTextBubbles,
+  planFinalWrite,
+  runTextBubbles,
+} from "./final-supersede.js";
 import {
   fractalCardHtml,
   fractalCheckFromRow,
@@ -224,7 +238,7 @@ import {
   emptyWindow,
   type HistoryWindow,
 } from "./history-window.js";
-import { htmlRenderNeedsFrame } from "./html-render-route.js";
+import { htmlCardCensus, htmlRenderNeedsFrame } from "./html-render-route.js";
 // FORK 2026-08-24 — the post-restart wake-up is injected as a USER turn; this tells it apart from
 // something the human actually typed so it can be rendered as an automated notice. See
 // system-notice.ts.
@@ -236,6 +250,12 @@ import {
   type InjectedKind,
 } from "./injected-prompt.js";
 import { createJevChip } from "./jev-chip.js";
+import {
+  allowLeave,
+  installLeaveGuard,
+  markLinkForNewTab,
+  type LeaveReport,
+} from "./leave-guard.js";
 import {
   advanceCursor,
   closeSegment,
@@ -267,6 +287,7 @@ import {
   getModelUsage as sharedGetModelUsage,
   type ModelUsageInfo,
   refreshTooltipReset,
+  refreshTooltipResets,
 } from "./model-usage.js";
 // FORK 2026-08-05 — message IDENTITY (`_uid`) and RENDER ORDER (`_seq` = the Nth
 // message this client ever put on screen) live in a pure, unit-tested module. app.ts never
@@ -446,6 +467,9 @@ import {
   hideRewound,
   newestExchange,
   exchangeByKey,
+  exchangeFromCut,
+  nthNewestExchange,
+  rewindCommandArg,
   RewoundStore,
   rowTimeMs,
   type ExchangeDeps,
@@ -457,6 +481,16 @@ import {
   speakOnPhone,
   startVoicePolling,
 } from "./voice-in-browser.js";
+import {
+  RECORDER_BITS_PER_SECOND,
+  RECORDING_MAX_BYTES,
+  baseAudioMime,
+  formatRecordingDuration,
+  formatRecordingSize,
+  pickRecorderMime,
+  recordingFileName,
+  recordingPromptText,
+} from "./voice-recorder.js";
 // FORK 2026-10-06 — multi-user mode (hive door): who this page belongs to, null in single-user mode.
 let hiveMe: HiveMe | null = null;
 // One /me request per page load, shared by the banner, the USERS panel and the Users tab.
@@ -482,6 +516,10 @@ import {
   eegToolIdentity,
   type EegSample,
   type EegTurnEnd,
+  eegTokensFromAnatomy,
+  eegOwnTurnWindows,
+  eegInWindows,
+  eegSplitTurnGhosts,
 } from "./panels/eeg-trace.js";
 import {
   mountPrefrontalTree,
@@ -568,7 +606,8 @@ import {
   type ThalamusTurnDecision,
   type ThalamusTurnFallback,
 } from "./panels/thalamus-turn.js";
-import { renderThalamusV4 } from "./panels/thalamus-v4-card.js";
+import { coolingFor, renderThalamusV4 } from "./panels/thalamus-v4-card.js";
+import { renderTokenBurnerTab } from "./panels/token-burner-tab.js";
 // FORK 2026-08-02 (the architect) — unified UI-state store (spec 2026-08-02-unified-ui-state-
 // persistence-design.md, jarvis-icu docs/superpowers/specs). Grown from the 2026-07-25
 // per-panel right-rail collapse map: ONE module now owns every piece of persisted UI
@@ -686,6 +725,7 @@ import {
   terminalPromptFacts,
   type TerminalScope,
 } from "./queued-sends.js";
+import { plainReason, reloadNotice, type ReloadNotice } from "./reload-notice.js";
 // FORK 2026-08-04 (auto-retry x background tabs): the auto-retry LIFECYCLE decision —
 // whose track a chat event moves, and which way — is a pure sibling of retry-policy.ts,
 // extracted so the per-session keying is unit-testable (queued-sends.ts precedent, same
@@ -719,6 +759,7 @@ import {
   sessionHasFreshClientRun,
   sessionJobActivity,
   type SessionJobActivity,
+  rewindBlockedByLiveReply,
   transcriptWriterIsLive,
 } from "./run-state.js";
 // FORK 2026-09-29 (u14) — the chat follow latch's decision table: the owner's composer send
@@ -729,6 +770,7 @@ import { FOLLOW_BOTTOM_EPS, nextFollowState } from "./scroll-follow.js";
 // lives in its own unit-tested module. Recognises only 💬 ANSWER / 🌿 FRACTAL;
 // the retired 🧠 AMYGDALA section is no longer split or compacted (live panel owns it).
 import {
+  isSectionedBubble,
   renderSectionedReply,
   splitSectionedReply,
   splitLeadingNarration,
@@ -756,6 +798,7 @@ import {
   finalStampOf,
   isUnread,
   markSeen,
+  mergeSeenMaps,
   noteOwnFinal,
   parseSeenMap,
   serializeSeenMap,
@@ -1047,6 +1090,7 @@ function readStoredGatewayToken(): string {
 }
 const TOKEN = readStoredGatewayToken() || (typeof __cfg.token === "string" ? __cfg.token : "");
 if (!TOKEN && !window.location.pathname.includes("/login")) {
+  allowLeave(); // a planned leave: the leave guard does not ask
   window.location.replace(`${(import.meta.env.BASE_URL ?? "/tinker/").replace(/\/?$/, "/")}login`);
 }
 // In dev mode (vite), connect WS directly to the gateway; in prod the plugin serves from the gateway itself
@@ -1098,6 +1142,9 @@ let pendingHmrSince = 0;
 const RELOAD_CAUSE_KEY = "tinker.reloadCause";
 let pendingReloadCause = "";
 let pendingReloadWhy = "";
+// FORK 2026-11-12: who asked for the pushed build and why (tinker-prod-ui's cause), kept beside the reload's detail
+// so the notice after the reload can say it in plain words (reload-notice.ts).
+let reloadPushed: PushedBuildCause | null = null;
 let reloadInFlight = false;
 
 /**
@@ -1163,6 +1210,7 @@ function reloadPage(
       JSON.stringify({
         cause,
         detail,
+        pushed: reloadPushed,
         when,
         at: now,
         bundle: OWN_BUNDLE,
@@ -1176,9 +1224,11 @@ function reloadPage(
     // report it as a browser reload ("manual")
   }
   console.info(`[ui-reload] ${cause} (${when}): ${detail}`);
+  allowLeave(); // the page's own reload is a planned leave: the leave guard does not ask
   location.reload();
 }
-function requestUiReload(cause: string, why: string): void {
+function requestUiReload(cause: string, why: string, pushed: PushedBuildCause | null = null): void {
+  reloadPushed = pushed;
   // FORK 2026-10-06 — and never onto a gateway that cannot answer yet (gatewayAnswersHistory): the
   // page keeps showing what it has through a restart and reloads once history comes back.
   if (viewedSessionBusy() || composerInUse() || !gatewayAnswersHistory()) {
@@ -1272,6 +1322,10 @@ function describePushedBuild(
   return `a newer Tinker build is live (${bundle}, this page runs ${ownBundle})`;
 }
 
+/** FORK 2026-11-14 — the page's one event stream from tinker-prod-ui (opened below), kept so the
+ *  unread section can listen on it too ("tab-seen"). A second stream would count as a second page. */
+let uiEventStream: EventSource | null = null;
+
 /**
  * FORK 2026-09-30. Measured: every UI deploy of the night reached tinker-prod-ui and none reached his
  * page; at 06:10 it still ran the bundle of 2026-09-29 04:07. A production page has no HMR, and
@@ -1310,7 +1364,11 @@ if (!import.meta.hot) {
           // FORK 2026-10-03: lastPush names who asked for a build, but only counts for this bundle.
           const push = d.lastPush;
           const cause = push && push.bundle === d.bundle ? push.cause : null;
-          requestUiReload("new-build", describePushedBuild(d.bundle, cause, ownBundle));
+          requestUiReload(
+            "new-build",
+            describePushedBuild(d.bundle, cause, ownBundle),
+            cause ?? null,
+          );
         }
       })
       .catch(() => {
@@ -1329,6 +1387,7 @@ if (!import.meta.hot) {
   // tinker-prod-ui too; an older server answers 404 and the stream stays closed (the poll remains).
   if (ownBundle && typeof EventSource !== "undefined") {
     const uiEvents = new EventSource(`/api/ui-events?have=${encodeURIComponent(ownBundle)}`);
+    uiEventStream = uiEvents;
     uiEvents.addEventListener("ui-build", (ev) => {
       try {
         const d = JSON.parse((ev as MessageEvent<string>).data) as {
@@ -1336,7 +1395,11 @@ if (!import.meta.hot) {
           cause?: PushedBuildCause | null;
         };
         if (d.bundle && d.bundle !== ownBundle) {
-          requestUiReload("new-build", describePushedBuild(d.bundle, d.cause, ownBundle));
+          requestUiReload(
+            "new-build",
+            describePushedBuild(d.bundle, d.cause, ownBundle),
+            d.cause ?? null,
+          );
         }
       } catch {
         // a malformed event: the poll still catches the new build
@@ -1354,6 +1417,7 @@ if (!import.meta.hot) {
     type StoredReloadCause = {
       cause?: string;
       detail?: string;
+      pushed?: PushedBuildCause | null;
       when?: "immediate" | "after-turn" | "ceiling" | null;
       at?: number;
       bundle?: string | null;
@@ -1407,9 +1471,21 @@ if (!import.meta.hot) {
     }).catch(() => undefined); // tinker-prod-ui restarting, or an older one without the route
     // A self-reload says so on screen too; a hand F5 needs no toast. The delay lets the chat
     // paint first.
+    // FORK 2026-11-12: what changed first, then who asked, no file names or commit ids, and it stays
+    // until dismissed (it was one line of ids that left after 10 s).
     if (fresh && pageLoad.cause !== "manual") {
-      const toast = `↻ Page reloaded: ${pageLoad.detail}`;
-      setTimeout(() => showToast(toast, false, 10_000), 2000);
+      const pushed = fresh.pushed && typeof fresh.pushed === "object" ? fresh.pushed : null;
+      setTimeout(
+        () =>
+          showReloadNotice(
+            reloadNotice(
+              pageLoad.detail,
+              pushed,
+              (key) => tabs.find((t) => t.sessionKey === key)?.title || null,
+            ),
+          ),
+        2000,
+      );
     }
   } catch (err) {
     console.warn("[ui-reload] page-load report failed", err);
@@ -4329,6 +4405,7 @@ import {
   ganttViewUrl,
   parseGanttBoards,
 } from "./gantt-tab.js";
+import { createJobTrailUi, trailIsLive, type TrailWire } from "./job-trail.js";
 import {
   type IndicatorLayer,
   type LongjobJob,
@@ -4342,9 +4419,21 @@ import {
 import { AA_DOSSIER_ONLY_IDS, AA_UNROUTED_MODELS } from "./panels/aa-unrouted-models.js";
 import {
   modelCatalogIdsForPickerAndPanel,
+  latestOfFamily,
   panelIdsDownToCopilot,
   withoutRouteTwins,
 } from "./panels/model-surface-catalog.js";
+import {
+  hoverNameAttrs,
+  installUnroutableHoverCard,
+  interleaveByScore,
+  openRouterBlocked,
+  openRouterBlockedAttrs,
+  renderUnroutableChip,
+  renderUnroutableRow,
+  unroutableTraceId,
+  unroutableModels,
+} from "./panels/unroutable-models.js";
 import { type ChainOverlay, createChainOverlay, type TabAnchor } from "./tab-chains-overlay.js";
 // FORK 2026-09-23 — master/slave tab chains for the
 // conversation-loop skill; pure list + rope physics in tab-chains.ts, canvas in the overlay.
@@ -4355,6 +4444,7 @@ import {
   chainOfSession,
   CHAIN_COLORS,
   linkTabs,
+  healChains,
   LOOP_CHAINS_CHOICE,
   LOOP_CHAINS_DEFAULT,
   nextChainColor,
@@ -4373,16 +4463,11 @@ import {
   refreshAnchorInstruction,
   resolveTitleKind,
   sameSubject,
+  sendTitleAction,
   turnEndTitleAction,
   type TitleKind,
 } from "./tab-title-policy.js";
-import { detailedModelLabel } from "./thinking-model-label.js";
-import {
-  spokenLineOf,
-  type VoiceReaction,
-  voiceReactionChips,
-  voiceTapKey,
-} from "./voice-reaction.js";
+import { detailedModelLabel, effortLabel } from "./thinking-model-label.js";
 import { parseZenLink, zenTabHint, zenTitleHtml } from "./zen-link.js";
 
 // Scores for Chinese models the cost table shows but AA_INTELLIGENCE_INDEX cannot
@@ -6174,9 +6259,164 @@ function chatRowOf(el: HTMLElement, node: Element): Element {
   return row;
 }
 
+// ─── FORK 2026-11-15: the text at the pane's middle survives a turn of the phone ──────────────
+// (chat-viewport.ts, THE MIDDLE ANCHOR). Measured while the pane is settled, restored by the
+// pane's ResizeObserver before paint, frozen while a resize settles.
+
+/** The smallest blocks that hold text: the middle anchor prefers one of these to its whole row. */
+const MIDDLE_BLOCKS = "p, li, pre, h1, h2, h3, h4, h5, h6, tr, blockquote";
+
+let middleAnchor: {
+  tabId: string;
+  node: Element;
+  fraction: number;
+  unit: string | null;
+  rowFraction: number;
+} | null = null;
+/** Until when the pane is settling after a resize (performance.now()); no measuring meanwhile. */
+let paneSettlingUntil = 0;
+/** When the current settle began; a scroll with no input after it is the layout's. */
+let paneSettleStartedAt = 0;
+/** His last wheel, touch, pointer or key input on the pane (performance.now()). */
+let lastScrollInputAt = 0;
+let middleCaptureFrame = 0;
+let middleSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function paneSettling(): boolean {
+  return performance.now() < paneSettlingUntil;
+}
+
+/** A resize began or goes on: freeze the middle anchor until the pane is still again. */
+function extendPaneSettle(el: HTMLElement): void {
+  const now = performance.now();
+  if (now >= paneSettlingUntil) {
+    paneSettleStartedAt = now;
+  }
+  paneSettlingUntil = now + PANE_SETTLE_MS;
+  if (middleSettleTimer !== null) {
+    clearTimeout(middleSettleTimer);
+  }
+  middleSettleTimer = setTimeout(() => {
+    middleSettleTimer = null;
+    scheduleMiddleCapture(el);
+  }, PANE_SETTLE_MS + 50);
+}
+
+/**
+ * Measure the block under the pane's middle. Reading only: following keeps the bottom pinned, and
+ * a row still being looked for (pendingViewport) is not on screen yet.
+ */
+function captureMiddleAnchor(el: HTMLElement): void {
+  if (!activeTabId || chatFollow || viewportSearchActive()) {
+    middleAnchor = null;
+    return;
+  }
+  const paneHeight = el.clientHeight;
+  if (paneHeight <= 0) {
+    return; // hidden: keep what was measured while it showed
+  }
+  const paneTop = el.getBoundingClientRect().top;
+  const mid = paneTop + paneHeight / 2;
+  // Rows stack top to bottom, so their bottoms only grow: halve to the first one past the middle
+  // instead of measuring hundreds on every scroll frame.
+  const rows = el.children;
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (rows[m].getBoundingClientRect().bottom > mid) {
+      hi = m;
+    } else {
+      lo = m + 1;
+    }
+  }
+  let row: Element | null = null;
+  let rowRect: DOMRect | null = null;
+  for (let i = lo; i < rows.length; i++) {
+    const r = rows[i].getBoundingClientRect();
+    if (r.height > 0 && rowShown(rows[i])) {
+      row = rows[i];
+      rowRect = r;
+      break;
+    }
+  }
+  if (!row || !rowRect) {
+    middleAnchor = null;
+    return;
+  }
+  let node: Element = row;
+  let rect: DOMRect = rowRect;
+  for (const b of Array.from(row.querySelectorAll(MIDDLE_BLOCKS))) {
+    const r = b.getBoundingClientRect();
+    if (r.height > 0 && r.top <= mid && r.bottom > mid && r.height < rect.height && rowShown(b)) {
+      node = b;
+      rect = r;
+    }
+  }
+  const at = (r: DOMRect) =>
+    middleFraction({ paneTop, paneHeight, nodeTop: r.top, nodeHeight: r.height });
+  middleAnchor = {
+    tabId: activeTabId,
+    node,
+    fraction: at(rect),
+    unit: unitKeyOf(row),
+    rowFraction: at(rowRect),
+  };
+}
+
+/** Measure the middle at the next frame, at most once per frame, and never while settling. */
+function scheduleMiddleCapture(el: HTMLElement): void {
+  if (middleCaptureFrame || typeof requestAnimationFrame === "undefined") {
+    return;
+  }
+  middleCaptureFrame = requestAnimationFrame(() => {
+    middleCaptureFrame = 0;
+    if (!paneSettling()) {
+      captureMiddleAnchor(el);
+    }
+  });
+}
+
+/**
+ * Put the measured point back at the pane's middle. Its block when still on the pane, else its row
+ * (a repaint replaced the block). False when neither is there or the anchor is another tab's.
+ */
+function restoreMiddleAnchor(el: HTMLElement): boolean {
+  const a = middleAnchor;
+  if (!a || a.tabId !== activeTabId || el.clientHeight <= 0) {
+    return false;
+  }
+  let node: Element | null = a.node.isConnected && el.contains(a.node) ? a.node : null;
+  let fraction = a.fraction;
+  if (!node || node.getBoundingClientRect().height <= 0) {
+    node = a.unit ? unitElement(el, a.unit) : null;
+    fraction = a.rowFraction;
+  }
+  const r = node?.getBoundingClientRect();
+  if (!r || r.height <= 0) {
+    return false;
+  }
+  setChatScrollTop(
+    el,
+    scrollTopForMiddle({
+      scrollTop: el.scrollTop,
+      paneTop: el.getBoundingClientRect().top,
+      paneHeight: el.clientHeight,
+      nodeTop: r.top,
+      nodeHeight: r.height,
+      fraction,
+    }),
+  );
+  return true;
+}
+
 /** Late growth of `elem` by `growth` px (an image that loaded, a frame that reported its height). */
 function applyLateGrowth(el: HTMLElement, elem: Element, growth: number): void {
   const following = chatFollow || viewportSearchActive();
+  // A resize still settling: the middle anchor holds the view, not the first row.
+  if (!following && paneSettling() && restoreMiddleAnchor(el)) {
+    return;
+  }
   if (!following && restoreViewportAnchor(el, heldAnchor())) {
     return;
   }
@@ -6216,12 +6456,54 @@ function bindChatFollowListener(el: HTMLElement): void {
   // attach strip appearing) leaves a followed view short of the last line until the next paint.
   // Following, or showing the latest while a remembered row is looked for: pin again. Reading: a
   // pane that changes size at its bottom edge moves nothing he is reading.
+  // FORK 2026-11-15 (the architect: turning the phone threw the chat back) — reading, a pane that changes
+  // WIDTH re-wraps every row and slid the view back; the text at its middle is put back there
+  // (chat-viewport.ts paneResizeStep, the middle anchor). Runs before paint, through
+  // setChatScrollTop, so the echo is not taken for a gesture and pages nothing older in.
   if (typeof ResizeObserver !== "undefined") {
+    let size: { w: number; h: number } | null = null;
     new ResizeObserver(() => {
-      if (chatFollow || viewportSearchActive()) {
+      const prev = size;
+      size = { w: el.clientWidth, h: el.clientHeight };
+      const settles = paneResizeSettles({ prev, next: size, settling: paneSettling() });
+      const step = paneResizeStep({
+        follow: chatFollow || viewportSearchActive(),
+        prev,
+        next: size,
+        settling: paneSettling(),
+      });
+      if (settles) {
+        extendPaneSettle(el);
+      }
+      if (step === "pin") {
         setChatScrollTop(el, el.scrollHeight);
+      } else if (step === "none") {
+        // Composer or keyboard: the top stays; the middle moved with the bottom edge.
+        scheduleMiddleCapture(el);
+      } else if (restoreMiddleAnchor(el)) {
+        // The held row's offset (heldViewport) means nothing at a new width: the middle holds now.
+        heldViewport = null;
       }
     }).observe(el);
+  }
+  // FORK 2026-11-15 — the window's width changes before the pane's layout catches up: its resize
+  // event comes ahead of the clamped scroll of the in-between layout, so the settle starts here.
+  // The keyboard changes only the height and starts nothing.
+  if (typeof window !== "undefined") {
+    let winW = window.innerWidth;
+    window.addEventListener("resize", () => {
+      if (window.innerWidth !== winW) {
+        winW = window.innerWidth;
+        extendPaneSettle(el);
+      }
+    });
+  }
+  // His own input on the pane: a scroll after one of these is his, even while a resize settles.
+  const noteScrollInput = () => {
+    lastScrollInputAt = performance.now();
+  };
+  for (const type of ["wheel", "touchmove", "pointerdown", "keydown"]) {
+    el.addEventListener(type, noteScrollInput, { passive: true });
   }
   // FORK 2026-10-02 — a markdown image carries no dimensions, so it lays out at zero height and
   // grows when it loads, after the pin: the OrbisVision tab's screenshots left the view short of
@@ -6246,6 +6528,8 @@ function bindChatFollowListener(el: HTMLElement): void {
   el.addEventListener(
     "scroll",
     () => {
+      // Our own writes too: the middle anchor follows wherever the pane now stands.
+      scheduleMiddleCapture(el);
       if (el.scrollTop <= OLDER_PAGE_TRIGGER_PX) {
         lastHistoryGesture = { at: Date.now(), tabId: activeTabId, kind: "scroll" };
         scheduleUiSnapshotDump(el);
@@ -6256,6 +6540,27 @@ function bindChatFollowListener(el: HTMLElement): void {
         // one echo: the record is consumed.
         lastProgrammatic = null;
         return;
+      }
+      if (
+        scrollIsResizeLayout({
+          now: performance.now(),
+          settleStartedAt: paneSettleStartedAt,
+          settlingUntil: paneSettlingUntil,
+          lastInputAt: lastScrollInputAt,
+        })
+      ) {
+        // FORK 2026-11-15 — an in-between layout of a turn clamped scrollTop. Not a gesture: the
+        // latch stays, nothing older is paged in, and the view is put back where it belongs.
+        if (chatFollow || viewportSearchActive()) {
+          setChatScrollTop(el, el.scrollHeight);
+        } else {
+          restoreMiddleAnchor(el);
+        }
+        return;
+      }
+      if (paneSettling()) {
+        // His own gesture during a settle: the middle anchor follows him from here.
+        paneSettlingUntil = 0;
       }
       if (viewportSearchActive()) {
         // Showing the latest while a remembered row is looked for: an event that lands at the
@@ -7552,7 +7857,12 @@ const SESSION_CHAIN_SVG =
   "</svg>";
 
 function loadTabChains(): TabChain[] {
-  return parseChains(getChoice(LOOP_CHAINS_CHOICE, LOOP_CHAINS_DEFAULT));
+  // FORK 2026-11-14: a pair whose tabs were reopened finds its new tabs by session key.
+  return healChains(
+    parseChains(getChoice(LOOP_CHAINS_CHOICE, LOOP_CHAINS_DEFAULT)),
+    tabs,
+    sessionKeyMatches,
+  );
 }
 
 function saveTabChains(chains: TabChain[]): void {
@@ -8618,6 +8928,9 @@ type ActiveRunInfo = {
   redacted?: boolean;
   outputTokens?: number;
   numTurns?: number;
+  // FORK 2026-11-13: the turn's cache traffic, from the final effort event (EegSample.cacheReadTokens).
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   pendingThinkLevel?: { requested?: string; running?: string };
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
@@ -10025,7 +10338,65 @@ function inUseTabIcons(exceptTabId: string): Set<string> {
     const e = leadingEmoji(t.title);
     if (e) used.add(e);
   }
+  // FORK 2026-11-03 — closed (detached) chats keep their saved name on the server; their icons
+  // count too, so reopening one never shows a duplicate.
+  const ownKey = tabs.find((t) => t.id === exceptTabId)?.sessionKey;
+  for (const raw of sessions) {
+    const sess = raw as { key?: string; cookiePhrase?: string; cookiePhraseUserSet?: boolean };
+    if (!sess?.cookiePhraseUserSet || !sess.cookiePhrase) continue;
+    if (ownKey && sess.key && sessionKeyMatches(sess.key, ownKey)) continue;
+    if (tabs.some((t) => t.sessionKey && sess.key && sessionKeyMatches(sess.key, t.sessionKey)))
+      continue;
+    const e = leadingEmoji(sess.cookiePhrase);
+    if (e) used.add(e);
+  }
   return used;
+}
+
+// FORK 2026-11-03 — split a tab name into its icon and its words. Every tab shows an icon; a name
+// without one borrows the auto-name sentinel for display until it is named.
+function splitTabTitle(title: string): { icon: string; words: string } {
+  const t = (title ?? "").trim();
+  const icon = leadingEmoji(t);
+  return icon ? { icon, words: t.slice(icon.length).trim() } : { icon: AUTO_NAME_ICON, words: t };
+}
+
+// FORK 2026-11-03 — locking a name re-picks its icon from the words: one model call for a fitting
+// emoji, then the usual uniqueness walk over every icon in use (open tabs and closed chats).
+async function refineTabIcon(tab: Tab): Promise<void> {
+  if (!tab.sessionKey || tab.id === "tab-main") return;
+  const { icon: current, words } = splitTabTitle(tab.title);
+  if (!words) return;
+  const used = [...inUseTabIcons(tab.id)];
+  const prompt = [
+    `Pick ONE emoji that best represents this chat tab name: "${words}".`,
+    used.length ? `It must NOT be any of these, already used by other tabs: ${used.join(" ")}` : "",
+    `Reply with ONLY the emoji, nothing else.`,
+  ]
+    .filter((l) => l !== "")
+    .join("\n");
+  const raw = await spawnTitleViaBridge(prompt, tab.id, tab.sessionKey);
+  const preferred = leadingEmoji((raw ?? "").trim());
+  const icon = pickUniqueTabIcon(preferred, words, tab.id);
+  const latest = splitTabTitle(tab.title);
+  // The name may have changed while the model answered; only swap the icon of the same words.
+  if (latest.words !== words || icon === current) return;
+  tab.title = `${icon} ${words}`;
+  console.log("[tabs] icon refined:", tab.title);
+  saveTabs();
+  persistTabNameToServer(tab);
+  renderTabs();
+  updateSessionsPanel();
+}
+
+// FORK 2026-11-03 — lock (frozen, never auto-renamed) or unlock (auto names keep refreshing).
+function setTabNameLock(tab: Tab, lock: boolean): void {
+  tab.titleLocked = true;
+  tab.titleKind = lock ? "manual" : "auto";
+  saveTabs();
+  persistTabNameToServer(tab);
+  renderTabs();
+  if (lock) void refineTabIcon(tab);
 }
 
 // Keyword → emoji map (all values exist in EMOJI_CATALOG). Used when the LLM returns no emoji, to
@@ -10217,7 +10588,42 @@ function clearConnectWatchdogFor(sock: WebSocket | null): void {
   }
 }
 
+/**
+ * FORK 2026-11-12 — inside the phone app the gateway socket sleeps while the app is off screen.
+ *
+ * The app pauses this page in the background (battery), but the socket stayed open: every row a long turn
+ * streamed was held for the sleeping page, and on reopening they all played back in a burst before the answer
+ * (and its buzz) showed. Now the page closes the socket as it is hidden and dials again when it is shown. A
+ * reconnect over a loaded page is the existing catch-up (loadChat {catchUp}): one request for the rows after the
+ * last one held. Nothing streams to a phone in a pocket, and the buzz and the spoken line at the end of the
+ * turn come from the Pi (scripts/phone-door/phone-badge.mjs).
+ */
+let socketAsleep = false;
+const inPhoneApp = (): boolean =>
+  typeof (window as Window & { JarvisNative?: { isApp?: unknown } }).JarvisNative?.isApp ===
+  "function";
+document.addEventListener("visibilitychange", () => {
+  if (!inPhoneApp()) return;
+  if (document.visibilityState === "hidden") {
+    socketAsleep = true;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.close(1000, "app off screen");
+      } catch {
+        /* already closing; its close handler runs either way */
+      }
+    }
+  } else {
+    socketAsleep = false;
+    if (!connected) gwConnect();
+  }
+});
+
 function gwConnect() {
+  // Asleep with the app off screen: the reconnect ladder waits for the page to be shown again.
+  if (socketAsleep && document.visibilityState === "hidden") {
+    return;
+  }
   // Idempotent: the reconnect ladder is now driven from three places (the close
   // handler's timer, returning to the tab, and the network coming back), and two of
   // them can fire in the same tick. Without this guard that leaks a second socket
@@ -10493,15 +10899,56 @@ const amyUi = createAmygdalaUi({
     return p === null ? null : exchangeKey(p);
   },
   // The exchange a Rewind would take, read now. A reply in flight has none: the gateway refuses to rewind under it too.
+  // FORK 2026-11-12: a leftover stream cursor after a finished error (Anthropic safeguard) is not a reply in flight.
   newestExchange: () => {
-    if (sending || streamRunId !== null || streamMsgUid !== null) return null;
+    if (
+      rewindBlockedByLiveReply({
+        sendingNow: sendingNow(),
+        lastDeltaAt,
+        streamRun: streamRunId === null ? undefined : activeRuns.get(streamRunId),
+        now: Date.now(),
+      })
+    )
+      return null;
     const ex = newestExchange(pageView(), exchangeDeps);
     return ex ? { key: ex.key, prompt: ex.prompt, at: ex.at } : null;
   },
-  exchangeAt: (key) => {
-    if (sending || streamRunId !== null || streamMsgUid !== null) return null;
-    const ex = exchangeByKey(pageView(), key, exchangeDeps);
+  // FORK 2026-11-13: `at` is the time of the prompt row meant. Two prompts with the same words share a key, and
+  // without the time the older turn's Rewind acted on the newest of them.
+  exchangeAt: (key, at) => {
+    if (
+      rewindBlockedByLiveReply({
+        sendingNow: sendingNow(),
+        lastDeltaAt,
+        streamRun: streamRunId === null ? undefined : activeRuns.get(streamRunId),
+        now: Date.now(),
+      })
+    )
+      return null;
+    const ex = exchangeByKey(pageView(), key, exchangeDeps, at);
     return ex ? { key: ex.key, prompt: ex.prompt, at: ex.at, later: ex.later } : null;
+  },
+  // FORK 2026-11-13 (`/rewind n`): the n-th exchange from the end of the page, with the ones after it.
+  nthNewestExchange: (n) => {
+    if (
+      rewindBlockedByLiveReply({
+        sendingNow: sendingNow(),
+        lastDeltaAt,
+        streamRun: streamRunId === null ? undefined : activeRuns.get(streamRunId),
+        now: Date.now(),
+      })
+    )
+      return null;
+    const ex = nthNewestExchange(pageView(), n, exchangeDeps);
+    return ex ? { key: ex.key, prompt: ex.prompt, at: ex.at, later: ex.later } : null;
+  },
+  // FORK 2026-11-13: after the gateway cut, the exchange to hide from. It starts before the one pointed at when one
+  // turn of the model shows as two prompt rows (rewound-exchanges.ts exchangeFromCut).
+  exchangeFromCut: (ex, cutAt) => {
+    const view = pageView();
+    const target = exchangeByKey(view, ex.key, exchangeDeps, ex.at);
+    const from = target ? exchangeFromCut(view, target, cutAt, exchangeDeps) : null;
+    return from ? { key: from.key, prompt: from.prompt, at: from.at, later: from.later } : null;
   },
   composerDraft: () =>
     (document.getElementById("chat-textarea") as HTMLTextAreaElement | null)?.value ?? "",
@@ -10534,6 +10981,8 @@ const amyUi = createAmygdalaUi({
   modelChip: (id) => modelIcon(id, providerOf(id)),
   pinnedModel: () => (sessionKey ? modelPinBySession.get(sessionKey) : undefined),
   sendOneTurn: (text, model) => sendWithModelForOneTurn(text, model),
+  // FORK 2026-10-29: the Allow button under a held reply sends "allow <code>" as the owner's own prompt.
+  sendPrompt: (text) => sendFromComposer(text),
 });
 document.addEventListener("click", (ev) => {
   const el = (ev.target as HTMLElement | null)?.closest("[data-amy-act]");
@@ -10553,6 +11002,69 @@ const askUi = createAskSessionUi({
   toolDetail: (name, input) => toolExpandedDetail(askToolName(name), input),
   isExpanded: (tid) => expandedTools.has(tid),
 });
+// FORK 2026-11-14 — the owner asked to see the work hidden behind a long job's row. A long job's row opens into its
+// JOB TRAIL (job-trail.ts): the work of the agents behind it, from their first step, live while the job runs.
+// Read from tinker-prod-ui `/api/longjob/<id>/trail`; its tool rows open through `expandedTools` like the feed's.
+const JOB_TRAIL_POLL_MS = 2500;
+const jobTrailUi = createJobTrailUi({
+  fetchTrail: async (id, cursor) => {
+    const res = await fetch(
+      `/api/longjob/${encodeURIComponent(id)}/trail${cursor ? `?c=${encodeURIComponent(cursor)}` : ""}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) {
+      throw new Error(res.status === 404 ? "HTTP 404 no such job" : `HTTP ${res.status}`);
+    }
+    return (await res.json()) as TrailWire;
+  },
+  repaint: () => updateChat(true),
+  storage: typeof localStorage !== "undefined" ? localStorage : null,
+  esc,
+  md,
+  toolSummary: (name, input) => toolSummary(askToolName(name), input),
+  toolDetail: (name, input) => toolExpandedDetail(askToolName(name), input),
+  isExpanded: (tid) => expandedTools.has(tid),
+  modelIcon,
+  modelLabel: (m) => detailedModelLabel(m) || modelName(m),
+  dotColor: (model, provider) => resolveEegGlowColor({ model, provider }),
+});
+/** The open trails of the chat on screen, as chat units: live ones at the end, finished ones by their end time. */
+function jobTrailUnits(): Array<{ key: string; html: string; at: number | null }> {
+  if (!sessionKey) {
+    return [];
+  }
+  return jobTrailUi
+    .trailsFor((s) => sessionKeyMatches(s))
+    .map((t) => ({
+      key: `jobtrail:${t.id}`,
+      html: jobTrailUi.html(t),
+      at: trailIsLive(t) ? null : t.endedAt,
+    }));
+}
+/** A click on a job's row: open its trail from the start, or close it. */
+function toggleJobTrail(id: string): void {
+  const job = longjobCensus.jobs.find((j) => j?.id === id);
+  jobTrailUi.toggle({
+    id,
+    label: job?.label,
+    session: job?.session ?? sessionKey,
+    startedAt: job?.startedAt ?? null,
+  });
+  updateChat(true);
+}
+const jobTrailWindow =
+  typeof window !== "undefined"
+    ? (window as Window & { __tinkerJobTrailWired?: boolean })
+    : undefined;
+if (jobTrailWindow && !jobTrailWindow.__tinkerJobTrailWired) {
+  jobTrailWindow.__tinkerJobTrailWired = true;
+  setInterval(() => {
+    if (document.visibilityState !== "hidden") {
+      jobTrailUi.poll();
+    }
+  }, JOB_TRAIL_POLL_MS);
+  document.addEventListener("visibilitychange", () => jobTrailUi.poll());
+}
 /** The ask cards of a finished run's folded Reasoning group, drawn below it so the card stays in the feed. */
 function askCardsInFold(
   rows: readonly unknown[],
@@ -11125,6 +11637,7 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
         // FORK 2026-09-08 — what the last history reconcile did to this page (paper model), so a
         // snapshot reader can tell "written once" from "gap-filled" without the browser console.
         clientMeta: {
+          htmlCards: htmlCardCensus(messagesEl),
           historyReconcile: lastHistoryReconcile,
           historyPaging: {
             window: tabWindowOf(activeTabId ? tabStates.get(activeTabId) : undefined, sessionKey),
@@ -11236,6 +11749,9 @@ function req<T = unknown>(
         reject(err);
       },
     });
+    if (method === "chat.send") {
+      markNewTabUsed((params as { sessionKey?: unknown } | undefined)?.sessionKey);
+    }
     ws.send(JSON.stringify({ type: "req", id, method, params }));
   });
 }
@@ -11350,6 +11866,28 @@ function firstTextBlock(m: Record<string, unknown> | undefined): { text?: string
   return Array.isArray(c)
     ? (c as Array<{ type?: unknown; text?: string }>).find((b) => b?.type === "text")
     : undefined;
+}
+
+/**
+ * FORK 2026-11-04 (cut-card.ts): the run's text segment closed while its bubble was inside an open
+ * ```html-render card (a thought or a stop check came in between). The rest of the card, up to its
+ * closing fence, grows that bubble instead of opening a new one. Returns how many characters of
+ * `buffer` from `start` it took; only a bubble that ends exactly at `start` is grown.
+ */
+function carryIntoCutCard(runId: string, buffer: string, start: number, now: number): number {
+  const prev = runTextBubbles(messages as Record<string, unknown>[], runId)
+    .filter((m) => m._temporary === true)
+    .at(-1);
+  const blk = firstTextBlock(prev);
+  if (!prev || typeof blk?.text !== "string" || bubbleSegStart(prev) + blk.text.length !== start) {
+    return 0;
+  }
+  const n = cardCarryLength(blk.text, buffer.slice(start));
+  if (n > 0) {
+    blk.text += buffer.slice(start, start + n);
+    prev._lastWriteAt = now;
+  }
+  return n;
 }
 
 /**
@@ -11572,7 +12110,21 @@ function postPhoneAway(chats: string[], mode: "away" | "beat" | "clear"): void {
     body: JSON.stringify({ chats, away: mode !== "clear", beat: mode === "beat" }),
   }).catch((err) => console.error("[phone-buzz] handoff failed", err));
 }
+// FORK 2026-11-12: every prompt tells Zen Mail which device it was typed on. Zen Mail reads a laptop prompt as
+// "at the office" and a phone prompt as "laid back": it tilts its list by that and holds phone alerts that do
+// not fit the moment (apps/zen-mail/context.py). One small POST through the /zen/ proxy; a failure only logs.
+function noteDevice(): void {
+  const phone =
+    inPhoneApp() || (window.matchMedia?.("(pointer: coarse)").matches && window.innerWidth < 900);
+  fetch("/zen/api/presence", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device: phone ? "phone" : "laptop" }),
+    keepalive: true,
+  }).catch((err) => console.error("[zen-presence] not recorded", err));
+}
 function notePhonePrompt(sessionKey: unknown): void {
+  noteDevice();
   const native = (window as Window & { JarvisNative?: { vibrate?: (ms: number) => void } })
     .JarvisNative;
   const tail = chatTail(sessionKey);
@@ -11586,9 +12138,15 @@ function buzzIfPhonePrompted(sessionKey: unknown): void {
   postPhoneAway([tail], "clear");
   if (document.visibilityState === "hidden") return; // the phone's native path buzzes then
   try {
-    (
-      window as Window & { JarvisNative?: { vibrate?: (ms: number) => void } }
-    ).JarvisNative?.vibrate?.(180);
+    // 2026-11-12: the buzz verb with no pattern = the owner's own choice, kept on the phone (app settings);
+    // an app from before that verb keeps the single buzz.
+    const native = (
+      window as Window & {
+        JarvisNative?: { vibrate?: (ms: number) => void; buzz?: (pattern?: number[]) => void };
+      }
+    ).JarvisNative;
+    if (native?.buzz) native.buzz();
+    else native?.vibrate?.(180);
   } catch (err) {
     console.error("[phone-buzz] vibrate failed", err);
   }
@@ -11638,6 +12196,7 @@ function onEvent(evt: unknown) {
   }
   if (evt.event === "chat") {
     const p = evt.payload;
+    markNewTabUsed(p?.sessionKey);
     // FORK 2026-08-26 — HOISTED from the viewed-session gate below, which is where these two used
     // to be computed. The session-scoped block directly beneath now needs the same answer, and
     // deriving "is this the tab on screen" a second way is the exact failure design principle #18
@@ -12125,7 +12684,10 @@ function onEvent(evt: unknown) {
           // updated lastDeltaLen — where the previous bubble ended in the cumulative stream. On a
           // RESET the cumulative stream itself restarted, so the whole of it is new content and the
           // segment begins at 0 (a stale, larger offset would slice an EMPTY bubble).
-          const start = bufferReset ? 0 : segmentStart;
+          let start = bufferReset ? 0 : segmentStart;
+          if (!bufferReset && deltaRunId) {
+            start += carryIntoCutCard(deltaRunId, deltaText, start, nowDelta);
+          }
           if (deltaText.slice(start).trim()) {
             const watchedFrom = deltaRunId ? runWatchedFrom(deltaRunId) : undefined;
             streamMsgUid = pushAndUid({
@@ -12563,11 +13125,15 @@ function onEvent(evt: unknown) {
       // the live stream — a final for run B must not reset run A's in-flight
       // delta cursors mid-turn. streamRunId===null → nothing streaming → the
       // reset is a safe no-op default (e.g. tool-only turns with no deltas).
+      // FORK 2026-11-12: a finished error is a terminal too. Leaving streamRunId set so a
+      // recoverable retry could resume the same cursor also greyed Rewind with "Wait for the
+      // reply to finish" after a provider safeguard, which never retries. A retry mints a new
+      // runId on its first delta (the self-heal below) and does not need this leftover.
       if (streamRunId === null || streamRunId === p.runId) {
         streamMsgUid = null;
         lastDeltaLen = 0;
         lastDeltaAt = 0;
-        streamRunId = p.state !== "error" ? null : streamRunId;
+        streamRunId = null;
       }
       // FORK: Chat final/error is authoritative — if the lifecycle "end" agent event
       // was missed (dropped frame, JS error, session key mismatch), activeRuns would
@@ -12581,7 +13147,9 @@ function onEvent(evt: unknown) {
       // for 10 min after the reply was delivered). The watchdog was deleted
       // 2026-05-14 precisely so the UI would trust lifecycle/final events; this
       // makes `final` actually close the run instead of leaking it.
-      if (p.state === "final" || p.state === "aborted") {
+      // FORK 2026-11-12: error is the same terminator. A provider safeguard is state:"error"
+      // and never retried; leaving the run in the map kept Rewind grey after the turn was over.
+      if (p.state === "final" || p.state === "aborted" || p.state === "error") {
         const finalRunId = p.runId;
         const pend = pendingRunDeletes.get(finalRunId);
         if (pend) {
@@ -13072,6 +13640,8 @@ function onEvent(evt: unknown) {
       if (typeof d.redacted === "boolean") r.redacted = d.redacted;
       if (d.phase === "final") {
         if (typeof d.output_tokens === "number") r.outputTokens = d.output_tokens;
+        if (typeof d.cache_read_tokens === "number") r.cacheReadTokens = d.cache_read_tokens;
+        if (typeof d.cache_write_tokens === "number") r.cacheWriteTokens = d.cache_write_tokens;
         if (typeof d.num_turns === "number") r.numTurns = d.num_turns;
       }
       // FORK 2026-06-19: do NOT resurrect a run that already ended. When ~30
@@ -13117,6 +13687,9 @@ function onEvent(evt: unknown) {
           // (panels/call-timeline.ts). That is where the input term should come from when the
           // pricing question above is answered. Left unwired on purpose.
           outputTokens: r.outputTokens,
+          // FORK 2026-11-13: shown in the hover text, not priced (EegSample.cacheReadTokens).
+          cacheReadTokens: r.cacheReadTokens,
+          cacheWriteTokens: r.cacheWriteTokens,
           startedAt: r.startedAt,
           // FORK 2026-06-19: stamp endedAt on the FINAL effort event so the subagent
           // branch merges back into the trunk at its real finish time (bible §5.8h).
@@ -14339,10 +14912,14 @@ function onEvent(evt: unknown) {
           if (!budgetUsageData.claude.limits) {
             budgetUsageData.claude.limits = {} as unknown;
           }
-          budgetUsageData.claude.limits.five_hour = {
-            utilization: rl.h5,
-            resets_at: budgetUsageData.claude.limits.five_hour?.resets_at ?? null,
-          };
+          // FORK 2026-11-03: the header store writes h5 = 0 when no 5h header came back; on an
+          // account with no 5h window that would recreate the 0% the panel now leaves out.
+          if (budgetUsageData.claude.limits.five_hour || rl.h5 > 0) {
+            budgetUsageData.claude.limits.five_hour = {
+              utilization: rl.h5,
+              resets_at: budgetUsageData.claude.limits.five_hour?.resets_at ?? null,
+            };
+          }
           budgetUsageData.claude.limits.seven_day = {
             utilization: rl.d7,
             resets_at: budgetUsageData.claude.limits.seven_day?.resets_at ?? null,
@@ -14426,7 +15003,7 @@ function onEvent(evt: unknown) {
                   );
                   if (userMsgs.length > 0) {
                     promptIndex = viewedUserRowOffset() + userMsgs.length - 1;
-                    const pt = (msgText(userMsgs[userMsgs.length - 1]) || "").trim();
+                    const pt = (rowFirstText(userMsgs[userMsgs.length - 1]) || "").trim();
                     promptText = pt.length > 280 ? `${pt.slice(0, 280)}…` : pt;
                   }
                 }
@@ -14915,6 +15492,27 @@ let historyLoadSeq = 0;
 let gatewayConnectedAt = 0;
 let historyAnsweredAt = 0;
 
+/**
+ * FORK 2026-10-29 — keys the "+" button minted on this page that no prompt has used yet. The key
+ * was made in the browser a moment ago, so the gateway holds nothing under it: a history read only
+ * drew "Loading chat history", "Loading earlier turns" and an amber "history unavailable" strip
+ * over a chat that is new. Those reads are skipped until the first chat.send for the key (req) or
+ * the first event for it from another device (onEvent), after which it reads like any tab.
+ */
+const unusedNewTabKeys = new Set<string>();
+function isUnusedNewTab(key: string): boolean {
+  for (const k of unusedNewTabKeys) {
+    if (sessionKeyMatches(k, key)) return true;
+  }
+  return false;
+}
+function markNewTabUsed(key: unknown): void {
+  if (typeof key !== "string" || unusedNewTabKeys.size === 0) return;
+  for (const k of unusedNewTabKeys) {
+    if (sessionKeyMatches(k, key)) unusedNewTabKeys.delete(k);
+  }
+}
+
 /** Register a read; the returned function ends it. A read under the delay never shows. */
 function beginHistoryLoad(key: string, kind: HistoryLoadKind): () => void {
   const id = ++historyLoadSeq;
@@ -15027,7 +15625,10 @@ window.addEventListener("resize", () => {
  * screen through the restart, and the reload lands on a gateway that has just served that history.
  */
 function gatewayAnswersHistory(): boolean {
-  return connected && (!sessionKey || historyAnsweredAt >= gatewayConnectedAt);
+  return (
+    connected &&
+    (!sessionKey || isUnusedNewTab(sessionKey) || historyAnsweredAt >= gatewayConnectedAt)
+  );
 }
 
 type HistoryLoadState =
@@ -15400,7 +16001,7 @@ function mergeHistoryIntoSavedPage(ts: TabState, key: string, incoming: unknown[
  * actually destroy still vetoes a forced call — see the gate.
  */
 async function loadChat(opts?: { force?: boolean; catchUp?: boolean }) {
-  if (!sessionKey) {
+  if (!sessionKey || isUnusedNewTab(sessionKey)) {
     return;
   }
   const keyAtStart = sessionKey;
@@ -15899,7 +16500,7 @@ async function loadResetArchivePage(): Promise<boolean> {
   const tabId = activeTabId;
   const key = sessionKey;
   const st = tabId ? tabStates.get(tabId) : undefined;
-  if (!tabId || !key || !st || resetArchiveInFlightFor === tabId) {
+  if (!tabId || !key || !st || resetArchiveInFlightFor === tabId || isUnusedNewTab(key)) {
     return false;
   }
   const paging = resetPagingOf(st, key);
@@ -16362,6 +16963,33 @@ function backfillEegFromAnatomy(eegSk: string): void {
           // the authoritative server-side anatomy carries MORE calls than the local store;
           // keep local only when it is already as rich or richer (a live in-progress run).
           const store = getEegStore(eegSk);
+          // FORK 2026-11-12 — a sample this browser kept from before the server sent `effort` holds
+          // no level, and the older-only path below never rewrites it. Give it the recorded one.
+          // FORK 2026-11-13: the same for the turn's token counts, which the server did not send either.
+          let effortFilled = 0;
+          for (const ev of events) {
+            const prior = typeof ev?.runId === "string" ? store.get(ev.runId) : undefined;
+            if (!prior) continue;
+            const tokens = eegTokensFromAnatomy(ev);
+            const fill: Partial<EegSample> = {
+              ...(!prior.chosenLevel && typeof ev.effort === "string" && ev.effort
+                ? { chosenLevel: ev.effort }
+                : {}),
+              ...(prior.outputTokens === undefined && tokens.outputTokens !== undefined
+                ? { outputTokens: tokens.outputTokens }
+                : {}),
+              ...(prior.cacheReadTokens === undefined && tokens.cacheReadTokens !== undefined
+                ? { cacheReadTokens: tokens.cacheReadTokens }
+                : {}),
+              ...(prior.cacheWriteTokens === undefined && tokens.cacheWriteTokens !== undefined
+                ? { cacheWriteTokens: tokens.cacheWriteTokens }
+                : {}),
+            };
+            if (Object.keys(fill).length > 0) {
+              store.record({ ...prior, ...fill });
+              effortFilled++;
+            }
+          }
           // FORK 2026-08-17:
           // this guard used to compare the store's TOTAL sample count against the payload's
           // event count — two different populations. The store also holds live per-call and
@@ -16413,6 +17041,13 @@ function backfillEegFromAnatomy(eegSk: string): void {
               evBranches,
               busyNow,
             });
+            if (effortFilled > 0) {
+              saveEegStore(eegSk);
+              if (sessionKey === eegSk) {
+                renderEegPanel();
+                updateChat(true);
+              }
+            }
             return;
           }
           if (!olderOnly) {
@@ -16434,15 +17069,30 @@ function backfillEegFromAnatomy(eegSk: string): void {
               : typeof ev.timestamp === "number"
                 ? ev.timestamp
                 : 0;
-          const mainTs = source
-            .filter(
+          // FORK 2026-11-13 — bounded per TURN, not by the tab's whole span: a fan-out of another tab
+          // that ran while this one sat idle for hours fell inside first-row..last-row+1h and drew here
+          // (4 of 11 strands on the owner's tab that day). See eegOwnTurnWindows. Built from every row
+          // fetched, so the older-only path below still knows the turns it is not re-adding.
+          const SUB_WINDOW_SLACK_MS = 60 * 60 * 1000; // a fan-out's later units, up to 1h after its turn
+          const ownTurnWindows = eegOwnTurnWindows(
+            events
+              .filter(
+                (ev) =>
+                  !(typeof ev?.sessionKey === "string" && ev.sessionKey.includes(":subagent:")) &&
+                  tsOf(ev) > 0,
+              )
+              .map((ev) => ({
+                ts: tsOf(ev),
+                durMs: typeof ev.durationMs === "number" ? Math.max(0, ev.durationMs) : 0,
+              })),
+            SUB_WINDOW_SLACK_MS,
+          );
+          // FORK 2026-11-13 — the empty first row of a turn a restart cut in two (eegSplitTurnGhosts).
+          const splitGhosts = eegSplitTurnGhosts(
+            events.filter(
               (ev) => !(typeof ev?.sessionKey === "string" && ev.sessionKey.includes(":subagent:")),
-            )
-            .map(tsOf)
-            .filter((t) => t > 0);
-          const SUB_WINDOW_SLACK_MS = 60 * 60 * 1000; // 1h past the last main turn
-          const minMainTs = mainTs.length ? Math.min(...mainTs) : 0;
-          const maxMainTs = mainTs.length ? Math.max(...mainTs) + SUB_WINDOW_SLACK_MS : Infinity;
+            ),
+          );
           // FORK 2026-06-22 (the architect): carry the prompt text + index onto restored boundaries
           // (anatomy events include `userMessage`) so a reloaded/restored EEG line is just as
           // hoverable + clickable as a live one — history in step with the chat.
@@ -16474,10 +17124,15 @@ function backfillEegFromAnatomy(eegSk: string): void {
             // trunk by START TIME (mainColAt), which is exactly right for history.
             const isSubagent =
               typeof ev.sessionKey === "string" && ev.sessionKey.includes(":subagent:");
-            // Drop subagent rows outside this session's window (stale/foreign fan-outs).
-            if (isSubagent && (ts < minMainTs || ts > maxMainTs)) {
+            // Drop subagent rows that did not START inside one of this tab's own turns (stale/foreign
+            // fan-outs). A sub-agent row is stamped at its end, so its start is ts − its duration.
+            const subDurMs = typeof ev.durationMs === "number" ? Math.max(0, ev.durationMs) : 0;
+            if (isSubagent && !eegInWindows(ts - subDurMs, ownTurnWindows)) {
               continue;
             }
+            // A split turn's empty first row draws no strand, but still marks where its turn began.
+            const splitGhost =
+              !isSubagent && typeof ev.runId === "string" && splitGhosts.has(ev.runId);
             // A durable branch needs a real INTERVAL, not just an end: the renderer decides
             // parallelism by true temporal overlap (eeg-trace.ts — depth-shade stacks, lanes,
             // "N× parallel here"), so a strand with startedAt === endedAt can never overlap a
@@ -16495,28 +17150,29 @@ function backfillEegFromAnatomy(eegSk: string): void {
             // getting an invented one, so a historical fan-out reads as unknown-duration
             // instants instead of a fabricated shape.
             const durMs = typeof ev.durationMs === "number" ? Math.max(0, ev.durationMs) : 0;
-            samples.push({
-              runId,
-              model,
-              provider:
-                typeof ev.provider === "string" && ev.provider ? ev.provider : providerOf(model),
-              chosenLevel: typeof ev.thinkLevel === "string" ? ev.thinkLevel : "",
-              subagent: isSubagent,
-              parentRunId: undefined,
-              ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
-              // tokens → segment length (area ∝ cost). Best-effort from anatomy.
-              ...(() => {
-                const inTok =
-                  ev.inputTokens ?? ev.contextSent?.totalTokens ?? ev.tokensIn ?? undefined;
-                const outTok = ev.outputTokens ?? ev.tokensOut ?? undefined;
-                return {
-                  ...(typeof inTok === "number" ? { inputTokens: inTok } : {}),
-                  ...(typeof outTok === "number" ? { outputTokens: outTok } : {}),
-                };
-              })(),
-              startedAt: isSubagent ? ts - durMs : ts,
-              endedAt: isSubagent ? ts : undefined,
-            });
+            if (!splitGhost)
+              samples.push({
+                runId,
+                model,
+                provider:
+                  typeof ev.provider === "string" && ev.provider ? ev.provider : providerOf(model),
+                // The anatomy row names it `effort`; `thinkLevel` never came back from the server.
+                chosenLevel:
+                  typeof ev.effort === "string"
+                    ? ev.effort
+                    : typeof ev.thinkLevel === "string"
+                      ? ev.thinkLevel
+                      : "",
+                subagent: isSubagent,
+                parentRunId: undefined,
+                ...(typeof ev.thinkingChars === "number"
+                  ? { thinkingChars: ev.thinkingChars }
+                  : {}),
+                // tokens → segment length (area ∝ cost), and the cache traffic for the hover text.
+                ...eegTokensFromAnatomy(ev),
+                startedAt: isSubagent ? ts - durMs : ts,
+                endedAt: isSubagent ? ts : undefined,
+              });
             // Only MAIN-session events define prompt boundaries — a single-turn subagent
             // must never mint a spurious yellow prompt rule on the parent's timeline.
             const turn = isSubagent ? undefined : typeof ev.turn === "number" ? ev.turn : undefined;
@@ -16547,6 +17203,8 @@ function backfillEegFromAnatomy(eegSk: string): void {
           // trigger a later redraw, so the forked EEG stayed invisible despite the data being present.
           if (sessionKey === eegSk) {
             renderEegPanel();
+            // The answer rails read each past turn's effort from this store (railRunEffort).
+            updateChat(true);
           }
           const dbgPaper = document.getElementById("eeg-paper");
           const dbgBody = document.getElementById("eeg-panel-body");
@@ -18334,6 +18992,334 @@ function notePromptTerminal(p: unknown): void {
 // consumes it as its FIRST statement — before any await — so on a single thread it cannot leak to
 // any other caller: nothing can run between the raise here and the consume there.
 let composerSendArmed = false;
+
+// FORK 2026-11-03 — the RECORD button beside Send (rules in voice-recorder.ts). Press it, speak,
+// press it again (or press Send straight away): the recording waits in #rec-chip above the composer
+// and rides the next composer send as a chat.send attachment. The gateway transcribes it and gives
+// the agent the transcript plus the file path. The base64 is made when the recording stops, so
+// send() attaches it synchronously: send() must reach chat.send without an await in between.
+type PendingRecording = {
+  id: number;
+  url: string;
+  mime: string;
+  fileName: string;
+  durationMs: number;
+  bytes: number;
+  base64: string;
+};
+let recorder: MediaRecorder | null = null;
+let recorderStream: MediaStream | null = null;
+let recorderChunks: Blob[] = [];
+let recorderBytes = 0;
+let recorderStartedAt = 0;
+let recorderStartDate = new Date();
+let recorderTick: ReturnType<typeof setInterval> | null = null;
+let recorderDone: Promise<void> | null = null;
+let recordingSeq = 0;
+let pendingRecording: PendingRecording | null = null;
+// One-shot, like composerSendArmed: set by the composer right before sendFromComposer, consumed as
+// send()'s first statement, so no other caller can pick it up.
+let recordingForNextSend: PendingRecording | null = null;
+// The recording a send is carrying right now, so a second press cannot send it twice.
+let recordingInFlightId = 0;
+let recordingNotice = "";
+// FORK 2026-11-04 — inside the Jarvis phone app the APP records (JarvisRecorder.kt): the door is
+// plain http, where a WebView has no getUserMedia. The file comes back as base64 pieces on
+// "jarvis-native" events and lands in the same chip as a browser recording.
+type NativeRecorderApi = { recStart: () => void; recStop: () => void };
+function nativeRecorder(): NativeRecorderApi | null {
+  const n = (window as Window & { JarvisNative?: Partial<NativeRecorderApi> }).JarvisNative;
+  return n && typeof n.recStart === "function" && typeof n.recStop === "function"
+    ? (n as NativeRecorderApi)
+    : null;
+}
+let nativeRecording = false;
+let nativeChunks: string[] = [];
+let nativeDone: (() => void) | null = null;
+
+function finishNativeRecording() {
+  nativeRecording = false;
+  nativeChunks = [];
+  if (recorderTick) {
+    clearInterval(recorderTick);
+    recorderTick = null;
+  }
+  const done = nativeDone;
+  nativeDone = null;
+  done?.();
+  renderRecorder();
+}
+
+window.addEventListener("jarvis-native", (ev) => {
+  const d = (ev as CustomEvent).detail as Record<string, unknown> | null;
+  if (!d || (d.ev !== "rec" && d.ev !== "rec-chunk")) {
+    return;
+  }
+  if (d.ev === "rec") {
+    if (d.state === "tick") {
+      recorderBytes = Number(d.bytes) || recorderBytes;
+    } else if (d.state === "error") {
+      console.error("[recorder] app recorder", d.message);
+      showRecordingNotice(String(d.message || "The app could not record."));
+      finishNativeRecording();
+    }
+    return;
+  }
+  const total = Number(d.total) || 0;
+  nativeChunks[Number(d.seq) || 0] = String(d.b64 || "");
+  if (total <= 0 || nativeChunks.filter((c) => c !== undefined).length < total) {
+    return;
+  }
+  // Each piece is a multiple of 3 bytes (JarvisRecorder CHUNK_BYTES), so the base64 joins cleanly.
+  const base64 = nativeChunks.join("");
+  const mime = String(d.mime || "audio/ogg");
+  if (d.capped) {
+    showRecordingNotice("Recording stopped at the size limit (about 90 minutes).");
+  }
+  void fetch(`data:${mime};base64,${base64}`)
+    .then((r) => r.blob())
+    .then((blob) => {
+      pendingRecording = {
+        id: ++recordingSeq,
+        url: URL.createObjectURL(blob),
+        mime: baseAudioMime(mime),
+        fileName: recordingFileName(mime, recorderStartDate),
+        durationMs: Number(d.durationMs) || Date.now() - recorderStartedAt,
+        bytes: Number(d.bytes) || blob.size,
+        base64,
+      };
+    })
+    .catch((err) => {
+      console.error("[recorder] could not read the app recording", err);
+      showRecordingNotice("The recording could not be read.");
+    })
+    .finally(finishNativeRecording);
+});
+let recordingNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function recordingUnavailableReason(): string | null {
+  if (!window.isSecureContext) {
+    return "The microphone only works on an https page or on localhost, and this page is plain http.";
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    return "This browser cannot record audio.";
+  }
+  return null;
+}
+
+function showRecordingNotice(text: string) {
+  recordingNotice = text;
+  if (recordingNoticeTimer) {
+    clearTimeout(recordingNoticeTimer);
+  }
+  recordingNoticeTimer = setTimeout(() => {
+    recordingNotice = "";
+    renderRecorder();
+  }, 8000);
+  renderRecorder();
+}
+
+function renderRecorder() {
+  const btn = $("rec-btn") as HTMLButtonElement | null;
+  if (btn) {
+    const live = recorder !== null || nativeRecording;
+    btn.classList.toggle("recording", live);
+    btn.title = live
+      ? "Stop recording. Send also stops it and sends."
+      : pendingRecording
+        ? "Record again (replaces the recording that has not been sent)"
+        : "Record. Everything said until you stop goes with your next message.";
+    btn.setAttribute("aria-label", btn.title);
+    btn.innerHTML = live
+      ? '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>'
+      : '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="9" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2.5M5.5 15h5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+  }
+  const chip = $("rec-chip");
+  if (!chip) {
+    return;
+  }
+  if (recorder || nativeRecording) {
+    const ms = Date.now() - recorderStartedAt;
+    chip.innerHTML = `<span class="rec-dot"></span><span class="rec-label">Recording ${formatRecordingDuration(ms)} · ${formatRecordingSize(recorderBytes)}</span>`;
+    chip.hidden = false;
+  } else if (pendingRecording) {
+    const r = pendingRecording;
+    chip.innerHTML = `<span class="rec-label">🎙️ ${formatRecordingDuration(r.durationMs)} · ${formatRecordingSize(r.bytes)} · goes with your next message</span><audio controls preload="metadata" src="${r.url}"></audio><button type="button" class="rec-discard" title="Discard this recording" aria-label="Discard this recording">✕</button>`;
+    chip.hidden = false;
+  } else {
+    chip.innerHTML = "";
+    chip.hidden = true;
+  }
+  if (recordingNotice) {
+    chip.insertAdjacentHTML(
+      "beforeend",
+      `<span class="rec-notice">${escapeHtml(recordingNotice)}</span>`,
+    );
+    chip.hidden = false;
+  }
+}
+
+function discardRecording(id?: number) {
+  if (!pendingRecording || (id !== undefined && pendingRecording.id !== id)) {
+    return;
+  }
+  URL.revokeObjectURL(pendingRecording.url);
+  pendingRecording = null;
+  renderRecorder();
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = String(reader.result ?? "");
+      resolve(s.slice(s.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function startRecording(): Promise<void> {
+  if (recorder || nativeRecording) {
+    return;
+  }
+  const native = nativeRecorder();
+  if (native) {
+    if (pendingRecording && !window.confirm("Replace the recording you have not sent yet?")) {
+      return;
+    }
+    discardRecording();
+    nativeRecording = true;
+    nativeChunks = [];
+    recorderBytes = 0;
+    recorderStartedAt = Date.now();
+    recorderStartDate = new Date();
+    recorderDone = new Promise<void>((resolve) => {
+      nativeDone = resolve;
+    });
+    native.recStart();
+    recorderTick = setInterval(renderRecorder, 500);
+    renderRecorder();
+    return;
+  }
+  const why = recordingUnavailableReason();
+  if (why) {
+    showRecordingNotice(why);
+    return;
+  }
+  if (pendingRecording && !window.confirm("Replace the recording you have not sent yet?")) {
+    return;
+  }
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (err) {
+    console.error("[recorder] getUserMedia failed", err);
+    showRecordingNotice(
+      `The microphone could not start: ${(err as Error)?.message || String(err)}`,
+    );
+    return;
+  }
+  const mime = pickRecorderMime((m) => MediaRecorder.isTypeSupported(m));
+  let rec: MediaRecorder;
+  try {
+    rec = new MediaRecorder(stream, {
+      ...(mime ? { mimeType: mime } : {}),
+      audioBitsPerSecond: RECORDER_BITS_PER_SECOND,
+    });
+  } catch (err) {
+    console.error("[recorder] MediaRecorder failed", err);
+    stream.getTracks().forEach((t) => t.stop());
+    showRecordingNotice(`This browser cannot record: ${(err as Error)?.message || String(err)}`);
+    return;
+  }
+  discardRecording();
+  recorder = rec;
+  recorderStream = stream;
+  recorderChunks = [];
+  recorderBytes = 0;
+  recorderStartedAt = Date.now();
+  recorderStartDate = new Date();
+  let finish: () => void = () => {};
+  recorderDone = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  rec.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) {
+      recorderChunks.push(ev.data);
+      recorderBytes += ev.data.size;
+      if (recorderBytes >= RECORDING_MAX_BYTES && rec.state === "recording") {
+        showRecordingNotice("Recording stopped at the size limit (about 90 minutes).");
+        rec.stop();
+      }
+    }
+  };
+  rec.onstop = async () => {
+    const durationMs = Date.now() - recorderStartedAt;
+    const type = rec.mimeType || mime || "audio/webm";
+    const blob = new Blob(recorderChunks, { type });
+    recorderStream?.getTracks().forEach((t) => t.stop());
+    recorder = null;
+    recorderStream = null;
+    recorderChunks = [];
+    if (recorderTick) {
+      clearInterval(recorderTick);
+      recorderTick = null;
+    }
+    try {
+      if (blob.size > 0) {
+        pendingRecording = {
+          id: ++recordingSeq,
+          url: URL.createObjectURL(blob),
+          mime: baseAudioMime(type),
+          fileName: recordingFileName(type, recorderStartDate),
+          durationMs,
+          bytes: blob.size,
+          base64: await blobToBase64(blob),
+        };
+      }
+    } catch (err) {
+      console.error("[recorder] could not read the recording", err);
+      showRecordingNotice(
+        `The recording could not be read: ${(err as Error)?.message || String(err)}`,
+      );
+    }
+    renderRecorder();
+    finish();
+  };
+  // A chunk every second keeps the size count live for the cap.
+  rec.start(1000);
+  recorderTick = setInterval(renderRecorder, 500);
+  renderRecorder();
+}
+
+/** Stops a live recording and waits until it is ready to send. */
+async function stopRecording(): Promise<void> {
+  const done = recorderDone;
+  if (nativeRecording) {
+    nativeRecorder()?.recStop();
+    // The app streams the file back; never let Send hang on an answer that does not come.
+    const timedOut = await Promise.race([
+      (done ?? Promise.resolve()).then(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 60_000)),
+    ]);
+    if (timedOut) {
+      showRecordingNotice("The app did not hand the recording back.");
+      finishNativeRecording();
+    }
+    return;
+  }
+  if (recorder && recorder.state !== "inactive") {
+    recorder.stop();
+  }
+  if (done) {
+    await done;
+  }
+}
+
 // FORK 2026-10-02 (the architect, Thalamus full deploy) — "Rewind and retry with <model>": the model for ONE send. A one-shot flag, like
 // composerSendArmed, consumed by the chat.send that carries it (matched on the tab's key). chat.send turns `model` into an
 // inline `/model` directive and the gateway PERSISTS it on the session, so a tab on Auto would stay on the retry model
@@ -18391,7 +19377,20 @@ async function send(text: string, reuseClientMsgId?: string, resendOf?: string, 
   // u14: consume the composer's one-shot owner-intent flag (see sendFromComposer) — FIRST, always.
   const fromComposer = composerSendArmed;
   composerSendArmed = false;
+  // FORK 2026-11-03 — the record button's one-shot, taken here with the composer flag.
+  const recording = fromComposer ? recordingForNextSend : null;
+  recordingForNextSend = null;
   if (!text.trim()) {
+    return;
+  }
+  // FORK 2026-11-13: /rewind (or /rewind 3) takes the last exchange (or the last three) out of the model's context
+  // and off the page, and puts its prompt back in the box. It is a page command: nothing is sent to the model and no
+  // turn starts, so it sits before everything below. It works on any exchange, with or without a refusal strip.
+  const rewindArg = rewindCommandArg(text);
+  if (rewindArg !== null) {
+    // The typed command is not a draft to keep; the rewound prompt takes the box when the gateway answers.
+    saveDraftFor(activeTabId, "");
+    await amyUi.rewindCommand(rewindArg);
     return;
   }
   // FORK 2026-08-20: a new user prompt is a new turn. Drop the Stop stamp so
@@ -18814,6 +19813,26 @@ async function send(text: string, reuseClientMsgId?: string, resendOf?: string, 
     }
     tabStates.set(sentTabId, targetState);
   }
+  // FORK 2026-11-03 — name a placeholder tab as soon as its first prompt is sent, not when the
+  // reply ends. generateTabTitle's in-flight guard keeps the turn-end trigger from asking twice.
+  // Naming is a nicety placed between the bubble push and updateChat()/chat.send, so a throw here must
+  // never cost the paint or the send: a missing import once held both until the outbox replay.
+  if (!isQueued) {
+    try {
+      const titleTab = tabs.find((t) => t.id === sentTabId);
+      if (titleTab && titleTab.id !== "tab-main") {
+        const titleMsgs = targetIsActive() ? messages : (tabStates.get(sentTabId)?.messages ?? []);
+        const turns = titleMsgs.filter((m: any) => m?.role === "user").length;
+        const action = sendTitleAction(resolveTitleKind(titleTab, AUTO_NAME_ICON), turns);
+        if (action) {
+          console.log("[tabs] triggering title generation on send", titleTab.id);
+          void generateTabTitle(titleTab, { reason: action });
+        }
+      }
+    } catch (err) {
+      console.error("[tabs] title generation on send failed", err);
+    }
+  }
   if (targetIsActive()) {
     // FORK 2026-09-29 — the owner's own composer send re-arms the follow latch: §5.20's one exception,
     // and only for `fromComposer` calls, so ladder retries, explicit Resend, COMPACT and
@@ -18957,9 +19976,28 @@ async function send(text: string, reuseClientMsgId?: string, resendOf?: string, 
     idempotencyKey: clientMsgId,
     ...(effortPin ? { thinking: effortPin } : {}),
     ...(modelPin ? { model: modelPin } : autoReset ? { model: "auto" } : {}),
+    ...(recording
+      ? {
+          attachments: [
+            {
+              type: "audio",
+              mimeType: recording.mime,
+              fileName: recording.fileName,
+              content: recording.base64,
+            },
+          ],
+        }
+      : {}),
   })
     .then((ack: unknown) => {
       sendOk = true;
+      // The gateway has the recording; the chip can go.
+      if (recording) {
+        if (recordingInFlightId === recording.id) {
+          recordingInFlightId = 0;
+        }
+        discardRecording(recording.id);
+      }
       // FORK 2026-08-24 — ACK IS NOT DURABILITY. This used to call `removeFromOutbox` here, on the
       // belief (stated in the old comment) that a resolved `chat.send` meant the gateway had
       // already written the user turn to the transcript. It had not: chat.ts fires the eager
@@ -19045,6 +20083,12 @@ async function send(text: string, reuseClientMsgId?: string, resendOf?: string, 
     })
     .catch((e) => {
       console.error(e);
+      if (recording && recordingInFlightId === recording.id) {
+        recordingInFlightId = 0;
+        showRecordingNotice(
+          "The recording did not reach the gateway. It is kept: press Send to try again.",
+        );
+      }
       // FORK 2026-08-16 — the send did NOT land (the commonest cause is exactly the reported one:
       // `req` rejects "disconnected" because the gateway is mid-restart, or the gateway's own close
       // handler rejected everything in flight). The bubble therefore records transport "rejected"
@@ -19491,8 +20535,14 @@ async function loadBudget() {
 }
 
 // ─── Render Helpers ───
+// Quotes too: most callers build `attr="${esc(x)}"` from model, tool or provider text (burn review F2).
 function esc(s: string) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // FORK 2026-06-24: live HTML rendering in chat. openclaw's own UI deliberately
@@ -19513,6 +20563,9 @@ function htmlRenderFrame(rawHtml: string): string {
   const doc =
     "<!doctype html><html><head><meta charset='utf-8'>" +
     "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+    // FORK 2026-11-12: a link inside a framed card opens a new tab; without this it loaded the site
+    // inside the card's own frame, in place of the card.
+    "<base target='_blank'>" +
     // FORK 2026-06-25 (the architect) — responsive base reset for EVERY html-render block:
     // adapt to the chat's width and NEVER show a horizontal scrollbar. The frame is
     // width:100% of the bubble; this reset stops inner content (fixed-px widths, wide
@@ -19555,6 +20608,10 @@ function htmlRenderFrame(rawHtml: string): string {
 // resize, stable height → no flicker, no jump. The iframe path is kept ONLY for blocks
 // that contain <script> (interactive widgets need JS isolation) or <style> (DOMPurify
 // strips a stylesheet, 2026-10-12).
+// FORK 2026-11-12: a link written as raw HTML in a card had no new-tab mark (the markdown rule in
+// md-links.ts never sees it), so it loaded in place of the page. Every link the cleaner lets through
+// is marked here; the hook runs after the cleaner has dropped attributes, so the mark stays.
+DOMPurify.addHook("afterSanitizeAttributes", markLinkForNewTab);
 function htmlRenderInline(rawHtml: string): string {
   const clean = DOMPurify.sanitize(rawHtml, { ADD_ATTR: ["target"] });
   return `<div class="chat-html-inline">${clean}</div>`;
@@ -19600,7 +20657,7 @@ if (typeof window !== "undefined" && !(window as any).__tinkerHtmlFrameResizeWir
         // compensate by that much (chat-viewport.ts lateGrowthAdjustment).
         const msgs = document.getElementById("messages");
         const before = f.getBoundingClientRect().height;
-        f.style.height = Math.min(Math.max(d.h, 40), 2000) + "px";
+        f.style.height = htmlFrameHeight(d.h) + "px";
         if (msgs && msgs.contains(f)) {
           applyLateGrowth(msgs, f, f.getBoundingClientRect().height - before);
         }
@@ -19745,23 +20802,6 @@ function mergeFsLinkClass(attrs: string | undefined, extra = ""): string {
  * Goku's `**GOKU:**` paints purple exactly like Jarvis's line. The default only covers first paint.
  */
 let voiceSpeakerName = "Jarvis";
-
-/**
- * FORK 2026-10-10 (J7 §8.6, plan Phase 1.4): his taps on the purple line's chips, by chat and line, so a rebuilt
- * bubble keeps the chip he pressed. Only this page's taps: after a reload the chips start blank (the store keeps them).
- */
-const voiceTaps = new Map<string, VoiceReaction>();
-
-/** Laughed / neutral / not now under a reply with a purple line, on Tinker chats only (where the plugin records). */
-function voiceChipsFor(answerText: string, isThinking: boolean): string {
-  if (isThinking || !sessionKey.startsWith("agent:main:tinker:")) {
-    return "";
-  }
-  const line = spokenLineOf(answerText, voiceSpeakerName);
-  return line
-    ? voiceReactionChips(line, voiceTaps.get(voiceTapKey(sessionKey, line)), escapeHtml)
-    : "";
-}
 
 /**
  * FORK 2026-09-23 (plan task 9) — markdown by text, memoized. updateChat rebuilds every row's HTML
@@ -20260,7 +21300,7 @@ function toolSummary(name: string, input: unknown): string {
 function toolExpandedDetail(name: string, input: unknown): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
-  const p = shortenPath(String(a.file_path ?? a.path ?? ""));
+  const p = esc(shortenPath(String(a.file_path ?? a.path ?? "")));
   switch (n) {
     case "exec":
       return `<div class="explanation">Ran shell command:</div><div class="code-block">${esc(String(a.command ?? ""))}</div>`;
@@ -20270,7 +21310,7 @@ function toolExpandedDetail(name: string, input: unknown): string {
       return `<div class="explanation">Edited ${p} — replaced ${oldStr.length} chars with ${newStr.length} chars:</div><del>${esc(oldStr)}</del><ins>${esc(newStr)}</ins>`;
     }
     case "read":
-      return `<div class="explanation">Read ${p}${a.offset ? `, lines ${a.offset}–${(a.offset ?? 0) + (a.limit ?? 0)}` : ""}:</div>`;
+      return `<div class="explanation">Read ${p}${a.offset ? `, lines ${esc(String(a.offset))}–${esc(String((a.offset ?? 0) + (a.limit ?? 0)))}` : ""}:</div>`;
     case "write":
       return `<div class="explanation">Wrote ${String(a.content ?? "").length} chars to ${p}:</div><div class="code-block">${esc(String(a.content ?? ""))}</div>`;
     case "memory_search":
@@ -20280,7 +21320,7 @@ function toolExpandedDetail(name: string, input: unknown): string {
     case "web_fetch":
       return `<div class="explanation">Fetched URL: ${esc(String(a.url ?? ""))}</div>`;
     case "process":
-      return `<div class="explanation">Process ${esc(String(a.action ?? "?"))} on session ${esc(String(a.sessionId ?? "?"))}${a.timeout ? ` (timeout: ${a.timeout}ms)` : ""}:</div>`;
+      return `<div class="explanation">Process ${esc(String(a.action ?? "?"))} on session ${esc(String(a.sessionId ?? "?"))}${a.timeout ? ` (timeout: ${esc(String(a.timeout))}ms)` : ""}:</div>`;
     default: {
       // Formatted key-value pairs instead of raw JSON
       const entries = Object.entries(a);
@@ -21446,7 +22486,8 @@ function renderMsg(
         .filter((t: unknown): t is string => typeof t === "string")
         .join(" ")
         .trim() || "Gateway restarted";
-    return `<div class="msg-overload-bubble msg-restart-notice" data-msg-idx="${idx}">🔄 ${esc(text)}</div>`;
+    // 2026-11-12: the reason's commit ids are not shown (reload-notice.ts).
+    return `<div class="msg-overload-bubble msg-restart-notice" data-msg-idx="${idx}">🔄 ${esc(plainReason(text))}</div>`;
   }
   // FORK 2026-09-29 (U9) — an outcome row with NO renderable content, which is what the gateway's
   // `empty` verdict is (rule 8: no text, no tool blocks — a turn that returned nothing, or only
@@ -21614,7 +22655,7 @@ function renderMsg(
       // reintroduce the format "blinking" class which depended on neighbouring stream state).
       {
         const sectioned = splitSectionedReply(text);
-        if (sectioned && (sectioned.answer || sectioned.deeper || sectioned.fractal)) {
+        if (isSectionedBubble(sectioned)) {
           // FORK 2026-08-11 (the architect) — thread the fractal anchor through. This branch
           // returns early, so it never reached the fractalAnchorAttr code below; every
           // sectioned reply was therefore untagged, orphaning the dock and blocking the
@@ -21777,7 +22818,7 @@ function renderMsg(
             (msg as any)._eegTurn != null
               ? ` data-eeg-turn="${esc(String((msg as any)._eegTurn))}"`
               : "";
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}${ocIdAttrs(msg, "main")}>${thinkingPrefix}${md(answerText)}${voiceChipsFor(answerText, isThinking)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}${ocIdAttrs(msg, "main")}>${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       }
     } else {
@@ -21889,7 +22930,9 @@ function renderMsg(
         // (see the string-content path above for the full rationale). Run unconditionally.
         {
           const sectioned2 = splitSectionedReply(text);
-          if (sectioned2 && (sectioned2.answer || sectioned2.fractal)) {
+          // FORK 2026-10-31 — this is the path served and live rows take (`content: [{type:"text"}]`). It
+          // tested `answer || fractal` only, so a reply with ✨ DEEPER and no 🌿 never got its yellow bubble.
+          if (isSectionedBubble(sectioned2)) {
             // FORK 2026-08-11 (the architect) — twin of the string-content path: thread the
             // fractal anchor so this early return does not produce an untagged bubble.
             h += renderSectionedReply(
@@ -22016,7 +23059,7 @@ function renderMsg(
             (msg as any)._eegTurn != null
               ? ` data-eeg-turn="${esc(String((msg as any)._eegTurn))}"`
               : "";
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}${ocIdAttrs(msg, "main")}>${thinkingPrefix}${md(answerText)}${voiceChipsFor(answerText, isThinking)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}${ocIdAttrs(msg, "main")}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       } else {
         h += renderSystemMsg(text, msgKey);
@@ -22097,7 +23140,7 @@ function renderMsg(
       // FORK 2026-10-15:
       // the Amygdala's pink bubbles for THIS tool call sit under its row (and under its open detail), hook
       // decisions first, then Jev. "" when the Amygdala did nothing here, so a quiet call draws as before.
-      h += amyUi.inlineFor(block.id ?? "");
+      h += amyUi.inlineFor(block.id ?? "", title !== mechanicalSummary ? title : undefined);
     } else if (block.type === "tool_result") {
       // tool_result blocks are shown alongside their tool_use (via globalResults).
       // Only render standalone if there's no matching tool_use anywhere AND this
@@ -22145,12 +23188,17 @@ function thinkingTask(): string {
 
 /** The indicator's label: model, then what the turn is doing. With no named model and a running
  *  call, the call alone (no empty-model icon, no bare "working"). */
-function thinkingLabelHtml(model: string, provider: string, name: string): string {
+function thinkingLabelHtml(model: string, provider: string, name: string, effort = ""): string {
+  // FORK 2026-11-12: the thinking effort follows the model's name, once the turn has reported it.
+  const eff =
+    model && effort
+      ? ` &middot; <span class="thinking-effort" title="Thinking effort: ${esc(effort)}">${esc(effort)}</span>`
+      : "";
   const task = thinkingTask();
   if (!task) {
-    return `${modelIcon(model, provider)} ${esc(name)}`;
+    return `${modelIcon(model, provider)} ${esc(name)}${eff}`;
   }
-  const who = model ? `${modelIcon(model, provider)} ${esc(name)} &middot; ` : "";
+  const who = model ? `${modelIcon(model, provider)} ${esc(name)}${eff} &middot; ` : "";
   return `${who}<span class="thinking-task" title="${esc(task)}">&#8987; ${esc(task)}</span>`;
 }
 // FORK 2026-08-17 — `thinkingTickInterval` is gone with the second clock; the one clock's handle is
@@ -22319,7 +23367,7 @@ function renderThinkingIndicator(): string {
       const badge = restarting ? `<span class="restart-badge">RESTARTING</span>` : "";
       const row = `<div class="thinking-run" data-run-id="${esc(primaryRunId)}" data-provider="${esc(runProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots" style="--thinking-phase:${thinkingDotsPhase()}ms"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${thinkingLabelHtml(runModel, runProvider, name)}${recipeLabel}${subBadge}</span>
+  <span class="thinking-model">${thinkingLabelHtml(runModel, runProvider, name, effortLabel(primary.thinkLevel))}${recipeLabel}${subBadge}</span>
   ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
@@ -22467,6 +23515,7 @@ function jobRowDeps(): LongjobRowDeps {
     modelLabel: (m) => detailedModelLabel(m) || modelName(m),
     dotColor: (model, provider) => resolveEegGlowColor({ model, provider }),
     phaseMs: thinkingDotsPhase(),
+    trailOpen: (id) => jobTrailUi.isOpen(id),
   };
 }
 
@@ -22768,7 +23817,11 @@ function tickUsageResets(): void {
     if (!iso || !hint) {
       continue;
     }
-    const next = refreshTooltipReset(hint, iso, now);
+    // FORK 2026-11-14: a Claude hover with a reserve account carries a second `reset:` row.
+    const reserveIso = el.dataset.resetAtReserve;
+    const next = reserveIso
+      ? refreshTooltipResets(hint, [iso, reserveIso], now)
+      : refreshTooltipReset(hint, iso, now);
     if (next !== hint) {
       el.dataset.hint = next;
       changed = true;
@@ -22786,10 +23839,7 @@ function tickUsageResets(): void {
     if (Number.isFinite(at) && at <= now) {
       el.classList.remove("model-btn-exhausted");
       el.removeAttribute("aria-disabled");
-      const plain = el.dataset.modelId;
-      if (plain) {
-        el.title = plain;
-      }
+      delete el.dataset.hoverNote;
       delete el.dataset.resetAt;
       delete el.dataset.modelId;
     }
@@ -22821,10 +23871,21 @@ function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   // FORK 2026-08-28 (the architect) — the reset instant rides on the element so the minute
   // tick below can re-stamp the hover's countdown without a panel repaint.
   const resetAttr = usage.resetIso ? ` data-reset-at="${esc(usage.resetIso)}"` : "";
+  const r = usage.reserve;
+  const reserveResetAttr = r?.resetIso ? ` data-reset-at-reserve="${esc(r.resetIso)}"` : "";
   let h = '<span class="usage-bars-col">';
-  h += `<span class="usage-bars-wrap" data-hint="${esc(usage.tooltip)}"${resetAttr}>`;
-  h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${topW}%;background:${topColor}"></span></span>`;
-  h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${bottomW}%;background:${bottomColor}"></span></span>`;
+  h += `<span class="usage-bars-wrap" data-hint="${esc(usage.tooltip)}"${resetAttr}${reserveResetAttr}>`;
+  if (r) {
+    // FORK 2026-11-14 (the architect): with a second Claude subscription, each bar splits in two halves:
+    // the account in use on top, the one in reserve below, a lighter shade of the same colour.
+    const fill = (w: number, color: string, cls = "") =>
+      `<span class="usage-bar-fill${cls}" style="width:${w}%;background:${color}"></span>`;
+    h += `<span class="usage-bar usage-bar-split">${fill(topW, topColor)}${fill(Math.min(r.topPct, 100), topColor, " usage-bar-reserve")}</span>`;
+    h += `<span class="usage-bar usage-bar-split">${fill(bottomW, bottomColor)}${fill(Math.min(r.bottomPct, 100), bottomColor, " usage-bar-reserve")}</span>`;
+  } else {
+    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${topW}%;background:${topColor}"></span></span>`;
+    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${bottomW}%;background:${bottomColor}"></span></span>`;
+  }
   h += `</span>`;
   // FORK 2026-07-27 (the architect): the trailing "3·0%" readout is gone — the same numbers
   // are already in the wrap's hover, so it was duplicate ink stealing width from the
@@ -23114,6 +24175,60 @@ function viewedTurnInFlight(): boolean {
 }
 
 /**
+ * FORK 2026-11-12 — the thinking effort of one run, as the word the thinking indicator shows, "" when
+ * unknown. The turn in flight reads the run the indicator names. A settled run is found in the EEG
+ * store (live effort events, and the server's record of past turns): by the run id its prompt or
+ * its rows carry, else by the newest record of the same model between the prompt and the last row.
+ */
+function railRunEffort(
+  rows: readonly unknown[],
+  prompt: unknown,
+  model: RailModel,
+  inFlight: boolean,
+): string {
+  if (inFlight) {
+    const live = effortLabel(viewedRunsForIndicator().primary?.[1].thinkLevel);
+    if (live) {
+      return live;
+    }
+  }
+  if (!sessionKey) {
+    return "";
+  }
+  type R = {
+    idempotencyKey?: unknown;
+    _clientMsgId?: unknown;
+    _runId?: unknown;
+    _phaseRunId?: unknown;
+    timestamp?: unknown;
+  };
+  const p = (prompt ?? {}) as R;
+  const store = getEegStore(sessionKey);
+  const ids: unknown[] = [p.idempotencyKey, p._clientMsgId];
+  let last = 0;
+  for (const raw of rows) {
+    const r = (raw ?? {}) as R;
+    ids.push(r._runId, r._phaseRunId);
+    if (typeof r.timestamp === "number" && r.timestamp > last) {
+      last = r.timestamp;
+    }
+  }
+  for (const id of ids) {
+    if (typeof id === "string" && id) {
+      const level = activeRuns.get(id)?.thinkLevel || store.get(id)?.chosenLevel;
+      if (level) {
+        return effortLabel(level);
+      }
+    }
+  }
+  const first = typeof p.timestamp === "number" ? p.timestamp : 0;
+  if (!first || !last) {
+    return "";
+  }
+  return effortLabel(store.mainEffortBetween(first - 5_000, last + 30_000, model.model));
+}
+
+/**
  * One run's rail: the model that answered it, in its EEG colour, with its logo and full name.
  * FORK 2026-10-05 — the last run, while its turn is in flight, takes the model the thinking
  * indicator names (inFlightTurnModel) and is PENDING_RAIL until there is one: never the previous
@@ -23123,6 +24238,7 @@ function chatRunRail(
   rows: readonly unknown[],
   prev: RailModel | null,
   tail: boolean,
+  prompt: unknown,
 ): { rail: ChatRail; model: RailModel | null } | null {
   const inFlight = tail && viewedTurnInFlight();
   if (inFlight) {
@@ -23163,7 +24279,11 @@ function chatRunRail(
       // The same resolver as the EEG trace and the thinking indicator: one colour per model.
       color: resolveEegGlowColor({ model: model.model, provider: model.provider }),
       logoHtml: modelIcon(model.model, model.provider),
-      title: railTitle(model, detailedModelLabel(model.model) || modelName(model.model)),
+      title: railTitle(
+        model,
+        detailedModelLabel(model.model) || modelName(model.model),
+        railRunEffort(rows, prompt, model, inFlight),
+      ),
     },
   };
 }
@@ -23210,17 +24330,21 @@ function updateChat(skipScroll = false): ChatPositioning | null {
     skillNoticesHtmlAfter,
     renderThinkingIndicator,
     queuedRows: () => queuedForSession(pendingQueuedSends, sessionKey, sessionKeyMatches),
-    amygdalaAfterRun: (userMsg, nextUserMsg) => {
+    amygdalaAfterRun: (userMsg, nextUserMsg, placed) => {
       const start = view.indexOf(userMsg);
       const end = nextUserMsg == null ? view.length : view.indexOf(nextUserMsg);
       const safeguard =
         start >= 0 &&
         end > start &&
         view.slice(start + 1, end).some((m) => providerSafeguardOutcome(m) !== null);
-      return amyUi.afterRun(userMsg, nextUserMsg, safeguard);
+      return amyUi.afterRun(userMsg, nextUserMsg, safeguard, placed);
     },
+    amygdalaStopBubbles: (userMsg, nextUserMsg) => amyUi.stopBubbles(userMsg, nextUserMsg),
+    rowStartedAt: (m) => (m as { _bubbleStartedAt?: number })._bubbleStartedAt ?? rowTime(m),
+    sendBackTimes: () => amyUi.sendBackTimes(),
     fractalAfterRun: fractalCardHtmlFor,
     amygdalaTail: () => amyUi.tailHtml(),
+    jobTrails: jobTrailUnits,
     askCardsInFold,
     runRail: chatRunRail,
     openGroupOnForm: openReasoningGroupOnForm,
@@ -23494,6 +24618,8 @@ function updateChat(skipScroll = false): ChatPositioning | null {
     setChatScrollTop(el, prevScrollTop);
     positioned = "pixel";
   }
+  // A repaint can change what sits at the pane's middle (FORK 2026-11-15, the middle anchor).
+  scheduleMiddleCapture(el);
   // Images still loading grow after this pin (chat-viewport.ts lateGrowthAdjustment). Measured
   // here, after positioning, so the layout the pin already forced serves these reads too.
   freshElements(fresh, "img").forEach((img) => {
@@ -23616,6 +24742,27 @@ function storeTabSeen(): void {
     "{}",
   );
 }
+
+/**
+ * FORK 2026-11-14 (the architect: a chat opened on the phone stayed green on the laptop, and the other way
+ * round) — seen stamps another page wrote. tinker-prod-ui merges every page's stamps into the desk
+ * file and pushes a raised one to every open page ("tab-seen" on the build stream, also sent when the
+ * stream connects); the live tab re-sync (resyncTabsFromFile) reads them from the file too, for a
+ * stream that slept. Adopted in memory only: the file already holds them, so storing them here
+ * would only send them back. The activity tick repaints the glow (its fingerprint holds the unread set).
+ */
+function adoptTabSeen(raw: string | undefined): void {
+  if (!raw) {
+    return;
+  }
+  const { map, changed } = mergeSeenMaps(tabSeen, parseSeenMap(raw));
+  if (changed) {
+    tabSeen = map;
+  }
+}
+uiEventStream?.addEventListener("tab-seen", (ev) => {
+  adoptTabSeen((ev as MessageEvent<string>).data);
+});
 
 /** Is the owner looking at the active chat: the chat view on screen, no Gantt chart over it, and
  *  (unless `ignoreVisibility`, for the moment the window hides) a visible window. */
@@ -23861,17 +25008,23 @@ function renderTabs() {
       : "";
     const hint =
       (zen ? zenTabHint(tab.title) : tab.title) + jobHint + (unread ? " · new result" : "");
+    // FORK 2026-11-03 — the icon is its own span (the unread glow sits under it), and the words'
+    // colour says whether the name is frozen (locked by hand) or still auto-refreshing.
+    const parts = splitTabTitle(tab.title);
+    if (!isMain && resolveTitleKind(tab, AUTO_NAME_ICON) === "manual") {
+      classes.push("tab-frozen");
+    }
     const titleHtml = zen
       ? `<span class="tab-title tab-title-zen">${zenTitleHtml(tab.title, escapeHtml)}</span>`
-      : `<span class="tab-title">${escapeHtml(tab.title)}</span>`;
-    const jobMark = run?.job
-      ? `<span class="tab-job-mark" aria-label="background job">⚙</span>`
-      : "";
-    const unreadMark = unread
-      ? `<span class="tab-unread-dot" aria-label="unread result"></span>`
-      : "";
+      : `<span class="tab-icon">${
+          run?.job
+            ? `<span class="tab-job-gear" aria-label="background job">⚙</span>`
+            : run?.pending
+              ? `<span class="tab-wait-glass" aria-label="waiting for the model">⏳</span>`
+              : ""
+        }<span class="tab-icon-glyph">${escapeHtml(parts.icon)}</span></span><span class="tab-title">${escapeHtml(parts.words)}</span>`;
     html += `<div class="${classes.join(" ")}"${glowStyle} data-tab-id="${tab.id}" data-hint="${escapeHtml(hint)}">
-      ${jobMark}${titleHtml}${unreadMark}${closeBtn}
+      ${titleHtml}${closeBtn}
     </div>`;
     const board = ganttByMaster.get(tab.id);
     if (board) {
@@ -23919,7 +25072,12 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
     tab.id === "tab-main"
       ? ""
       : `<button data-tab-action="rename" class="exec-context-item">✏️ Rename…</button>
-    <button data-tab-action="auto" class="exec-context-item">${AUTO_NAME_ICON} Auto-name</button>`;
+    <button data-tab-action="auto" class="exec-context-item">${AUTO_NAME_ICON} Auto-name</button>
+    ${
+      resolveTitleKind(tab, AUTO_NAME_ICON) === "manual"
+        ? `<button data-tab-action="unlock" class="exec-context-item">🔓 Unlock name</button>`
+        : `<button data-tab-action="lock" class="exec-context-item">🔒 Lock name</button>`
+    }`;
   // FORK 2026-09-01 (the architect): Delete here is the SAME sessions.delete as the
   // sessions-panel bin — close-tab (×) only detaches. Hidden on Main, matching
   // the panel's protected-row rule (main + heartbeat cannot be deleted).
@@ -23980,6 +25138,9 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
           // becomes an auto name again; it always asks for a fresh title (no anchor).
           void generateTabTitle(t, { reason: "menu" });
         }
+      } else if (action === "lock" || action === "unlock") {
+        const t = tabs.find((tt) => tt.id === tabId);
+        if (t) setTabNameLock(t, action === "lock");
       } else if (action === "delete") {
         const t = tabs.find((tt) => tt.id === tabId);
         if (t?.sessionKey) void deleteSession(t.sessionKey);
@@ -24010,7 +25171,9 @@ function openTabRename(tabId: string, x: number, y: number) {
   box.style.cssText = "position:fixed;z-index:10000;";
   const input = document.createElement("input");
   input.type = "text";
-  input.value = tab.title;
+  // FORK 2026-11-03 — only the words are editable; the icon stays and is refined on commit.
+  const { icon: keptIcon, words: oldWords } = splitTabTitle(tab.title);
+  input.value = oldWords;
   input.spellcheck = false;
   input.style.cssText =
     "width:200px;font-size:11px;padding:3px 6px;background:var(--surface,#1a1a1a);color:var(--text,#eee);border:1px solid var(--accent,#d97757);border-radius:4px;outline:none;";
@@ -24029,7 +25192,10 @@ function openTabRename(tabId: string, x: number, y: number) {
     if (save) {
       const v = input.value.trim();
       if (v) {
-        tab.title = v;
+        // A typed emoji at the front is dropped: the icon is not part of the editable text.
+        const typed = splitTabTitle(v);
+        const words = leadingEmoji(v) ? typed.words : v;
+        tab.title = `${keptIcon} ${words || oldWords}`;
         // FORK 2026-06-06 — u2-tab-naming: a manual rename is a deliberate title; lock it so
         // loadSessions() won't overwrite it with the server fortune-cookie phrase. Persisted via
         // saveTabs() → survives hard refresh AND gateway restart.
@@ -24043,6 +25209,8 @@ function openTabRename(tabId: string, x: number, y: number) {
         persistTabNameToServer(tab);
         renderTabs();
         updateSessionsPanel();
+        // A hand rename locks the name, and every lock refines the icon to fit the new words.
+        void refineTabIcon(tab);
       }
     }
     box.remove();
@@ -24312,7 +25480,7 @@ function renderAttachStrip(): void {
     return;
   }
   el.hidden = false;
-  // esc() escapes < > & only. ATTRIBUTE values additionally need the double quote neutralised, so
+  // esc() escaped < > & only until 2026-11-14 (it does quotes now). ATTRIBUTE values need the double quote neutralised, so
   // every title=/data-* value goes through escapeHtml() — a label containing a quote would
   // otherwise break out of the attribute and swallow the rest of the row.
   const rowHtml = rows.map((a) => {
@@ -24709,6 +25877,8 @@ async function resyncTabsFromFile(): Promise<void> {
     const epochBefore = uiStateMirrorEpoch();
     const server = await peekUiStateTabs();
     if (!server) return;
+    // FORK 2026-11-14 — the chats another device read meanwhile stop glowing here (adoptTabSeen).
+    adoptTabSeen(server.choices[TAB_SEEN_CHOICE]);
     // An auto-name older than TITLE_INFLIGHT_STALE_MS is abandoned (generateTabTitle ignores it
     // too), so it must not hold the re-sync off for the life of the page.
     const now = Date.now();
@@ -25119,6 +26289,8 @@ function modelName(id: string): string {
   // variant word is what you actually scan for. So drop "gemini-"/"gpt-" entirely
   // and spell "flash" out again. Net width is a wash; legibility is not.
   short = short.replace(/^gemini-/, "");
+  // 2026-11-13 (the architect): Gemini 4 Argon / Carbon / Hydrogen share the "4"; the codename tells them apart.
+  short = short.replace(/^[\d.]+-(?!flash|pro|lite)([a-z]+)$/, "$1");
   // Codex codenames ARE the identity (gpt-5.6-sol → sol, gpt-6-astra → astra).
   // Kept as a rule, not a SHORT_NAMES row, so a 5.7-sol bump needs no edit.
   // Alternation is explicit so gpt-5.4-mini / gpt-5.3-codex keep their version
@@ -25370,7 +26542,7 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   // measured AA index (y) and a live provider id + price (x). Two named gaps this
   // pass, each missing a different half, both left OUT on purpose:
   //
-  //  · Qwen3.8-Flash-Next — AA 39.8223, which would still rank mid-panel, but there is NO
+  //  · Qwen3.8-Flash-Next — AA 28.575 (was 39.8223 before the 2026-11-12 re-score), but there is NO
   //    route. The tempting map is `qwen/qwen3.8-flash`, added to OpenRouter
   //    2026-08-26 at $0.150/$0.470. It is a DIFFERENT model: OpenRouter names it
   //    "Qwen3.8 Flash" and AA carries no plain `qwen3-8-flash` row, so pairing them
@@ -25390,10 +26562,11 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   //
   // Entries marked "frozen" are genuinely ABSENT from AA (verified, not assumed),
   // which is why they keep their last measured value.
-  "claude-code/claude-opus-5-5": 57.6224, // AA #1 2026-09-23; Max 20x seat (Claude Code 2.1.280; control claude-opus-9-9 unrecognized_model)
-  "claude-code/claude-haiku-5-5": 43.395, // AA #~16 2026-10-08; Max 20x seat (Claude Code 2.1.292; control claude-haiku-9-9 refused). $0.10/$0.50 list (anthropic.com pricing, prompts up to 100k).
-  "claude-code/claude-sonnet-5-5": 56.0001, // AA #2 2026-09-29; Max 20x seat (Claude Code 2.1.284; control claude-sonnet-9-9 unrecognized_model). $2/$10 list, same sticker as Sonnet 5.
-  "claude-code/claude-fable-5-1": 53.3549, // Max 20x subscription route (verified on Claude Code 2.1.258)
+  "claude-code/claude-opus-5-5": 59.106, // AA #1 2026-09-23; Max 20x seat (Claude Code 2.1.280; control claude-opus-9-9 unrecognized_model)
+  "claude-code/claude-haiku-5-5": 36.4845, // AA #~16 2026-10-08; Max 20x seat (Claude Code 2.1.292; control claude-haiku-9-9 refused). $0.10/$0.50 list (anthropic.com pricing, prompts up to 100k).
+  "claude-code/claude-sonnet-5-5": 54.5413, // AA #2 2026-09-29; Max 20x seat (Claude Code 2.1.284; control claude-sonnet-9-9 unrecognized_model). $2/$10 list, same sticker as Sonnet 5.
+  "claude-code/claude-fable-5-2": 64.5636, // AA #1 2026-11-10; Max 20x seat (Claude Code 2.1.314; control claude-fable-9-9 unrecognized_model). $8/$40 list.
+  "claude-code/claude-fable-5-1": 50.0216, // Max 20x subscription route (verified on Claude Code 2.1.258)
   "claude-code/claude-fable-5": 49.6258, // Max 20x seat, probed 2026-10-13 on Claude Code 2.1.296 (control claude-fable-9-9 refused); AA base row, effort max in aa-effort-index
   "claude-code/claude-opus-5": 50.7771,
   // FORK 2026-09-02: drop the older of the two adjacent Fable rows. Fable 5.0
@@ -25414,33 +26587,39 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   // chatgpt.com/backend-api/codex; that path completed gpt-6-astra with text=OK,
   // control gpt-6-astra-9-9 400s unsupported. Keep the openai/ key as the metered
   // twin (wallet still empty — never pin openai/gpt-*); the picker stop is openai-codex/.
-  "openai-codex/gpt-6-astra": 52.6737,
-  "openai/gpt-6-astra": 52.6737,
+  "openai-codex/gpt-6-astra": 56.8539,
+  "openai/gpt-6-astra": 56.8539,
   // FORK 2026-09-23: GPT-6 Sol + Luna launched 2026-09-22 (AA scored same day; prices
   // halved vs the 5.6 promo — Sol $2/$10, Luna $0.10/$0.50). Seat id + metered twin, as Astra.
   // FORK 2026-09-30: GPT-6.1 Sol (AA 51.8333, $2/$10). Seat probe OK, control 400s.
-  "openai-codex/gpt-6.1-sol": 51.8333,
-  "openai/gpt-6.1-sol": 51.8333,
+  "openai-codex/gpt-6.1-sol": 54.6087,
+  "openai/gpt-6.1-sol": 54.6087,
   // FORK 2026-10-27: GPT-6.1 Terra shipped 2026-10-26 (AA 48.1062, $1/$5). Seat probe OK, control 400s.
-  "openai-codex/gpt-6.1-terra": 48.1062,
-  "openai/gpt-6.1-terra": 48.1062,
+  "openai-codex/gpt-6.1-terra": 51.3265,
+  "openai/gpt-6.1-terra": 51.3265,
   // FORK 2026-10-02: Gemini 4 Argon, announced
   // 2026-09-30, AA 52.5606 (high) — level with GPT-6 Astra, 5 below Opus 5.5. NOT callable:
   // Google gives it only to its Fairwind cyber-defence testers; no public model id yet.
   // Plotted from this table as a catalog dot, never added to the picker. Price in
   // rel-cost-table.ts ($2/$10 intro, $4/$20 after).
-  "google/gemini-4-argon": 52.5606,
+  "google/gemini-4-argon": 50.4122,
+  // FORK 2026-11-11: Gemini 4 Carbon, AA 60.0257 (high; low 54.2206, medium 58.2588). Google's model list carries it
+  // now; its key is out of prepaid credit (402), OpenRouter sells it at the same $2/$10. Price in rel-cost-table.ts.
+  "google/gemini-4-carbon": 60.0257,
+  // 2026-11-13: Gemini 4 Hydrogen, AA 53.9192 (untagged headline; tagged low 26.89, medium 41.23, high 50.79).
+  // Google serves it directly on our key, like Carbon and Argon.
+  "google/gemini-4-hydrogen": 53.9192,
   "openai-codex/gpt-6-sol": 47.6305,
   "openai/gpt-6-sol": 47.6305,
-  "openai-codex/gpt-6-luna": 38.1245,
-  "openai/gpt-6-luna": 38.1245,
+  "openai-codex/gpt-6-luna": 27.8552,
+  "openai/gpt-6-luna": 27.8552,
   "openai/gpt-5.6-sol": 46.9727,
   "openai-codex/gpt-5.6-sol": 46.9727,
-  "xai/grok-4.7": 46.4466, // SuperGrok seat 2026-09-22; proxy catalog grok-4.7, control grok-4.7-9-9 404s
-  "openrouter/xiaomi/mimo-v2.6-pro": 46.3242, // panel model added 2026-09-22 ($0.435/$0.87 OR, Xiaomi seat, ctx 1.05M)
+  "xai/grok-4.7": 35.485, // SuperGrok seat 2026-09-22; proxy catalog grok-4.7, control grok-4.7-9-9 404s
+  "openrouter/xiaomi/mimo-v2.6-pro": 29.8898, // panel model added 2026-09-22 ($0.435/$0.87 OR, Xiaomi seat, ctx 1.05M)
   "xai/grok-4.6": 44.3113,
   "openrouter/meta/muse-spark-1.3": 48.0923, // panel model added 2026-09-03 ($1.25/$4.25 OR, ctx 1M; 18+ attestation still gates live completions)
-  "google/gemini-3.8-flash": 40.9262, // panel model added 2026-09-03 — native google, $0.75/$3.75 promo through 2026-12-31
+  "google/gemini-3.8-flash": 30.8468, // panel model added 2026-09-03 — native google, $0.75/$3.75 promo through 2026-12-31
   "claude-code/claude-opus-4-8": 41.7899,
   "codex/gpt-5.6-terra": 42.0829, // legacy alias
   "openai/gpt-5.6-terra": 42.0829,
@@ -25480,7 +26659,7 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   "github-copilot/gemini-3-flash-preview": 26.3272,
   "openai/gpt-5.1": 24.7358,
   "github-copilot/gpt-5.1": 24.7358,
-  "google/gemini-3.5-flash-lite": 22.1685,
+  "google/gemini-3.5-flash-lite": 11.6563,
   "github-copilot/claude-sonnet-4": 35.9, // AA no longer scores this — value frozen
   "github-copilot/gpt-5.1-codex": 23.6973,
   "github-copilot/claude-opus-4.5": 29.0955,
@@ -25516,30 +26695,34 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   //    configured OpenRouter key; every one has a verified cost row in
   //    EEG_COST_TABLE, so none of them plots at a made-up price.
   "openrouter/moonshotai/kimi-k3": 43.5938,
-  "openrouter/moonshotai/kimi-k3.1-pro": 55.0869, // AA 2026-10-24; OpenRouter $2.00/$10.00 (Moonshot AI first-party mxfp4, the only standard seat), ctx 1M (route retired for us, label only)
+  "openrouter/moonshotai/kimi-k3.1-pro": 46.4526, // AA 2026-10-24; OpenRouter $2.00/$10.00 (Moonshot AI first-party mxfp4, the only standard seat), ctx 1M (route retired for us, label only)
   "openrouter/qwen/qwen3.8-max-0902": 45.4152, // AA split 0902 off the 0803 snapshot 2026-09-16 (was 40.3049, now a real +5.13)
   "openrouter/qwen/qwen3.8-2.4t-a95b": 39.9462,
-  "openrouter/meta/muse-wonder": 52.3939, // AA 2026-10-13; OpenRouter $4/$20, ctx 1M (route retired for us, label only)
-  "openrouter/inclusionai/ling-3.1-flash": 41.0907, // AA 2026-10-14; OpenRouter $0.075/$0.225 (Novita), ctx 262k (route retired for us, label only)
+  "openrouter/meta/muse-wonder": 43.5748, // AA 2026-10-13; OpenRouter $4/$20, ctx 1M (route retired for us, label only)
+  "openrouter/inclusionai/ling-3.1-flash": 29.5701, // AA 2026-11-14 (1019 snapshot; was 41.0907 on the 1001 snapshot); OpenRouter $0.075/$0.225 (Novita), ctx 262k (route retired for us, label only)
   "openrouter/openai/gpt-5.4": 38.9756, // AA 2026-10-22; OpenRouter $2.50/$15, ctx 1.05M (route retired for us, label only)
   "openrouter/meta/muse-spark-1.2": 39.5759,
-  "openrouter/meta/muse-spark-open": 38.8667, // AA 2026-10-16; OpenRouter $1.25/$4.25, ctx 1M, listed 2026-10-15 (route retired for us, label only)
+  // FORK 2026-11-11: Muse Ember (AA 36.0213, OpenRouter $0.10/$0.50, ctx 1M) and Motif 3 (AA 33.5666, first seller
+  // OpenRouter $0.30/$1.20, ctx 262k). OpenRouter balance is negative: billing label only, nothing routes to them.
+  "openrouter/meta/muse-ember": 36.0213,
+  "openrouter/motif-technologies/motif-3": 33.5666,
+  "openrouter/meta/muse-spark-open": 24.8816, // AA 2026-10-16; OpenRouter $1.25/$4.25, ctx 1M, listed 2026-10-15 (route retired for us, label only)
   "google/gemini-3.7-flash": 39.6178, // panel model — native google provider
   "openrouter/meta/muse-spark-1.1": 33.7298,
-  "openrouter/deepseek/deepseek-v4-pro": 35.9968, // undated slug
+  "openrouter/deepseek/deepseek-v4-pro": 23.0633, // undated slug
   "openrouter/deepseek/deepseek-v4-pro-0813": 35.9968, // dated alias (panel model)
-  "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash-1017": 45.0965, // AA 2026-10-20 (10-17 snapshot, replaces the carried 39.4562 row); DeepInfra API $0.20/$0.60, ctx 1M
+  "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash-1017": 32.5896, // AA 2026-10-20 (10-17 snapshot, replaces the carried 39.4562 row); DeepInfra API $0.20/$0.60, ctx 1M
   "openrouter/deepseek/deepseek-v4.1-flash": 39.4562, // panel model added 2026-09-11 ($0.30/$1.20 OR list, DeepInfra $0.20/$0.60, ctx 1M)
-  "openrouter/z-ai/glm-5.3": 44.7774,
-  "openrouter/z-ai/glm-5.3-flash": 41.8075, // added 2026-08-27 ($0.075/$0.250 OR, ctx 1.31M)
+  "openrouter/z-ai/glm-5.3": 31.6534,
+  "openrouter/z-ai/glm-5.3-flash": 27.8039, // added 2026-08-27 ($0.075/$0.250 OR, ctx 1.31M)
   "openrouter/z-ai/glm-5.2": 33.7055, // AA re-scored 2026-09-13 (was 38.6393)
-  "openrouter/qwen/qwen3.8-27b": 33.6763,
+  "openrouter/qwen/qwen3.8-27b": 20.1069,
   "openrouter/deepseek/deepseek-v4-flash": 34.3305, // undated slug
   "openrouter/deepseek/deepseek-v4-flash-0731": 34.3305, // dated alias (panel model)
   "openrouter/deepseek/deepseek-v4-flash-vision-exp": 34.8391, // panel model added 2026-08-25 ($0.44/$1.32/M list, ctx 1M)
   "openrouter/qwen/qwen3.7-max": 29.4572,
-  "openrouter/minimax/minimax-m3": 29.2203,
-  "openrouter/minimax/minimax-m3.1-flash": 42.7057, // AA 2026-10-23; OpenRouter $0.10/$0.50 (InferenceNet fp4 cheapest; Parasail/Together/MiniMax $0.15/$0.60), ctx 1M (route retired for us, label only)
+  "openrouter/minimax/minimax-m3": 18.8789,
+  "openrouter/minimax/minimax-m3.1-flash": 29.0595, // AA 2026-10-23; OpenRouter $0.10/$0.50 (InferenceNet fp4 cheapest; Parasail/Together/MiniMax $0.15/$0.60), ctx 1M (route retired for us, label only)
   "openrouter/moonshotai/kimi-k2.6": 26.9792, // AA re-scored 2026-09-15 (was 31.3197)
   // FORK 2026-09-02 (the architect): `openrouter/openai/gpt-5.3-codex` removed — a GPT reached
   // through OpenRouter at metered $1.75/$14.00 while we hold `openai-codex` directly. The
@@ -25548,12 +26731,13 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   "openrouter/moonshotai/kimi-k2.7-code": 25.8121,
   "openrouter/xiaomi/mimo-v2.5-pro": 25.9869,
   // mimo-v2.6-pro is on the picker (see above); keep the 2.5-pro chart id as the predecessor.
-  "openrouter/thinkingmachines/inkling": 24.9848,
+  "openrouter/thinkingmachines/inkling": 12.4782,
   "openrouter/tencent/hy3": 25.2973,
+  "openrouter/tencent/hy4": 34.5552, // AA 2026-11-05 (new, tencent-hy4); OpenRouter $0.417/$1.2505, listed 2026-11-04
   "openrouter/nex-agi/nex-n2-pro": 28.1991,
-  "openrouter/upstage/solar-pro4": 26.56, // AA rescored 28.15 -> 26.56, 2026-10-17
+  "openrouter/upstage/solar-pro4": 14.1589, // AA rescored 26.56 -> 14.16, 2026-11-12 (was 28.15 -> 26.56, 2026-10-17)
   "openrouter/reflection/beam-1.0-501b-a23b": 30.3334, // AA 2026-10-17 (new); OpenRouter $1.00/$3.00, ctx 1M, listed 2026-10-16 (route retired for us, label only)
-  "openrouter/thinkingmachines/inkling-small": 25.6583, // AA rescored 27.78 -> 25.66, 2026-10-16
+  "openrouter/thinkingmachines/inkling-small": 12.9102, // AA rescored 27.78 -> 25.66, 2026-10-16
   "openrouter/qwen/qwen3.6-max-preview": 28.3749, // panel model added 2026-08-22
   "openrouter/z-ai/glm-5.1": 26.0586,
   "openrouter/z-ai/glm-5": 27.9112,
@@ -25565,7 +26749,7 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   //    context windows come from /api/v1/models in the same pass.
   "openrouter/inclusionai/ling-3.0-flash": 20.1333, // AA rescored 24.94 -> 20.13, 2026-10-16; $0.021/$0.063, ctx 262k
   "openrouter/meituan/longcat-2.0": 19.1123, // $0.300/$1.200, ctx 1.05M
-  "openrouter/nvidia/nemotron-3.5-lightning": 12.8572, // $0.080/$0.200, ctx 262k
+  "openrouter/nvidia/nemotron-3.5-lightning": 5.5347, // $0.080/$0.200, ctx 262k
 
   // ROUTE TWIN, not a new brain. Anthropic's fast mode is Opus 5 served faster —
   // "identical capabilities ... at 2x pricing" in Anthropic's own words — so it
@@ -25720,7 +26904,7 @@ function updateBudgetPanel() {
           badge,
           suffix,
           singleKeyCount,
-          providerErrors.get(keyId || modelId),
+          providerErrors.get(keyId || modelId) ?? coolingErrorFor(modelId, provider),
           keyId,
           rowHint,
         );
@@ -25744,7 +26928,9 @@ function updateBudgetPanel() {
             name,
             badge,
             splitCount(counts.get(keyId)),
-            providerErrors.get(keyId) || providerErrors.get(modelId),
+            providerErrors.get(keyId) ||
+              providerErrors.get(modelId) ||
+              coolingErrorFor(modelId, provider),
             rowHint,
           );
         }
@@ -25836,6 +27022,13 @@ function updateBudgetPanel() {
       return a.localeCompare(b);
     };
     allIds.sort(byPanelOrder);
+    const panelScore = (id: string): number | undefined =>
+      configuredIntelligenceIndex(modelsMeta, id);
+    // Greyed rows scoring at or above the weakest SMART model belong in SMART, the rest in MORE.
+    const smartFloor = Math.min(
+      ...allIds.map((id) => panelScore(id) ?? Number.POSITIVE_INFINITY),
+      Number.POSITIVE_INFINITY,
+    );
     // FORK 2026-07-30 (the architect): the sub-50 tail, tucked into its own collapsed group.
     // The 19 models culled from openclaw.json this morning survive ONLY in the baked
     // AA map, so that map — not config — is the catalog here; config alone would make
@@ -25872,8 +27065,11 @@ function updateBudgetPanel() {
       // export drives through window.__tzOpenDossier.
       html += '<div class="model-group-label">SMART MODELS</div>';
       html += '<div class="model-group-body">';
-      for (const id of allIds) {
-        renderAuthKeyRows(id, chainBadge.get(id) ?? "");
+      // 2026-11-03: every scored model sits at its rank; the ones nothing routes to are greyed.
+      for (const item of interleaveByScore(allIds, panelScore, unroutableModels(), smartFloor)) {
+        if ("entry" in item)
+          html += renderUnroutableRow(item.entry, renderCostCol(unroutableTraceId(item.entry)));
+        else renderAuthKeyRows(item.id, chainBadge.get(item.id) ?? "");
       }
       html += "</div></div>";
     }
@@ -25883,16 +27079,19 @@ function updateBudgetPanel() {
     // binding below picks it up with no extra wiring. Default-collapsed (stated in
     // MODEL_SECTION_DEFAULT_COLLAPSED) — the point is that the long tail stays
     // reachable, not that it comes back into view.
-    if (moreIds.length) {
+    const moreUnroutable = unroutableModels().filter((m) => m.score < smartFloor);
+    if (moreIds.length || moreUnroutable.length) {
       const open = !isCollapsed(
         "model:more-models",
         MODEL_SECTION_DEFAULT_COLLAPSED["more-models"],
       );
       html += `<div class="model-group${open ? " open" : ""}" data-section="more-models">`;
-      html += `<div class="model-group-label">MORE MODELS <span class="model-group-count">${moreIds.length}</span></div>`;
+      html += `<div class="model-group-label">MORE MODELS <span class="model-group-count">${moreIds.length + moreUnroutable.length}</span></div>`;
       html += '<div class="model-group-body">';
-      for (const id of moreIds) {
-        renderAuthKeyRows(id, chainBadge.get(id) ?? "");
+      for (const item of interleaveByScore(moreIds, panelScore, moreUnroutable, 0)) {
+        if ("entry" in item)
+          html += renderUnroutableRow(item.entry, renderCostCol(unroutableTraceId(item.entry)));
+        else renderAuthKeyRows(item.id, chainBadge.get(item.id) ?? "");
       }
       html += "</div></div>";
     }
@@ -26127,6 +27326,63 @@ function showToast(msg: string, isError = false, ms = 3000): void {
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), ms);
+}
+
+/** The notice after the page reloaded itself: the upgrade, then who asked, and a button to dismiss it. */
+function showReloadNotice(n: ReloadNotice): void {
+  const t = document.createElement("div");
+  t.className = "toast toast-notice";
+  t.setAttribute("role", "status");
+  const body = document.createElement("div");
+  const what = document.createElement("div");
+  what.className = "toast-notice-what";
+  what.textContent = `↻ ${n.what}`;
+  body.appendChild(what);
+  if (n.who) {
+    const who = document.createElement("div");
+    who.className = "toast-notice-who";
+    who.textContent = `Asked by ${n.who}`;
+    body.appendChild(who);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-notice-x";
+  close.textContent = "✕";
+  close.title = "Dismiss";
+  close.setAttribute("aria-label", "Dismiss");
+  close.addEventListener("click", () => t.remove());
+  t.append(body, close);
+  document.body.appendChild(t);
+}
+
+/** The leave guard's notice (src/leave-guard.ts): stays until dismissed; `url` adds a link that opens it in a new tab. */
+function showLeaveNotice(text: string, url: string | null): void {
+  const t = document.createElement("div");
+  t.className = "toast toast-notice";
+  t.setAttribute("role", "alert");
+  const body = document.createElement("div");
+  const what = document.createElement("div");
+  what.className = "toast-notice-what";
+  what.textContent = `🛡 ${text}`;
+  body.appendChild(what);
+  if (url) {
+    const a = document.createElement("a");
+    a.className = "toast-notice-who";
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = "Open it in a new tab";
+    body.appendChild(a);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-notice-x";
+  close.textContent = "✕";
+  close.title = "Dismiss";
+  close.setAttribute("aria-label", "Dismiss");
+  close.addEventListener("click", () => t.remove());
+  t.append(body, close);
+  document.body.appendChild(t);
 }
 
 async function startOAuthReauthFlow(profileId: string): Promise<void> {
@@ -27147,6 +28403,32 @@ function rowHintAttr(rowHint: string | undefined): string {
   return rowHint ? ` data-hint="${esc(rowHint)}"` : "";
 }
 
+/**
+ * FORK 2026-11-13 — a model Thalamus cannot use now (its supply, or its own cap like Fable's, is cooling) is struck
+ * out in the picker like a model in error, with when it reopens. The source is the server's cooling store, through
+ * `thalamus.panel`, so every tab agrees, and the mark leaves by itself at the reset.
+ */
+function coolingErrorFor(
+  modelId: string,
+  provider: string,
+): { error: string; reason: string } | undefined {
+  const view = thalamusV4Ui.view();
+  if (!view || view.state !== "ok") return undefined;
+  const c = coolingFor(view.panel.cooling, modelId, provider, Date.now());
+  if (!c) return undefined;
+  const when = new Date(c.until).toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const what = c.key.startsWith("model:")
+    ? `${c.key.slice(6)} limit reached`
+    : `${c.key} limit reached`;
+  return { error: `${what} · Thalamus skips it until ${when}`, reason: "limit" };
+}
+
 function renderModelRow(
   id: string,
   provider: string,
@@ -27180,6 +28462,9 @@ function renderModelRow(
     : "";
   const usage = getModelUsage(provider, id, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
+  const noCreditTag = openRouterBlocked(id)
+    ? `<span class="model-unroutable-tag"${openRouterBlockedAttrs(modelFullName(id))}>no credit</span>`
+    : "";
   const costHtml = renderCostCol(id);
   const nameParts =
     esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
@@ -27187,7 +28472,7 @@ function renderModelRow(
   const recentClass = count === 0 && rowIsRecentModel(id) ? " model-recent" : "";
 
   return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}${rowHintAttr(rowHint)}>
-    <span class="model-name-col">${modelIcon(id, provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    <span class="model-name-col">${modelIcon(id, provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}${noCreditTag}</span>
     ${modelIntelligenceIndex(id)}
     ${barsHtml}
     ${costHtml}
@@ -27225,12 +28510,15 @@ function renderAuthKeyRow(
     : "";
   const usage = getModelUsage(provider, modelId, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
+  const noCreditTag = openRouterBlocked(modelId)
+    ? `<span class="model-unroutable-tag"${openRouterBlockedAttrs(modelFullName(modelId))}>no credit</span>`
+    : "";
   const costHtml = renderCostCol(modelId);
   // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
   const recentClass = count === 0 && rowIsRecentModel(modelId) ? " model-recent" : "";
 
   return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}${rowHintAttr(rowHint)}>
-    <span class="model-name-col">${modelIcon(modelId, provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    <span class="model-name-col">${modelIcon(modelId, provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}${noCreditTag}</span>
     ${modelIntelligenceIndex(modelId)}
     ${barsHtml}
     ${costHtml}
@@ -27548,59 +28836,6 @@ function modelChipBoxHeight(stops: { id: string | null }[]): number {
   return Math.max(Math.ceil(widest) + CHIP_PAD_PX, 26);
 }
 
-// FORK 2026-08-30. The chips
-// deliberately CANNOT separate models that cost within ~10% of each other - six of the
-// selector models sit inside a 4.25/3.75 = 1.13x price band, which the log scale draws
-// as a 0.2px difference, so they read as one height. That is the thickness channel
-// being honest, not a rendering fault (eeg-trace.ts, FORK 2026-08-28 #2), and
-// steepening the slope was measured and REJECTED: it makes the dear models bigger
-// blocks that read MORE alike, for +42px of panel height.
-//
-// So the NUMBER carries what the pixels cannot. Same vocabulary as the MODELS panel
-// cost hover (renderCostCol) so the two surfaces still read as one language, and it
-// names the drawn width explicitly - a hover that explains the bar it is attached to
-// is the whole point when two bars are the same height.
-//
-// Precision is 3 decimals below EUR 1: the panel toFixed(2) collapses the prepaid
-// block (grok 0.054, sonnet 0.089, opus 0.223) and rounds luna, the cheapest routable
-// model, to a flat 0.01.
-// FORK 2026-08-30 #3.
-//
-// SUPERSEDES the price+cost hover of a0fbf99d3b1 and the cost hover before it. Both
-// were right about the problem - the bars cannot separate models priced within ~10% of
-// each other - and wrong about the dose: four figures per button (list price, cheapest
-// supplier, EUR/Mtok, x sonnet, bar px) is a spreadsheet in a tooltip.
-//
-// ONE number, and it is chosen to be CHECKABLE. Grok is the reference because it is on
-// the screen, in this very control, drawn as the thinnest bar - so "5x Grok" can be
-// verified against a bar three buttons away instead of against a number the reader has
-// to already know. That is the property x-sonnet lacked: Sonnet is a real model but it
-// is not necessarily rendered in the picker, so its multiple was unanchored.
-//
-// UNIFIED 2026-08-30: the MODELS panel now uses this same unit, so the picker no longer keeps a
-// local reference constant — EEG_COST_COMPARE_* in eeg-trace.ts is the single owner and
-// a multiple means the same thing on both surfaces. What stays picker-specific is the
-// ROUNDING: one decimal below 10×, whole numbers above, so Opus 4.2× and GLM-5.3-flash
-// 4.7× stay apart while Sol prints the "5× Grok" that was asked for instead of 4.96×.
-// The panel keeps its own toFixed(2) — a dense table hover can afford the extra digit.
-function modelCostHint(id: string): string {
-  const mult = eegCostLunaMult(id, providerOf(id));
-  if (!Number.isFinite(mult) || mult <= 0) {
-    return "";
-  }
-  // Three bands, and the sub-1x one exists to stop a cheap model reading as FREE:
-  // one decimal alone rounds anything under 0.05x to a flat "0x". tool:local (0.02x)
-  // is not routable so it cannot reach this control today, but the picker's model list
-  // comes from config and the next cheap model added would have printed 0x.
-  const shown =
-    mult < 1
-      ? Math.round(mult * 100) / 100
-      : mult < 10
-        ? Math.round(mult * 10) / 10
-        : Math.round(mult);
-  return `${String(shown)}× ${EEG_COST_COMPARE_LABEL}`;
-}
-
 function renderModelChip(id: string | null, idx: number, H: number): string {
   // FORK 2026-08-05.
   // The stroke-width is the number resolveEegPaint returns, drawn 1:1 in Y — that
@@ -27657,6 +28892,23 @@ function renderModelChip(id: string | null, idx: number, H: number): string {
 // works off the raw model id (NOT modelName, whose "gem-3.1-pro" short form made
 // the old regex mislabel a Gemini as "Pro"). Keeps family + the disambiguating
 // version/variant so two opus or two gemini stops never collide.
+/** The model's name for a hover card: "claude-code/claude-opus-5-5" → "Claude Opus 5.5". */
+function modelFullName(id: string): string {
+  const tail = id.split("/").pop() || id;
+  const words: string[] = [];
+  for (const w of tail.split("-")) {
+    const prev = words[words.length - 1];
+    if (/^\d+$/.test(w) && prev && /^\d+(\.\d+)?$/.test(prev) && w.length <= 2) {
+      words[words.length - 1] = `${prev}.${w}`;
+    } else {
+      words.push(w);
+    }
+  }
+  return words
+    .map((w) => (/^(gpt|glm)$/i.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(" ");
+}
+
 function shortModelLabel(id: string): string {
   const lo = id.toLowerCase();
   // FORK 2026-07-31. The slider draws each stop behind its provider logo — the same reason
@@ -27688,6 +28940,10 @@ function shortModelLabel(id: string): string {
     // FORK 2026-07-22: under the Gemini lines show only their version —
     // the provider LOGO already precedes the tick, so drop the "Gem" prefix and
     // show the bare version + variant: 3.1P · 3.5F · 3.6F (FL = flash-lite).
+    const code = lo.match(/gemini-[\d.]+-([a-z]+)$/)?.[1];
+    if (code && !/^(flash|pro|lite|preview|latest)$/.test(code)) {
+      return code.charAt(0).toUpperCase() + code.slice(1);
+    }
     const v = (lo.match(/(\d+(?:\.\d+)?)/) || [])[1] || "";
     const kind = /flash-?lite/.test(lo) ? "FL" : /flash/.test(lo) ? "F" : /pro/.test(lo) ? "P" : "";
     return `${v}${kind}`.slice(0, 7);
@@ -27865,7 +29121,10 @@ function modelForceStops(): { id: string | null; label: string }[] {
   // FORK 2026-09-25: SUPERSEDES the 09-22 "every configured model must exist in the picker".
   // The picker stops at Copilot (the architect 09-24) while config and MORE MODELS keep the whole
   // catalog (the architect 09-25) — see panelIdsDownToCopilot. A pinned model still joins below.
-  const keep = panelIdsDownToCopilot([...eligible].sort(byRank));
+  // 2026-11-05: the Copilot cut is back. The 11-04 "every configured model" picker held 72
+  // chips plus a 397-model drawer; the picker shows only the smart models, Copilot and up.
+  // 2026-11-13: one Fable, Opus, Astra and Sol, the newest of each (latestOfFamily).
+  const keep = latestOfFamily(panelIdsDownToCopilot([...eligible].sort(byRank)));
   // FORK 2026-08-04. The axis
   // MUST be able to represent the state it is reporting. Every gate above can
   // legitimately drop a model the user has already pinned — CAP=14, the AA>=50
@@ -28001,7 +29260,32 @@ function renderModelForceSlider(): string {
   // count, so adding or removing a model can never silently become a third row the
   // way flex-wrap would. Grid also makes every button the same width, which is what
   // lets the labels sit under the chips without ragged columns.
-  const cols = Math.max(1, Math.ceil(stops.length / 2));
+  // 2026-11-05: scored market models nothing routes to sit greyed at their rank, down to the
+  // weakest stop the picker shows (the Copilot cut). Hover opens the card with the supplier link.
+  const chipCfg = (modelConfigData as { models?: Record<string, ModelIntelligenceMeta> } | null)
+    ?.models;
+  const chipScore = (id: string | null): number | undefined =>
+    id === null ? Number.POSITIVE_INFINITY : configuredIntelligenceIndex(chipCfg, id);
+  const chipFloor = Math.min(
+    ...stops.filter((s) => s.id !== null).map((s) => chipScore(s.id) ?? Number.POSITIVE_INFINITY),
+    Number.POSITIVE_INFINITY,
+  );
+  // The chips run weakest to strongest after Auto, so merge strongest-first and flip back.
+  const chipItems = [
+    ...stops.flatMap((s, i) => (s.id === null ? [{ id: String(i) }] : [])),
+    ...interleaveByScore(
+      stops
+        .map((s, i) => ({ s, i }))
+        .filter(({ s }) => s.id !== null)
+        .reverse()
+        .map(({ i }) => String(i)),
+      (i) => chipScore(stops[Number(i)].id),
+      unroutableModels(),
+      chipFloor,
+    ).reverse(),
+  ];
+  // Two rows up to 15 per row, then the grid wraps into more rows.
+  const cols = Math.max(1, Math.min(15, Math.ceil(chipItems.length / 2)));
   // ONE height for every chip in this row, derived from the widest stroke the row
   // will draw (FORK 2026-08-28 #2). Computed here, not inside renderModelChip, so
   // every chip shares a baseline AND no chip is ever clipped by a constant.
@@ -28011,7 +29295,17 @@ function renderModelForceSlider(): string {
     '<span class="model-slider-caption">MODEL</span>' +
     `<div class="model-btn-group" role="radiogroup" aria-label="Model override"` +
     ` style="grid-template-columns:repeat(${cols},minmax(0,1fr))">`;
-  for (let i = 0; i < stops.length; i++) {
+  let greyedChips = 0;
+  for (const item of chipItems) {
+    if ("entry" in item) {
+      // 2026-11-13 (the architect): no model without a trace; greyed ones draw theirs too.
+      out += renderUnroutableChip(
+        item.entry,
+        renderModelChip(unroutableTraceId(item.entry), 1000 + greyedChips++, chipH),
+      );
+      continue;
+    }
+    const i = Number(item.id);
     const s = stops[i];
     const on = i === idx;
     const label = s.id === null ? "Auto" : shortModelLabel(s.id);
@@ -28031,8 +29325,11 @@ function renderModelForceSlider(): string {
       : s.id
         ? "\nRight-click: suggest this model for a Thalamus dial stop"
         : "";
-    let title =
-      (s.id === null ? autoStopTitle(active) : `${s.id}\n${modelCostHint(s.id)}`) + tierHint;
+    // 2026-11-13 (the architect): one black hover card for every chip. It names the model; a note
+    // follows only with a direction (out of tokens, no service routing it yet).
+    const hoverName = s.id === null ? "Auto" : modelFullName(s.id);
+    let hoverNote = s.id === null ? autoStopTitle(active) : "";
+    void tierHint;
     if (exhausted && usage && s.id) {
       const resetAt =
         usage.resetIso ??
@@ -28040,16 +29337,16 @@ function renderModelForceSlider(): string {
       exhaustedAttrs =
         ` aria-disabled="true" data-model-id="${esc(s.id)}"` +
         (resetAt ? ` data-reset-at="${esc(resetAt)}"` : "");
-      title =
-        `${s.id} — token window exhausted (click to try anyway)\n` +
-        `${modelCostHint(s.id)}\n${usage.tooltip}` +
-        tierHint;
+      hoverNote = `Out of tokens. ${usage.tooltip} Click to try anyway.`;
     }
-    const btnClass = `model-btn${on ? " active" : ""}${exhausted ? " model-btn-exhausted" : ""}`;
+    // 2026-11-05: an OpenRouter-only model with no credit wears the same red cross as a spent
+    // token window, and keeps the black hover card with the add-credit link.
+    const blocked = s.id !== null && openRouterBlocked(s.id);
+    const btnClass = `model-btn${on ? " active" : ""}${exhausted || blocked ? " model-btn-exhausted" : ""}`;
     out +=
       `<button type="button" class="${btnClass}" role="radio"` +
-      ` aria-checked="${on ? "true" : "false"}" data-model-idx="${i}"${exhaustedAttrs}` +
-      ` title="${esc(title)}">` +
+      ` aria-checked="${on ? "true" : "false"}" data-model-idx="${i}"${blocked ? openRouterBlockedAttrs(hoverName) : exhaustedAttrs + hoverNameAttrs(hoverName, hoverNote)}` +
+      ">" +
       renderModelChip(s.id, i, chipH) +
       `<span class="model-btn-text">${esc(label)}</span>` +
       (tiers.length ? `<span class="model-btn-tier">${roleLetters(tiers)}</span>` : "") +
@@ -28892,6 +30189,8 @@ function init() {
       <button class="nav-btn" data-tab="debug" data-hint="Debug"><svg viewBox="0 0 24 24" style="stroke:#f87171"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3 3 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg></button>
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
       <button class="nav-btn" data-tab="recipes" data-hint="Recipes"><svg viewBox="0 0 24 24" style="stroke:#d4a574"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="12" y1="17" y2="17"/><line x1="8" x2="10" y1="9" y2="9"/></svg></button>
+      <!-- FORK 2026-11-03: what the token burner spends spare weekly tokens on (panels/token-burner-tab.ts). -->
+      <button class="nav-btn" data-tab="token-burner" data-hint="Token burner"><svg viewBox="0 0 24 24" style="stroke:#e8603c"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></button>
       <button class="nav-btn" data-tab="users" data-hint="Users" style="display:none"><svg viewBox="0 0 24 24" style="stroke:#e879f9"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
     </nav>
     <div class="topbar">
@@ -28988,8 +30287,12 @@ function init() {
            (No backticks in this comment - the enclosing innerHTML is a template literal; an inner
             backtick terminates it early and crashes the page to black on load.) -->
       <div class="attach-strip" id="attach-strip" hidden></div>
+      <!-- FORK 2026-11-03: the recording waiting for the next send (renderRecorder). Static host,
+           hidden when empty so the composer does not move. -->
+      <div class="rec-chip" id="rec-chip" hidden></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
+        <button type="button" id="rec-btn" class="rec-btn"></button>
         <button id="action-btn" disabled>Send</button>
       </div>
     </div>
@@ -29134,6 +30437,40 @@ function init() {
     return true;
   };
 
+  // FORK 2026-11-12: nothing replaces this page (src/leave-guard.ts holds the rule and its reasons).
+  // A link that would load here goes to a new tab, a script navigation is stopped, an unplanned leave asks first;
+  // each catch is logged through /api/bug-report, said on screen, and a fix is asked of the chat on screen.
+  try {
+    installLeaveGuard({
+      win: window,
+      doc: document,
+      appBase: (import.meta.env.BASE_URL ?? "/tinker/").replace(/\/?$/, "/"),
+      sessionKey: () => sessionKey || null,
+      askOnLeave: () => !document.body.classList.contains("phone"),
+      report: async (r: LeaveReport) => {
+        const resp = await fetch("/api/bug-report", {
+          method: "POST",
+          keepalive: true, // a report made while the page is leaving still goes out
+          headers: { "Content-Type": "application/json", "X-Tinker-Action": "bug-report" },
+          body: JSON.stringify(r),
+        });
+        const out = (await resp.json().catch(() => ({}))) as { path?: string; error?: string };
+        if (!resp.ok || !out.path) throw new Error(out.error || `HTTP ${resp.status}`);
+        return out.path;
+      },
+      notify: showLeaveNotice,
+      askFix: async (key, text) => {
+        await req("chat.send", {
+          sessionKey: key,
+          message: text,
+          idempotencyKey: crypto.randomUUID(),
+        });
+      },
+    });
+  } catch (err) {
+    console.error("[leave-guard] not installed", err);
+  }
+
   // FORK 2026-10-19 (the architect: phone app) — phone mode (src/phone/phone-mode.ts) over this skeleton,
   // and the live tab re-sync (resyncTabsFromFile) on visible, on focus and every 20 s.
   initPhoneMode({
@@ -29141,6 +30478,19 @@ function init() {
     getActiveTabId: () => activeTabId,
     isZenTab,
     isRunning: (id) => tabsRunningNow().has(id),
+    tabLook: (id) => {
+      const tab = tabs.find((t) => t.id === id);
+      if (!tab) return null;
+      const run = tabsRunningNow().get(id);
+      const { icon, words } = splitTabTitle(tab.title);
+      return {
+        icon,
+        words,
+        frozen: id !== "tab-main" && resolveTitleKind(tab, AUTO_NAME_ICON) === "manual",
+        job: Boolean(run?.job),
+        pending: Boolean(run?.pending),
+      };
+    },
     isUnread: (id) => {
       const tab = tabs.find((t) => t.id === id);
       return !!tab && tabIsUnread(tab);
@@ -29239,6 +30589,7 @@ function init() {
   // A hover held open across a minute boundary must show the NEW countdown, not the
   // one minted when the pointer arrived — positionHint re-reads dataset.hint, so
   // re-running it against the same target is the whole refresh.
+  installUnroutableHoverCard();
   repaintOpenHint = () => {
     if (hintTarget) {
       positionHint(hintTarget);
@@ -29346,27 +30697,52 @@ function init() {
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !touchKeyboard) {
       e.preventDefault();
-      if (ta.value.trim()) {
-        // FORK 2026-06-07 — do NOT clear the saved draft here. send() clears it ONLY on a
-        // CONFIRMED send (and restores it on failure), so a failed send can't lose the draft.
-        // The owner's own Enter — re-arms the chat follow latch (u14, sendFromComposer).
-        sendFromComposer(ta.value);
-        ta.value = "";
-        ta.style.height = "auto";
-      }
+      void sendComposer(false);
     }
   });
-  $("action-btn")!.addEventListener("click", () => {
-    if (ta.value.trim()) {
-      // FORK 2026-06-07 — clearing is owned by send() (clears on confirmed send, restores on
-      // failure) so a failed send never loses the draft.
-      // The owner's own send button — re-arms the chat follow latch (u14, sendFromComposer).
-      sendFromComposer(ta.value);
-      ta.value = "";
-      ta.style.height = "auto";
+  // FORK 2026-11-03 — Enter and Send share this path because of the record button: a live
+  // recording is stopped first (Send while recording = stop and send), and a waiting recording
+  // goes with the typed text, or alone as a voice prompt (recordingPromptText).
+  const sendComposer = async (refocus: boolean) => {
+    if (recorder || nativeRecording) {
+      await stopRecording();
+    }
+    const rec =
+      pendingRecording && pendingRecording.id !== recordingInFlightId ? pendingRecording : null;
+    if (!ta.value.trim() && !rec) {
+      return;
+    }
+    const text = rec ? recordingPromptText(ta.value, rec.durationMs) : ta.value;
+    if (rec) {
+      recordingForNextSend = rec;
+      recordingInFlightId = rec.id;
+    }
+    // FORK 2026-06-07 — do NOT clear the saved draft here. send() clears it ONLY on a
+    // CONFIRMED send (and restores it on failure), so a failed send can't lose the draft.
+    // The owner's own Enter / send button — re-arms the chat follow latch (u14, sendFromComposer).
+    sendFromComposer(text);
+    ta.value = "";
+    ta.style.height = "auto";
+    if (refocus) {
       ta.focus();
     }
+  };
+  $("action-btn")!.addEventListener("click", () => {
+    void sendComposer(true);
   });
+  $("rec-btn")!.addEventListener("click", () => {
+    if (recorder || nativeRecording) {
+      void stopRecording();
+    } else {
+      void startRecording();
+    }
+  });
+  $("rec-chip")!.addEventListener("click", (ev) => {
+    if ((ev.target as HTMLElement).closest(".rec-discard")) {
+      discardRecording();
+    }
+  });
+  renderRecorder();
   // FORK 2026-06-11 — tinkerui-slider: delegated listeners for the thinking slider,
   // now rendered INSIDE the Models side panel (#budget-panel) directly under the
   // active tab's model row (see renderThinkingSlider + updateBudgetPanel). `input`
@@ -29918,38 +31294,6 @@ function init() {
         setTimeout(() => link.classList.remove("fs-link-error"), 4000);
       });
   }
-  // FORK 2026-10-10 (plan Phase 1.4): a tap on a purple line's chip writes the outcome on that line's attempt row.
-  document.addEventListener("click", (ev) => {
-    const chip = (ev.target as HTMLElement | null)?.closest(
-      ".voice-react-chip",
-    ) as HTMLElement | null;
-    const group = chip?.closest(".voice-react") as HTMLElement | null;
-    const line = group?.dataset.line;
-    const reaction = chip?.dataset.reaction as VoiceReaction | undefined;
-    if (!chip || !group || !line || !reaction) {
-      return;
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
-    const key = sessionKey;
-    group.classList.remove("is-error");
-    group.classList.add("is-sending");
-    req("limbic.reaction.set", { sessionKey: key, line, reaction })
-      .then(() => {
-        voiceTaps.set(voiceTapKey(key, line), reaction);
-        for (const b of group.querySelectorAll<HTMLElement>(".voice-react-chip")) {
-          const on = b === chip;
-          b.classList.toggle("is-on", on);
-          b.setAttribute("aria-pressed", String(on));
-        }
-      })
-      .catch((err: unknown) => {
-        console.error("[voice-react] limbic.reaction.set failed", err);
-        group.classList.add("is-error");
-        group.title = `Not saved: ${(err as { message?: string } | null)?.message ?? String(err)}`;
-      })
-      .finally(() => group.classList.remove("is-sending"));
-  });
   document.addEventListener("click", (ev) => {
     const copyBtn = (ev.target as HTMLElement | null)?.closest(
       ".bq-copy",
@@ -31292,7 +32636,7 @@ function init() {
     }
     cronPanelDefaultModelSaving = true;
     cronPanelDefaultModelStatus = "saving…";
-    renderCronDefaultModelControl(body);
+    renderCronDefaultModelControl();
     try {
       await req("config.patch", {
         raw: buildCronDefaultModelPatch(model),
@@ -36787,6 +38131,8 @@ function init() {
     | "debug"
     | "logs"
     | "recipes"
+    // FORK 2026-11-03 — the token burner's objective and strategy (panels/token-burner-tab.ts).
+    | "token-burner"
     // FORK 2026-10-07 — people behind the hive door; the nav button shows only in multi-user mode.
     | "users"
     // FORK 2026-06-06 — BROCA recipe visibility: a detail view reached by clicking
@@ -36807,6 +38153,7 @@ function init() {
     debug: "#f87171",
     logs: "#94a3b8",
     recipes: "#d4a574",
+    "token-burner": "#e8603c",
     users: "#e879f9",
     "recipe-detail": "#e3b341",
   };
@@ -36897,7 +38244,12 @@ function init() {
     if (s == null) {
       return "";
     }
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
   function altTokens(n: number | null | undefined): string {
     if (n == null) {
@@ -37062,7 +38414,8 @@ function init() {
     }
 
     const color = TAB_COLORS[tab];
-    const title = tab.charAt(0).toUpperCase() + tab.slice(1);
+    const title =
+      tab === "token-burner" ? "Token burner" : tab.charAt(0).toUpperCase() + tab.slice(1);
     const btnSvg = document.querySelector(`.nav-btn[data-tab="${tab}"] svg`)?.outerHTML || "";
     altView.innerHTML = `
       <div class="alt-view-header">
@@ -37114,6 +38467,9 @@ function init() {
           break;
         case "recipe-detail":
           await renderRecipeDetail(body, sub);
+          break;
+        case "token-burner":
+          await renderTokenBurnerTab(body as HTMLElement, sub as HTMLElement, (m, p) => req(m, p));
           break;
         case "users": {
           const me = hiveMe ?? (await getHiveMe());
@@ -38003,7 +39359,7 @@ function init() {
             const skills: unknown[] = Array.isArray(a.skills) ? a.skills : [];
             return `<div class="alt-card">
             <h3 style="display:flex;align-items:center;gap:6px">
-              ${a.emoji ? `<span style="font-size:16px">${a.emoji}</span>` : ""}
+              ${a.emoji ? `<span style="font-size:16px">${altEsc(a.emoji)}</span>` : ""}
               ${altEsc(a.name ?? a.id ?? "?")}
               ${isDefault ? '<span style="padding:1px 6px;border-radius:3px;font-size:9px;background:rgba(193,154,107,0.2);color:var(--accent)">default</span>' : ""}
             </h3>
@@ -38127,7 +39483,7 @@ function init() {
             return `<div style="background:var(--bg);border:1px solid ${hasIssue ? "rgba(239,68,68,0.3)" : "var(--border)"};border-radius:4px;padding:6px 10px;margin-bottom:4px">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span style="font-size:11px;font-weight:600;color:${hasIssue ? "var(--yellow)" : "var(--text)"}">
-                ${s.emoji ? s.emoji + " " : ""}${altEsc(s.name ?? s.key ?? "?")}
+                ${s.emoji ? altEsc(s.emoji) + " " : ""}${altEsc(s.name ?? s.key ?? "?")}
                 ${version ? `<span style="font-size:9px;color:var(--muted);font-weight:400;margin-left:4px">v${altEsc(version)}</span>` : ""}
               </span>
               <span style="display:flex;align-items:center;gap:6px">
@@ -39695,6 +41051,7 @@ function init() {
 
   $("tab-add")!.addEventListener("click", () => {
     const tab = createTab();
+    unusedNewTabKeys.add(tab.sessionKey!);
     renderTabs();
     switchToTab(tab.id);
     updateSessionsPanel();
@@ -39759,6 +41116,21 @@ function init() {
       } else if (promptId && action === "report-bug") {
         void reportPromptBug(promptId, promptAction.closest(".msg"));
       }
+      return;
+    }
+    // FORK 2026-11-14 — a long job's row opens (or closes) the work behind it; the trail's × closes it.
+    const trailClose = target.closest("[data-job-trail-close]") as HTMLElement | null;
+    if (trailClose) {
+      e.stopPropagation();
+      jobTrailUi.close(trailClose.getAttribute("data-job-trail-close") ?? "");
+      updateChat(true);
+      return;
+    }
+    const jobRow = target.closest(
+      ".thinking-run.job-run-openable[data-job-id]",
+    ) as HTMLElement | null;
+    if (jobRow) {
+      toggleJobTrail(jobRow.getAttribute("data-job-id") ?? "");
       return;
     }
     const stop = target.closest(".thinking-stop");

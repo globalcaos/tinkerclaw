@@ -184,3 +184,150 @@ describe("BridgeSessionMap on temp copies", () => {
     expect(back["tinker-sp-aaa"]?.sessionId).toBe(S1);
   });
 });
+
+// 2026-11-13: the map was memory only, so after each gateway restart every tab answered "this runner cannot rewind"
+// until it ran a new turn; a chat stuck on a refusal is exactly the one that will not run one.
+describe("SeenSessions survives a restart when given a file", () => {
+  const hook = (id: string, path: string) => ({ session_id: id, transcript_path: path, cwd: "/w" });
+
+  it("a new instance on the same file knows the tabs the old one saw, and the rewind works", () => {
+    const { d, transcript, mapFile } = setup();
+    const file = join(d, "state", "seen-sessions.json");
+    new SeenSessions(file).note("tab-1", hook(S1, transcript), 5);
+    const after = new SeenSessions(file);
+    expect(after.get("tab-1")).toMatchObject({ sessionId: S1, transcriptPath: transcript });
+    const map = new BridgeSessionMap({ mapFile, seen: after });
+    expect(map.runnerFor("tab-1")).toBe("cc-bridge");
+    const r = rewindTurn({
+      sessionMap: map,
+      registry: new RewindRegistry(),
+      sessionKey: "tab-1",
+      turnId: "",
+      now: 6,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("a re-pointed tab is saved too, and a repeated hook with the same session does not write again", () => {
+    const { d, transcript } = setup();
+    const file = join(d, "seen.json");
+    const seen = new SeenSessions(file);
+    seen.note("tab-1", hook(S1, transcript), 5);
+    const written = readFileSync(file, "utf-8");
+    seen.note("tab-1", hook(S1, transcript), 9);
+    expect(readFileSync(file, "utf-8")).toBe(written);
+    seen.set("tab-1", { sessionId: "fork-1", transcriptPath: null, cwd: null, ts: 10 });
+    expect(new SeenSessions(file).get("tab-1")?.sessionId).toBe("fork-1");
+  });
+
+  it("a missing or broken file starts empty, and with no file nothing is written", () => {
+    const d = tmp();
+    const file = join(d, "seen.json");
+    writeFileSync(file, "not json");
+    expect(new SeenSessions(file).get("tab-1")).toBeUndefined();
+    const mem = new SeenSessions();
+    mem.note("tab-1", { session_id: S1 }, 1);
+    expect(readdirSync(d)).toEqual(["seen.json"]);
+  });
+});
+
+// 2026-11-13: a chat whose transcript passed the bridge's resume limit runs on a new Claude session; the page still
+// shows the older turns, and a Rewind to one of them answered that the context was empty.
+describe("Rewind reaches a prompt in an earlier session of the same tab", () => {
+  const S0 = "00000000-0000-0000-0000-000000000000";
+  const ln = (sid: string, o: Record<string, unknown>) => JSON.stringify({ sessionId: sid, ...o });
+  function twoSessions(oldBytes = 0) {
+    const d = tmp();
+    const old = join(d, `${S0}.jsonl`);
+    writeFileSync(
+      old,
+      [
+        ln(S0, { type: "user", uuid: "o1", message: { content: "old first" } }),
+        ln(S0, {
+          type: "assistant",
+          uuid: "o2",
+          message: { content: [{ type: "text", text: "x".repeat(oldBytes) }] },
+        }),
+        ln(S0, { type: "user", uuid: "o3", message: { content: "the old ask" } }),
+        ln(S0, {
+          type: "assistant",
+          uuid: "o4",
+          message: { content: [{ type: "text", text: "old answer" }] },
+        }),
+      ].join("\n") + "\n",
+    );
+    const cur = join(d, `${S1}.jsonl`);
+    writeFileSync(
+      cur,
+      [ln(S1, { type: "user", uuid: "n1", message: { content: "new ask" } })].join("\n") + "\n",
+    );
+    const mapFile = join(d, "session-map.json");
+    writeFileSync(
+      mapFile,
+      JSON.stringify({
+        "tinker-sp-old": { sessionId: S0, updatedAt: 1, openclawSessionId: "oc-1" },
+        "tinker-sp-new": { sessionId: S1, updatedAt: 2, openclawSessionId: "oc-1" },
+        "tinker-sp-other": {
+          sessionId: "99999999-9999-9999-9999-999999999999",
+          updatedAt: 3,
+          openclawSessionId: "oc-2",
+        },
+      }),
+    );
+    const seen = new SeenSessions();
+    seen.note("tab-1", { session_id: S1, transcript_path: cur }, 1);
+    return { d, old, cur, mapFile, seen, map: new BridgeSessionMap({ mapFile, seen }) };
+  }
+
+  it("lists only this tab's earlier sessions", () => {
+    const { old, map } = twoSessions();
+    expect(map.earlierTranscriptsFor("tab-1")).toEqual([old]);
+  });
+
+  it("cuts the earlier session before that prompt, points the tab at the copy, and Undo returns to the current one", () => {
+    const { d, old, map } = twoSessions();
+    const before = readFileSync(old, "utf-8");
+    const registry = new RewindRegistry();
+    const r = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "tab-1",
+      turnId: "",
+      fromPrompt: "the old ask",
+      now: 5,
+    });
+    expect(r).toMatchObject({ ok: true, restoredPrompt: "the old ask", originalSessionId: S1 });
+    const fork = readFileSync(join(d, `${r.forkSessionId}.jsonl`), "utf-8");
+    expect(fork).toContain("old first");
+    expect(fork).not.toContain("the old ask");
+    expect(readFileSync(old, "utf-8")).toBe(before);
+    const u = rewindTurn({
+      sessionMap: map,
+      registry,
+      sessionKey: "tab-1",
+      turnId: "",
+      undo: true,
+      now: 6,
+    });
+    expect(u).toMatchObject({ ok: true, restoredSessionId: S1 });
+  });
+
+  it("a copy too large for the bridge to resume is refused, and no copy stays", () => {
+    const { d, map } = twoSessions(8_100_000);
+    const r = rewindTurn({
+      sessionMap: map,
+      registry: new RewindRegistry(),
+      sessionKey: "tab-1",
+      turnId: "",
+      fromPrompt: "the old ask",
+      now: 5,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/MB the bridge resumes/);
+    expect(
+      readdirSync(d)
+        .filter((f) => f.endsWith(".jsonl"))
+        .sort(),
+    ).toEqual([`${S0}.jsonl`, `${S1}.jsonl`].sort());
+  });
+});

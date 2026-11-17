@@ -10,15 +10,17 @@
  * Both tools gracefully degrade when the embedding provider is unavailable,
  * returning structured `disabled`/`unavailable` payloads with actionable hints.
  *
- * Wired in by: tool registration in the agent runner; imported as `createMemorySearchTool` / `createMemoryGetTool`
+ * Wired in by: nothing but its own tests as of 2026-10-29. Agents get `memory_search` from the
+ * memory plugin slot (fresh-clone default: extensions/memory-core/src/tools.ts).
  */
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
+import type { EmbedQueryCaller } from "../../fork/embedder-governor.js";
 import { resolveMemoryBackendConfig } from "../../memory/backend-config.js";
 import { getMemorySearchManager } from "../../memory/index.js";
 import { readAgentMemoryFile } from "../../memory/read-file.js";
-import type { MemorySearchResult } from "../../memory/types.js";
+import type { MemorySearchManager, MemorySearchResult } from "../../memory/types.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveMemorySearchConfig } from "../memory-search.js";
@@ -36,6 +38,12 @@ const MemoryGetSchema = Type.Object({
   from: Type.Optional(Type.Number()),
   lines: Type.Optional(Type.Number()),
 });
+
+// FORK 2026-10-29: the MemorySearchManager interface omits `caller`. MemoryIndexManager.search
+// reads it and the qmd fallback wrapper forwards opts untouched (src/memory/search-manager.ts).
+type MemoryToolSearchOptions = NonNullable<Parameters<MemorySearchManager["search"]>[1]> & {
+  caller: EmbedQueryCaller;
+};
 
 function resolveMemoryToolContext(options: { config?: OpenClawConfig; agentSessionKey?: string }) {
   const cfg = options.config;
@@ -134,11 +142,15 @@ export function createMemorySearchTool(options: {
             mode: citationsMode,
             sessionKey: options.agentSessionKey,
           });
-          const rawResults = await memory.manager.search(query, {
+          // FORK 2026-10-29: the agent's own recall is real demand for the embedder fit
+          // (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). The manager's default, 'internal', is not.
+          const searchOptions: MemoryToolSearchOptions = {
             maxResults,
             minScore,
             sessionKey: options.agentSessionKey,
-          });
+            caller: "agent",
+          };
+          const rawResults = await memory.manager.search(query, searchOptions);
           const status = memory.manager.status();
           const decorated = decorateCitations(rawResults, includeCitations);
           const resolved = resolveMemoryBackendConfig({ cfg, agentId });

@@ -11,6 +11,7 @@ import {
   liveSessionsForModel,
   modelCountKey,
   resolveSessionRunState,
+  rewindBlockedByLiveReply,
   RUN_STALE_MS,
   sessionHasFreshClientRun,
   sessionJobActivity,
@@ -1010,6 +1011,41 @@ describe("transcriptWriterIsLive", () => {
     );
     expect(
       transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: run(T - RUN_STALE_MS - 1), now: T }),
+    ).toBe(false);
+  });
+});
+
+// FORK 2026-11-12 — Rewind after a provider safeguard.
+// Symptom: the button stayed grey with "Wait for the reply to finish" after Fable 5.2 blocked a
+// turn. The page treated a leftover `streamRunId` as a live reply; the error path never cleared it.
+describe("rewindBlockedByLiveReply", () => {
+  const T = 1_786_999_000_000;
+  const liveRun = { lastEventAt: T - 1_000 } as ClientRun;
+
+  it("blocks while the owner is still sending or a writer is live", () => {
+    expect(
+      rewindBlockedByLiveReply({ sendingNow: true, lastDeltaAt: 0, streamRun: undefined, now: T }),
+    ).toBe(true);
+    expect(
+      rewindBlockedByLiveReply({
+        sendingNow: false,
+        lastDeltaAt: 0,
+        streamRun: liveRun,
+        now: T,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not block on a leftover stream cursor after a finished error — the reported bug", () => {
+    // Error path zeroed lastDeltaAt and streamMsgUid but left streamRunId set, and never deleted
+    // the run. Once the run is gone from the map, that cursor is a corpse: Rewind must work.
+    expect(
+      rewindBlockedByLiveReply({
+        sendingNow: false,
+        lastDeltaAt: 0,
+        streamRun: undefined,
+        now: T,
+      }),
     ).toBe(false);
   });
 });

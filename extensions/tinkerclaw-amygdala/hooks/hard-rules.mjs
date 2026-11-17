@@ -32,9 +32,11 @@ import {
   closeSync,
   lstatSync,
   readdirSync,
+  realpathSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DATA_DIR = process.env.AMYGDALA_DATA_DIR || join(homedir(), ".openclaw", "data", "amygdala");
 // One amygdala (2026-10-15, the architect): this is the AEGIS hard-rule layer of the digital amygdala (J11 v6.7 §6.1), moved
@@ -43,6 +45,8 @@ const DATA_DIR = process.env.AMYGDALA_DATA_DIR || join(homedir(), ".openclaw", "
 // bubbles and the "allow <code>" history carry on.
 const POLICY_PATH = process.env.AMYGDALA_POLICY_PATH || join(DATA_DIR, "policy.json");
 const SPOOL_PATH = join(DATA_DIR, "hook-decisions.jsonl");
+// The agent's own files (2026-11-16): the list the gateway keeps beside the policy (src/own-files.ts, OWN_FILES_NAME).
+const OWN_FILES_PATH = join(dirname(POLICY_PATH), "own-files.jsonl");
 const GRANTS_USED_PATH = join(DATA_DIR, "owner-grants-used.jsonl");
 
 /**
@@ -97,6 +101,54 @@ function ownerWords(text) {
   return text;
 }
 
+/**
+ * The text of a transcript row that can carry the owner's typed words, or null: a `user` row that is
+ * not meta and not a tool result, or (2026-11-14) his message sent while the turn was still running.
+ * Claude Code writes that one as no `user` row at all: it absorbs it into the running turn and records
+ * `{type:"attachment", attachment:{type:"queued_command", commandMode:"prompt", prompt}}`. Before this,
+ * an Allow pressed while the agent worked never counted, and the "retry the identical command" the deny
+ * text asks for was refused a second time. Job and task notifications arrive the same way with another
+ * commandMode and stay out; ownerWords() then applies the same owner test to both kinds of row.
+ */
+function typedText(row) {
+  if (!row || row.isMeta) {
+    return null;
+  }
+  if (row.type === "attachment") {
+    const a = row.attachment;
+    if (a?.type !== "queued_command" || a.commandMode !== "prompt") {
+      return null;
+    }
+    if (typeof a.prompt === "string") {
+      return a.prompt;
+    }
+    if (Array.isArray(a.prompt)) {
+      return a.prompt
+        .filter((b) => b?.type === "text")
+        .map((b) => b.text || "")
+        .join("\n");
+    }
+    return null;
+  }
+  if (row.type !== "user") {
+    return null;
+  }
+  const c = row.message?.content;
+  if (typeof c === "string") {
+    return c;
+  }
+  if (Array.isArray(c)) {
+    if (c.some((b) => b?.type === "tool_result")) {
+      return null;
+    }
+    return c
+      .filter((b) => b?.type === "text")
+      .map((b) => b.text || "")
+      .join("\n");
+  }
+  return "";
+}
+
 /** Latest owner-typed message from the transcript tail: { words, ts } or null. */
 function latestOwnerMessage(transcriptPath) {
   if (!transcriptPath) return null;
@@ -114,16 +166,9 @@ function latestOwnerMessage(transcriptPath) {
     } catch {
       continue; // first line of the tail may be cut
     }
-    if (row?.type !== "user" || row.isMeta) continue;
-    const c = row.message?.content;
-    let text = "";
-    if (typeof c === "string") text = c;
-    else if (Array.isArray(c)) {
-      if (c.some((b) => b?.type === "tool_result")) continue;
-      text = c
-        .filter((b) => b?.type === "text")
-        .map((b) => b.text || "")
-        .join("\n");
+    const text = typedText(row);
+    if (text === null) {
+      continue;
     }
     const words = ownerWords(text);
     if (words === null) continue;
@@ -150,19 +195,12 @@ function recentOwnerMessages(transcriptPath, maxAgeMs) {
     } catch {
       continue;
     }
-    if (row?.type !== "user" || row.isMeta) continue;
+    const text = typedText(row);
+    if (text === null) {
+      continue;
+    }
     const ts = Date.parse(row.timestamp || "");
     if (Number.isFinite(ts) && Date.now() - ts > maxAgeMs) break;
-    const c = row.message?.content;
-    let text = "";
-    if (typeof c === "string") text = c;
-    else if (Array.isArray(c)) {
-      if (c.some((b) => b?.type === "tool_result")) continue;
-      text = c
-        .filter((b) => b?.type === "text")
-        .map((b) => b.text || "")
-        .join("\n");
-    }
     const words = ownerWords(text);
     if (words !== null) out.push({ words, ts });
   }
@@ -269,14 +307,23 @@ function jevKey() {
 
 /** Long token-like runs (keys, passwords pasted in chat) never leave the machine. */
 function redact(text) {
+  // Paths stay (2026-11-04): Jev must see WHAT a delete targets to judge it against the task;
+  // a long absolute path had been cut to [redacted]. Token-like runs still go.
   return String(text)
-    .replace(/[A-Za-z0-9_\-+/=.]{24,}/g, "[redacted]")
+    .replace(/[A-Za-z0-9_\-+/=.]{24,}/g, (m) =>
+      m.includes("/") && PATH_RUN_RE.test(m) ? m : "[redacted]",
+    )
     .slice(0, 2000);
 }
 
 async function jevScore(words, command, question, instructions) {
+  return (await jevScoreOrNull(words, command, question, instructions)) ?? 0;
+}
+
+/** Jev's score, or null when Jev gave no answer (no key, timeout, error). */
+async function jevScoreOrNull(words, command, question, instructions) {
   const key = jevKey();
-  if (!key) return 0;
+  if (!key) return null;
   try {
     const r = await fetch(JEV_URL, {
       method: "POST",
@@ -288,12 +335,99 @@ async function jevScore(words, command, question, instructions) {
       }),
       signal: AbortSignal.timeout(JEV_TIMEOUT_MS),
     });
-    if (!r.ok) return 0;
+    if (!r.ok) return null;
     const p = (await r.json())?.answers?.[question]?.noul;
-    return typeof p === "number" && Number.isFinite(p) ? p : 0;
+    return typeof p === "number" && Number.isFinite(p) ? p : null;
   } catch {
-    return 0;
+    return null;
   }
+}
+
+/**
+ * Side-agenda check (2026-11-04): a deletion no longer needs the owner's words. It passes when it
+ * plausibly serves the task he gave, and is held only when its target is far from that task, the
+ * sign of an assistant pursuing something nobody asked for. Jev reads the last few prompts against
+ * the command; only a clear "unrelated" (below AGENDA_MAX) holds it. No Jev answer → it passes
+ * (the hold exists to catch a side agenda, not to fail closed on an outage).
+ * Returns "serves", "agenda", or "no-task" when there is no prompt to compare against.
+ */
+const AGENDA_MAX = 0.25;
+const TASK_WINDOW_MS = 6 * 60 * 60 * 1000;
+const JEV_TASK_QUESTION =
+  "Verify if the deletion in command serves the task in owner_message: owner_message holds the owner's recent prompts (newest first), command is what the assistant would run. Answer true if deleting those items is part of that task or a reasonable step toward it (cleaning up files the task created or touched, replacing, rebuilding, freeing space when asked). Answer false only if the deleted items are unrelated to anything the owner asked, as if the assistant were pursuing an agenda of its own.";
+
+async function deletionServesTask(transcriptPath, command) {
+  const prompts = recentOwnerMessages(transcriptPath, TASK_WINDOW_MS)
+    .slice(0, 3)
+    .map((m) => m.words.trim())
+    .filter(Boolean);
+  if (!prompts.length) return "no-task";
+  const p = await jevScoreOrNull(
+    prompts.join("\n---\n"),
+    command,
+    "serves_task",
+    JEV_TASK_QUESTION,
+  );
+  return p !== null && p < AGENDA_MAX ? "agenda" : "serves";
+}
+
+/**
+ * Send serves the task (2026-11-05): a step that sends data to an outside service no longer
+ * needs the owner's words when it is part of what he asked for in his last few prompts (setting
+ * up the server he asked to be set up calls that host's API). Jev reads the prompts against the
+ * command; it is held only on a clear "unrelated" or when there is no prompt to compare against.
+ * Hard rules on credentials and exfiltration stay as they are.
+ */
+const JEV_SEND_TASK_QUESTION =
+  "Verify if the data the command sends serves the task in owner_message: owner_message holds the owner's recent prompts (newest first), command is what the assistant would run. Answer true if sending this request to that destination is part of that task or a reasonable step toward it. Answer false if the destination or the data are unrelated to anything the owner asked, as if the assistant were pursuing an agenda of its own.";
+
+export async function sendServesTask(transcriptPath, command) {
+  const prompts = recentOwnerMessages(transcriptPath, TASK_WINDOW_MS)
+    .slice(0, 3)
+    .map((m) => m.words.trim())
+    .filter(Boolean);
+  if (!prompts.length || !command) return false;
+  const p = await jevScoreOrNull(
+    prompts.join("\n---\n"),
+    command,
+    "serves_task",
+    JEV_SEND_TASK_QUESTION,
+  );
+  return p !== null && p >= AGENDA_MAX;
+}
+
+/**
+ * Secret serves the task (2026-11-05): using a stored key no longer needs the owner to name it.
+ * It passes when Jev reads it as a step in the task from his last few prompts (editing his Slack
+ * message with the Slack token he asked us to use for Slack). Unlike deletion it fails closed:
+ * no Jev answer, or no prompt to compare against, keeps the hold, since a leaked key cannot be
+ * taken back. Sending a secret over the web stays with CREDENTIAL_EXFIL.
+ */
+const JEV_SECRET_TASK_QUESTION =
+  "Verify if using the stored secret in command serves the task in owner_message: owner_message holds the owner's recent prompts (newest first), command is what the assistant would run. Answer true if the secret is the credential for the very service or machine the owner asked the assistant to act on, and the command performs that requested action. Answer false if the secret belongs to a different service, or the command does something the owner did not ask for.";
+
+async function secretServesTask(transcriptPath, command) {
+  const prompts = recentOwnerMessages(transcriptPath, TASK_WINDOW_MS)
+    .slice(0, 3)
+    .map((m) => m.words.trim())
+    .filter(Boolean);
+  if (!prompts.length) return false;
+  const p = await jevScoreOrNull(
+    prompts.join("\n---\n"),
+    command,
+    "serves_task",
+    JEV_SECRET_TASK_QUESTION,
+  );
+  return p !== null && p >= JEV_DELETE_MIN;
+}
+
+/**
+ * Deletions that stay held whatever the task (2026-11-04): the two memory databases. A recursive
+ * delete of an absolute path outside /tmp keeps its own floor (FS_DESTRUCTIVE_ROOT).
+ */
+const PROTECTED_DELETE_RE = /\bmain\.sqlite\b|\bwhatsapp-history\.db\b/;
+function deletesProtected(command) {
+  return PROTECTED_DELETE_RE.test(command);
 }
 
 /**
@@ -364,7 +498,7 @@ function deletesOnlyTmpScratch(command, ruleRe) {
   for (const seg of String(command).split(/&&|\|\||[;&|\n]/)) {
     if (!ruleRe.test(` ${seg} `)) continue; // this segment deletes nothing
     const toks = seg.trim().split(/\s+/).filter(Boolean);
-    const i = toks.findIndex((t) => /^(?:rm|shred|unlink)$/.test(t));
+    const i = toks.findIndex((t) => /^(?:rm|rmdir|shred|unlink)$/.test(t));
     if (i < 0) return false; // cache purge, prune, worktree removal, find -delete …
     const targets = toks
       .slice(i + 1)
@@ -427,8 +561,50 @@ function isFresh(path) {
   }
 }
 
+// The agent's own files (2026-11-16, the owner's order: the agent can always delete what it created). The gateway
+// records every path a tool call gave birth to (src/own-files.ts: not there before the call, born during it). A
+// listed path is the agent's own while the file on disk is the same one (inode and birth time) and nobody changed
+// it since the agent's last write (same change time); a folder must be the listed one and hold nothing but paths
+// the same command names (the usual clean-up removes the files, then the folder). Same reading as OwnFiles.isOwn in
+// the gateway: keep the two equal. The delete must still name each target one by one.
+let ownFiles = null;
+function isOwnFile(path, named) {
+  if (!ownFiles) {
+    ownFiles = new Map();
+    try {
+      for (const line of readFileSync(OWN_FILES_PATH, "utf-8").split("\n")) {
+        if (!line) continue;
+        try {
+          const r = JSON.parse(line);
+          if (r && typeof r.p === "string") ownFiles.set(r.p, r);
+        } catch {}
+      }
+    } catch {}
+  }
+  const rec = ownFiles.get(path);
+  if (!rec) return false;
+  try {
+    const st = lstatSync(path);
+    if (st.uid !== process.getuid()) return false;
+    if (st.ino !== rec.ino || st.birthtimeMs !== rec.born) return false;
+    if (st.isDirectory()) {
+      return rec.dir === true && readdirSync(path).every((n) => named.has(join(path, n)));
+    }
+    return st.isFile() && rec.dir !== true && st.mtimeMs === rec.mtime;
+  } catch {
+    return false;
+  }
+}
+
+/** "fresh" when every target is under five minutes old, "own" when some passed by the own-files list, else false. */
 function deletesOnlyFreshFiles(command, ruleRe) {
   let sawDelete = false;
+  let usedOwn = false;
+  const named = new Set(); // every absolute path the command spells, for the folder check of isOwnFile
+  for (const w of shellWords(String(command).replace(/&&|\|\||[;&|\n]/g, " ")) ?? []) {
+    if (w.startsWith("/")) named.add(w.replace(/\/+$/, ""));
+    else if (w.startsWith("~/")) named.add(join(homedir(), w.slice(2)).replace(/\/+$/, ""));
+  }
   for (const seg of String(command).split(/&&|\|\||[;&|\n]/)) {
     if (!ruleRe.test(` ${seg} `)) continue;
     if (/[$`*?[\]{}]/.test(seg)) return false; // expansions and wildcards hide what is deleted
@@ -443,11 +619,13 @@ function deletesOnlyFreshFiles(command, ruleRe) {
     for (let t of targets) {
       if (t.startsWith("~/")) t = join(homedir(), t.slice(2));
       if (!t.startsWith("/") || t.includes("..")) return false;
-      if (!isFresh(t)) return false;
+      if (isFresh(t)) continue;
+      if (!isOwnFile(t.replace(/\/+$/, "") || "/", named)) return false;
+      usedOwn = true;
     }
     sawDelete = true;
   }
-  return sawDelete;
+  return sawDelete ? (usedOwn ? "own" : "fresh") : false;
 }
 
 function ownerGranted(code, transcriptPath) {
@@ -457,6 +635,91 @@ function ownerGranted(code, transcriptPath) {
   if (grantAlreadyUsed(code)) return false;
   try {
     appendFileSync(GRANTS_USED_PATH, JSON.stringify({ code, ts: new Date().toISOString() }) + "\n");
+  } catch {
+    return false; // cannot record the spend → do not allow
+  }
+  return true;
+}
+
+/**
+ * His Allow press covers this layer too (2026-11-13). The judge layer holds a step with a question
+ * and an Allow button under the reply; the press sends "allow JEV-…" as his prompt, and that layer
+ * then lets the step run (src/families/common.ts, ownerAllowTurn). This hook knew only its own
+ * AEGIS codes, so a clean-up he had just allowed was refused again as a side agenda and one step
+ * needed two Allows. A deletion now passes when his latest typed message is that press, less than
+ * GRANT_MAX_AGE_MS old, and the identical command was tried and refused by a guard hook since his
+ * message before it. One retry per press. The memory databases and the recursive-delete floor are
+ * checked apart from this and stay.
+ */
+const ALLOW_PRESS_RE = /\ballow\s+JEV-[0-9A-Z]{6}\b/i;
+const HOOK_REFUSAL_RE = /^PreToolUse:\S+ hook error:/;
+
+function allowPressCoversRetry(transcriptPath, command) {
+  if (!transcriptPath || typeof command !== "string" || !command) return false;
+  let tail;
+  try {
+    tail = readTail(transcriptPath, TRANSCRIPT_TAIL_BYTES);
+  } catch {
+    return false;
+  }
+  const lines = tail.split("\n");
+  let pressTs = null; // set once his latest message turns out to be an Allow press
+  const refused = new Set(); // tool calls a guard hook refused before the press
+  const commands = new Map(); // tool call id → command text
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let row;
+    try {
+      row = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (row?.isMeta) continue;
+    const c = row?.message?.content;
+    if (row?.type === "assistant") {
+      if (pressTs === null || !Array.isArray(c)) continue; // steps after the press are the retry itself
+      for (const b of c) {
+        if (b?.type === "tool_use" && typeof b.input?.command === "string") {
+          commands.set(b.id, b.input.command);
+        }
+      }
+      continue;
+    }
+    if (row?.type === "user" && Array.isArray(c) && c.some((b) => b?.type === "tool_result")) {
+      if (pressTs === null) continue;
+      for (const b of c) {
+        if (b?.type !== "tool_result" || b.is_error !== true) continue;
+        const said =
+          typeof b.content === "string"
+            ? b.content
+            : Array.isArray(b.content)
+              ? b.content.map((x) => x?.text || "").join("\n")
+              : "";
+        if (HOOK_REFUSAL_RE.test(said)) refused.add(b.tool_use_id);
+      }
+      continue;
+    }
+    const text = typedText(row); // a typed prompt, or one he sent while the turn ran (queued_command)
+    if (text === null) {
+      continue;
+    }
+    const words = ownerWords(text);
+    if (words === null) continue;
+    if (pressTs !== null) break; // his message before the press: older steps are not what he allowed
+    const ts = Date.parse(row.timestamp || "");
+    if (!ALLOW_PRESS_RE.test(words)) return false;
+    if (!Number.isFinite(ts) || Date.now() - ts > GRANT_MAX_AGE_MS) return false;
+    pressTs = ts;
+  }
+  if (pressTs === null) return false;
+  if (![...refused].some((id) => commands.get(id) === command)) return false;
+  const h = createHash("sha256").update(`${pressTs}\n${command}`).digest("hex");
+  const spent = `RETRY-${h.slice(0, 12)}`;
+  if (grantAlreadyUsed(spent)) return false;
+  try {
+    appendFileSync(
+      GRANTS_USED_PATH,
+      JSON.stringify({ code: spent, ts: new Date().toISOString() }) + "\n",
+    );
   } catch {
     return false; // cannot record the spend → do not allow
   }
@@ -556,14 +819,27 @@ async function main() {
   } else if (EXEC_TOOL_RE.test(toolName)) {
     execText = safeStringify(toolInput);
   }
+  // 2026-11-12: the delete rule reads the body of a script the command runs only when that script
+  // changed in the last 24 hours. A script body is appended so a delete the agent hides in a file
+  // it just wrote is still seen; a program installed weeks ago is not that. A run of the two-week
+  // old speaker script was blocked for the temp-file clean-up inside it, on a command that deleted
+  // nothing. A command that touches the memory databases keeps the full text, and so does every
+  // other hard rule (disk formatting, raw device write, recursive delete of an absolute path).
+  const deleteText =
+    /^bash$/i.test(toolName) &&
+    typeof toolInput?.command === "string" &&
+    !deletesProtected(execText)
+      ? toolInput.command + scriptBodies(toolInput.command, DELETE_SCRIPT_MAX_AGE_MS)
+      : execText;
   const allText = `${toolName} ${safeStringify(toolInput)}`;
 
   const enforcement = policy.hookEnforcement !== false;
   let sampledAllow = false;
+  let observed = null;
 
   for (const r of policy.rules) {
     if (!r || !r.source) continue;
-    const text = r.scope === "all" ? allText : execText;
+    const text = r.scope === "all" ? allText : r.ownerIntent === "delete" ? deleteText : execText;
     if (!text) continue;
     let re;
     try {
@@ -573,25 +849,52 @@ async function main() {
     }
     if (!re.test(text)) continue;
 
+    // Everything under /tmp is scratch, recursive deletes included.
+    if (
+      r.id === "FS_DESTRUCTIVE_ROOT" &&
+      deletesOnlyTmpScratch(execText, new RegExp(r.source, (r.flags || "").replace("g", "")))
+    ) {
+      continue;
+    }
+
     // Redact BEFORE the 200-char cut: a token split by the cut would leave its prefix behind.
     const target = (isSecretRow({ rule: r.id }) ? redactTarget(text) : String(text)).slice(0, 200);
+    let agenda = false;
     if (r.enforce && enforcement && r.ownerIntent === "delete") {
       // Deletion needs the owner's words (2026-10-13). Agent scratch under /tmp is fine.
       const nonGlobal = new RegExp(r.source, (r.flags || "").replace("g", ""));
-      if (deletesOnlyTmpScratch(execText, nonGlobal)) continue;
-      if (deletesOnlyFreshFiles(execText, nonGlobal)) {
+      if (deletesOnlyTmpScratch(deleteText, nonGlobal)) continue;
+      const mine = deletesOnlyFreshFiles(deleteText, nonGlobal);
+      if (mine) {
         spool({
           ts: new Date().toISOString(),
           tool: toolName,
           target,
-          decision: "fresh-files",
+          decision: mine === "own" ? "own-files" : "fresh-files",
           rule: r.id,
           enforced: true,
           src: "cc-hook",
         });
         continue;
       }
-      if (await ownerAskedToDelete(payload.transcript_path, execText)) {
+      // 2026-11-13: his Allow press on the held step releases its identical retry here too.
+      if (
+        /^bash$/i.test(toolName) &&
+        !deletesProtected(deleteText) &&
+        allowPressCoversRetry(payload.transcript_path, toolInput?.command)
+      ) {
+        spool({
+          ts: new Date().toISOString(),
+          tool: toolName,
+          target,
+          decision: "owner-allow-retry",
+          rule: r.id,
+          enforced: true,
+          src: "cc-hook",
+        });
+        continue;
+      }
+      if (await ownerAskedToDelete(payload.transcript_path, deleteText)) {
         spool({
           ts: new Date().toISOString(),
           tool: toolName,
@@ -602,6 +905,23 @@ async function main() {
           src: "cc-hook",
         });
         continue;
+      }
+      // 2026-11-04: past those, a deletion that serves the task passes; only a side agenda is held.
+      if (!deletesProtected(deleteText)) {
+        const verdict = await deletionServesTask(payload.transcript_path, deleteText);
+        if (verdict === "serves") {
+          spool({
+            ts: new Date().toISOString(),
+            tool: toolName,
+            target,
+            decision: "serves-task",
+            rule: r.id,
+            enforced: true,
+            src: "cc-hook",
+          });
+          continue;
+        }
+        agenda = verdict === "agenda";
       }
     }
     if (r.enforce && enforcement && r.ownerIntent === "secret") {
@@ -633,6 +953,18 @@ async function main() {
         });
         continue;
       }
+      if (await secretServesTask(payload.transcript_path, execText || allText)) {
+        spool({
+          ts: new Date().toISOString(),
+          tool: toolName,
+          target,
+          decision: "serves-task",
+          rule: r.id,
+          enforced: true,
+          src: "cc-hook",
+        });
+        continue;
+      }
     }
     if (r.enforce && enforcement) {
       const code = grantCode(r.id, execText || allText);
@@ -653,7 +985,7 @@ async function main() {
         // A general "yes, do it" in chat does not clear this deny (2026-10-12, a Pi SSD
         // format refused three times after the owner's go). Only the owner's own typed
         // "allow <code>" for this exact command does, once (owner grant, see above).
-        `AMYGDALA hard rule (AEGIS) [${r.id}]: ${r.explanation}. Blocked. ${r.ownerIntent === "delete" ? 'Asking for help ("free some space", "clean up") is not an instruction to delete. Do this instead: (1) ask the owner ONE specific question that names exactly what would be deleted and its size, e.g. "Delete the 12 Timeshift snapshots from 2022-08-18 to 2026-10-06 (about 195 GB), keeping today\'s?"; (2) give them the exact reply that unblocks it, as a plain sentence starting with the word Delete and naming the same items, e.g. Delete the 12 old Timeshift snapshots. It must be their own message, unquoted and with no negation (not, never, don\'t) in that sentence; it then opens deletions for 30 minutes. Agent scratch under /tmp/<name> is always allowed. ' : r.ownerIntent === "secret" ? 'Using a stored password needs the owner\'s express words. Do this instead: ask the owner ONE specific question naming the secret and what it is for, e.g. "Use the MIC password to add mic-710aix to the docker group?", and give them the exact reply that unblocks it, a plain sentence in their own words such as: Use the MIC password to add my user to the docker group. It must be their own message, unquoted and with no negation; it then opens that kind of access for 30 minutes. ' : ""}${r.id === "FS_DESTRUCTIVE_ROOT" && /\s\/tmp\/[^/\s]+/.test(execText) ? "For your own scratch under /tmp, do not ask the owner for a code: remove its files by absolute path without -r, then rmdir the folder; that passes. " : ""}If the owner wants this exact command run, ask them to type "allow ${code}" in the chat, then retry the identical command; the grant works once, for this command only, within 30 minutes. A general "go ahead" does not count, and you must not type or relay the code as if it were theirs. The rule matches any text in the command, comments and heredocs included.`,
+        `AMYGDALA hard rule (AEGIS) [${r.id}]: ${r.explanation}. Blocked. ${agenda ? "This deletion does not match anything the owner asked for in his recent prompts, which is how a side agenda looks. Do not delete it on your own initiative: either drop it, or tell the owner in one sentence what it is and why the task needs it gone. " : r.ownerIntent === "delete" ? 'Asking for help ("free some space", "clean up") is not an instruction to delete. Do this instead: (1) ask the owner ONE specific question that names exactly what would be deleted and its size, e.g. "Delete the 12 Timeshift snapshots from 2022-08-18 to 2026-10-06 (about 195 GB), keeping today\'s?"; (2) give them the exact reply that unblocks it, as a plain sentence starting with the word Delete and naming the same items, e.g. Delete the 12 old Timeshift snapshots. It must be their own message, unquoted and with no negation (not, never, don\'t) in that sentence; it then opens deletions for 30 minutes. Agent scratch under /tmp/<name> is always allowed. ' : r.ownerIntent === "secret" ? 'Using a stored password needs the owner\'s express words. Do this instead: ask the owner ONE specific question naming the secret and what it is for, e.g. "Use the MIC password to add mic-710aix to the docker group?", and give them the exact reply that unblocks it, a plain sentence in their own words such as: Use the MIC password to add my user to the docker group. It must be their own message, unquoted and with no negation; it then opens that kind of access for 30 minutes. ' : ""}${r.id === "FS_DESTRUCTIVE_ROOT" && /\s\/tmp\/[^/\s]+/.test(execText) ? "For your own scratch under /tmp, do not ask the owner for a code: remove its files by absolute path without -r, then rmdir the folder; that passes. " : ""}If the owner wants this exact command run, stop and say what was blocked: an Allow button under your reply sends "allow ${code}" for them (they can also type it), then retry the identical command; the grant works once, for this command only, within 30 minutes. A general "go ahead" does not count, and you must not type or relay the code as if it were theirs. The rule matches any text in the command, comments and heredocs included.`,
       );
       spool({
         ts: new Date().toISOString(),
@@ -661,18 +993,27 @@ async function main() {
         target,
         decision: "deny",
         rule: r.id,
+        // 2026-10-29: the page draws an Allow button under the reply that sends "allow <grant>" as the owner's prompt.
+        grant: code,
         enforced: true,
         src: "cc-hook",
       });
       return;
     }
-    // Matched but observe-only (enforce:false or enforcement globally off).
+    // Matched but observe-only (enforce:false or enforcement globally off). Keep looking (2026-11-09):
+    // stopping here let CREDENTIAL_CONTENT, which matches every text CREDENTIAL_EXFIL matches, keep that
+    // deny from ever firing, and any observe-only rule hid the enforced rules after it. The first
+    // observe-only match is logged once, below, only when no enforced rule denies.
+    observed ??= { rule: r.id, target };
+  }
+
+  if (observed) {
     spool({
       ts: new Date().toISOString(),
       tool: toolName,
-      target,
+      target: observed.target,
       decision: "observe",
-      rule: r.id,
+      rule: observed.rule,
       enforced: false,
       src: "cc-hook",
     });
@@ -708,8 +1049,10 @@ async function main() {
 const SCRIPT_RUN_RE =
   /(?:^|[\s;&|(])(?:bash|sh|zsh|dash|source|\.)\s+(?:-\w+\s+)*([^\s;&|()]+)|(?:^|[;&|(])\s*(?:(?:sudo|nohup|exec|env|time)\s+(?:-\S+\s+)*)*((?:\.{1,2}|~|\/)[^\s;&|()]*\.(?:sh|bash|zsh))/g;
 const SCRIPT_MAX_BYTES = 256 * 1024;
+const DELETE_SCRIPT_MAX_AGE_MS = 24 * 3600_000;
 
-function scriptBodies(command) {
+/** `maxAgeMs`: leave out a script whose file last changed longer ago than this. */
+function scriptBodies(command, maxAgeMs = Infinity) {
   let out = "";
   for (const m of String(command).matchAll(SCRIPT_RUN_RE)) {
     let p = (m[1] || m[2] || "").replace(/^['"]|['"]$/g, "");
@@ -720,6 +1063,7 @@ function scriptBodies(command) {
       try {
         const st = fstatSync(fd);
         if (!st.isFile() || st.size > SCRIPT_MAX_BYTES) continue;
+        if (Date.now() - st.mtimeMs > maxAgeMs) continue;
         const buf = Buffer.alloc(st.size);
         readSync(fd, buf, 0, st.size, 0);
         out += `\n${buf.toString("utf-8")}`;
@@ -751,9 +1095,14 @@ function pickSample(toolName, text) {
   return Math.abs(h) % 50 === 0;
 }
 
-try {
-  await main();
-} catch {
-  /* fail-open: never block the agent on a hook error */
+// Run only as the hook itself. lib.mjs imports sendServesTask from here (2026-11-05); an
+// unguarded main() + process.exit(0) ended that process before the send check ran, so every
+// held send passed with no check at all.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main();
+  } catch {
+    /* fail-open: never block the agent on a hook error */
+  }
+  process.exit(0);
 }
-process.exit(0);

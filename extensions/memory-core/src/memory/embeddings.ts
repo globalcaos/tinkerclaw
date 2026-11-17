@@ -107,6 +107,18 @@ async function createWithAdapter(
 export async function createEmbeddingProvider(
   options: CreateEmbeddingProviderOptions,
 ): Promise<EmbeddingProviderResult> {
+  // FORK 2026-10-29: "none" means word index only: no adapter, no fallback, no embedding call. In
+  // TinkerClaw, resolveMemorySearchConfig returns it for an unset or "auto" provider when the
+  // embedder fit chose no model for this machine or has not measured it, and a user may set it by
+  // hand. The manager's FTS-only mode then indexes and searches words. Without this branch,
+  // getAdapter("none") throws "Unknown memory embedding provider: none".
+  if (options.provider === "none") {
+    return {
+      provider: null,
+      requestedProvider: "none",
+      providerUnavailableReason: "memorySearch.provider is none: word index only",
+    };
+  }
   if (options.provider === "auto") {
     const reasons: string[] = [];
     for (const adapter of listAutoSelectAdapters(options)) {

@@ -85,22 +85,90 @@ export function newestExchange(view: readonly Row[], d: ExchangeDeps): Exchange 
 }
 
 /**
- * The exchange whose prompt has this key (the newest such one), and how many real prompts come after it: a Rewind there
- * takes `1 + later` exchanges. Placeholders are transparent, as in `newestExchange`.
+ * The exchange whose prompt has this key, and how many real prompts come after it: a Rewind there takes `1 + later`
+ * exchanges. Placeholders are transparent, as in `newestExchange`.
+ *
+ * FORK 2026-11-13: the same words sent twice share a key. A tab held one short prompt three times, and the Rewind of
+ * the older turn acted on the newest of them. With `at` (the time of the prompt row the caller means) the row sent
+ * nearest to that time is the one; without it, the newest, as before.
  */
 export function exchangeByKey(
   view: readonly Row[],
   key: string,
   d: ExchangeDeps,
+  at?: number,
 ): (Exchange & { later: number }) | null {
   let later = 0;
+  let best: (Exchange & { later: number }) | null = null;
+  let bestGap = Number.POSITIVE_INFINITY;
   for (let i = view.length - 1; i >= 0; i--) {
     const p = d.promptOf(view[i]);
     if (p === null) continue;
-    if (exchangeKey(p) === key) return { key, prompt: p, at: d.timeOf(view[i]), index: i, later };
+    if (exchangeKey(p) === key) {
+      const rowAt = d.timeOf(view[i]);
+      const hit = { key, prompt: p, at: rowAt, index: i, later };
+      if (at === undefined) return hit;
+      // A row with no time is taken only when no timed row has the words.
+      const gap = rowAt === undefined ? Number.MAX_VALUE : Math.abs(rowAt - at);
+      if (gap < bestGap) {
+        best = hit;
+        bestGap = gap;
+      }
+    }
     later++;
   }
+  return best;
+}
+
+/** The n-th real prompt from the end (1 = the newest): where `/rewind n` starts. Null when the page holds fewer. */
+export function nthNewestExchange(
+  view: readonly Row[],
+  n: number,
+  d: ExchangeDeps,
+): (Exchange & { later: number }) | null {
+  let seen = 0;
+  for (let i = view.length - 1; i >= 0; i--) {
+    const p = d.promptOf(view[i]);
+    if (p === null) continue;
+    seen++;
+    if (seen === n) {
+      return { key: exchangeKey(p), prompt: p, at: d.timeOf(view[i]), index: i, later: n - 1 };
+    }
+  }
   return null;
+}
+
+/** A prompt row this close before the gateway's cut belongs to the exchange that was cut. */
+export const CUT_SKEW_MS = 2_000;
+
+/**
+ * FORK 2026-11-13: where the page must start hiding, given the exchange the owner pointed at and the time of the
+ * prompt the gateway cut at (`cutAt`). One turn of the model can show as two prompt rows: the CLI's own notice for a
+ * background task, and the gateway's line for the same turn, written seconds later. A Rewind aimed at the second cuts
+ * the model's transcript at the first, and the notice and its reply would stay on the page with nothing behind them.
+ * So the start moves back over every prompt row sent at or after the cut. A typed prompt is not moved: the row before
+ * it was sent before the cut. `later` counts the prompts after the start, for the one placeholder that covers them.
+ */
+export function exchangeFromCut(
+  view: readonly Row[],
+  target: Pick<Exchange, "index">,
+  cutAt: number | undefined,
+  d: ExchangeDeps,
+): (Exchange & { later: number }) | null {
+  let start = target.index;
+  if (cutAt !== undefined) {
+    for (let i = target.index - 1; i >= 0; i--) {
+      if (d.promptOf(view[i]) === null) continue;
+      const t = d.timeOf(view[i]);
+      if (t === undefined || t < cutAt - CUT_SKEW_MS) break;
+      start = i;
+    }
+  }
+  const prompt = d.promptOf(view[start]);
+  if (prompt === null) return null;
+  let later = 0;
+  for (let i = start + 1; i < view.length; i++) if (d.promptOf(view[i]) !== null) later++;
+  return { key: exchangeKey(prompt), prompt, at: d.timeOf(view[start]), index: start, later };
 }
 
 /**
@@ -176,6 +244,15 @@ export function placeholderRow(r: RewoundExchange): Row {
       },
     ],
   };
+}
+
+/**
+ * FORK 2026-11-13: the argument of a `/rewind` typed in the box ("" for none, "3" for `/rewind 3`), or null when the
+ * text is not that command. The page runs it; the words are never sent to the model.
+ */
+export function rewindCommandArg(text: string): string | null {
+  const m = /^\/rewind(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return m ? (m[1] ?? "").trim() : null;
 }
 
 // ─── the per-tab record, kept in localStorage ───────────────────────────────────────────────────────────────────────

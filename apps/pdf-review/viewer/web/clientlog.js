@@ -8,13 +8,33 @@
   const BASE = location.pathname.replace(/\/viewer\/web\/[^/]*$/, "");
   const id = Math.random().toString(36).slice(2, 7);
   const t0 = performance.now();
-  const send = (event, data = {}) => {
-    const body = JSON.stringify({ id, event, t: Math.round(performance.now() - t0), ...data });
+  // 2026-11-11: one request every few seconds, not one per event (a touch on the phone made five). What
+  // matters at once (errors, saves, the offline engine) still goes at once, with all that waited before
+  // it. Each event carries its own clock time (UTC), since the server now stamps the batch.
+  const NOW = /^(boot|error|rejection|console\.|sw-|save-|marks-|redo-|paragraph-|delta-|auto-|watch-|folder-kept|offline-ready|connection|opened-kept-copy|keep-failed)/;
+  let queue = [];
+  let timer = 0;
+  const post = (body) => {
     try {
       if (!navigator.sendBeacon?.(BASE + "/api/clientlog", new Blob([body], { type: "application/json" })))
         fetch(BASE + "/api/clientlog", { method: "POST", body, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
     } catch {}
   };
+  const flushLog = () => {
+    clearTimeout(timer);
+    timer = 0;
+    if (!queue.length) return;
+    const batch = queue;
+    queue = [];
+    post(JSON.stringify(batch));
+  };
+  const send = (event, data = {}) => {
+    queue.push({ id, event, t: Math.round(performance.now() - t0), at: new Date().toISOString().slice(11, 19), ...data });
+    if (NOW.test(event) || queue.length >= 50) flushLog();
+    else if (!timer) timer = setTimeout(flushLog, 8000);
+  };
+  addEventListener("pagehide", flushLog);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) flushLog(); });
   const box = (sel) => {
     const el = typeof sel === "string" ? document.querySelector(sel) : sel;
     if (!el) return null;

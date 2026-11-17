@@ -1,10 +1,10 @@
 # Total Recall
 
-> Yesterday's chat got compacted away? Per-session event store with FTS + vector recall — pulled back on demand.
+> Yesterday's chat got compacted away? Per-session event store with full-text recall — pulled back on demand.
 
 Context compaction silently drops the messages that matter most by the time you wish they were still there. ENGRAM catches them on the way out.
 
-Every assistant response is ingested into a per-session event store with full-text search and Ollama-powered vector embeddings (`mxbai-embed-large` by default). Before each prompt, the most relevant past events are retrieved and injected as a `## Retrieved Memory Context` block within a tunable token budget (default `2000`). Messages about to be lost to compaction are persisted _first_ via `before_compaction`, so nothing important disappears. The agent gets a `recall` tool for explicit memory queries. Pointer compaction keeps storage efficient at scale; null retention means the engram is yours forever.
+Every assistant response is ingested into a per-session event store with full-text search; recall works on words, so no embedding model is needed. Before each prompt, the most relevant past events are retrieved and injected as a `## Retrieved Memory Context` block within a tunable token budget (default `2000`). Messages about to be lost to compaction are persisted _first_ via `before_compaction`, so nothing important disappears. The agent gets a `recall` tool for explicit memory queries. Pointer compaction keeps storage efficient at scale; null retention means the engram is yours forever.
 
 ## Install
 
@@ -12,7 +12,7 @@ Every assistant response is ingested into a per-session event store with full-te
 openclaw plugins install @globalcaos/openclaw-total-recall
 ```
 
-Pull the embedding model: `ollama pull mxbai-embed-large`. Then enable in `openclaw.json`:
+Then enable it in `openclaw.json`:
 
 ```json
 "plugins": {
@@ -20,6 +20,8 @@ Pull the embedding model: `ollama pull mxbai-embed-large`. Then enable in `openc
   "entries": { "tinkerclaw-total-recall": { "enabled": true } }
 }
 ```
+
+The `embeddingProvider` and `embeddingModel` config keys are ignored; configs that still set them keep loading. Semantic memory search is a separate feature, configured under `agents.defaults.memorySearch`; on TinkerClaw, `openclaw embedder fit` picks its model per machine.
 
 ## Evicted tool output comes back with one call
 

@@ -4,11 +4,12 @@
  * In memory and bounded: at most 50 sessions, the least recently touched is evicted.
  */
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { isAgentPrompt } from "openclaw/plugin-sdk/fork-prompt-envelope";
-import { classifyEffect, isShellTool, writtenByCommand } from "./effect-class.js";
+import { isAgentPrompt, stripPromptEnvelope } from "openclaw/plugin-sdk/fork-prompt-envelope";
+import { classifyEffect, isShellTool, resolveTargets, writtenByCommand } from "./effect-class.js";
+import { candidateRoots, listTree, OwnFiles, type TreeListing } from "./own-files.js";
 import { turnKindOf, type SessionContext } from "./situation.js";
 import type { ToolRecordEntry, TurnKind } from "./types.js";
 
@@ -28,21 +29,62 @@ const MAX_PENDING = 20;
  */
 export const DEFAULT_SCRATCH_DIRS: readonly string[] = ["/tmp/jarvis"];
 
+/**
+ * Fresh files (2026-11-13). A file born in the last five minutes is the agent's own to remove, whichever program wrote
+ * it: a cache a test run left behind, a copy a shell command made. The hard-rule hook has read this clock for deletions
+ * since 2026-10-16 (hooks/hard-rules.mjs, FRESH_MS and isFresh); this layer did not, so a clean-up passed there and was
+ * asked about here. Keep the two windows equal. A folder is fresh when it is that young and holds nothing but fresh plain
+ * files: a file moved into it keeps its own birth time. This user's files only; a link or an unreadable path is not
+ * fresh. A file the owner made himself in those minutes is not told apart.
+ */
+export const FRESH_MS = 5 * 60 * 1000;
+const FRESH_DIR_MAX = 64;
+
+export function isFreshPath(
+  p: string,
+  now: number,
+  maxAgeMs = FRESH_MS,
+  inFolder = false,
+): boolean {
+  try {
+    const st = lstatSync(p);
+    if (typeof process.getuid === "function" && st.uid !== process.getuid()) return false;
+    const born = st.birthtimeMs;
+    if (!(born > 0) || now - born > maxAgeMs || born > now + 1000) return false;
+    if (st.isFile()) return true;
+    if (!st.isDirectory() || inFolder) return false;
+    const names = readdirSync(p);
+    return (
+      names.length <= FRESH_DIR_MAX &&
+      names.every((n) => isFreshPath(path.join(p, n), now, maxAgeMs, true))
+    );
+  } catch {
+    return false;
+  }
+}
+
 interface SessionState {
   turnN: number;
   lastRequest: string | undefined;
   /** The owner's own last request; a turn an agent's prompt started (a long-job wake-up) continues it. */
   lastOwnerRequest: string | undefined;
+  /** The words of the prompt that started this turn, when a job or an agent wrote it. */
+  turnWords: string | undefined;
   agentTurn: boolean;
   /** Who started the current turn (owner, agent, reflection); undefined before any prompt seam. */
   turnKind: TurnKind | undefined;
+  /** The turn (`turnN`) whose reviews a Claude Code Stop hook, with its transcript, last queued; -1 before any. */
+  hookReviewTurn: number;
   toolRecord: ToolRecordEntry[];
   /** Absolute paths a successful tool call created this session: they did not exist before the call. */
   created: string[];
   /** Absolute paths a successful tool call changed this session that existed before it. */
   edited: string[];
-  /** Per tool call (its tool_use_id), the paths it will write that did not exist at its pre-tool seam. */
-  pending: Map<string, string[]>;
+  /**
+   * Per tool call (its tool_use_id): the paths it will write that did not exist at its pre-tool seam, the listing of
+   * the folders it names taken at that seam (shell calls that are not read-only), and the time of the seam.
+   */
+  pending: Map<string, { absent: string[]; before: TreeListing | null; t0: number }>;
   results: number;
   repeatedErrors: number;
   lastErrorText: string | null;
@@ -114,6 +156,9 @@ export class SessionTracker {
   private readonly home: string;
   private readonly epoch: string | undefined;
   private readonly scratchDirs: string[];
+  /** The durable list of files the agent's tool calls created (src/own-files.ts); absent in tests that pass no path. */
+  private readonly own: OwnFiles | null;
+  private readonly ownSkipRoots: readonly string[] | undefined;
 
   constructor(
     o: {
@@ -122,6 +167,9 @@ export class SessionTracker {
       homeDir?: string;
       epoch?: string;
       scratchDirs?: readonly string[];
+      ownFilesPath?: string;
+      /** Folders never listed for births; tests under /tmp pass their own. */
+      ownSkipRoots?: readonly string[];
     } = {},
   ) {
     this.max = o.maxSessions ?? MAX_SESSIONS;
@@ -129,6 +177,8 @@ export class SessionTracker {
     this.epoch = o.epoch;
     this.now = o.now ?? Date.now;
     this.home = o.homeDir ?? homedir();
+    this.own = o.ownFilesPath ? new OwnFiles(o.ownFilesPath) : null;
+    this.ownSkipRoots = o.ownSkipRoots;
   }
 
   size(): number {
@@ -149,8 +199,10 @@ export class SessionTracker {
         turnN: 0,
         lastRequest: undefined,
         lastOwnerRequest: undefined,
+        turnWords: undefined,
         agentTurn: false,
         turnKind: undefined,
+        hookReviewTurn: -1,
         toolRecord: [],
         created: [],
         edited: [],
@@ -180,6 +232,21 @@ export class SessionTracker {
   }
 
   /**
+   * A Claude Code Stop hook queued this turn's reviews, with the transcript (2026-11-16). The tracker is one per process,
+   * so the runtime that `agent_end` reaches sees it too and does not queue them again without the transcript. A stop
+   * that sent the reply back queued nothing, so it leaves no mark.
+   */
+  noteHookReviews(sessionKey: string): void {
+    const s = this.touch(sessionKey);
+    s.hookReviewTurn = s.turnN;
+  }
+
+  hookReviewed(sessionKey: string): boolean {
+    const s = this.sessions.get(sessionKey);
+    return s !== undefined && s.hookReviewTurn === s.turnN;
+  }
+
+  /**
    * A prompt seam starts a new turn. The owner's prompt clears the request, so the situation builder derives it from
    * the prompt. An agent's prompt (`⟦AGENT:…⟧`, a long-job wake-up) continues the owner's last request when there is
    * one (2026-10-05: 405 wake-ups in a day were read as the request).
@@ -190,6 +257,13 @@ export class SessionTracker {
     s.agentTurn = isAgentPrompt(prompt);
     s.turnKind = turnKindOf(sessionKey, prompt);
     s.lastRequest = s.agentTurn ? s.lastOwnerRequest : undefined;
+    s.turnWords = s.agentTurn && prompt ? stripPromptEnvelope(prompt) : undefined;
+  }
+
+  /** The words of this turn's prompt when a job or an agent woke it; nothing on his own turns and on a reflection. */
+  wakeWords(sessionKey: string): string | undefined {
+    const s = this.touch(sessionKey);
+    return s.turnKind === "agent" ? s.turnWords : undefined;
   }
 
   /** Remember the request (already stripped of metadata wrappers) for the later seams of this turn. */
@@ -229,12 +303,26 @@ export class SessionTracker {
       }
     });
     const callId = typeof hook.tool_use_id === "string" ? hook.tool_use_id : "";
-    s.pending.set(callId, fresh);
+    s.pending.set(callId, { absent: fresh, before: this.listBefore(tool, hook), t0: this.now() });
     while (s.pending.size > MAX_PENDING) {
       const oldest = s.pending.keys().next().value;
       if (oldest === undefined) break;
       s.pending.delete(oldest);
     }
+  }
+
+  /** The folders a shell call names, listed before it runs, so its post-tool seam can tell what it gave birth to. */
+  private listBefore(tool: string, hook: HookPayload): TreeListing | null {
+    if (!this.own || !isShellTool(tool)) return null;
+    const input = asRecord(hook.tool_input);
+    const command = typeof input?.command === "string" ? input.command : null;
+    if (command === null || classifyEffect(tool, command, input).value === "read") return null;
+    const cwd = typeof hook.cwd === "string" && hook.cwd ? hook.cwd : this.home;
+    const named = (resolveTargets(command, undefined, cwd, this.home).value ?? []).map(
+      (t) => t.path,
+    );
+    const roots = candidateRoots([...named, cwd], this.home, this.ownSkipRoots);
+    return roots.length > 0 ? listTree(roots) : null;
   }
 
   /** Append one finished tool call (a `post-tool` payload) and update the futility signals. */
@@ -252,8 +340,19 @@ export class SessionTracker {
       if (typeof p === "string") filesWritten.push(p);
     }
     const callId = typeof hook.tool_use_id === "string" ? hook.tool_use_id : "";
-    const fresh = new Set(s.pending.get(callId) ?? []);
+    const pre = s.pending.get(callId);
+    const fresh = new Set(pre?.absent ?? []);
     s.pending.delete(callId);
+    if (pre && this.own) {
+      // Also after a failed call: what it left behind before it failed is the agent's to remove.
+      this.own.noteCall({
+        before: pre.before,
+        absent: pre.absent,
+        written: this.writeTargets(tool, input, hook.cwd),
+        t0: pre.t0,
+        now: this.now(),
+      });
+    }
     if (res.errorText === null) {
       for (const p of this.writeTargets(tool, input, hook.cwd)) {
         if (s.created.includes(p)) continue;
@@ -301,6 +400,8 @@ export class SessionTracker {
       createdPaths: s.created.length ? [...s.created] : undefined,
       editedPaths: s.edited.length ? [...s.edited] : undefined,
       scratchDirs: this.scratchDirs,
+      freshPath: (p) => isFreshPath(p, this.now()),
+      ownPath: this.own ? (p) => this.own?.isOwn(p) === true : undefined,
     };
   }
 }

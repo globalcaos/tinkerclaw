@@ -426,6 +426,21 @@ export async function startGatewaySidecars(params: {
     });
   });
 
+  // FORK 2026-10-29: the per-machine embedder fit (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). A
+  // missing or outdated record starts `openclaw embedder fit --background` in a detached child once
+  // the CPU is idle; nothing is measured on this thread.
+  await measureStartup(params.startupTrace, "sidecars.embedder-fit", async () => {
+    setImmediate(() => {
+      void import("../fork/embedder-fit-runtime.js")
+        .then(({ scheduleEmbedderFitCheck }) =>
+          scheduleEmbedderFitCheck({ cfg: params.cfg, log: params.log }),
+        )
+        .catch((err) => {
+          params.log.warn(`embedder fit check failed: ${String(err)}`);
+        });
+    });
+  });
+
   await measureStartup(params.startupTrace, "sidecars.restart-sentinel", async () => {
     if (!shouldCheckRestartSentinel()) {
       return;

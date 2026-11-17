@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import type { Family } from "../src/families/types.js";
-import { changeView, cutoffText, editablePath, questionRows, rebuildEvents } from "../src/feed.js";
+import {
+  changeView,
+  cutoffText,
+  editablePath,
+  questionRows,
+  rebuildEvents,
+  ruleRows,
+} from "../src/feed.js";
 import type { JevTransport } from "../src/jev.js";
 import { QuestionBook } from "../src/question-book.js";
 import { createRuntime, type Runtime } from "../src/runtime.js";
@@ -71,7 +78,7 @@ function make(sendReal = true) {
   });
   runtimes.push(rt);
   rt.start();
-  return { rt, events };
+  return { rt, events, root };
 }
 
 const TAB = "agent:main:tinker:tabX";
@@ -102,6 +109,18 @@ describe("runtime feed, tab keys and the canary", () => {
     expect(iv).toMatchObject({ sessionKey: TAB, kind: "hold", decisionId: expect.any(String) });
   });
 
+  it("a call the AEGIS hook refused raises no card: the runtime reads the hook's own file", async () => {
+    const { rt, events, root } = make();
+    mkdirSync(join(root, "amygdala"));
+    writeFileSync(
+      join(root, "amygdala", "hook-decisions.jsonl"),
+      `${JSON.stringify({ decision: "deny", enforced: true, rule: "DELETE_UNREQUESTED", toolUseId: "toolu_1" })}\n`,
+    );
+    await rt.decide("pre-tool", hook, TAB);
+    expect(events.some((e) => e.event === "amygdala2.intervention")).toBe(false);
+    expect(rt.feed({ sessionKey: TAB }).interventions).toEqual([]);
+  });
+
   it("feed rebuilds decision events, intervention views, questions and spend for one tab", async () => {
     const { rt } = make();
     await Promise.race([rt.decide("pre-tool", hook, TAB), new Promise((r) => setTimeout(r, 200))]);
@@ -112,6 +131,8 @@ describe("runtime feed, tab keys and the canary", () => {
       "runs-or-quotes",
     ]);
     expect(feed.decisionEvents.every((e) => e.sessionKey === TAB)).toBe(true);
+    // The rebuilt feed keeps the tool call, or a reloaded page drops every check to the end of the reply.
+    expect(feed.decisionEvents.every((e) => e.toolUseId === "toolu_1")).toBe(true);
     expect(feed.interventions[0]).toMatchObject({
       kind: "hold",
       cmd: "cp /work/demo/a /work/demo/b",
@@ -294,7 +315,20 @@ describe("prompt files in the feed (panel open-to-edit, 2026-09-30)", () => {
     const rows = questionRows(store, book, 0);
     expect(rows.length).toBe(30);
     for (const r of rows) expect(r.file).toMatch(new RegExp(`questions/[a-z-]+/${r.id}\\.md$`));
+    // Each question says one plain line when it acts; the chat bubble shows it (2026-11-03).
+    for (const r of rows) expect(r.says, r.id).toMatch(/^[A-Z].{8,80}[.?]$/);
     store.close();
+  });
+
+  it("the feed names each hard rule once, with its words and the rules.ts that holds it", () => {
+    const rows = ruleRows(EXT);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+    expect(rows.find((r) => r.id === "DELETE_UNREQUESTED")).toMatchObject({
+      says: "That deletion has nothing to do with what you were asked.",
+      ask: "Allow deleting {target}?",
+      noun: "these files",
+    });
+    for (const r of rows) expect(r.file).toMatch(/tinkerclaw-amygdala\/src\/rules\.ts$/);
   });
 
   // 2026-10-01: classify them into families, as the paper does.

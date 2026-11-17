@@ -216,3 +216,56 @@ describe("emitters", () => {
     });
   });
 });
+
+describe("the decision that ran is kept (2026-11-13)", () => {
+  it("writes one line per turn with the model, effort, stop and reason, and nothing in a test run that names no file", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { recordThalamusTurnDecision, thalamusTurnLogPath } =
+      await import("./thalamus-turn-telemetry.js");
+    expect(thalamusTurnLogPath({ VITEST: "true" })).toBeUndefined();
+    expect(thalamusTurnLogPath({ OPENCLAW_STATE_DIR: "/s" })).toBe(
+      "/s/data/thalamus-v4/turn-decisions.jsonl",
+    );
+    const file = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "thal-turn-")),
+      "d",
+      "turns.jsonl",
+    );
+    const decision = {
+      phase: "decision",
+      model: "claude-code/claude-fable-5-2",
+      effort: "max",
+      effortWhy: "the smart stop's effort stands",
+      ultracode: false,
+      tier: "smart",
+      biasIdx: 6,
+      domain: "code",
+      why: ["bias"],
+      declined: [],
+      subject: "none",
+      mode: "solo",
+      panel: [],
+      chain: [],
+      reason: "kept",
+    } as never;
+    recordThalamusTurnDecision("agent:main:tinker:x", decision, file);
+    recordThalamusTurnDecision("agent:main:tinker:x", decision, file);
+    const rows = fs
+      .readFileSync(file, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      session: "agent:main:tinker:x",
+      model: "claude-code/claude-fable-5-2",
+      effort: "max",
+      tier: "smart",
+      biasIdx: 6,
+      domain: "code",
+    });
+    fs.rmSync(path.dirname(path.dirname(file)), { recursive: true, force: true });
+  });
+});

@@ -68,4 +68,4 @@ For routine watchlist scans where source-diversity already carries the day, pref
 
 ## Authoritative reference
 
-See `~/.claude/projects/-home-globalcaos-src-jarvis-icu/memory/reference_marketplace_watcher_scrape.md` for the historical scrape-recipe context. This script implements the same `__INITIAL_PROPS__` parse contract documented there, run server-side instead of in-page via CDP `Runtime.evaluate`.
+See `~/.claude/projects/-home-user-src-jarvis-icu/memory/reference_marketplace_watcher_scrape.md` for the historical scrape-recipe context. This script implements the same `__INITIAL_PROPS__` parse contract documented there, run server-side instead of in-page via CDP `Runtime.evaluate`.

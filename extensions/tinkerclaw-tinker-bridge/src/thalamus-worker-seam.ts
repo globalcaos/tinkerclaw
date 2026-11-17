@@ -43,14 +43,14 @@ export function thalamusOwnsModelChoice(site: "subagent" | "orchestrate-default"
 /** The worker's spawn guidance opens with who picks a sub-agent's model, so the agent does not override Thalamus. */
 export function subagentModelOwnerText(owned = thalamusOwnsModelChoice("subagent")): string {
   return owned
-    ? "Thalamus picks it right now: leave `--model` out and it prices each spawn from its board, with the configured default for any spawn it cannot price. Name a model only when the task needs that exact one; a named model is never replaced. For reference, the weights it works from:"
+    ? "Thalamus picks it right now: leave `--model` out. It starts from the model and effort the owner set for the bias in force (smart, default or budget) and moves only to a model measured better at that spawn's kind of work. It prices each spawn from its board, with the configured default for any spawn it cannot price. Name a model only when the task needs that exact one; a named model is never replaced. For reference, the weights it works from:"
     : "Thalamus is not picking models right now, so pick by task weight:";
 }
 
 /** The same for an orchestrate leaf (`agent(task, {model})`). */
 export function leafModelOwnerText(owned = thalamusOwnsModelChoice("orchestrate-default")): string {
   return owned
-    ? 'Thalamus picks each leaf\'s model right now: leave `{model}` out (or say `"auto"`) and it prices the unit from its board, with the default leaf (sonnet) for any unit it cannot price. Name a model only when a unit needs that exact one; a named model is never replaced. The table below is what it works from.'
+    ? "Thalamus picks each leaf's model right now: leave `{model}` out (or say `\"auto\"`). It starts from the model and effort the owner set for the bias in force (smart, default or budget) and moves only to a model measured better at that unit's kind of work. It prices the unit from its board, with the default leaf (sonnet) for any unit it cannot price. Name a model only when a unit needs that exact one; a named model is never replaced. The table below is what it works from."
     : "Pick the leaf model PER UNIT by weight (`agent(task, {model})`) — this is the main cost lever, and it is cheap to fan out wide. Omitting `{model}` uses the runtime default (sonnet).";
 }
 

@@ -72,6 +72,8 @@ const SEAM_PREFERENCE: readonly Seam[] = ["pre-tool", "stop", "post-tool", "prom
 // Case fields that production feeds `buildSituation` through the session context rather than the tool input.
 const SESSION_FIELDS = [
   "request",
+  "exchange",
+  "turnSteps",
   "toolRecord",
   "restatement",
   "expectation",

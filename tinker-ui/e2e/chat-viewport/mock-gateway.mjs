@@ -472,7 +472,7 @@ function control(req, res, url) {
         for (const s of sockets) s.terminate();
       }
     }
-    // GET /__mock/log: every request the page sent since the last read ({at, method, key, afterSeq}),
+    // GET /__mock/log: every request the page sent since the last read ({at, method, key, afterSeq, older}),
     // then cleared (2026-10-06, check 14d: what a reconnect reads and in which order).
     const reply =
       url.pathname === "/__mock/run"
@@ -489,6 +489,8 @@ function control(req, res, url) {
   });
 }
 
+// FORK 2026-11-14 (e2e/tab-seen): POST /__mock/state {endedAt} has every row say its session last
+// finished a turn then; the page's unread glow compares it with the seen stamps. Unset, rows omit it.
 const session = (key, title) => ({
   key,
   sessionKey: key,
@@ -497,6 +499,7 @@ const session = (key, title) => ({
   updatedAt: Date.now(),
   kind: "direct",
   model: "mock",
+  ...(typeof state.endedAt === "number" ? { endedAt: state.endedAt } : {}),
 });
 
 function answer(method, params) {
@@ -593,6 +596,8 @@ wss.on("connection", (ws) => {
       method: f.method,
       key: f.params?.sessionKey ?? null,
       afterSeq: f.params?.afterSeq ?? null,
+      // FORK 2026-11-15 (check 15): a read of older rows, live (beforeSeq) or archived.
+      older: f.params?.beforeSeq !== undefined || f.params?.resetArchiveBefore !== undefined,
     });
     const reply = () => {
       try {

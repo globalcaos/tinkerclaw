@@ -6,10 +6,12 @@
 // A board belongs to a SESSION, so it follows the master through a reopen; it only shows while
 // that session is the master end of a chain whose tab is open. The tab is not a chat tab: it has
 // no data-tab-id, so drag, close, chain anchors and session switching never see it.
+// FORK 2026-11-14: a board whose plan file is missing still shows, greyed, and its hint and chart
+// say where the plan was, so a moved or left-behind plan can never make the tab vanish silently.
 
 import type { TabChain } from "./tab-chains.js";
 
-export type GanttBoard = { session: string; plan: string; title: string };
+export type GanttBoard = { session: string; plan: string; title: string; missing?: boolean };
 
 type KeyMatch = (a: string, b: string) => boolean;
 
@@ -23,9 +25,14 @@ export function parseGanttBoards(raw: unknown): GanttBoard[] {
   const out: GanttBoard[] = [];
   for (const b of list) {
     if (!b || typeof b !== "object") continue;
-    const { session, plan, title } = b as Record<string, unknown>;
+    const { session, plan, title, missing } = b as Record<string, unknown>;
     if (typeof session !== "string" || !session || typeof plan !== "string" || !plan) continue;
-    out.push({ session, plan, title: typeof title === "string" ? title : "" });
+    out.push({
+      session,
+      plan,
+      title: typeof title === "string" ? title : "",
+      ...(missing === true ? { missing: true } : {}),
+    });
   }
   return out;
 }
@@ -62,9 +69,12 @@ export function ganttTabHtml(
   board: GanttBoard,
   opts: { active: boolean; color: string; escape: (s: string) => string },
 ): string {
-  const hint = `Gantt chart${board.title ? ` · ${board.title}` : ""}`;
+  const hint =
+    `Gantt chart${board.title ? ` · ${board.title}` : ""}` +
+    (board.missing ? ` · plan file missing: ${board.plan}` : "");
+  const classes = `tab tab-gantt${board.missing ? " tab-gantt-missing" : ""}${opts.active ? " tab-active" : ""}`;
   return (
-    `<div class="tab tab-gantt${opts.active ? " tab-active" : ""}" data-gantt-for="${opts.escape(masterTabId)}"` +
+    `<div class="${classes}" data-gantt-for="${opts.escape(masterTabId)}"` +
     ` data-hint="${opts.escape(hint)}" style="color:${opts.escape(opts.color)}" role="tab"` +
     ` aria-label="${opts.escape(hint)}">${GANTT_ICON_SVG}</div>`
   );

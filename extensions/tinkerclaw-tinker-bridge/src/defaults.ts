@@ -207,6 +207,13 @@ export const DEFAULT_MODELS = [
     maxOutputTokens: 64_000,
   },
   {
+    id: "claude-fable-5-2",
+    name: "Claude Fable 5.2",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+  },
+  {
     id: "claude-fable-5-1",
     name: "Claude Fable 5.1",
     reasoning: true,

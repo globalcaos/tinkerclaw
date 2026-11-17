@@ -9,11 +9,15 @@ export async function postJson<T>(params: {
   body: unknown;
   errorPrefix: string;
   attachStatus?: boolean;
+  // FORK 2026-10-30: the caller's AbortSignal reaches the request, so an aborted or timed-out
+  // embedding stops on the wire instead of running on. Absent, the request is unchanged.
+  signal?: AbortSignal;
   parse: (payload: unknown) => T | Promise<T>;
 }): Promise<T> {
   return await withRemoteHttpResponse({
     url: params.url,
     ssrfPolicy: params.ssrfPolicy,
+    signal: params.signal,
     init: {
       method: "POST",
       headers: params.headers,

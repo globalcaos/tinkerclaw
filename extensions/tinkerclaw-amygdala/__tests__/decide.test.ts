@@ -109,6 +109,55 @@ const input = (command: string): DecideInput => ({
 // Written with the Write tool on purpose: a shell heredoc containing this text trips the live AEGIS hook.
 const ABSOLUTE_DELETE = "rm -rf /var/data";
 
+describe("decide: a file change whose version was kept needs no proof", () => {
+  const tableProof = (code: string) =>
+    fam("safety", ["danger-level"], () => ({
+      response: proof,
+      drivers: ["danger-level"],
+      reasonCode: code,
+    }));
+  it("the safety table's proof at danger 2 becomes proceed once the versions are kept", async () => {
+    const { deps, store } = setup({ families: [tableProof("table-d2-medium")], mode: "enforce" });
+    let asked = 0;
+    deps.saveVersions = () => (asked++, [{ path: "/h/doc.md" }]);
+    const r = await decide(deps, input("echo x > /h/doc.md"));
+    expect(asked).toBe(1);
+    expect(r.decision.response.kind).toBe("proceed");
+    expect(store.getDecision(r.id)?.reasonCode).toContain("undo-saved");
+    expect(r.hook.kind).not.toBe("deny");
+  });
+  it("the proof stands when the versions cannot be kept, at danger 3, and for a hold", async () => {
+    const cant = setup({ families: [tableProof("table-d2-medium")], mode: "enforce" });
+    cant.deps.saveVersions = () => null;
+    expect((await decide(cant.deps, input("echo x > /h/doc.md"))).decision.response.kind).toBe(
+      "proof",
+    );
+
+    let asked = 0;
+    const d3 = setup({ families: [tableProof("table-d3-medium-authorise")], mode: "enforce" });
+    d3.deps.saveVersions = () => (asked++, [{ path: "/h/doc.md" }]);
+    expect((await decide(d3.deps, input("echo x > /h/doc.md"))).decision.response.kind).toBe(
+      "proof",
+    );
+
+    const held = setup({
+      families: [
+        fam("safety", ["danger-level"], () => ({
+          response: hold,
+          drivers: [],
+          reasonCode: "table-d2-high",
+        })),
+      ],
+      mode: "enforce",
+    });
+    held.deps.saveVersions = () => (asked++, [{ path: "/h/doc.md" }]);
+    expect((await decide(held.deps, input("echo x > /h/doc.md"))).decision.response.kind).toBe(
+      "hold",
+    );
+    expect(asked).toBe(0);
+  });
+});
+
 describe("decide: hard rules", () => {
   it("hold before any judge; Jev never called; enforced when the floor is active; the hook denies", async () => {
     const { deps, jev, store } = setup({
@@ -257,7 +306,7 @@ describe("decide: notes and send-backs are limited", () => {
     expect(r2.decision.reasonCode).toBe("note-suppressed[]");
   });
 
-  it("send-back is capped at two per turn: the third is delivered with a marker event", async () => {
+  it("send-back is capped at one per reply: the next one is delivered with a marker event", async () => {
     const back: Response = {
       kind: "send-back",
       templateId: "send-back-dodged",
@@ -280,11 +329,182 @@ describe("decide: notes and send-backs are limited", () => {
     const c = await decide(deps, stopInput);
     expect([a, b, c].map((x) => x.decision.response.kind)).toEqual([
       "send-back",
-      "send-back",
+      "proceed",
       "proceed",
     ]);
     expect(a.hook.kind).toBe("block");
     expect(events.some(([e]) => e === "amygdala2.marker")).toBe(true);
+  });
+});
+
+describe("decide: notes the reviews found near-always noise are log only", () => {
+  const noteOf = (reasonCode: string, id: Family["id"]): Family => ({
+    id,
+    questionsFor: () => [],
+    decide: () => ({
+      response: {
+        kind: "note",
+        templateId: "relevant-fact",
+        slots: { fact: reasonCode },
+        channel: "additionalContext",
+      },
+      drivers: [],
+      reasonCode,
+    }),
+  });
+  const input: DecideInput = {
+    seam: "post-tool",
+    payload: { seam: "post-tool", sessionKey: "s", turnId: "t", now: 1000, tool: "Read" },
+    session: { workspaceRoot: "/w", homeDir: "/h" },
+  };
+
+  for (const [code, id] of [
+    ["table-d2-low", "safety"],
+    ["novelty", "personality"],
+    ["surprise", "personality"],
+    ["futility-warn", "efficiency"],
+  ] as const) {
+    it(`${code}: recorded, not injected`, async () => {
+      const { deps } = setup({ mode: "enforce", families: [noteOf(code, id)] });
+      const r = await decide(deps, input);
+      expect(r.decision.response.kind).toBe("note");
+      expect(r.decision.enforced).toBe(false);
+      expect(r.hook.kind).toBe("none");
+    });
+  }
+
+  it("any other note still reaches the agent", async () => {
+    const { deps } = setup({ mode: "enforce", families: [noteOf("worth-knowing", "personality")] });
+    const r = await decide(deps, input);
+    expect(r.decision.enforced).toBe(true);
+    expect(r.hook.kind).toBe("context");
+  });
+});
+
+describe("decide: a hold in a subagent's session", () => {
+  const holds: Family = {
+    id: "safety",
+    questionsFor: () => [],
+    decide: () => ({
+      response: { kind: "hold", ruleOrQuestion: "danger-level", releasable: "user-only" },
+      drivers: [],
+      reasonCode: "x",
+    }),
+  };
+  const at = (sessionKey: string): DecideInput => ({
+    seam: "pre-tool",
+    payload: { seam: "pre-tool", sessionKey, turnId: "t", now: 1000, tool: "Bash" },
+    session: { workspaceRoot: "/w", homeDir: "/h" },
+  });
+
+  it("refuses at once and leaves nothing waiting on the owner", async () => {
+    const { deps } = setup({ mode: "enforce", families: [holds] });
+    const r = await decide(deps, at("agent:main:subagent:u1"));
+    expect(r.hook.kind).toBe("deny");
+    expect(deps.store.listInterventions({ state: "open" })).toEqual([]);
+  });
+
+  it("in the owner's chat the wait stands", async () => {
+    const { deps } = setup({ mode: "enforce", families: [holds] });
+    const r = await decide(deps, at("agent:main:tinker:t1"));
+    expect(r.hook.kind).toBe("wait");
+    expect(deps.store.listInterventions({ state: "open" })).toHaveLength(1);
+  });
+});
+
+describe("decide: AEGIS already refused the call", () => {
+  const stops = (response: Response): Family => ({
+    id: "second-opinion",
+    questionsFor: () => [],
+    decide: () => ({ response, drivers: ["excess-scope"], reasonCode: "excess-scope" }),
+  });
+  const ask: Response = {
+    kind: "ask",
+    askId: "scope-1",
+    options: [{ id: "only-asked", label: "Do only what you asked" }],
+    preselect: "only-asked",
+  };
+  const hold: Response = { kind: "hold", ruleOrQuestion: "danger-level", releasable: "user-only" };
+  const proof: Response = {
+    kind: "proof",
+    templateId: "proof-required",
+    slots: { what: "delete x", needs: "listing" },
+    needs: ["listing"],
+  };
+  const at = (toolUseId?: string): DecideInput => ({
+    seam: "pre-tool",
+    payload: {
+      seam: "pre-tool",
+      sessionKey: "agent:main:tinker:t1",
+      turnId: "t",
+      now: 1000,
+      tool: "Bash",
+      ...(toolUseId ? { toolUseId } : {}),
+    },
+    session: { workspaceRoot: "/w", homeDir: "/h" },
+  });
+
+  it.each([
+    ["ask", ask],
+    ["hold", hold],
+    ["proof", proof],
+  ])("a %s raises no card and no wait, and leaves no hold", async (_name, response) => {
+    const { deps } = setup({ mode: "enforce", families: [stops(response)] });
+    deps.floorDenied = async () => true;
+    const r = await decide(deps, at("toolu_1"));
+    expect(r.hook.kind).toBe("none");
+    expect(r.decision.response.kind).toBe("proceed");
+    expect(r.decision.enforced).toBe(false);
+    expect(r.decision.family).toBe("fallback");
+    expect(r.decision.reasonCode).toBe("aegis-denied[excess-scope]");
+    expect(r.interventionId).toBeUndefined();
+    expect(deps.store.listInterventions({ state: "open" })).toEqual([]);
+  });
+
+  it("the card goes and the memory stays: a retry in new words still meets same-goal-as-held", async () => {
+    const { deps } = setup({ mode: "enforce", families: [stops(ask)] });
+    deps.floorDenied = async () => true;
+    await decide(deps, at("toolu_5"));
+    expect(deps.contexts.recentHolds("agent:main:tinker:t1")).toHaveLength(1);
+  });
+
+  it("a call AEGIS let through keeps Jev's stop", async () => {
+    const { deps } = setup({ mode: "enforce", families: [stops(ask)] });
+    const asked: string[] = [];
+    deps.floorDenied = async (id) => {
+      asked.push(id);
+      return false;
+    };
+    const r = await decide(deps, at("toolu_2"));
+    expect(asked).toEqual(["toolu_2"]);
+    expect(r.hook.kind).toBe("wait");
+    expect(r.decision.reasonCode).toBe("excess-scope[excess-scope]");
+    expect(deps.store.listInterventions({ state: "open" })).toHaveLength(1);
+  });
+
+  it("only a stop asks AEGIS: a note goes out without the lookup", async () => {
+    const { deps } = setup({ mode: "enforce", families: [stops(note("a fact"))] });
+    const floorDenied = vi.fn(async () => true);
+    deps.floorDenied = floorDenied;
+    const r = await decide(deps, at("toolu_3"));
+    expect(floorDenied).not.toHaveBeenCalled();
+    expect(r.decision.response.kind).toBe("note");
+  });
+
+  it("a step with no call id keeps Jev's stop", async () => {
+    const { deps } = setup({ mode: "enforce", families: [stops(ask)] });
+    deps.floorDenied = async () => true;
+    const r = await decide(deps, at());
+    expect(r.hook.kind).toBe("wait");
+  });
+
+  it("in shadow the row stays a record of what Jev would have done", async () => {
+    const { deps } = setup({ mode: "shadow", families: [stops(ask)] });
+    const floorDenied = vi.fn(async () => true);
+    deps.floorDenied = floorDenied;
+    const r = await decide(deps, at("toolu_4"));
+    expect(floorDenied).not.toHaveBeenCalled();
+    expect(r.decision.response.kind).toBe("ask");
   });
 });
 

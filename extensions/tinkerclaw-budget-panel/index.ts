@@ -42,6 +42,17 @@ import { resolveApiKeyForProfile, ensureAuthProfileStore } from "openclaw/plugin
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { getRateLimitSnapshot } from "openclaw/plugin-sdk/fork-usage-metrics";
 import { setUsageSnapshot } from "openclaw/plugin-sdk/fork-usage-metrics";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import {
+  accountLabel,
+  accountOfToken,
+  buildReserve,
+  readCooling,
+  readLiveAccount,
+  readReports,
+  readVault,
+  rememberReport,
+} from "./src/claude-accounts.js";
 
 /**
  * Anthropic OAuth profile IDs to poll for usage.
@@ -79,8 +90,15 @@ export function usageProfiles(): Record<string, string> {
   return out;
 }
 
-/** Per-profile cache: profile → { data, ts }. null data = rate-limited / failed. */
-const usageCache: Record<string, { data: Record<string, any> | null; ts: number }> = {};
+/** Per-profile cache: profile → { data, ts }. null data = rate-limited / failed.
+ *  FORK 2026-11-14: `email` is the Claude account the data belongs to, when the token that
+ *  fetched it is the one in Claude Code's login file (`accountOfToken`); absent otherwise. */
+const usageCache: Record<string, { data: Record<string, any> | null; ts: number; email?: string }> =
+  {};
+
+/** Last usage report per Claude account (src/claude-accounts.ts `rememberReport`). */
+const claudeReportsFile = (): string =>
+  join(resolveStateDir(), "budget-panel", "claude-accounts.json");
 // Anthropic /api/oauth/usage has a per-ACCESS-TOKEN rate limit of ~5 requests.
 // With 30min cache we use ~2 requests/hr, safely under the limit.
 const CACHE_TTL_MS = 30 * 60_000;
@@ -155,13 +173,20 @@ async function fetchProfileUsage(
   log: (...args: any[]) => void = console.log,
 ): Promise<Record<string, any> | null> {
   const cached = usageCache[label];
+  // FORK 2026-11-14: once the seat keeper has moved Claude Code to another account, a report
+  // fetched for the previous one is that account's, not the live one's: fetch again, and on an
+  // error answer "unknown" rather than the other account's numbers.
+  const liveEmail = readLiveAccount();
+  const switched = !!(cached?.email && liveEmail && cached.email !== liveEmail);
+  const prior = switched ? null : (cached?.data ?? null);
+  const priorEmail = switched ? undefined : cached?.email;
   const ttl = cached?.data ? CACHE_TTL_MS : CACHE_TTL_FAILED_MS;
-  if (cached && Date.now() - cached.ts < ttl) {
+  if (cached && !switched && Date.now() - cached.ts < ttl) {
     return cached.data;
   }
   const profileId = usageProfiles()[label];
   if (!profileId) {
-    return cached?.data ?? null;
+    return prior;
   }
 
   let token = await resolveToken(profileId, log);
@@ -186,25 +211,25 @@ async function fetchProfileUsage(
         // Token rotation invalidates the old refresh token (Anthropic strict
         // rotation) which kills the agent runner's in-memory credentials.
         log(`[budget-panel] ${label}: 429 on usage API, using cached data`);
-        usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
-        return cached?.data ?? null;
+        usageCache[label] = { data: prior, ts: Date.now(), email: priorEmail };
+        return prior;
       }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         log(`[budget-panel] ${label}: HTTP ${res.status} ${body.slice(0, 120)}`);
-        usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
-        return cached?.data ?? null;
+        usageCache[label] = { data: prior, ts: Date.now(), email: priorEmail };
+        return prior;
       }
       const data = (await res.json()) as Record<string, any>;
-      usageCache[label] = { data, ts: Date.now() };
+      usageCache[label] = { data, ts: Date.now(), email: accountOfToken(token) };
       return data;
     } catch (e) {
       log(`[budget-panel] ${label}: ${e}`);
-      usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
-      return cached?.data ?? null;
+      usageCache[label] = { data: prior, ts: Date.now(), email: priorEmail };
+      return prior;
     }
   }
-  return cached?.data ?? null;
+  return prior;
 }
 
 /** Fetch live usage from all profiles sequentially. */
@@ -1198,6 +1223,19 @@ export default function register(api: OpenClawPluginApi) {
       // rendering nothing here would be a regression against the pre-2026-08-29 handler.
       const chatgptData = refreshed?.extras.chatgpt ?? readChatgptFile();
 
+      function scopedLimits(
+        list: unknown,
+      ): Record<string, { utilization: number; resets_at: string | null }> {
+        const out: Record<string, { utilization: number; resets_at: string | null }> = {};
+        for (const lim of Array.isArray(list) ? list : []) {
+          const name = String(lim?.scope?.model?.display_name ?? "").toLowerCase();
+          if (lim?.kind === "weekly_scoped" && name) {
+            out[name] = { utilization: Number(lim.percent ?? 0), resets_at: lim.resets_at ?? null };
+          }
+        }
+        return out;
+      }
+
       function buildClaudeProfile(live: Record<string, any> | null) {
         if (!live) {
           return null;
@@ -1207,10 +1245,16 @@ export default function register(api: OpenClawPluginApi) {
           plan: "max",
           fetchedAt: new Date().toISOString(),
           limits: {
-            five_hour: {
-              utilization: live.five_hour?.utilization ?? 0,
-              resets_at: live.five_hour?.resets_at ?? null,
-            },
+            // FORK 2026-11-03: `five_hour: null` means no session window is open on that account.
+            // Leave it out; a filled-in 0% read as fresh 5h headroom on the panel.
+            ...(live.five_hour
+              ? {
+                  five_hour: {
+                    utilization: live.five_hour.utilization ?? 0,
+                    resets_at: live.five_hour.resets_at ?? null,
+                  },
+                }
+              : {}),
             seven_day: {
               utilization: live.seven_day?.utilization ?? 0,
               resets_at: live.seven_day?.resets_at ?? null,
@@ -1220,7 +1264,9 @@ export default function register(api: OpenClawPluginApi) {
                   utilization: live.seven_day_sonnet.utilization ?? 0,
                   resets_at: live.seven_day_sonnet.resets_at ?? null,
                 }
-              : undefined,
+              : undefined, // 2026-11-13: a model's own weekly cap (the report lists Fable at half the week). Without it
+            // the page saw only the seat's week (62 %) while Fable's share sat at 100 %, uncrossed.
+            scoped: scopedLimits(live.limits),
           },
         };
       }
@@ -1283,9 +1329,45 @@ export default function register(api: OpenClawPluginApi) {
           limits: { five_hour: { utilization: 0 }, seven_day: { utilization: 0 } },
         };
 
+      // FORK 2026-11-14 (the architect): name the Claude account the top half of each bar shows, keep its
+      // report for when it moves to reserve, and add the account in reserve for the lower half
+      // (src/claude-accounts.ts). A failure here only drops the reserve, never the reply.
+      let claudeReserve: ReturnType<typeof buildReserve> = undefined;
+      try {
+        const live = readLiveAccount();
+        const firstLabel = Object.keys(liveProfiles).find((k) => liveProfiles[k]);
+        const shown = firstLabel ? usageCache[firstLabel] : undefined;
+        if (live && firstLive && firstLabel && shown?.email === live) {
+          const named = { account: live, accountLabel: accountLabel(live) };
+          Object.assign(claudeResult, named);
+          if (claudeProfiles[firstLabel]) {
+            Object.assign(claudeProfiles[firstLabel], named);
+          }
+          rememberReport(
+            claudeReportsFile(),
+            live,
+            buildClaudeProfile(firstLive)?.limits,
+            shown.ts,
+          );
+        }
+        const vault = readVault();
+        claudeReserve = buildReserve({
+          live,
+          accounts: vault.accounts,
+          readings: vault.readings,
+          reports: readReports(claudeReportsFile()),
+          cooling: readCooling(),
+          switchLog: vault.switchLog,
+          now: Date.now(),
+        });
+      } catch (e) {
+        log(`[budget-panel] claude reserve: ${e}`);
+      }
+
       const result: Record<string, unknown> = {
         claude: claudeResult,
         claudeProfiles,
+        ...(claudeReserve ? { claudeReserve } : {}),
         gemini: geminiLive ?? { rpm_used: 0, rpm_limit: 0, rpd_used: 0, rpd_limit: 0 },
         manus: (() => {
           if (!manusData) {

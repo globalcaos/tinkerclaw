@@ -29,7 +29,7 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveRetryAfterSeconds } from "../agents/rate-limit-reset.js";
-import { supplyOf, type SupplyId } from "../shared/thalamus-supply.js";
+import { modelLimitFamily, supplyOf, type SupplyId } from "../shared/thalamus-supply.js";
 
 /** How long a supply cools when the error states no reset time (the architect: 30 minutes). */
 export const DEFAULT_COOLING_MS = 30 * 60 * 1000;
@@ -154,6 +154,58 @@ export function readThalamusCooling(opts?: { file?: string; nowMs?: number }): T
     }
   }
   return empty;
+}
+
+/**
+ * FORK 2026-11-13 — note a limit on one model's own cap (the CLI's line naming the Fable limit and its reset date).
+ * Written as `model:<family>` beside the supply entries, so `readThalamusCooling().set` carries it and the
+ * feasibility veto closes that family only (`modelCoolingKey`). `untilMs` is the reset the caller parsed; with
+ * none, DEFAULT_COOLING_MS. A later limit never shortens an earlier, longer one. Never throws.
+ */
+export function recordModelLimit(input: {
+  raw: string;
+  untilMs?: number;
+  source?: string;
+  nowMs?: number;
+  file?: string;
+}): { key: string; entry: CoolingEntry } | undefined {
+  try {
+    const family = modelLimitFamily(input.raw);
+    const file = thalamusCoolingFilePath(input.file);
+    if (!family || !file) {
+      return undefined;
+    }
+    const key = `model:${family}`;
+    const nowMs = input.nowMs ?? Date.now();
+    const stated = input.untilMs !== undefined && input.untilMs > nowMs;
+    const until = stated ? (input.untilMs as number) : nowMs + DEFAULT_COOLING_MS;
+    const current = readFileCached(file);
+    const prior = current[key as SupplyId];
+    const entry: CoolingEntry =
+      prior && prior.until > until
+        ? prior
+        : {
+            until,
+            since: nowMs,
+            reason: "rate_limit",
+            ...(input.source ? { source: input.source } : {}),
+            stated,
+            detail: input.raw.replace(/\s+/g, " ").trim().slice(0, 160),
+          };
+    const next: CoolingFile = {};
+    for (const [s, e] of Object.entries(current) as [SupplyId, CoolingEntry][]) {
+      if (e.until > nowMs) next[s] = e;
+    }
+    next[key as SupplyId] = entry;
+    mkdirSync(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+    renameSync(tmp, file);
+    cache.delete(file);
+    return { key, entry };
+  } catch {
+    return undefined;
+  }
 }
 
 export type SupplyLimitInput = {

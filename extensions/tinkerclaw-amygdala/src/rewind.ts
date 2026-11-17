@@ -35,6 +35,18 @@ export function rewindCapability(runner: string): RewindCapability {
 /** A transcript larger than this is refused (it is read whole once); the exchange to drop is near the end anyway. */
 export const MAX_REWIND_BYTES = 256 * 1024 * 1024;
 
+/**
+ * FORK 2026-11-13: the id a tab is pointed at when a Rewind takes its WHOLE conversation (the first exchange of its
+ * Claude session, and so everything). No transcript is ever written under such an id: the bridge reads the prefix and
+ * starts the tab's next turn on a fresh session (tinker-bridge worker.ts), and Undo can still point the tab back at the
+ * session it had. Must equal `REWOUND_ALL_PREFIX` in extensions/tinkerclaw-tinker-bridge/src/rewind-seam.ts; a test
+ * there compares them (extensions cannot import each other).
+ */
+export const REWOUND_ALL_PREFIX = "rewound-";
+
+/** With no words to compare, a page row and a transcript entry are the same prompt only this close in time. */
+export const SAME_PROMPT_MS = 60_000;
+
 export interface ForkResult {
   ok: boolean;
   reason?: string;
@@ -45,12 +57,17 @@ export interface ForkResult {
   droppedEntries?: number;
   /** The text of the prompt that was removed, to put back in the composer. */
   restoredPrompt?: string;
+  /** Nothing was left before the cut: no copy was written and `forkSessionId` is a `REWOUND_ALL_PREFIX` marker. */
+  whole?: boolean;
+  /** When the prompt at the cut was sent (ms), so the page can hide every row of that exchange. */
+  cutAt?: number;
 }
 
 interface Entry {
   type?: string;
   sessionId?: string;
   isMeta?: boolean;
+  timestamp?: string;
   message?: { content?: unknown };
 }
 
@@ -95,27 +112,100 @@ function ownerWordsOf(line: string): string {
   }
 }
 
+interface PromptEntry {
+  index: number;
+  /** When the transcript says it was sent (ms). */
+  ts?: number;
+}
+
+/** The prompt sent nearest to `at`; a later one wins a tie, and one with no time loses to any that has one. */
+function nearest(list: PromptEntry[], at: number): PromptEntry {
+  let best = list[list.length - 1]!;
+  let gap = Number.POSITIVE_INFINITY;
+  for (const p of list) {
+    if (p.ts === undefined) continue;
+    const g = Math.abs(p.ts - at);
+    if (g <= gap) {
+      best = p;
+      gap = g;
+    }
+  }
+  return best;
+}
+
 /**
- * Index of the last real user prompt whose owner's words are `words`, or -1. The page names the exchange by the words it
- * shows, so a row and a transcript line are matched by content, never by counting prompts (agent-written prompts and
- * injected notes would shift a count).
+ * Index of the prompt the page means, or -1. The page names an exchange by the words its row shows and, since
+ * 2026-11-13, the time of that row; a row and a transcript line are matched by content, never by counting prompts
+ * (agent-written prompts and injected notes would shift a count).
+ *
+ *  - WORDS: the owner's words of the entry, or its whole text. A prompt nobody typed (a background-task notice, an
+ *    agent's wake) has no owner words, and the page shows such a row by its text.
+ *  - TIME, among those: the same words sent twice are two exchanges, and the one sent at `at` is meant. With no time
+ *    given it is the last one, as before.
+ *  - TIME alone, when no entry has the words: the page can hold a row the transcript words differently (the gateway's
+ *    own line for a turn the CLI started by itself). The entry sent within `SAME_PROMPT_MS` of the row is that turn.
  */
-export function promptIndexByWords(lines: string[], words: string): number {
+export function promptIndexFor(lines: string[], words: string, at?: number): number {
   const want = norm(words);
-  if (!want) return -1;
-  for (let i = lines.length - 1; i >= 0; i--) if (norm(ownerWordsOf(lines[i])) === want) return i;
-  return -1;
+  const prompts: PromptEntry[] = [];
+  const named: PromptEntry[] = [];
+  lines.forEach((l, index) => {
+    let e: Entry;
+    try {
+      e = JSON.parse(l) as Entry;
+    } catch {
+      return;
+    }
+    const text = promptText(e);
+    if (text === null) return;
+    const ts = typeof e.timestamp === "string" ? Date.parse(e.timestamp) : Number.NaN;
+    const entry: PromptEntry = Number.isFinite(ts) ? { index, ts } : { index };
+    prompts.push(entry);
+    if (!want) return;
+    if (norm(ownerWords(withoutLeadingPromptBlocks(text)) ?? "") === want || norm(text) === want) {
+      named.push(entry);
+    }
+  });
+  if (named.length > 0) return (at === undefined ? named.at(-1)! : nearest(named, at)).index;
+  if (at === undefined) return -1;
+  const near = prompts.filter((p) => p.ts !== undefined && Math.abs(p.ts - at) <= SAME_PROMPT_MS);
+  return near.length > 0 ? nearest(near, at).index : -1;
+}
+
+/** Index of the last real user prompt with these words, or -1 (`promptIndexFor` with no time). */
+export function promptIndexByWords(lines: string[], words: string): number {
+  return promptIndexFor(lines, words);
+}
+
+/** When a transcript line says it was written (ms), or undefined. */
+function lineTime(line: string): number | undefined {
+  try {
+    const ts = Date.parse(String((JSON.parse(line) as Entry).timestamp ?? ""));
+    return Number.isFinite(ts) ? ts : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * Write a copy of the transcript truncated before its last user prompt, under a new session id, next to the source
- * (or in `destDir`). With `fromPrompt`, truncated before the last prompt carrying those owner's words instead, so that
- * exchange and every later one go (2026-10-22: remove more than one turn from history at once). Never
- * modifies the source. `newId` is injectable for tests.
+ * (or in `destDir`). With `fromPrompt` (and `fromPromptAt`, the time of the page's row), truncated before the prompt
+ * the page means instead (`promptIndexFor`), so that exchange and every later one go (2026-10-22: remove more than one
+ * turn from history at once). `orLast`: the page says its exchange is the newest one, so when the transcript cannot
+ * name it the last prompt is cut. Never modifies the source. `newId` is injectable for tests.
+ *
+ * When nothing is left before the cut (2026-11-13) no copy is written: the result is `whole`, and its id is a
+ * `REWOUND_ALL_PREFIX` marker for the caller to point the tab at.
  */
 export function forkTruncatedTranscript(
   srcPath: string,
-  o: { destDir?: string; newId?: string; fromPrompt?: string } = {},
+  o: {
+    destDir?: string;
+    newId?: string;
+    fromPrompt?: string;
+    fromPromptAt?: number;
+    orLast?: boolean;
+  } = {},
 ): ForkResult {
   try {
     const size = statSync(srcPath).size;
@@ -123,7 +213,10 @@ export function forkTruncatedTranscript(
     const lines = readFileSync(srcPath, "utf-8")
       .split("\n")
       .filter((l) => l.length > 0);
-    const at = o.fromPrompt ? promptIndexByWords(lines, o.fromPrompt) : lastPromptIndex(lines);
+    let at = o.fromPrompt
+      ? promptIndexFor(lines, o.fromPrompt, o.fromPromptAt)
+      : lastPromptIndex(lines);
+    if (at < 0 && o.fromPrompt && o.orLast) at = lastPromptIndex(lines);
     if (at < 0) {
       return {
         ok: false,
@@ -132,14 +225,11 @@ export function forkTruncatedTranscript(
           : "no user prompt found in the transcript",
       };
     }
-    if (at === 0 || !lines.slice(0, at).some((l) => /"(user|assistant)"/.test(l))) {
-      // Nothing before the prompt: rewinding would leave an empty conversation, which is a reset, not a rewind.
-      return { ok: false, reason: "the removed exchange is the whole conversation" };
-    }
     // What goes back to the composer is the owner's words. The transcript copy of a Tinker prompt also carries the
     // bridge's `<turn_context>` header, the date stamp and the chat-row contract (11.5 KB around a 60-character
     // prompt, measured 2026-10-22); an agent-written prompt has no owner words, so nothing is returned for it.
     const prompt = ownerWordsOf(lines[at]);
+    const cutAt = lineTime(lines[at]);
     let originalId: string | undefined;
     for (const l of lines) {
       try {
@@ -153,6 +243,22 @@ export function forkTruncatedTranscript(
       }
     }
     const forkId = o.newId ?? randomUUID();
+    if (at === 0 || !lines.slice(0, at).some((l) => /"(user|assistant)"/.test(l))) {
+      // FORK 2026-11-13: nothing is said before this prompt, so the exchange is the whole conversation. Until today
+      // that was refused as a reset. A tab whose session began with a refused prompt (the bridge starts a fresh
+      // session when the old transcript is too large to resume) then had no Rewind at all. An empty context has no
+      // transcript to resume, so no copy is written: the marker id tells the bridge to start fresh.
+      return {
+        ok: true,
+        whole: true,
+        forkSessionId: `${REWOUND_ALL_PREFIX}${forkId}`,
+        originalSessionId: originalId,
+        keptEntries: 0,
+        droppedEntries: lines.length,
+        restoredPrompt: prompt,
+        ...(cutAt !== undefined ? { cutAt } : {}),
+      };
+    }
     const kept = lines.slice(0, at).map((l) => {
       try {
         const e = JSON.parse(l) as Entry & Record<string, unknown>;
@@ -174,6 +280,7 @@ export function forkTruncatedTranscript(
       keptEntries: at,
       droppedEntries: lines.length - at,
       restoredPrompt: prompt,
+      ...(cutAt !== undefined ? { cutAt } : {}),
     };
   } catch (err) {
     console.error("[amygdala] rewind fork failed", err);
@@ -198,7 +305,15 @@ export interface SessionMap {
   point(sessionKey: string, sessionId: string): boolean;
   /** True while a reply runs in the tab: a rewind then would cut the transcript under a live worker. */
   busy?(sessionKey: string): boolean;
+  /**
+   * FORK 2026-11-13: transcripts of the tab's EARLIER Claude sessions, newest first (the bridge starts a new session
+   * when a transcript grows past its resume limit; the page still shows the older turns). Absent = none known.
+   */
+  earlierTranscriptsFor?(sessionKey: string): string[];
 }
+
+/** The bridge resumes a transcript up to this size (tinker-bridge defaults.ts RESUME_MAX_TRANSCRIPT_BYTES). */
+export const RESUME_LIMIT_BYTES = 8_000_000;
 
 export interface RewindRecord {
   sessionKey: string;
@@ -270,6 +385,10 @@ export interface RewindMethodResult {
   originalSessionId?: string;
   restoredSessionId?: string;
   restoredPrompt?: string;
+  /** The exchange was the whole conversation: the tab was released from its session, no copy exists. */
+  whole?: boolean;
+  /** When the prompt at the cut was sent (ms). */
+  cutAt?: number;
 }
 
 /**
@@ -288,8 +407,12 @@ export function rewindTurn(o: {
    * on an older turn would silently drop a newer one (2026-09-30, two refusals in a row): refuse it instead.
    */
   newestTurnId?: string;
-  /** Rewind to this prompt (owner's words): it and every later exchange go. Lifts the newest-only rule. */
+  /** Rewind to this prompt (the words the page shows for it): it and every later exchange go. Lifts the newest-only rule. */
   fromPrompt?: string;
+  /** The time of the page's row for that prompt (ms): tells apart two prompts with the same words. */
+  fromPromptAt?: number;
+  /** The page says the named exchange is its newest: when the transcript cannot name it, the last prompt is cut. */
+  orLast?: boolean;
   now: number;
 }): RewindMethodResult {
   const map = o.sessionMap;
@@ -334,26 +457,124 @@ export function rewindTurn(o: {
     };
   }
   const path = map.transcriptPathFor(o.sessionKey);
-  if (!path) return { ok: false, capability, reason: "no transcript for this tab" };
-  const fork = forkTruncatedTranscript(path, o.fromPrompt ? { fromPrompt: o.fromPrompt } : {});
-  if (!fork.ok || !fork.forkPath || !fork.forkSessionId) {
+  // FORK 2026-11-13: a named prompt the current session does not hold may sit in an earlier session of this tab.
+  if (o.fromPrompt) {
+    if (!path || !holdsPrompt(path, o.fromPrompt, o.fromPromptAt)) {
+      const earlier = earlierFork(map, o.sessionKey, o.fromPrompt, o.fromPromptAt);
+      if (earlier)
+        return finishFork(map, o, capability, earlier, map.currentSessionId(o.sessionKey) ?? "");
+    }
+  }
+  if (!path) {
+    // A tab released by a whole-conversation rewind points at a marker id, which has no transcript.
+    const released = map.currentSessionId(o.sessionKey)?.startsWith(REWOUND_ALL_PREFIX) === true;
+    return {
+      ok: false,
+      capability,
+      reason: released
+        ? "the model's context is already empty in this tab"
+        : "no transcript for this tab",
+    };
+  }
+  const fork = forkTruncatedTranscript(
+    path,
+    o.fromPrompt
+      ? {
+          fromPrompt: o.fromPrompt,
+          ...(o.fromPromptAt !== undefined ? { fromPromptAt: o.fromPromptAt } : {}),
+          ...(o.orLast ? { orLast: true } : {}),
+        }
+      : {},
+  );
+  if (!fork.ok || !fork.forkSessionId || (!fork.whole && !fork.forkPath)) {
     return { ok: false, capability, reason: fork.reason ?? "could not fork the transcript" };
   }
-  const original = fork.originalSessionId ?? map.currentSessionId(o.sessionKey) ?? "";
-  if (!map.point(o.sessionKey, fork.forkSessionId)) {
-    try {
-      unlinkSync(fork.forkPath); // our own unused copy; the original was never touched
-    } catch {
-      /* already gone */
+  return finishFork(
+    map,
+    o,
+    capability,
+    fork,
+    fork.originalSessionId ?? map.currentSessionId(o.sessionKey) ?? "",
+  );
+}
+
+/** Does this transcript hold the named prompt? A read only; an unreadable file answers no. */
+function holdsPrompt(path: string, words: string, at?: number): boolean {
+  try {
+    if (statSync(path).size > MAX_REWIND_BYTES) return false;
+    const lines = readFileSync(path, "utf-8")
+      .split("\n")
+      .filter((l) => l.length > 0);
+    return promptIndexFor(lines, words, at) >= 0;
+  } catch {
+    return false;
+  }
+}
+
+/** The newest earlier session of the tab that holds the named prompt, cut before it; null when none does. */
+function earlierFork(
+  map: SessionMap,
+  sessionKey: string,
+  words: string,
+  at?: number,
+): ForkResult | null {
+  for (const p of map.earlierTranscriptsFor?.(sessionKey) ?? []) {
+    const f = forkTruncatedTranscript(p, {
+      fromPrompt: words,
+      ...(at !== undefined ? { fromPromptAt: at } : {}),
+    });
+    if (!f.ok) continue;
+    if (f.forkPath) {
+      try {
+        if (statSync(f.forkPath).size > RESUME_LIMIT_BYTES) {
+          unlinkSync(f.forkPath);
+          return {
+            ok: false,
+            reason: `the copy from that earlier session would be over the ${RESUME_LIMIT_BYTES / 1_000_000} MB the bridge resumes`,
+          };
+        }
+      } catch {
+        continue;
+      }
     }
-    return { ok: false, capability, reason: "could not point the tab at the fork" };
+    return f;
+  }
+  return null;
+}
+
+/** Point the tab at a fork (or a released marker) and record it, so Undo returns the tab to `original`. */
+function finishFork(
+  map: SessionMap,
+  o: { sessionKey: string; turnId: string; registry: RewindRegistry; now: number },
+  capability: RewindCapability,
+  fork: ForkResult,
+  original: string,
+): RewindMethodResult {
+  if (!fork.ok || !fork.forkSessionId || (!fork.whole && !fork.forkPath)) {
+    return { ok: false, capability, reason: fork.reason ?? "could not fork the transcript" };
+  }
+  if (!map.point(o.sessionKey, fork.forkSessionId)) {
+    if (fork.forkPath) {
+      try {
+        unlinkSync(fork.forkPath); // our own unused copy; the original was never touched
+      } catch {
+        /* already gone */
+      }
+    }
+    return {
+      ok: false,
+      capability,
+      reason: fork.whole
+        ? "could not release the tab from its session"
+        : "could not point the tab at the fork",
+    };
   }
   o.registry.add({
     sessionKey: o.sessionKey,
     turnId: o.turnId,
     originalSessionId: original,
     forkSessionId: fork.forkSessionId,
-    forkPath: fork.forkPath,
+    forkPath: fork.forkPath ?? "",
     prompt: fork.restoredPrompt ?? "",
     ts: o.now,
     undone: false,
@@ -364,5 +585,7 @@ export function rewindTurn(o: {
     forkSessionId: fork.forkSessionId,
     originalSessionId: original,
     restoredPrompt: fork.restoredPrompt,
+    ...(fork.whole ? { whole: true } : {}),
+    ...(fork.cutAt !== undefined ? { cutAt: fork.cutAt } : {}),
   };
 }

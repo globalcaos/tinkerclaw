@@ -4,7 +4,7 @@
     "onStartup": true
   },
   "name": "Total Recall",
-  "description": "ENGRAM \u2014 Episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation, and artifact externalization",
+  "description": "ENGRAM \u2014 Episodic memory with FTS (word) retrieval, pointer compaction, sleep consolidation, and artifact externalization",
   "kind": "memory",
   "configSchema": {
     "type": "object",
@@ -16,11 +16,11 @@
       },
       "embeddingProvider": {
         "type": "string",
-        "default": "ollama"
+        "description": "Ignored. Embeddings are chosen per machine (openclaw embedder fit, agents.defaults.memorySearch)."
       },
       "embeddingModel": {
         "type": "string",
-        "default": "mxbai-embed-large"
+        "description": "Ignored. Embeddings are chosen per machine (openclaw embedder fit, agents.defaults.memorySearch)."
       },
       "retentionDays": {
         "type": ["number", "null"],

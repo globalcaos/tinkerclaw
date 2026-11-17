@@ -91,6 +91,13 @@ type ForgetState = {
   timers: Set<ReturnType<typeof setTimeout>>;
 };
 const STATE_KEY = Symbol.for("openclaw.tinkerclaw-forget.state");
+/** Read by total-recall: it drops its memoised event stores and packs when this moves. */
+const FORGET_EPOCH_KEY = Symbol.for("openclaw.memory.forget-epoch");
+
+function bumpForgetEpoch(): void {
+  const g = globalThis as Record<symbol, number | undefined>;
+  g[FORGET_EPOCH_KEY] = (g[FORGET_EPOCH_KEY] ?? 0) + 1;
+}
 
 export function forgetState(): ForgetState {
   const g = globalThis as Record<symbol, ForgetState | undefined>;
@@ -367,6 +374,9 @@ export async function runForget(req: ForgetRequest, env: ForgetEnv): Promise<Rec
     });
     const items = new Map<PlaceId, ReceiptItem[]>();
     const redacted = recordSweep(env, sw, apply, items);
+    if (apply && redacted.length > 0) {
+      bumpForgetEpoch();
+    }
     const touched = apply ? redacted : sw.found.filter((f) => f.kind === "text").map((f) => f.path);
 
     for (const it of await purgeTranscriptIndexes({
@@ -459,6 +469,7 @@ export async function followUpPass(
     const text = sw.found.filter((f) => f.kind === "text");
     const redacted = text.filter((f) => f.wrote).map((f) => f.path);
     if (redacted.length > 0) {
+      bumpForgetEpoch();
       await purgeTranscriptIndexes({ engramBaseDir, redacted, dryRun: false });
       await resyncMemoryIndexes({
         agentIds: env.agentIds,

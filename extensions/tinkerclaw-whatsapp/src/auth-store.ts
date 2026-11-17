@@ -296,6 +296,13 @@ async function shouldClearOnLogout(authDir: string, isLegacyAuthDir: boolean): P
     if (credsStats?.isFile()) {
       return true;
     }
+    // The whatsmeow backend keeps the whole session in whatsmeow.db and never
+    // writes creds.json; without this, logout reports "no session" and keeps it
+    // (burn review 2026-11-14, b1113-c F2).
+    const wmStoreStats = await fs.lstat(path.join(authDir, "whatsmeow.db")).catch(() => null);
+    if (wmStoreStats?.isFile()) {
+      return true;
+    }
     const backupStats = await fs.lstat(resolveWebCredsBackupPath(authDir)).catch(() => null);
     return backupStats?.isFile() === true;
   } catch (error) {

@@ -1653,6 +1653,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/tinkerclaw-token-burner: {}
+
   extensions/tinkerclaw-total-recall:
     dependencies:
       openclaw:

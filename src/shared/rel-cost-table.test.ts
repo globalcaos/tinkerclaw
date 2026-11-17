@@ -73,6 +73,35 @@ describe("shared/rel-cost-table", () => {
     });
   });
 
+  describe("gemini 4 carbon (2026-11-11)", () => {
+    it("prices Gemini 4 Carbon from its own row at the $10 introductory output price", () => {
+      expect(allRowsMatching("google/gemini-4-carbon").map((r) => r4(r.relCost))).toEqual([10.0]);
+      expect(relCostFor("google/gemini-4-carbon")).toBe(10.0);
+      expect(relCostFor("openrouter/google/gemini-4-carbon")).toBe(10.0);
+    });
+  });
+
+  describe("gemini 4 hydrogen (2026-11-13)", () => {
+    it("prices Gemini 4 Hydrogen from its own row at $7.50 output, not the Carbon or pro rate", () => {
+      expect(allRowsMatching("google/gemini-4-hydrogen").map((r) => r4(r.relCost))).toEqual([7.5]);
+      expect(relCostFor("google/gemini-4-hydrogen")).toBe(7.5);
+      expect(relCostFor("openrouter/google/gemini-4-hydrogen")).toBe(7.5);
+    });
+  });
+
+  describe("muse ember and motif 3 (2026-11-11)", () => {
+    it("prices each from its own row, never the Muse Spark or default rate", () => {
+      expect(allRowsMatching("openrouter/meta/muse-ember").map((r) => r4(r.relCost))).toEqual([
+        0.5,
+      ]);
+      expect(
+        allRowsMatching("openrouter/motif-technologies/motif-3").map((r) => r4(r.relCost)),
+      ).toEqual([1.2]);
+      expect(relCostFor("openrouter/meta/muse-ember")).toBe(0.5);
+      expect(relCostFor("openrouter/motif-technologies/motif-3")).toBe(1.2);
+    });
+  });
+
   describe("fallback", () => {
     it("returns DEFAULT_REL_COST for an id no row claims", () => {
       expect(allRowsMatching("acme/frobnicator-9")).toHaveLength(0);

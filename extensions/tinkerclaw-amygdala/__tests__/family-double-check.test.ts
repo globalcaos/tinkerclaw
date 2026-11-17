@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { goalFingerprint } from "../src/context.js";
 import { createDoubleCheckFamily } from "../src/families/double-check.js";
+import { proofGrantCode } from "../src/grant-code.js";
 import { renderTemplate } from "../src/templates.js";
 import type { Response, Seam, Situation, ToolRecordEntry } from "../src/types.js";
 import {
@@ -40,124 +42,29 @@ const preTool = (over: Partial<Situation> = {}): Situation =>
   caseSituation(null, "pre-tool", {}, over);
 
 describe("double-check decision table (design 5.2)", () => {
-  it("a refusal outranked by a claim send-back is flagged, so the strip is still offered (2026-09-30, CTO tab)", () => {
-    const r = result(fam, "stop", stop(), [V("refusal", 0.99), V("claim-record", 0.9)]);
-    expect(r?.response.kind).toBe("send-back");
-    expect(r?.alsoRefusal).toBe(true);
-    const alone = result(fam, "stop", stop(), [V("refusal", 0.99)]);
-    expect(alone?.response.kind).toBe("refusal");
-    expect(alone?.alsoRefusal).toBeUndefined();
-  });
-
-  it("claim-record crosses -> send-back-claim attempt 1", () => {
-    const r = result(fam, "stop", stop(), [V("claim-record", 0.9)]);
-    expect(r?.response).toEqual({
-      kind: "send-back",
-      templateId: "send-back-claim",
-      slots: {
-        claim: "I uploaded the PDF.",
-        missing: "no tool call in this task uploaded anything",
-      },
-      attempt: 1,
-    });
-    expect(r?.drivers).toEqual(["claim-record"]);
-    expect(r?.reasonCode).toBe("claim-unsupported");
-    renders(r!.response);
-  });
-
-  it("claim-support below its cut-off crosses too; drivers list the crossing questions", () => {
-    const r = result(fam, "stop", stop(), [V("claim-record", 0.2), V("claim-support", 0.1)]);
-    expect(r?.response.kind).toBe("send-back");
-    expect(r?.drivers).toEqual(["claim-support"]);
-    const both = result(fam, "stop", stop(), [V("claim-record", 0.9), V("claim-support", 0.1)]);
-    expect(both?.drivers).toEqual(["claim-record", "claim-support"]);
-  });
-
   it("claim-support at or above its cut-off does not act", () => {
     const vs = [V("claim-record", 0.2), V("claim-support", 0.9)];
     expect(respond(fam, "stop", stop(), vs).kind).toBe("proceed");
   });
 
-  it("names the first unsupported claim, not a supported one", () => {
-    const s = stop({
-      reply: F("I saved the file. I deleted the copy."),
-      toolRecord: F([rec("Write", ["local-write"])]),
-    });
-    const r = result(fam, "stop", s, [V("claim-record", 0.9)]);
-    const slots = (r?.response as { slots: Record<string, string> }).slots;
-    expect(slots.claim).toBe("I deleted the copy.");
-    expect(slots.missing).toBe("no successful call that deleted anything");
-  });
-
-  it("no done claim but a completion verb in the reply: the whole reply is checked", () => {
-    const s = stop({ reply: F("I have not deleted the file yet.") });
-    expect(fam.questionsFor("stop", s, freshState())).toContain("claim-record");
-    const r = result(fam, "stop", s, [V("claim-record", 0.9)]);
-    expect(r?.response.kind).toBe("send-back");
-  });
-
-  for (const [option, problem] of [
-    ["placeholder", "leaves a placeholder"],
-    ["handed-back", "hands the work back"],
-    ["question-open", "leaves your question open"],
-    ["promise-later", "promises later work that nothing will run"],
-    ["unverified-fix", "reports a fix that was not verified in this task"],
-  ] as const) {
-    it(`dodged-work ${option} -> send-back-dodged`, () => {
-      const r = result(fam, "stop", stop({ reply: F("Some reply.") }), [dodge(option)]);
-      expect(r?.response).toEqual({
-        kind: "send-back",
-        templateId: "send-back-dodged",
-        slots: { problem },
-        attempt: 1,
-      });
-      expect(r?.drivers).toEqual(["dodged-work"]);
-      expect(r?.reasonCode).toBe("dodged-work");
-      renders(r!.response);
-    });
-  }
-
-  it("dodged-work false-blocker -> send-back-blocker, which names the way through", () => {
-    const r = result(fam, "stop", stop({ reply: F("It is encrypted, I can't open it.") }), [
-      dodge("false-blocker"),
-    ]);
-    expect(r?.response).toEqual({
-      kind: "send-back",
-      templateId: "send-back-blocker",
-      slots: {},
-      attempt: 1,
-    });
-    expect(r?.reasonCode).toBe("false-blocker");
-    expect(renderTemplate("send-back-blocker")).toMatch(/same account, data or device/);
-    renders(r!.response);
-  });
-
-  it("promise-later is ignored when a job is scheduled, other dodges still act", () => {
-    const s = stop({ reply: F("I will report."), scheduledJobs: F(["job-1"]) });
-    expect(respond(fam, "stop", s, [dodge("promise-later")]).kind).toBe("proceed");
-    const mixed = V("dodged-work", "promise-later", 0.5);
-    mixed.probs = { "promise-later": 0.3, placeholder: 0.65, complete: 0.05 };
-    expect(respond(fam, "stop", s, [mixed]).kind).toBe("send-back");
+  it("a negated, future, conditional or proposed sentence claims nothing, so no claim question is asked", () => {
+    for (const reply of [
+      "I have not deleted the file yet.",
+      "Nothing was restarted.",
+      "I will push it tomorrow.",
+      "If the build is finally done, the page updates.",
+      "We should have it merged by Friday.",
+      "I propose to get the branch deleted.",
+    ]) {
+      const s = stop({ reply: F(reply) });
+      expect(fam.questionsFor("stop", s, freshState())).not.toContain("claim-record");
+      expect(respond(fam, "stop", s, [V("claim-record", 0.9)]).kind).toBe("proceed");
+    }
   });
 
   it("complete does not act", () => {
     const s = stop({ reply: F("Here.") });
     expect(respond(fam, "stop", s, [dodge("complete")]).kind).toBe("proceed");
-  });
-
-  it("stale-state-claim -> send-back-claim with the state claim", () => {
-    const s = stop({ reply: F("The service is running. Also I uploaded it.") });
-    const r = result(fam, "stop", s, [V("stale-state-claim", 0.9)]);
-    expect(r?.response).toMatchObject({
-      kind: "send-back",
-      templateId: "send-back-claim",
-      slots: {
-        claim: "The service is running.",
-        missing: "no check of the running state in this task",
-      },
-    });
-    expect(r?.reasonCode).toBe("stale-state");
-    renders(r!.response);
   });
 
   it("refusal -> {kind:refusal}, drivers [refusal], renders nothing", () => {
@@ -169,27 +76,6 @@ describe("double-check decision table (design 5.2)", () => {
       reasonCode: "refusal",
     });
     renders(r!.response);
-  });
-
-  it("a send-back outranks a refusal candidate", () => {
-    const r = result(fam, "stop", stop(), [V("refusal", 0.9), V("claim-record", 0.9)]);
-    expect(r?.response.kind).toBe("send-back");
-  });
-
-  it("attempt numbering: 1, then 2, then none (the refusal candidate survives)", () => {
-    const vs = [V("claim-record", 0.9)];
-    const at = (n: number) => respond(fam, "stop", stop(), vs, freshState({ sendBackAttempts: n }));
-    expect((at(0) as { attempt: number }).attempt).toBe(1);
-    expect((at(1) as { attempt: number }).attempt).toBe(2);
-    expect(at(2).kind).toBe("proceed");
-    const withRefusal = respond(
-      fam,
-      "stop",
-      stop(),
-      [...vs, V("refusal", 0.9)],
-      freshState({ sendBackAttempts: 2 }),
-    );
-    expect(withRefusal.kind).toBe("refusal");
   });
 
   it("pre-tool: weakens-own-check crosses -> hold", () => {
@@ -204,6 +90,233 @@ describe("double-check decision table (design 5.2)", () => {
       reasonCode: "weakens-own-check",
     });
     expect(respond(fam, "pre-tool", s, [V("weakens-own-check", 0.59)]).kind).toBe("proceed");
+  });
+
+  it("pre-tool: his Allow releases the hold, in his own turn and for this step only (2026-10-31)", () => {
+    const base = preTool({
+      sessionKey: "agent:main:tinker:t1",
+      turnKind: F("owner" as const, "derived"),
+      command: F("sed -i s/1/2/ tests/a.py"),
+      effectClass: F("local-write" as const, "derived"),
+    });
+    const allow = F(`allow ${proofGrantCode(goalFingerprint(base))}`);
+    const crossing = [V("weakens-own-check", 0.9)];
+    expect(result(fam, "pre-tool", { ...base, request: allow }, crossing)).toEqual({
+      response: { kind: "proceed" },
+      drivers: [],
+      reasonCode: "evidence-released-owner",
+    });
+    for (const s of [
+      { ...base, request: F("allow JEV-000000") },
+      { ...base, request: allow, sessionKey: "agent:main:subagent:u1" },
+      { ...base, request: allow, turnKind: F("agent" as const, "derived") },
+    ]) {
+      expect(respond(fam, "pre-tool", s, crossing).kind).toBe("hold");
+    }
+  });
+});
+
+describe("unchecked admission (2026-11-10)", () => {
+  const admits = () => stop({ reply: F("The page is live. The backups may be off (inferred).") });
+  it("a reply that admits it did not check something is sent back once, naming the sentence", () => {
+    const r = result(fam, "stop", admits(), []);
+    expect(r?.reasonCode).toBe("unchecked-admission");
+    expect(r?.response).toMatchObject({ kind: "send-back", templateId: "send-back-unchecked" });
+    if (r?.response.kind !== "send-back") return;
+    expect(renderTemplate(r.response.templateId, r.response.slots)).toContain(
+      "The backups may be off (inferred).",
+    );
+  });
+  it("after its one send-back the reply passes, and a reflection turn is never sent back", () => {
+    expect(result(fam, "stop", admits(), [], freshState({ sendBackAttempts: 1 }))).toBeNull();
+    const note = stop({
+      reply: F("Not confirmed: the card on his page."),
+      turnKind: F("reflection", "derived"),
+    });
+    expect(result(fam, "stop", note, [])).toBeNull();
+  });
+  it("a reply with nothing unchecked is left alone", () => {
+    expect(
+      result(fam, "stop", stop({ reply: F("I checked the page: it answers 200.") }), []),
+    ).toBeNull();
+  });
+});
+
+describe("weakens-own-check: only a step that can change a live check", () => {
+  const q = (over: Partial<Situation>) => fam.questionsFor("pre-tool", preTool(over), freshState());
+  const write = { effectClass: F("local-write" as const, "derived") };
+  const at = (...paths: string[]) => ({
+    targets: F(
+      paths.map((path) => ({ path, kind: "file" as const, resolvedFrom: path })),
+      "derived",
+    ),
+  });
+
+  it("a write to a live test file is asked", () => {
+    expect(q({ ...write, ...at("/w/src/a.test.ts") })).toEqual(["weakens-own-check"]);
+    expect(q({ ...write, ...at("/w/tests/test_a.py") })).toEqual(["weakens-own-check"]);
+  });
+  it("a read and a copy in /tmp are not", () => {
+    expect(q({ effectClass: F("read" as const, "derived"), ...at("/w/a.test.ts") })).toEqual([]);
+    expect(q({ ...write, ...at("/tmp/jarvis/x/a.test.ts") })).toEqual([]);
+  });
+  it("a plain cp changes only its destination", () => {
+    const cp = F("cp /w/src/a.test.ts /tmp/jarvis/x/a.test.ts");
+    expect(
+      q({ ...write, command: cp, ...at("/w/src/a.test.ts", "/tmp/jarvis/x/a.test.ts") }),
+    ).toEqual([]);
+    const over = F("cp /tmp/a.ts /w/src/a.test.ts");
+    expect(q({ ...write, command: over, ...at("/tmp/a.ts", "/w/src/a.test.ts") })).toEqual([
+      "weakens-own-check",
+    ]);
+  });
+  it("a command with no target: running a check is not asked, writing one is", () => {
+    const other = { effectClass: F("other" as const, "derived") };
+    expect(q({ ...other, command: F("pnpm exec vitest run src/a.test.ts") })).toEqual([]);
+    expect(q({ ...other, command: F("python3 fix.py > tests/a.test.ts") })).toEqual([
+      "weakens-own-check",
+    ]);
+  });
+  it("a checkout in /tmp is not scratch: its tests grade real work", () => {
+    const wt = mkdtempSync("/tmp/amy-checkout-");
+    try {
+      writeFileSync(join(wt, ".git"), "gitdir: /elsewhere\n");
+      expect(q({ ...write, ...at(join(wt, "tests/test_a.py")) })).toEqual(["weakens-own-check"]);
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+  it("a live test the target parser cannot see stays asked", () => {
+    const other = { effectClass: F("other" as const, "derived") };
+    const viaVar = F("W=~/wt; mv $W/src/__tests__/a.test.ts /tmp/jarvis/x/a.txt");
+    expect(q({ ...other, command: viaVar, ...at("/tmp/jarvis/x/a.txt") })).toEqual([
+      "weakens-own-check",
+    ]);
+    const inHeredoc = F(
+      "cd ~/wt && python3 - <<'E' > /tmp/jarvis/x/out.log\np='src/a.test.ts'; s=open(p).read(); open(p,'w').write(s)\nE",
+    );
+    expect(q({ ...other, command: inHeredoc, ...at("/tmp/jarvis/x/out.log") })).toEqual([
+      "weakens-own-check",
+    ]);
+    const viaPathlib = F(
+      "cd ~/wt && python3 - <<'E'\nfrom pathlib import Path\nPath('e2e/a.spec.ts').write_text('')\nE",
+    );
+    expect(q({ ...other, command: viaPathlib })).toEqual(["weakens-own-check"]);
+  });
+  it("a scripted step that stays in scratch is not asked", () => {
+    const other = { effectClass: F("other" as const, "derived") };
+    const py = F(
+      "cd /tmp/jarvis/x && python3 - <<'E'\ns=open('replay.mts').read(); open('out.mts','w').write(s)\nE",
+    );
+    expect(q({ ...other, command: py, ...at("/tmp/jarvis/x") })).toEqual([]);
+  });
+  it("an e2e file is a check", () => {
+    expect(q({ ...write, ...at("/w/e2e/walkthrough.ts") })).toEqual(["weakens-own-check"]);
+  });
+});
+
+describe("report-defect: the formal way to say a test is wrong", () => {
+  const reply =
+    "The test pins the old date format.\nreport-defect: tests/a.test.ts: pins 2019 rules";
+
+  it("reaches the owner as a note and asks nothing", () => {
+    const s = stop({ reply: F(reply) });
+    expect(fam.questionsFor("stop", s, freshState())).toEqual([]);
+    const r = result(fam, "stop", s, []);
+    expect(r?.response).toEqual({
+      kind: "note",
+      templateId: "defect-reported",
+      slots: { what: "tests/a.test.ts: pins 2019 rules" },
+      channel: "additionalContext",
+    });
+    expect(r?.reasonCode).toBe("report-defect");
+    renders(r!.response);
+  });
+
+  it("a mention inside a sentence is not a report", () => {
+    const s = stop({ reply: F("I could use report-defect: but the test is right.") });
+    expect(fam.questionsFor("stop", s, freshState())).toContain("refusal");
+  });
+});
+
+describe("selfModification: weakens-own-check", () => {
+  const own = "/repo/own";
+  const family = (selfModification: "locked" | "unlocked") =>
+    createDoubleCheckFamily({ book, selfModification, ownRepoRoots: () => [own] });
+  const step = (path: string) =>
+    preTool({
+      command: F("edit"),
+      effectClass: F("local-write" as const, "derived"),
+      targets: F([{ path, kind: "file" as const, resolvedFrom: "x" }], "derived"),
+    });
+  const asked = (selfModification: "locked" | "unlocked", path: string) =>
+    family(selfModification).questionsFor("pre-tool", step(path), freshState());
+
+  it("locked: the check over its own repo code is asked", () => {
+    expect(asked("locked", `${own}/tests/a.test.ts`)).toEqual(["weakens-own-check"]);
+  });
+  it("unlocked: not asked for its own repo code, still asked for any other project", () => {
+    expect(asked("unlocked", `${own}/tests/a.test.ts`)).toEqual([]);
+    expect(asked("unlocked", "/repo/client/tests/a.test.ts")).toEqual(["weakens-own-check"]);
+  });
+  it("unlocked with no repository found: nothing counts as its own", () => {
+    const f = createDoubleCheckFamily({
+      book,
+      selfModification: "unlocked",
+      ownRepoRoots: () => [],
+    });
+    expect(f.questionsFor("pre-tool", step(`${own}/tests/a.test.ts`), freshState())).toEqual([
+      "weakens-own-check",
+    ]);
+  });
+});
+
+describe("output as evidence (2026-11-01)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  /** A transcript: a Bash call with `output`, then whatever lines follow. */
+  const tail = (output: string, ...after: object[]): string => {
+    const d = mkdtempSync(join(tmpdir(), "dc-"));
+    dirs.push(d);
+    const p = join(d, "t.jsonl");
+    const lines = [
+      { type: "user", message: { content: "clean up the branch" } },
+      {
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "git x" } }],
+        },
+      },
+      {
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "t1", content: output }] },
+      },
+      ...after,
+    ];
+    writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n"));
+    return p;
+  };
+  const askedAfterEnrich = (reply: string, transcriptPath: string): string[] => {
+    const s = stop({ reply: F(reply), claims: F<never>(null as never) });
+    const state = freshState({ transcriptPath });
+    fam.enrich?.("stop", s, state);
+    return fam.questionsFor("stop", s, state);
+  };
+
+  it("a restart report proves the restart, and the report does not wipe the record", () => {
+    const report = {
+      type: "user",
+      message: {
+        content:
+          "<turn_context>x</turn_context>\n⟦AGENT:⏳ Longjob · x⟧ done\n[System] The gateway restart you requested at 07:57 finished. Gateway healthy on build abc1234.",
+      },
+    };
+    const p = tail("nothing here", report);
+    expect(askedAfterEnrich("The gateway restarted on build abc1234.", p)).not.toContain(
+      "claim-record",
+    );
   });
 });
 
@@ -242,40 +355,16 @@ describe("cannot-tell and skipped never act", () => {
 describe("questionsFor", () => {
   const q = (seam: Seam, s: Situation) => fam.questionsFor(seam, s, freshState());
 
-  it("stop: refusal and dodged-work always; claim questions only with a done claim", () => {
-    expect(q("stop", stop({ reply: F("The answer is 4.") }))).toEqual(["refusal", "dodged-work"]);
-    expect(q("stop", stop({ reply: F("I uploaded the PDF.") }))).toEqual([
-      "refusal",
-      "dodged-work",
-      "claim-record",
-      "claim-support",
-      "claim-source",
-    ]);
-    expect(q("stop", stop({ reply: F("The site is live.") }))).toEqual([
-      "refusal",
-      "dodged-work",
-      "stale-state-claim",
-    ]);
+  // FORK 2026-11-08: the stop seam asks only the refusal question; the send-backs it fed are gone.
+  it("stop: only the refusal question, with or without a done claim, reflection or not", () => {
+    expect(q("stop", stop({ reply: F("I uploaded the report and the server is fixed.") }))).toEqual(
+      ["refusal"],
+    );
+    expect(q("stop", stop({ turnKind: F("reflection", "derived") }))).toEqual(["refusal"]);
   });
 
   // 2026-10-25: 458 dodged-work flags on reflection turns were reviewed, 395 noise or harmful. A reflection leaves notes
   // for later; an open question in it is the point. Its done claims are still checked.
-  it("stop: a reflection turn skips dodged-work and stale-state-claim, keeps the claim questions", () => {
-    const reflection = { turnKind: F<"reflection">("reflection", "derived") };
-    expect(q("stop", stop({ reply: F("The answer is 4."), ...reflection }))).toEqual(["refusal"]);
-    expect(q("stop", stop({ reply: F("The site is live."), ...reflection }))).toEqual(["refusal"]);
-    expect(q("stop", stop({ reply: F("I uploaded the PDF."), ...reflection }))).toEqual([
-      "refusal",
-      "claim-record",
-      "claim-support",
-      "claim-source",
-    ]);
-    const agent = { turnKind: F<"agent">("agent", "derived") };
-    expect(q("stop", stop({ reply: F("The answer is 4."), ...agent }))).toEqual([
-      "refusal",
-      "dodged-work",
-    ]);
-  });
 
   it("stop: a provider error in the reply slot is not agent prose, so nothing is asked", () => {
     const raw =
@@ -398,7 +487,8 @@ describe("cases replay", () => {
   const controls = loadCaseFile("controls", "double-check");
 
   it("has the cases", () => {
-    expect(mustCatch.length).toBeGreaterThanOrEqual(10);
+    // 2026-11-08: the nine send-back cases retired with the send-backs (cases/retired).
+    expect(mustCatch.length).toBeGreaterThanOrEqual(2);
     expect(controls.length).toBeGreaterThanOrEqual(5);
   });
   for (const c of mustCatch)

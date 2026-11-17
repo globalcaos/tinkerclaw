@@ -132,6 +132,17 @@ function spreadLabel(text: string, read: TaskRead): string {
   return `${hits.join(" ")} ${read.kind.value}`;
 }
 
+/**
+ * THE SMART STOP'S EFFORT STANDS (owner, 2026-11-13: with the bias on smart, the model running all the time
+ * is the one he selected, at the effort he selected). At the smart band (dial 4 to 6) the task's difficulty
+ * does not lower the stop's effort: he chose smart to get the best, and the turns ran at low or medium
+ * (measured 11-10..13: 68 of 83 Fable turns, one at max). Below it the task still chooses, under the ceiling.
+ */
+export const SMART_BAND_FROM_IDX = 4;
+export function stopEffortStands(biasIdx: number | undefined): boolean {
+  return typeof biasIdx === "number" && biasIdx >= SMART_BAND_FROM_IDX;
+}
+
 export function taskEffort(input: TaskEffortInput): TaskEffort {
   const text = input.text ?? "";
   // A Jev read is used only when its difficulty is Jev's own answer. A fallback difficulty is the

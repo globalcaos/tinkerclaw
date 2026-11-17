@@ -34,13 +34,19 @@
 // PURE. No I/O, no clock beyond the `nowMs` argument.
 
 import { aaFamilyOf } from "./aa-effort-index.js";
-import { supplyOfKey, type SupplyId, type SupplyState } from "./thalamus-supply.js";
+import {
+  modelCoolingKey,
+  supplyOfKey,
+  type SupplyId,
+  type SupplyState,
+} from "./thalamus-supply.js";
 
 /** Why a rung cannot be used this turn. Ordered by how early it is decided. */
 export type FeasibilityVeto =
   | "supply-spent"
   | "supply-cooling"
   | "supply-unfunded"
+  | "supply-metered"
   | "capacity"
   | "engagement"
   | "not-allowed";
@@ -160,6 +166,8 @@ export type FeasibilityContext = {
   cooling?: ReadonlySet<SupplyId>;
   /** Supplies with no usable balance — today: openrouter while deliberately unfunded. */
   unfunded?: ReadonlySet<SupplyId>;
+  /** Supplies paid per call out of pocket — today: google, reserved for images and second opinions. */
+  secondOpinionOnly?: ReadonlySet<SupplyId>;
   /** `provider/model` → published context window, from the live model catalog. */
   contextWindowFor?: (key: string) => number | undefined;
   estimatedTokens?: number;
@@ -182,8 +190,20 @@ export function feasibility(key: string, ctx: FeasibilityContext): Feasibility {
   if (ctx.cooling?.has(id)) {
     return { ok: false, veto: "supply-cooling", detail: `${id} cooling after a failure` };
   }
+  // A limit on one model's own cap (Fable's), kept apart from the supply: only that family is closed.
+  const modelKey = modelCoolingKey(key);
+  if (modelKey && ctx.cooling?.has(modelKey as SupplyId)) {
+    return { ok: false, veto: "supply-cooling", detail: `${modelKey.slice(6)} limit reached` };
+  }
   if (ctx.unfunded?.has(id)) {
     return { ok: false, veto: "supply-unfunded", detail: `${id} has no funded balance` };
+  }
+  if (ctx.secondOpinionOnly?.has(id)) {
+    return {
+      ok: false,
+      veto: "supply-metered",
+      detail: `${id} is paid per call (reserved for images and second opinions)`,
+    };
   }
   const window = ctx.contextWindowFor?.(key);
   if (!fitsContext(window, ctx.estimatedTokens)) {

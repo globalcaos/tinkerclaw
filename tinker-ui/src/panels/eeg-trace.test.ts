@@ -34,10 +34,23 @@ import {
   resolveEegPaint,
   resolveEegGlowColor,
   EEG_GOOGLE_GLOW,
+  eegTokenTip,
+  eegTokensFromAnatomy,
+  EEG_GPT_SHADES,
+  eegSampleEuros,
+  eegBranchLevel,
+  eegTrunkClearance,
+  EEG_TRUNK_GAP,
+  eegOwnTurnWindows,
+  eegInWindows,
+  eegSplitTurnGhosts,
 } from "./eeg-trace";
 
 const T0 = 1_750_000_000_000;
 const ANTHROPIC_STROKE = "#E8702A";
+// 2026-11-13: one shade per Claude family (EEG_CLAUDE_SHADES); Opus keeps the brand orange.
+const FABLE_STROKE = "#B8321A";
+const SONNET_STROKE = "#F0A63C";
 const FALLBACK_GRAY = "#8A8F98";
 const WIDTH = 300;
 
@@ -1082,6 +1095,14 @@ describe("resolveEegPaint carries both scales (the architect 2026-08-28)", () =>
 });
 
 describe("eegProviderPaint", () => {
+  it("gives each GPT family its own green; Copilot twins stay blue", () => {
+    expect(eegProviderPaint("openai-codex", "gpt-6-astra").stroke).toBe("#0A5C47");
+    expect(eegProviderPaint("openai-codex", "gpt-6.1-sol").stroke).toBe("#10A37F");
+    expect(eegProviderPaint("openai-codex", "gpt-6.1-terra").stroke).toBe("#4FC49D");
+    expect(eegProviderPaint("openai-codex", "gpt-6-luna").stroke).toBe("#A8E2CB");
+    expect(eegProviderPaint("openai-codex", "gpt-5.5").stroke).toBe("#10A37F");
+    expect(eegProviderPaint("github-copilot", "gpt-5.5").stroke).not.toMatch(/^#(0A5C47|10A37F)$/);
+  });
   it("google is the rainbow provider", () => {
     expect(eegProviderPaint("google").isRainbow).toBe(true);
   });
@@ -1093,7 +1114,7 @@ describe("eegProviderPaint", () => {
   });
 
   it("infers the brand from a BARE model name (cc-bridge trace)", () => {
-    expect(eegProviderPaint("claude-fable-5").stroke).toBe(ANTHROPIC_STROKE);
+    expect(eegProviderPaint("claude-fable-5").stroke).toBe(FABLE_STROKE);
     expect(eegProviderPaint("claude-opus-4-8").stroke).toBe(ANTHROPIC_STROKE);
     expect(eegProviderPaint("gemini-3.1-pro").isRainbow).toBe(true);
     expect(eegProviderPaint("gpt-5.5").stroke).toBe(EEG_PROVIDER_COLORS.openai);
@@ -1113,7 +1134,7 @@ describe("eegProviderPaint", () => {
   // a class that covered five brands.
   it("routed openrouter/<brand>/* ids paint the BRAND, not the router", () => {
     expect(eegProviderPaint("openrouter", "openrouter/anthropic/claude-fable-5.1").stroke).toBe(
-      ANTHROPIC_STROKE,
+      FABLE_STROKE,
     );
     // FORK 2026-09-02: this leg used `openrouter/openai/gpt-5.3-codex` until the
     // architect banned OpenRouter routes for vendors we hold a direct subscription
@@ -1142,10 +1163,44 @@ describe("eegProviderPaint", () => {
   });
 
   // The native subscription route: hyphenated id, `claude-code` provider.
-  it("the claude-code Fable 5.1 subscription route paints Anthropic orange", () => {
+  it("the claude-code Fable 5.1 subscription route paints the Claude family's Fable shade", () => {
     expect(eegProviderPaint("claude-code", "claude-code/claude-fable-5-1").stroke).toBe(
-      ANTHROPIC_STROKE,
+      FABLE_STROKE,
     );
+  });
+
+  // 2026-11-13: every Claude model drew one orange, so a turn that mixed them read as one model.
+  it("each Claude family has its own shade, and an unnamed Claude model keeps the brand orange", () => {
+    const shade = (m: string) => eegProviderPaint("claude-code", m).stroke;
+    expect(shade("claude-fable-5-2")).toBe(FABLE_STROKE);
+    expect(shade("claude-opus-5-5")).toBe(ANTHROPIC_STROKE);
+    expect(shade("claude-sonnet-5-5")).toBe(SONNET_STROKE);
+    expect(shade("claude-haiku-4-5")).toBe("#F5D69A");
+    expect(
+      new Set(["fable-5-2", "opus-5-5", "sonnet-5-5", "haiku-4-5"].map((m) => shade(`claude-${m}`)))
+        .size,
+    ).toBe(4);
+    expect(eegProviderPaint("anthropic", "").stroke).toBe(ANTHROPIC_STROKE);
+    expect(eegProviderPaint("github-copilot", "github-copilot/claude-sonnet-5").stroke).not.toBe(
+      SONNET_STROKE,
+    );
+  });
+
+  it("a shell command is a provider call only when it runs that provider's tool", () => {
+    const local = { provider: "tool", model: "tool:local" };
+    expect(eegToolIdentity("Bash", "cat /home/x/.claude/skills/foo.md")).toEqual(local);
+    expect(eegToolIdentity("Bash", "grep -r openai notes.md")).toEqual(local);
+    expect(eegToolIdentity("Bash", "ls gemini-notes")).toEqual(local);
+    expect(eegToolIdentity("Bash", "cd /tmp && claude -p hello").provider).toBe("anthropic");
+    expect(eegToolIdentity("Bash", "FOO=1 /usr/local/bin/codex exec x").provider).toBe("openai");
+    expect(eegToolIdentity("Bash", "uv run ~/skills/nano-banana-pro/scripts/gen.py").provider).toBe(
+      "google",
+    );
+    expect(eegToolIdentity("Bash", "ls ~/skills/nano-banana-pro/")).toEqual(local);
+    expect(
+      eegToolIdentity("Bash", "python3 ~/skills/nano-banana-pro/scripts/gen.py").provider,
+    ).toBe("google");
+    expect(eegToolIdentity("Bash", "echo hi | gemini -p x").provider).toBe("google");
   });
 });
 
@@ -1181,8 +1236,18 @@ describe("fable 5.1 — subscription vs metered route", () => {
 
   it("a hypothetical future hyphen/dot spelling cannot flip the basis", () => {
     // Route decides, spelling does not: both metered ids stay at cash price.
-    expect(eegRelCost("openrouter/anthropic/claude-fable-5-2")).toBe(50);
-    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(0.9771, 4);
+    expect(eegRelCost("openrouter/anthropic/claude-fable-5-9")).toBe(50);
+    expect(eegRelCost("claude-code/claude-fable-5-9")).toBeCloseTo(0.9771, 4);
+  });
+
+  it("Fable 5.2 is priced at its own $8/$40 list on both routes", () => {
+    // OpenRouter 2026-11-10: $8 in / $40 out. Cheaper than 5.1's $50 out, so it must not
+    // fall through to the generic fable row.
+    expect(eegRelCost("openrouter/anthropic/claude-fable-5.2")).toBe(40);
+    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(
+      (eegRelCost("claude-code/claude-fable-5-1") * 40) / 50,
+      6,
+    );
   });
 });
 
@@ -1207,7 +1272,7 @@ describe("EegTraceStore basics", () => {
     const svg = store.renderSvg({ width: WIDTH });
     expect(store.isEmpty).toBe(false);
     expect(svg).toContain("<svg");
-    expect(svg).toContain(ANTHROPIC_STROKE);
+    expect(svg).toContain(SONNET_STROKE); // the default sample is a Sonnet
     expect(svg).toContain("data-eeg-turn");
   });
 
@@ -1352,7 +1417,76 @@ describe("google gradient", () => {
     const svg = store.renderSvg({ width: WIDTH });
     expect(svg).toContain("linearGradient");
     expect(svg).toContain("eeg-google");
-    expect(svg).toContain("url(#eeg-google)");
+    expect(svg).toContain("url(#eeg-google-");
+  });
+
+  it("the rainbow runs ACROSS a straight trunk, in paper units (2026-11-13: rotated 90 degrees)", () => {
+    // A trunk segment is a vertical line; its bounding box has zero width, and SVG ignores an
+    // objectBoundingBox gradient there, so a Gemini trunk drew nothing. Presence of the string proved nothing.
+    // The colours now lie side by side across the stroke: a horizontal gradient from its left to its right edge.
+    const store = new EegTraceStore();
+    store.record(
+      sample({ runId: "g1", provider: "google", model: "gemini-4-carbon", outputTokens: 5000 }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    const trunk =
+      /<path class="eeg-main" d="M ([\d.]+) [\d.]+ L ([\d.]+) [\d.]+"[^>]*stroke="url\(#(eeg-google-\d+)\)"[^>]*stroke-width="([\d.]+)"/.exec(
+        svg,
+      );
+    expect(trunk?.[1]).toBe(trunk?.[2]); // the case that matters: a perfectly vertical segment
+    const x = Number(trunk?.[1]);
+    const w = Number(trunk?.[4]);
+    const grad = new RegExp(`<linearGradient id="${trunk?.[3]}"([^>]*)>`).exec(svg)?.[1] ?? "";
+    expect(grad).toContain('gradientUnits="userSpaceOnUse"');
+    const attr = (k: string) => Number(new RegExp(` ${k}="([\\d.-]+)"`).exec(grad)?.[1]);
+    expect(attr("y1")).toBe(attr("y2")); // horizontal: the colours change across the line, not along it
+    expect(attr("x1")).toBeCloseTo(x - w / 2, 1); // left edge of the stroke
+    expect(attr("x2")).toBeCloseTo(x + w / 2, 1); // right edge
+  });
+
+  it("each Google strand gets the rainbow at its own x; strands at one x share one gradient", () => {
+    const store = new EegTraceStore();
+    const g = { provider: "google", model: "gemini-4-carbon" };
+    store.record(
+      sample({
+        runId: "M1",
+        ...g,
+        chosenLevel: "low",
+        startedAt: T0,
+        endedAt: T0 + 1000,
+        outputTokens: 900,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "M2",
+        ...g,
+        chosenLevel: "low",
+        startedAt: T0 + 2000,
+        endedAt: T0 + 3000,
+        outputTokens: 900,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "M3",
+        ...g,
+        chosenLevel: "max",
+        startedAt: T0 + 4000,
+        endedAt: T0 + 5000,
+        outputTokens: 900,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    const ids = [
+      ...svg.matchAll(
+        /class="eeg-main"[^>]*stroke="url\(#(eeg-google-\d+)\)"[^>]*data-eeg-run="(M\d)"/g,
+      ),
+    ].map((m) => [m[2], m[1]]);
+    const byRun = Object.fromEntries(ids);
+    expect(byRun.M1).toBe(byRun.M2); // same column, same width → one gradient
+    expect(byRun.M3).not.toBe(byRun.M1); // another column → its own
+    expect((svg.match(/<linearGradient /g) || []).length).toBe(2);
   });
 });
 
@@ -1456,7 +1590,7 @@ describe("tool calls branch off the trunk (the architect 2026-06-25: scope C —
     );
     const svg = store.renderSvg({ width: WIDTH });
     expect(svg).toContain('data-eeg-tool="1"'); // drawn as a tool branch
-    expect(svg).toContain("url(#eeg-google)"); // …in the gemini rainbow
+    expect(svg).toContain("url(#eeg-google-"); // …in the gemini rainbow
     // the tool must NOT be drawn as a trunk segment (eeg-main) — only the real LLM call is
     const mainCount = (svg.match(/class="eeg-main"/g) || []).length;
     expect(mainCount).toBe(1);
@@ -1500,7 +1634,7 @@ describe("tool calls branch off the trunk (the architect 2026-06-25: scope C —
     ].map((m) => Number(m[1]));
     expect(ws.length).toBe(2);
     expect(Math.max(...ws)).toBeGreaterThan(Math.min(...ws)); // gemini thicker than grep
-    expect(svg).toContain("url(#eeg-google)"); // gemini colored
+    expect(svg).toContain("url(#eeg-google-"); // gemini colored
   });
 
   it("tool branches do NOT inflate the subagent ×N multiplicity gauge", () => {
@@ -1545,6 +1679,175 @@ describe("tool calls branch off the trunk (the architect 2026-06-25: scope C —
     expect((svg.match(/class="eeg-branch"/g) || []).length).toBe(3);
     expect(svg).not.toContain("×2");
     expect(svg).not.toContain("×3");
+  });
+});
+
+// The column a branch's strand runs in: path "M sx sy C sx cy COL cy COL yOut …" → the 7th number.
+const branchColX = (svg: string, runId: string): number => {
+  const d = new RegExp(`<path class="eeg-branch" d="([^"]+)"[^>]*data-eeg-run="${runId}"`).exec(
+    svg,
+  )?.[1];
+  const nums = d?.match(/-?[\d.]+/g)?.map(Number) ?? [];
+  return nums.length >= 8 ? nums[6] : -1;
+};
+
+describe("a branch never takes a column it did not earn (the architect 2026-11-13: faint lines swinging min↔medium)", () => {
+  const opus = { model: "claude-opus-5-5", provider: "claude-code" };
+
+  it("a tool call keeps the column of the turn that made it — it never swings to Min", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "M1",
+        chosenLevel: "medium",
+        startedAt: T0,
+        endedAt: T0 + 60_000,
+        outputTokens: 5000,
+      }),
+    );
+    for (let i = 0; i < 3; i++) {
+      store.record(
+        sample({
+          runId: `T${i}`,
+          tool: true,
+          parentRunId: "M1",
+          model: "tool:local",
+          provider: "tool",
+          chosenLevel: "",
+          startedAt: T0 + 10_000 * (i + 1),
+          endedAt: T0 + 10_000 * (i + 1) + 500,
+        }),
+      );
+    }
+    const svg = store.renderSvg({ width: WIDTH });
+    const med = eegStopX("medium", WIDTH);
+    for (let i = 0; i < 3; i++) {
+      const x = branchColX(svg, `T${i}`);
+      expect(x).toBeLessThan(med); // beside the trunk, on its left…
+      expect(med - x).toBeLessThan(20); // …and close to it
+      expect(Math.abs(x - eegStopX("minimal", WIDTH))).toBeGreaterThan(20); // nowhere near Min
+    }
+  });
+
+  it("a tool call whose run is unknown follows the trunk running when it started", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "M1", chosenLevel: "high", startedAt: T0, endedAt: T0 + 60_000 }));
+    store.record(
+      sample({
+        runId: "T1",
+        tool: true,
+        parentRunId: "not-in-store",
+        model: "tool:local",
+        provider: "tool",
+        chosenLevel: "",
+        startedAt: T0 + 5_000,
+        endedAt: T0 + 6_000,
+      }),
+    );
+    const x = branchColX(store.renderSvg({ width: WIDTH }), "T1");
+    expect(eegStopX("high", WIDTH) - x).toBeGreaterThan(0);
+    expect(eegStopX("high", WIDTH) - x).toBeLessThan(20);
+  });
+
+  it("eegBranchLevel: a tool follows its trunk; with none it keeps the old floor; a sub-agent keeps its own", () => {
+    const tool = sample({ runId: "t", tool: true, chosenLevel: "" });
+    expect(eegBranchLevel(tool, "max")).toBe("max");
+    expect(eegBranchLevel(tool, undefined)).toBe("minimal");
+    expect(eegBranchLevel(sample({ runId: "s", subagent: true, chosenLevel: "high" }), "max")).toBe(
+      "high",
+    );
+  });
+
+  it("a sub-agent at its parent's effort stands beside the trunk, never under it", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "M1",
+        ...opus,
+        chosenLevel: "max",
+        startedAt: T0,
+        endedAt: T0 + 600_000,
+        outputTokens: 20_000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "S1",
+        ...opus,
+        subagent: true,
+        parentRunId: "M1",
+        chosenLevel: "max",
+        startedAt: T0 + 60_000,
+        endedAt: T0 + 300_000,
+        outputTokens: 8_000,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    const w = resolveEegPaint({ ...opus, effort: "max" }).logWidth;
+    const x = branchColX(svg, "S1");
+    // The trunk paints on top: the whole strand must sit left of the trunk's left edge, with the gap.
+    // the SVG rounds coordinates to 2 decimals
+    expect(x + w / 2 + EEG_TRUNK_GAP).toBeCloseTo(mainX(svg) - w / 2, 1);
+    expect(eegTrunkClearance(w, w)).toBeCloseTo(w + EEG_TRUNK_GAP, 5);
+  });
+
+  it("on reload, a sub-agent counts as this tab's only when it started in one of the tab's own turns", () => {
+    const HOUR = 3_600_000;
+    // The tab's turns (send time + duration, as anatomy stores them): 11:00 for 10 min, then 20:46 for 16 min.
+    const wins = eegOwnTurnWindows(
+      [
+        { ts: T0, durMs: 600_000 },
+        { ts: T0 + 9.77 * HOUR, durMs: 970_000 },
+      ],
+      HOUR,
+    );
+    expect(eegInWindows(T0 + 120_000, wins)).toBe(true); // its own fan-out, mid-turn
+    expect(eegInWindows(T0 + 600_000 + 45 * 60_000, wins)).toBe(true); // a later unit of that fan-out
+    // another tab's job that started at 19:55 while this tab sat idle since ~12:10
+    expect(eegInWindows(T0 + 8.92 * HOUR, wins)).toBe(false);
+    // a row stamped at completion: [ts − dur, ts] is covered too
+    expect(eegInWindows(T0 - 500_000, wins)).toBe(true);
+  });
+
+  it("a turn a restart cut in two: its empty first row is not drawn; a running turn's row stays", () => {
+    // the owner's tab, 2026-11-13: turn 28 has an empty row at 22:23 and the resumed run's row at 23:12
+    const rows = [
+      { runId: "t27", turn: 27, effort: "medium", responseTokens: 2242, timestampMs: 1 },
+      { runId: "t28-cut", turn: 28, effort: null, responseTokens: null, timestampMs: 2 },
+      { runId: "t28-resumed", turn: 28, effort: "max", responseTokens: 171_578, timestampMs: 3 },
+      { runId: "t30-running", turn: 30, effort: null, responseTokens: null, timestampMs: 4 },
+    ];
+    expect([...eegSplitTurnGhosts(rows)]).toEqual(["t28-cut"]);
+  });
+
+  it("a sub-agent at another effort keeps its own column exactly", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "M1",
+        ...opus,
+        chosenLevel: "max",
+        startedAt: T0,
+        endedAt: T0 + 600_000,
+        outputTokens: 20_000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "S1",
+        model: "claude-sonnet-5-5",
+        provider: "claude-code",
+        subagent: true,
+        parentRunId: "M1",
+        chosenLevel: "high",
+        startedAt: T0 + 60_000,
+        endedAt: T0 + 300_000,
+      }),
+    );
+    expect(branchColX(store.renderSvg({ width: WIDTH }), "S1")).toBeCloseTo(
+      eegStopX("high", WIDTH),
+      1,
+    );
   });
 });
 
@@ -1896,7 +2199,7 @@ describe("whitening only on REAL overlap + per-model lanes (the architect 2026-0
     expect(opus.col).not.toBe(sonnet.col); // side by side, not stacked
     // each keeps its brand color (no overlap WITHIN a single-model group → no lift)
     expect(opus.stroke).toBe(ANTHROPIC_STROKE);
-    expect(sonnet.stroke).toBe(ANTHROPIC_STROKE);
+    expect(sonnet.stroke).toBe(SONNET_STROKE);
   });
 });
 
@@ -2310,5 +2613,121 @@ describe("×N concurrency gauge — legible rows, peak preserved (2026-08-17)", 
     }
     store.backfill(samples, []);
     expect(xnLabels(store.renderSvg({ width: WIDTH })).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// FORK 2026-11-12: the answer rail asks the store for one past turn's thinking effort.
+describe("EegTraceStore — one run's effort", () => {
+  const run = (runId: string, startedAt: number, extra: Record<string, unknown> = {}) => ({
+    runId,
+    model: "claude-opus-5-5",
+    provider: "claude-code",
+    chosenLevel: "high",
+    subagent: false,
+    startedAt,
+    ...extra,
+  });
+
+  it("finds a run by id", () => {
+    const store = new EegTraceStore();
+    store.record(run("a", 1000));
+    expect(store.get("a")?.chosenLevel).toBe("high");
+    expect(store.get("b")).toBeUndefined();
+  });
+
+  it("takes the newest main run of that model inside the window", () => {
+    const store = new EegTraceStore();
+    store.record(run("old", 1000, { chosenLevel: "low" }));
+    store.record(run("turn", 5000, { chosenLevel: "medium" }));
+    store.record(run("next", 9000, { chosenLevel: "max" }));
+    expect(store.mainEffortBetween(4000, 6000, "claude-code/claude-opus-5-5")).toBe("medium");
+    expect(store.mainEffortBetween(0, 6000, "claude-opus-5-5")).toBe("medium");
+  });
+
+  it("never lends the effort of a subagent, a tool, another model or an unrecorded run", () => {
+    const store = new EegTraceStore();
+    store.record(run("sub", 5000, { subagent: true }));
+    store.record(run("tool", 5100, { tool: true }));
+    store.record(run("grok", 5200, { model: "grok-4.7" }));
+    store.record(run("blank", 5300, { chosenLevel: "" }));
+    expect(store.mainEffortBetween(4000, 6000, "claude-opus-5-5")).toBe("");
+  });
+});
+
+// 2026-11-13 (owner, on seeing the Claude shades): the same for Terra, Sol and Astra, one colour in tones.
+describe("GPT codenames: one green, one tone each", () => {
+  const tone = (m: string, provider = "openai-codex") => eegProviderPaint(provider, m).stroke;
+  it("gives Astra, Sol, Terra and Luna four tones, deepest for the strongest; Sol keeps the brand green", () => {
+    expect(tone("openai-codex/gpt-6-astra")).toBe(EEG_GPT_SHADES.astra);
+    expect(tone("openai-codex/gpt-6.1-sol")).toBe("#10A37F");
+    expect(tone("openai-codex/gpt-5.6-terra")).toBe(EEG_GPT_SHADES.terra);
+    expect(tone("openai-codex/gpt-6-luna")).toBe(EEG_GPT_SHADES.luna);
+    expect(new Set(Object.values(EEG_GPT_SHADES)).size).toBe(4);
+  });
+  it("a GPT with no codename keeps the brand green, and solar-pro is not Sol", () => {
+    expect(tone("openai-codex/gpt-5.5")).toBe("#10A37F");
+    expect(tone("openrouter/openai/gpt-5.4", "openrouter")).toBe("#10A37F");
+    expect(eegProviderPaint("openrouter", "openrouter/upstage/solar-pro4").stroke).not.toBe(
+      EEG_GPT_SHADES.sol,
+    );
+    expect(eegProviderPaint("github-copilot", "github-copilot/gpt-6-astra").stroke).not.toBe(
+      EEG_GPT_SHADES.astra,
+    );
+  });
+});
+
+// 2026-11-13: one turn made 56,740 tokens and re-read 35.6 million from cache; the paper showed neither truly.
+describe("a turn's token counts", () => {
+  const base = {
+    runId: "r",
+    model: "claude-fable-5-2",
+    provider: "claude-code",
+    chosenLevel: "max",
+    subagent: false,
+    startedAt: 1,
+  };
+  it("the hover line names output, fresh input and the cache traffic apart, in short numbers", () => {
+    expect(
+      eegTokenTip({
+        ...base,
+        outputTokens: 56740,
+        cacheReadTokens: 35590486,
+        cacheWriteTokens: 129456,
+      }),
+    ).toBe("out 56.7k · cache read 35.6M · cache written 129.5k");
+    expect(eegTokenTip({ ...base, outputTokens: 900, inputTokens: 58780 })).toBe(
+      "out 900 · in 58.8k",
+    );
+    expect(eegTokenTip(base)).toBeNull();
+  });
+  it("a stored harness turn gives its output and cache counts, and the gateway's prompt estimate is not its input", () => {
+    expect(
+      eegTokensFromAnatomy({
+        responseTokens: 56740,
+        cacheReadTokens: 35590486,
+        cacheCreationTokens: 129456,
+        contextSent: { totalTokens: 58981 },
+      }),
+    ).toEqual({ outputTokens: 56740, cacheReadTokens: 35590486, cacheWriteTokens: 129456 });
+  });
+  it("a stored turn with no cache counts keeps the prompt estimate as its input, as before", () => {
+    expect(
+      eegTokensFromAnatomy({ responseTokens: 300, contextSent: { totalTokens: 4000 } }),
+    ).toEqual({ inputTokens: 4000, outputTokens: 300 });
+    expect(eegTokensFromAnatomy({ contextSent: { totalTokens: 4000 } })).toEqual({
+      inputTokens: 4000,
+    });
+    expect(eegTokensFromAnatomy({ responseTokens: null, cacheReadTokens: -1 })).toEqual({});
+  });
+  it("the cache counts are shown, not priced: the strand's euros come from output and fresh input only", () => {
+    const plain = eegSampleEuros({ ...base, outputTokens: 1000 });
+    expect(
+      eegSampleEuros({
+        ...base,
+        outputTokens: 1000,
+        cacheReadTokens: 9_000_000,
+        cacheWriteTokens: 500_000,
+      }),
+    ).toBe(plain);
   });
 });

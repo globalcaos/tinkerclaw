@@ -35,4 +35,4 @@ ALWAYS try the script FIRST. It currently returns BLOCKED — so go straight to 
 
 ## Authoritative reference
 
-See `~/.claude/projects/-home-globalcaos-src-jarvis-icu/memory/reference_marketplace_watcher_scrape.md` for the historical scrape-recipe context.
+See `~/.claude/projects/-home-user-src-jarvis-icu/memory/reference_marketplace_watcher_scrape.md` for the historical scrape-recipe context.

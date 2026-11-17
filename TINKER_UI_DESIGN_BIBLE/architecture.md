@@ -143,7 +143,7 @@ verified on 2026-08-03 and re-measured on 2026-08-04. Keeping it true is not lef
 exists (`--rung=1`) and still exports what its row claims (`--rung=2`). §"What the four checks
 defend" explains why that is two rungs and not one.
 
-**Owed (2026-09-25).** The last four rows — pending prompts, the events database, compaction and
+**Owed (2026-09-25).** Four rows — pending prompts, the events database, compaction and
 model calls — were added from the wave-0924 tree and opened at its HEAD, but their modules are NOT
 yet in the script's `MECHANISMS` table. Until they are, neither rung asserts anything about them:
 they are the unbacked promise §"Don't regress" warns about, written down as owed rather than hidden.
@@ -177,6 +177,7 @@ gates, `context-window-panel.md` gate 7).
 | Model-call telemetry              | one `stream:"call"` event per phase (send, usage, end) of each model call, keyed (runId, lane, callIndex)                              | `src/infra/call-telemetry.ts` (`emitCallTelemetry`, `allocateCallIndex`)                                                                                                                                | `context-window-panel.md` §6.1 A8                             | SINGLE since 2026-09-24 (bridge mirror retired `23732b3cdef`)                              |
 | Per-call model routing            | `routeCall` — options = rung × feed, vetoes, a cache-aware price, the N\* switch policy; ships off, shadow records and changes nothing | `src/shared/thalamus-route-call.ts` (`routeCall`)                                                                                                                                                       | `auth-routing.md` § THALAMUS v4                               | SINGLE on `feat/thalamus-v4` (not merged); v2's task-level `thalamusPlan` stays beneath it |
 | Jev (System One) client           | one client for every Jev read, reached from plugins only through `openclaw/plugin-sdk/fork-jev`; the amygdala keeps a three-line shim  | `src/infra/jev/jev.ts` (`JevClient`)                                                                                                                                                                    | `auth-routing.md` § THALAMUS v4; `config-shape.md` § AMYGDALA | SINGLE since the move on `feat/thalamus-v4` (was inside the amygdala)                      |
+| Embedder rate + latency control   | one governor per endpoint: two-lane queue, derived abortable deadline, breaker, idle and demand admission                              | `src/fork/embedder-governor.ts` (`governEmbeddingProvider`, `getEmbedGovernor`)                                                                                                                         | `embedder-fit.md`                                             | SINGLE on the core and fork paths; memory-core's twin is not governed (`embedder-fit.md`)  |
 
 **Reading the Status column.** `SINGLE` means the row's claim holds today. Anything else names the
 second mechanism and points at the evidence below. A row that quietly said `SINGLE` while a twin

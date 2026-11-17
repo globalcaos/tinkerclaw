@@ -386,7 +386,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
           ? [fullQueryResults]
           : await Promise.all(
               // Fallback: broaden recall for conversational queries when the
-              // exact AND query is too strict to return any results.
+              // full query returns no results.
+              // FORK 2026-10-29: on unicode61 buildFtsQuery ORs the tokens, so this runs only when
+              // no token matched; the trigram query (buildMatchQueryFromTerms) still ANDs them.
               (() => {
                 const keywords = extractKeywords(cleaned, {
                   ftsTokenizer: this.settings.store.fts.tokenizer,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyCallUsage, EMPTY_CACHE_LEDGER } from "./thalamus-cache-ledger.js";
 import { cachePolicyFor } from "./thalamus-price-table.js";
-import { routeCall, stepUnsure, topicUnsure } from "./thalamus-route-call.js";
+import { routeCall, stepUnsure, topicUnsure, reservedReasonAtStop } from "./thalamus-route-call.js";
 import {
   answered,
   callParams,
@@ -518,5 +518,39 @@ describe("routeCall: enforce.midThread off", () => {
     )!;
     expect(gone.chosen.rung.key).not.toBe(OPUS);
     expect(gone.switch.reason).toBe("incumbent-vetoed");
+  });
+});
+
+describe("reservedReasonAtStop (2026-11-13)", () => {
+  it("opens the reserved set at the top stop, or for a reserved suggestion, and for nothing else", () => {
+    expect(reservedReasonAtStop(6, undefined)).toBe("dial");
+    expect(reservedReasonAtStop(6, { key: "claude-code/claude-opus-5-5" })).toBe("dial");
+    expect(reservedReasonAtStop(4, { key: "claude-code/claude-fable-5-2", effort: "max" })).toBe(
+      "suggestion",
+    );
+    expect(reservedReasonAtStop(3, { key: "claude-code/claude-opus-5-5" })).toBeUndefined();
+    expect(reservedReasonAtStop(0, undefined)).toBeUndefined();
+  });
+});
+
+describe("a limit on one model closes that model only (2026-11-13)", () => {
+  it("vetoes Fable when model:fable cools, and leaves Opus on the same supply open", async () => {
+    const { feasibility } = await import("./thalamus-feasibility.js");
+    const { modelCoolingKey, modelLimitFamily } = await import("./thalamus-supply.js");
+    const ctx = { supplies: new Map(), cooling: new Set(["model:fable"]) as never, nowMs: 0 };
+    expect(feasibility("claude-code/claude-fable-5-2", ctx)).toMatchObject({
+      ok: false,
+      veto: "supply-cooling",
+      detail: "fable limit reached",
+    });
+    expect(feasibility("claude-code/claude-opus-5-5", ctx).ok).toBe(true);
+    expect(feasibility("xai/grok-4.7", ctx).ok).toBe(true);
+    expect(modelCoolingKey("openrouter/anthropic/claude-fable-5.1")).toBeUndefined();
+    expect(
+      modelLimitFamily("You've hit your Fable limit · resets Nov 19, 5pm (Europe/Madrid)"),
+    ).toBe("fable");
+    expect(
+      modelLimitFamily("You've hit your session limit · resets 8:30pm (Europe/Madrid)"),
+    ).toBeUndefined();
   });
 });

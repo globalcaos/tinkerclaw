@@ -57,6 +57,7 @@ The measured status quo on 2026-08-03, after the ENGRAM collapse:
 | `movePathToTrash`          |               2 |   2 |
 | `estimateTokensFromChars`  |               2 |   2 |
 | `assembleRetrievalPack`    |           **2** |   1 |
+| `decideEmbedderFit`        |               1 |   — |
 
 ### The 2026-09-07 raise, and why a ratchet is allowed to move up
 
@@ -176,6 +177,31 @@ The alternative rejected was raising the cap to 13. The ratchet's own failure te
 that one: it is the bug being recorded as policy. A cap is a record of what a collapse cost, not a
 budget to spend.
 
+### The row added 2026-10-29: `decideEmbedderFit`
+
+**What it counts.** The per-machine embedding decision: whether the vector half of memory search
+runs on this machine, with which model and within which bounds. Its one derivation is
+`decideEmbedderFit` in `src/fork/embedder-fit.ts`, and every consumer reads it through
+`resolveMemorySearchConfig`, which returns through `applyEmbedderFit`; `embedder-fit.md` owns the
+design. The cap is 1, and the pattern is a name prefix on purpose: a helper named
+`decideEmbedderFitFor…` would be a second opinion about the same machine and should trip the
+ratchet. Call `decideEmbedderFit` instead.
+
+**What it cost before.** The model choice had two derivations that did not know about each other:
+`memorySearch` (an explicit provider, or `auto`, which took the first provider with a key) and a
+literal `mxbai-embed-large` in the embedded runner. The second started an embedder on the live
+host whose vectors nothing read. The collapse is recorded under _Already collapsed_.
+
+**Declared twins, to collapse next.** The ratchet counts definitions by name, so it cannot see
+these. They are registered here until a row can count them.
+
+| Concept                            | The one owner                                                                              | The twin                                                                                                                                                                                                                                                                                                                                       | Why it is still there                                                                                                                                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider auto-select order         | The fit's inventory and consent rule (`decideEmbedderFit`).                                | The doctor's list in `src/commands/doctor-memory-search.ts` (`listAutoSelectMemoryEmbeddingProviderDoctorMetadata`), next to the factories' own `auto` branches: `REMOTE_EMBEDDING_PROVIDER_IDS` in `src/memory/embeddings.ts`, memory-core's `listAutoSelectAdapters`, and the `autoSelectPriority` loop in `src/gateway/embeddings-http.ts`. | Since the seam, a resolved config never says `auto`, so these orders run only for a caller that skips `resolveMemorySearchConfig`, and there they would bring back the silent remote pick. Collapse them into the fit. |
+| Embedding deadline and concurrency | The governor, with `requestDeadlineMs` and `fitBudgetFor` from `src/fork/embedder-fit.ts`. | memory-core's `resolveEmbeddingTimeoutMs` and `resolveMemoryIndexConcurrency` (`extensions/memory-core/src/memory/manager-embedding-ops.ts`), still keyed on `providerId === "local"` and `"ollama"`.                                                                                                                                          | memory-core awaits its query embed outside any catch, so a fast-failing governor would turn slow searches into errors. It needs a word fallback first.                                                                 |
+| RAM floor                          | `memoryFloorBytes` (`src/fork/embedder-fit.ts`).                                           | The idle-worker floor in `extensions/tinkerclaw-tinker-bridge/src/worker-pool.ts`, the same `max(1.5 GiB, 10% of RAM)`.                                                                                                                                                                                                                        | The extension boundary: the bridge may not import `src/fork`. Collapse through a plugin-SDK subpath when a third reader appears.                                                                                       |
+| Agent id normalisation             | `normalizeAgentId` (`src/routing/session-key.ts`).                                         | `normalizeAgentIdForLookup`, inside `readRawMemorySearchProvider` (`src/fork/embedder-fit.ts`).                                                                                                                                                                                                                                                | The fit core's import allowlist (node builtins, `resolveStateDir`, one type-only import) keeps the routing module out; the copy exists so the agent lookup matches `resolveAgentConfig`.                               |
+
 ## Already collapsed
 
 Recorded so nobody re-splits them, each with the incident that paid for it.
@@ -187,6 +213,7 @@ Recorded so nobody re-splits them, each with the incident that paid for it.
 | AMYGDALA subsystem          |   2 | `extensions/tinkerclaw-learned-intuition`                             | 3,152 dead lines in `src/amygdala` kept alive by four `expect(mod).toBeDefined()` assertions                                                                     |
 | cron wake-target resolution |   2 | `resolveCronWakeTarget`, reached only via injected deps               | a second path skipped the resolver and re-broke a fixed bug — see below                                                                                          |
 | ENGRAM memory library       |   2 | `src/memory/engram/`, reached via `openclaw/plugin-sdk/memory-engram` | 30 vendored files drifting for four months. See _When a boundary rule causes the duplication_ below — this is the one worth reading twice                        |
+| Embedding model choice      |   2 | `decideEmbedderFit` through `resolveMemorySearchConfig`               | a second embedder ran on the live host with no reader (the embedded runner's literal `mxbai-embed-large` worker); see `embedder-fit.md`                          |
 
 ## The two shapes this failure takes
 

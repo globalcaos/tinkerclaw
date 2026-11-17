@@ -191,3 +191,108 @@ export function lateGrowthAdjustment(p: {
   }
   return { kind: "none" };
 }
+
+// FORK 2026-11-15 17:01: turning the phone between landscape and portrait must keep the text at the
+// middle of the screen in place, not scroll the chat back a long way.
+// With `overflow-anchor: none` the browser keeps the view on nothing when the pane
+// changes width. Every row re-wraps, scrollTop keeps its number, and turning the phone upright
+// slid a reading view several rows back (measured: A62 at the middle became A58).
+//
+// THE MIDDLE ANCHOR. While the pane is settled, app.ts remembers the smallest text block under the
+// pane's vertical middle and where on that block the middle falls, as a fraction of its height.
+// When the pane changes size it puts that point back at the middle. A turn fires several resizes,
+// so the anchor stays frozen until the pane has been still for PANE_SETTLE_MS.
+
+/** How long the pane must keep one size before the middle anchor may be measured again. */
+export const PANE_SETTLE_MS = 600;
+
+/** Where on a block the pane's middle falls: 0 at its top, 1 at its bottom. */
+export function middleFraction(p: {
+  paneTop: number;
+  paneHeight: number;
+  nodeTop: number;
+  nodeHeight: number;
+}): number {
+  if (p.nodeHeight <= 0) {
+    return 0;
+  }
+  return (p.paneTop + p.paneHeight / 2 - p.nodeTop) / p.nodeHeight;
+}
+
+/** The scrollTop that puts `fraction` of the block back at the pane's middle. */
+export function scrollTopForMiddle(p: {
+  scrollTop: number;
+  paneTop: number;
+  paneHeight: number;
+  nodeTop: number;
+  nodeHeight: number;
+  fraction: number;
+}): number {
+  return p.scrollTop + p.nodeTop + p.fraction * p.nodeHeight - (p.paneTop + p.paneHeight / 2);
+}
+
+/**
+ * Does this change of the pane's size start (or extend) a settle? A new width re-wraps every row.
+ * While settling, any change counts: a turn changes the width first and the height a frame later.
+ * A height-only change on a settled pane is the composer growing or the keyboard opening.
+ */
+export function paneResizeSettles(p: {
+  prev: { w: number; h: number } | null;
+  next: { w: number; h: number };
+  settling: boolean;
+}): boolean {
+  if (!p.prev) {
+    return false;
+  }
+  const widthChanged = Math.abs(p.next.w - p.prev.w) >= 1;
+  const heightChanged = Math.abs(p.next.h - p.prev.h) >= 1;
+  return widthChanged || (p.settling && heightChanged);
+}
+
+export type PaneResizeStep = "pin" | "keep-middle" | "none";
+
+/**
+ * What a change of the pane's size asks for. Following: pin the bottom, as before. Reading: a
+ * change that settles (paneResizeSettles) puts the middle back. A height-only change on a settled
+ * pane (composer, keyboard) does not re-wrap rows and the top stays where it is, so nothing is
+ * moved (the rule from 2026-10-02).
+ */
+export function paneResizeStep(p: {
+  follow: boolean;
+  prev: { w: number; h: number } | null;
+  next: { w: number; h: number };
+  settling: boolean;
+}): PaneResizeStep {
+  if (p.follow) {
+    return "pin";
+  }
+  return paneResizeSettles(p) ? "keep-middle" : "none";
+}
+
+/**
+ * Is this scroll event the layout of a resize rather than his hand? A turn passes through
+ * in-between layouts. One of them re-wrapped the rows at another width, the pane's content got
+ * shorter, and the browser clamped scrollTop. Its scroll event was read as a gesture: a tab
+ * parked at its bottom stopped following (measured: 4,255 px short of the bottom after one turn
+ * back to landscape), and near the top it would page older turns in. While settling, a scroll with
+ * no wheel, touch, pointer or key input since the settle began is the layout's.
+ */
+export function scrollIsResizeLayout(p: {
+  now: number;
+  settleStartedAt: number;
+  settlingUntil: number;
+  lastInputAt: number;
+}): boolean {
+  return p.now < p.settlingUntil && p.lastInputAt < p.settleStartedAt;
+}
+
+/**
+ * Height for a sandboxed chat HTML frame, from the height its own script posts. The ceiling is a
+ * guard against a card that grows with its own frame (a `100vh` body keeps reporting more), not a
+ * layout limit: at 2000 px a 20-card grid was cut after its fourth card on a phone (2026-11-04),
+ * so it sits far above any real card. The 40 px floor keeps an empty frame visible.
+ */
+export const HTML_FRAME_MAX_PX = 40000;
+export function htmlFrameHeight(reported: number): number {
+  return Math.min(Math.max(reported, 40), HTML_FRAME_MAX_PX);
+}

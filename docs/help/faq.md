@@ -529,6 +529,8 @@ lives on the [First-run FAQ](/help/faq-first-run).
     prefers `local`. Ollama is supported when you explicitly set
     `memorySearch.provider = "ollama"`.
 
+    Fork note (TinkerClaw): here an unset provider uses the model `openclaw embedder fit` chose for this machine, or keyword search only, and an API key alone never switches memory search to a remote provider. See section 4e of `FORK_SETUP.md` in the repository root.
+
     If you'd rather stay local, set `memorySearch.provider = "local"` (and optionally
     `memorySearch.fallback = "none"`). If you want Gemini embeddings, set
     `memorySearch.provider = "gemini"` and provide `GEMINI_API_KEY` (or

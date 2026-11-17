@@ -1,0 +1,15 @@
+{
+  "id": "tinkerclaw-token-burner",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "name": "Token Burner Settings",
+  "version": "0.1.0",
+  "description": "Choose what a subscription's spare weekly tokens are spent on: one objective, a strategy, the governing prompt and an optional dashboard link, stored in <stateDir>/token-burner/settings.json and read by the token-burner skill. GATEWAY METHODS (operator.admin): tokenBurner.settings.get, tokenBurner.settings.set, tokenBurner.suggest. FILES: reads and writes only <stateDir>/token-burner/ (settings.json, and prompt.md copied from the skill's default the first time). AGENT RUNS: none on its own; tokenBurner.suggest starts one run on the gateway's default model when the owner asks, to read recent chats and memory and propose an objective and strategy. Nothing is saved until the owner accepts it. No network calls, no timers.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -20,8 +20,9 @@ import { isWarm, ledgerKey, type CacheLedger } from "./thalamus-cache-ledger.js"
 import type { RefusalLedger } from "./thalamus-feasibility.js";
 import {
   isReservedKey,
-  SUGGESTION_PRIOR,
+  suggestionMoves,
   THALAMUS_ANCHOR_KEY,
+  THALAMUS_BIAS_GAP,
   domainStrengthFor,
 } from "./thalamus-frontier.js";
 import type { FrontierRung, RouteSuggestion } from "./thalamus-frontier.js";
@@ -43,6 +44,20 @@ import type {
   TaskRead,
 } from "./thalamus-v4-types.js";
 import { applyVetoes, type PolicyTable } from "./thalamus-vetoes.js";
+
+/**
+ * The named reason that opens the reserved set (Fable) at a dial stop, or undefined. ONE rule for every caller
+ * of routeCall (2026-11-13). The per-turn plan had it (thalamus-plan.ts); the per-call record and the pricing of
+ * sub-agents did not pass it, so with the dial on smart and the smart stop set to Fable they could not see Fable:
+ * the record named Opus while the turn ran Fable (39,516 rows, none applied), and a sub-agent never got the stop.
+ */
+export function reservedReasonAtStop(
+  dialIdx: number,
+  suggestion: RouteSuggestion | undefined,
+): ReservedReason | undefined {
+  if (dialIdx >= THALAMUS_BIAS_GAP.length - 1) return "dial";
+  return suggestion && isReservedKey(suggestion.key) ? "suggestion" : undefined;
+}
 
 /** Below this Jev confidence an answer counts as unsure. A starting value; P§9 test 1 measures it. */
 export const DEFAULT_CONFIDENCE_FLOOR = 0.6;
@@ -105,6 +120,9 @@ export type RouteCallParams = {
   refusals?: RefusalLedger;
   cooling?: ReadonlySet<SupplyId>;
   unfunded?: ReadonlySet<SupplyId>;
+  secondOpinionOnly?: ReadonlySet<SupplyId>;
+  /** Rungs from pay-per-call supplies held back for a second opinion when no subscription family can check. */
+  secondOpinionRungs?: readonly FrontierRung[];
   contextWindowFor?: (key: string) => number | undefined;
 
   confidenceFloor?: number;
@@ -233,6 +251,7 @@ export function routeCall(p: RouteCallParams): CallDecision | undefined {
     supplies: p.supplies,
     cooling: p.cooling,
     unfunded: p.unfunded,
+    secondOpinionOnly: p.secondOpinionOnly,
     contextWindowFor: p.contextWindowFor,
     estimatedTokens: p.feedTokens.thread,
     refusals: p.refusals,
@@ -341,7 +360,11 @@ export function routeCall(p: RouteCallParams): CallDecision | undefined {
           }
         }
       }
-      if (rival && sP !== undefined && rivalP > sP * (1 + SUGGESTION_PRIOR)) {
+      if (
+        rival &&
+        sP !== undefined &&
+        suggestionMoves(sP, rivalP, p.dialIdx >= THALAMUS_BIAS_GAP.length - 1)
+      ) {
         pick = rival;
         suggestionRes = {
           state: "moved",

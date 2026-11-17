@@ -26,13 +26,14 @@ How much work does the user's request look like?
 
 ## Settings
 
-What the code reads. `seams` says when Jev is asked, `fields` which parts of the situation it sees, `cutoff` where its answer starts to act, `mustCatch` the test cases it must get right. Rewording the question or its answers? Raise `version`, so earlier verdicts stay tied to the words they answered. Edits take effect after the next rebuild (the ↻ button).
+What the code reads. `seams` says when Jev is asked, `fields` which parts of the situation it sees, `cutoff` where its answer starts to act, `mustCatch` the test cases it must get right. `says` is the line the chat shows the agent when this question acts. Rewording the question or its answers? Raise `version`, so earlier verdicts stay tied to the words they answered. Edits take effect after the next rebuild (the ↻ button).
 
 ```yaml
 id: request-difficulty
 version: 1
 family: efficiency
 status: "off"
+says: "How hard is this request, really?"
 seams:
   - prompt
 type: score

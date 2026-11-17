@@ -207,6 +207,16 @@ function extractContextInfo(message: proto.IMessage | undefined): proto.IContext
   return undefined;
 }
 
+/**
+ * True when WhatsApp marked the message as forwarded: its text, caption or
+ * audio was written by someone other than the person who sent it here.
+ * Burn review 2026-11-14 (b1113-s8 F1).
+ */
+export function extractIsForwarded(rawMessage: proto.IMessage | undefined): boolean {
+  const contextInfo = extractContextInfo(rawMessage);
+  return contextInfo?.isForwarded === true || Number(contextInfo?.forwardingScore ?? 0) > 0;
+}
+
 export function extractMentionedJids(rawMessage: proto.IMessage | undefined): string[] | undefined {
   const message = unwrapMessage(rawMessage);
   if (!message) {

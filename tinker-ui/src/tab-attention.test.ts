@@ -5,6 +5,7 @@ import {
   finalStampOf,
   isUnread,
   markSeen,
+  mergeSeenMaps,
   noteOwnFinal,
   parseSeenMap,
   serializeSeenMap,
@@ -101,6 +102,40 @@ describe("noteOwnFinal (a Fractal answering in the chat)", () => {
     const rec = noteOwnFinal({ s: T }, T + 10, T + 10);
     const seen = markSeen(rec, finalStampOf(undefined, rec), T + 20) ?? rec;
     expect(isUnread(finalStampOf(undefined, seen), seen)).toBe(false);
+  });
+});
+
+// FORK 2026-11-14 — a chat read on the phone stops glowing on the laptop, and the other way round.
+describe("mergeSeenMaps (stamps another page wrote)", () => {
+  it("clears a chat here that the other device has seen since it ended", () => {
+    const laptop = { "tinker:a": { s: T } };
+    const row = { endedAt: T + 1_000 };
+    expect(isUnread(finalStampOf(row, laptop["tinker:a"]), laptop["tinker:a"])).toBe(true);
+    const { map, changed } = mergeSeenMaps(laptop, { "tinker:a": { s: T + 5_000 } });
+    expect(changed).toBe(true);
+    expect(isUnread(finalStampOf(row, map["tinker:a"]), map["tinker:a"])).toBe(false);
+  });
+
+  it("keeps the later stamp on each side, takes a chat new to this map, and never lowers one", () => {
+    const ours = { "tinker:a": { s: T + 10, f: T + 2 }, "tinker:b": { s: T } };
+    const { map, changed } = mergeSeenMaps(ours, {
+      "tinker:a": { s: T, f: T + 8 },
+      "tinker:b": { s: T - 50 },
+      "tinker:c": { s: T + 3 },
+    });
+    expect(changed).toBe(true);
+    expect(map).toEqual({
+      "tinker:a": { s: T + 10, f: T + 8 },
+      "tinker:b": { s: T },
+      "tinker:c": { s: T + 3 },
+    });
+    expect(ours).toEqual({ "tinker:a": { s: T + 10, f: T + 2 }, "tinker:b": { s: T } });
+  });
+
+  it("reports no change when the other page knows nothing newer", () => {
+    const ours = { "tinker:a": { s: T, f: T - 1 } };
+    expect(mergeSeenMaps(ours, { "tinker:a": { s: T - 1 } }).changed).toBe(false);
+    expect(mergeSeenMaps(ours, {}).changed).toBe(false);
   });
 });
 

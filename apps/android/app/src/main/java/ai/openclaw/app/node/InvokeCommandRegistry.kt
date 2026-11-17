@@ -168,6 +168,10 @@ object InvokeCommandRegistry {
         requiresForeground = false,
       ),
       InvokeCommandSpec(
+        name = "jarvis.files.fetch",
+        requiresForeground = false,
+      ),
+      InvokeCommandSpec(
         name = OpenClawCanvasA2UICommand.Push.rawValue,
         requiresForeground = true,
       ),

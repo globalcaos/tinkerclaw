@@ -769,6 +769,7 @@ export const SC_FACTS: { match: RegExp; facts: ModelFacts }[] = [
     match: /dolphin|venice/i,
     facts: { price: [0.2, 0.9], ctx: 128_000, as: "Dolphin Mistral 24B Venice Edition" },
   },
+  { match: /fable-5[.-]2/i, facts: { price: [8, 40], ctx: 1_000_000 } },
   {
     match: /fable/i,
     facts: {

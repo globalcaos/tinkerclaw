@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import {
   forkTruncatedTranscript,
   lastPromptIndex,
   promptText,
+  REWOUND_ALL_PREFIX,
   rewindCapability,
 } from "../src/rewind.js";
 
@@ -168,16 +169,135 @@ describe("forkTruncatedTranscript", () => {
     expect(r.forkPath).toBe(join(out, "f1.jsonl"));
   });
 
-  it("refuses when there is nothing before the prompt (that is a reset, not a rewind) or no prompt at all", () => {
+  // 2026-11-13: a tab whose Claude session began with the refused prompt (the bridge had started it fresh) could not be
+  // rewound at all. Ruling: the first exchange rewinds like any other; what is left is an empty context, so no copy is
+  // written and the tab is released from its session under a marker id.
+  it("the first exchange rewinds too: no copy is written, the id marks an empty context, the prompt comes back", () => {
     const d = tmp();
     const only = join(d, "only.jsonl");
-    writeFileSync(only, `${[prompt("first", "u1"), reply("a", "r1")].join("\n")}\n`);
-    expect(forkTruncatedTranscript(only)).toMatchObject({ ok: false });
+    writeFileSync(
+      only,
+      `${[line({ type: "attachment", uuid: "a0" }), prompt("first", "u1"), reply("a", "r1")].join("\n")}\n`,
+    );
+    const before = readFileSync(only, "utf-8");
+    const r = forkTruncatedTranscript(only);
+    expect(r).toMatchObject({
+      ok: true,
+      whole: true,
+      originalSessionId: S,
+      keptEntries: 0,
+      droppedEntries: 3,
+      restoredPrompt: "first",
+    });
+    expect(r.forkSessionId?.startsWith(REWOUND_ALL_PREFIX)).toBe(true);
+    expect(r.forkPath).toBeUndefined();
+    expect(readdirSync(d)).toEqual(["only.jsonl"]);
+    expect(readFileSync(only, "utf-8")).toBe(before);
+  });
+
+  it("no prompt at all is refused", () => {
+    const d = tmp();
     const none = join(d, "none.jsonl");
     writeFileSync(none, `${[line({ type: "attachment" })].join("\n")}\n`);
     expect(forkTruncatedTranscript(none)).toMatchObject({
       ok: false,
       reason: "no user prompt found in the transcript",
+    });
+  });
+
+  // 2026-11-13: a tab held the same short prompt three times, and a Rewind on the older one cut the newer one. The
+  // page now sends the time of the prompt row it means.
+  describe("the exchange is named by its words and the time it was sent", () => {
+    const T0 = Date.parse("2026-11-13T14:00:00.000Z");
+    const at = (text: string, uuid: string, ms: number) =>
+      line({
+        type: "user",
+        uuid,
+        timestamp: new Date(ms).toISOString(),
+        message: { role: "user", content: text },
+      });
+    const notice =
+      "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>";
+    const write = (lines: string[]) => {
+      const src = join(tmp(), "orig.jsonl");
+      writeFileSync(src, `${lines.join("\n")}\n`);
+      return src;
+    };
+    const twins = () =>
+      write([
+        at("remember ALPHA", "u1", T0),
+        reply("OK", "r1"),
+        at("go on", "u2", T0 + 60_000),
+        reply("work ONE", "r2"),
+        at("go on", "u3", T0 + 900_000),
+        reply("work TWO", "r3"),
+      ]);
+
+    it("the same words sent twice: the one sent at that time is cut, with everything after it", () => {
+      // The page's row carries the gateway's receipt time, a few seconds before the transcript's own.
+      const r = forkTruncatedTranscript(twins(), {
+        fromPrompt: "go on",
+        fromPromptAt: T0 + 54_000,
+      });
+      expect(r).toMatchObject({ ok: true, keptEntries: 2, cutAt: T0 + 60_000 });
+      const fork = readFileSync(r.forkPath as string, "utf-8");
+      expect(fork).toContain("ALPHA");
+      expect(fork).not.toContain("work ONE");
+    });
+
+    it("the newer twin by its own time, and the last one when no time is given (as before)", () => {
+      expect(
+        forkTruncatedTranscript(twins(), { fromPrompt: "go on", fromPromptAt: T0 + 896_000 }),
+      ).toMatchObject({ ok: true, keptEntries: 4, cutAt: T0 + 900_000 });
+      expect(forkTruncatedTranscript(twins(), { fromPrompt: "go on" })).toMatchObject({
+        ok: true,
+        keptEntries: 4,
+      });
+    });
+
+    it("a prompt nobody typed (a background-task notice) is found by its own text", () => {
+      const src = write([
+        at("remember ALPHA", "u1", T0),
+        reply("OK", "r1"),
+        at(notice, "u2", T0 + 60_000),
+        reply("API Error: safeguards flagged this message", "r2"),
+      ]);
+      const r = forkTruncatedTranscript(src, { fromPrompt: notice, fromPromptAt: T0 + 60_000 });
+      expect(r).toMatchObject({ ok: true, keptEntries: 2, restoredPrompt: "" });
+      expect(readFileSync(r.forkPath as string, "utf-8")).not.toContain("task-notification");
+    });
+
+    it("a row whose words the transcript does not hold is found by its time, within a minute", () => {
+      const lines = [
+        at("remember ALPHA", "u1", T0),
+        reply("OK", "r1"),
+        at(notice, "u2", T0 + 60_000),
+        reply("API Error", "r2"),
+      ];
+      // The gateway's own row for that turn: other words, written nine seconds after the transcript's entry.
+      const announce = "Background task: the dry-run completed.";
+      expect(
+        forkTruncatedTranscript(write(lines), { fromPrompt: announce, fromPromptAt: T0 + 69_000 }),
+      ).toMatchObject({ ok: true, keptEntries: 2, cutAt: T0 + 60_000 });
+      expect(
+        forkTruncatedTranscript(write(lines), { fromPrompt: announce, fromPromptAt: T0 + 660_000 }),
+      ).toMatchObject({ ok: false, reason: "that prompt is not in the model's transcript" });
+    });
+
+    it("orLast: the page's newest exchange the transcript cannot name falls back to the last prompt", () => {
+      const lines = [
+        at("remember ALPHA", "u1", T0),
+        reply("OK", "r1"),
+        at("the last one", "u2", T0 + 60_000),
+        reply("answer", "r2"),
+      ];
+      const named = { fromPrompt: "words only the page has", fromPromptAt: T0 + 660_000 };
+      expect(forkTruncatedTranscript(write(lines), named)).toMatchObject({ ok: false });
+      expect(forkTruncatedTranscript(write(lines), { ...named, orLast: true })).toMatchObject({
+        ok: true,
+        keptEntries: 2,
+        restoredPrompt: "the last one",
+      });
     });
   });
 

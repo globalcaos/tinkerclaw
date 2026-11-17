@@ -3,7 +3,8 @@
  * busy-tab-history-and-eeg). Serves the dist under /tinker/, answers the connect handshake itself,
  * forwards ONLY chat.history and sessions.list to the gateway (and sessions.subscribe plus every
  * live event with FORWARD_EVENTS=1, so the page sees real runs and its busy gates engage), proxies
- * GET /tinker/api/context-anatomy, and answers everything else locally. There is no /api/ui-state,
+ * GET /tinker/api/context-anatomy, serves the long-job list and job trails (read-only, 2026-11-14), and
+ * answers everything else locally. There is no /api/ui-state,
  * so the page keeps its state in the browser context and the owner's tinker-ui-state.json is never
  * written. Nothing it forwards writes.
  *
@@ -30,6 +31,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTrailReader, jobTrailBody } from "../../../scripts/lib/longjob-trail.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(new URL("../../../package.json", import.meta.url));
@@ -48,6 +50,9 @@ const GATEWAY_PORT = Number(process.env.TINKER_GATEWAY_PORT ?? 18789);
 const cfg = JSON.parse(readFileSync(join(os.homedir(), ".openclaw", "openclaw.json"), "utf8"));
 const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || cfg?.gateway?.auth?.token || "";
 const EVENTS = Boolean(process.env.FORWARD_EVENTS);
+const PROD_UI_PORT = Number(process.env.TINKER_PROD_PORT ?? 18793);
+const LONGJOB_ROOT = join(os.homedir(), ".openclaw", "canvas", "documents");
+const trailReader = createTrailReader();
 const FORWARD = new Set([
   "chat.history",
   "sessions.list",
@@ -208,6 +213,28 @@ const server = createServer((req, res) => {
     );
     up.on("error", () => res.writeHead(502).end("{}"));
     up.end();
+    return;
+  }
+  // FORK 2026-11-14 — long-job rows and the trail they open (job-trail.ts). The list is the live
+  // tinker-prod-ui's (a GET, read-only); a trail is read by THIS checkout's reader from the real job
+  // folders and transcripts, so a build under test shows the live jobs' work. Neither writes.
+  if (url.pathname === "/api/longjob/list" && req.method === "GET") {
+    const up = httpRequest(
+      { host: "127.0.0.1", port: PROD_UI_PORT, path: url.pathname + url.search, method: "GET" },
+      (r) => {
+        res.writeHead(r.statusCode ?? 502, { "content-type": "application/json" });
+        r.pipe(res);
+      },
+    );
+    up.on("error", () => res.writeHead(502).end("{}"));
+    up.end();
+    return;
+  }
+  const trail = /^\/api\/longjob\/([a-z0-9][a-z0-9-]{0,63})\/trail$/.exec(url.pathname);
+  if (trail && req.method === "GET") {
+    void jobTrailBody(trailReader, LONGJOB_ROOT, trail[1], url.searchParams.get("c")).then((r) =>
+      res.writeHead(r.status, { "content-type": "application/json" }).end(JSON.stringify(r.body)),
+    );
     return;
   }
   if (url.pathname.startsWith("/tinker/api/")) {

@@ -232,6 +232,9 @@ body.phone .chat-input button {
   min-height: 44px;
   font-size: 14px;
 }
+body.phone .chat-input button.rec-btn {
+  min-width: 44px;
+}
 /* The strips where a thumb starts most edge swipes do not scroll, so nothing gave them a
    touch-action: the browser took a slow sideways drag there (pointercancel) and the drawer snapped
    back. Same rule as the scrollers: vertical pans and zoom stay the browser's, sideways is ours.
@@ -659,4 +662,56 @@ body.phone #phone-settings-btn {
   width: 100%;
   border: 0;
   background: #fff;
+}
+
+/* FORK 2026-11-03 — the phone list and header draw the tab like the desktop strip: icon apart from
+   the words (gear or hourglass behind it, base.css), a green glow under the icon for an unread
+   result, ice blue words for a frozen name. */
+body.phone .tab-icon {
+  display: inline-block;
+  margin-right: 6px;
+}
+body.phone .phone-sheet-row.phone-unread .tab-icon {
+  filter: drop-shadow(0 0 3px rgba(63, 185, 80, 0.9));
+}
+body.phone .phone-sheet-row.phone-unread .tab-icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 16px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: #3fb950;
+  filter: blur(2px);
+  opacity: 0.9;
+}
+body.phone .phone-sheet-row.phone-frozen .phone-title-words,
+body.phone .phone-chat-title.phone-frozen .phone-title-words {
+  color: #8fc1e3;
+}
+/* The header's "unread in another chat" mark has no icon to glow under: same green. */
+body.phone .phone-unread-dot {
+  background: #3fb950;
+}
+
+/* FORK 2026-11-03 — the title boxes clip (overflow: hidden, for the ellipsis), which cut the green
+   unread glow off below the icon. With an icon drawn, the box becomes an icon + words row that does
+   not clip; only the words ellipsise. */
+body.phone .phone-sheet-title:has(> .tab-icon),
+body.phone .phone-chat-title:has(> .tab-icon) {
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+body.phone .phone-sheet-title > .tab-icon,
+body.phone .phone-chat-title > .tab-icon {
+  flex: 0 0 auto;
+}
+body.phone .phone-title-words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

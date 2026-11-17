@@ -4,8 +4,12 @@
     md2pdf.py SOURCE.md OUT.pdf [--keep-marks]
 
 Default: rebuild clean, no review marks (the architect 2026-10-16: a processed comment must not linger).
+Clean removes only the marks this Apply round took: those in its marked copy <name>-marques-oscar-N.pdf (2026-11-15).
+A mark made after that copy (he kept reading while the agent worked) is carried onto the rebuild; with no copy of
+this round, the marked file is kept under state/refused/ before it is replaced, so nothing he wrote is lost.
 --keep-marks: carry his marks onto the rebuild. Used ONLY when the rebuild is for a text edit the architect
 made himself (the viewer's paragraph popup, or his editor saving the .md), never after Apply comments.
+The last read of the marks and the write hold the PDF's lock (pdflock.py): a save cannot land in between.
 A clean rebuild also clears the server's Apply-comments flag for OUT (state/applying/), so the
 watcher starts rebuilding his own edits again.
 
@@ -13,12 +17,14 @@ The pdf-review server calls this when a PDF has a sibling SOURCE.md (same name) 
 PDF, so the architect can edit the text himself and the open viewer reloads the rebuilt PDF (2026-10-16:
 small edits are cheaper done by hand than by the model). Images use file:// paths.
 """
-import importlib.util, re, subprocess, sys, tempfile
+import importlib.util, os, re, subprocess, sys, tempfile
 from pathlib import Path
 _VENV_PY = Path(__file__).resolve().parent / ".venv/bin/python"
 if importlib.util.find_spec("markdown") is None and _VENV_PY.exists() and Path(sys.prefix).resolve() != _VENV_PY.parent.parent.resolve():
     import os; os.execv(str(_VENV_PY), [str(_VENV_PY), __file__, *sys.argv[1:]])  # Pi: system python has no markdown (2026-10-23)
 import markdown
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pdflock import file_lock  # noqa: E402
 
 BROWN, PEACH, LINE = "#7A3921", "#FDE5D0", "#B97040"
 import shutil
@@ -38,15 +44,81 @@ def render(md_text: str) -> str:
     html = html.replace("<h2>", f'<h2 style="color:{BROWN};border-bottom:2px solid {LINE};padding-bottom:4px;margin-top:30px;">')
     html = html.replace("<h3>", f'<h3 style="color:{BROWN};margin-top:22px;">')
     html = html.replace("<blockquote>", f'<blockquote style="background:{PEACH};border:1px solid {LINE};border-left:5px solid {BROWN};border-radius:6px;padding:12px 18px;margin:0 0 20px;">')
-    return f"""<!doctype html><html><head><meta charset="utf-8"><title>{title}</title>
+    # The source may hold raw HTML from anywhere (an unpacked archive, /api/paragraph, text an agent pasted in).
+    # This policy stands before the first byte of it: no script, frame, object or outside stylesheet. Pictures
+    # (file:, data:, web) and inline <style> stay, which is all 352 built sources under ~/Documents use (2026-11-14).
+    csp = "default-src 'none'; img-src file: data: http: https:; style-src 'unsafe-inline'; font-src file: data:"
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="{csp}"><title>{title}</title>
 <style>@page{{size:A4;margin:18mm 16mm}} body{{font-family:Georgia,'DejaVu Serif',serif;color:#404040;max-width:760px;margin:0 auto;font-size:13.5px;line-height:1.65}}
 h1{{color:{BROWN};font-size:26px;line-height:1.25;text-align:center;margin:14px 0 4px}} h2,h3{{page-break-after:avoid}} figure{{page-break-inside:avoid}} figure img{{max-height:150mm;width:auto!important;max-width:100%}}
-p,li{{color:#404040}} li{{margin:0 0 .8em}} img.side{{float:left;width:36%;margin:4px 18px 8px 0;border-radius:6px}} h2,h3{{clear:both}} strong{{color:#3B2A14}}</style></head><body>
+p,li{{color:#404040}} li{{margin:0 0 .8em}} img.side{{float:left;width:36%;margin:4px 18px 8px 0;border-radius:6px}} h2,h3{{clear:both}} strong{{color:#3B2A14}}
+.nw,.nw p,.nw li,.nw td,.nw strong,.nw em{{color:#1e90ff}}</style></head><body>
 {f'<h1>{title}</h1>' if title else ''}{html}</body></html>"""
+
+
+# Annotation kinds pdf-carry-marks.py carries (all but Link, Popup, Widget): his highlights, notes and ink.
+_MARK = re.compile(rb"/Subtype\s*/(Text|FreeText|Line|Square|Circle|Polygon|PolyLine|Highlight|Underline|Squiggly|"
+                   rb"StrikeOut|Stamp|Caret|Ink|FileAttachment|Sound|Redact)\b")
+
+
+def has_marks(pdf) -> bool:
+    """True when the PDF may hold review marks to carry. A byte scan, so the common case (no marks) skips loading
+    PyMuPDF, 1.4 s on the Pi (2026-11-15). Objects packed in compressed object streams cannot be scanned: such a
+    file counts as marked, and the carry itself decides."""
+    try:
+        data = Path(pdf).read_bytes()
+    except OSError:
+        return False
+    return bool(_MARK.search(data)) or b"/ObjStm" in data
 
 
 def applying_flag(out) -> Path:
     return Path(__file__).resolve().parent / "state" / "applying" / (Path(out).resolve().name + ".flag")
+
+
+def _carry_module():
+    spec = importlib.util.spec_from_file_location("carry", Path(__file__).with_name("pdf-carry-marks.py"))
+    carry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(carry)
+    return carry
+
+
+def keep_dropped(marked: Path, out) -> None:
+    """A clean rebuild with no marked copy of this round: the marked file goes to state/refused/ before it is
+    replaced (pdf-refused.py lists it), so a mark nobody applied is never simply gone."""
+    import datetime, json
+    state = Path(os.environ.get("PDF_REVIEW_STATE") or Path(__file__).resolve().parent / "state") / "refused"
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        stem = f"{Path(out).resolve().name}.{stamp}"
+        (state / f"{stem}.bin").write_bytes(marked.read_bytes())
+        (state / f"{stem}.json").write_text(json.dumps({
+            "file": str(Path(out).resolve()), "at": datetime.datetime.now().isoformat(timespec="seconds"), "status": "replaced",
+            "why": "clean rebuild with no marked copy of this round", "bin": f"{stem}.bin"}, indent=1), encoding="utf-8")
+        print(f"[md2pdf] no marked copy of this round: the marked file is kept as state/refused/{stem}.bin", file=sys.stderr)
+    except OSError as err:
+        print(f"[md2pdf] keeping the marked file failed: {err}", file=sys.stderr)
+
+
+def carry_marks(marked: Path, built: Path, out, keep_marks: bool) -> None:
+    """Marks of `marked` (the file as it was right before the write) onto `built`: all of them for --keep-marks,
+    else only those made after this Apply round's marked copy."""
+    if not marked.exists() or not has_marks(marked):
+        return
+    carry = _carry_module()
+    if keep_marks:
+        n, moved, stayed = carry.carry_file(str(marked), str(built))
+        if n:
+            print(f"[md2pdf] carried {n} marks ({moved} re-anchored, {stayed} in place)", file=sys.stderr)
+        return
+    copy = carry.round_copy(out)
+    if copy is None:
+        if not Path(out).resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()):  # a test's fixture: nothing to keep
+            keep_dropped(marked, out)
+        return
+    n, moved, stayed = carry.carry_file(str(marked), str(built), str(copy))
+    print(f"[md2pdf] {n} marks made after {copy.name} carried onto the clean rebuild", file=sys.stderr)
 
 
 def own_build_script(out) -> Path | None:
@@ -63,21 +135,23 @@ def own_build_script(out) -> Path | None:
 
 
 def build_with_script(sh: Path, out: str, keep_marks: bool) -> int:
-    with tempfile.TemporaryDirectory() as tmp:
+    # The folder's script writes the PDF itself, so the lock is held over the whole build: a save that arrives
+    # meanwhile waits, and then lands on the rebuilt file (or is carried onto it), never under it.
+    with tempfile.TemporaryDirectory() as tmp, file_lock(out):
         marked = Path(tmp) / "marked.pdf"
-        if keep_marks and Path(out).exists():
+        if Path(out).exists() and has_marks(out):
             marked.write_bytes(Path(out).read_bytes())
-        subprocess.run(["bash", str(sh)], cwd=sh.parent, check=True, capture_output=True, timeout=300)
+        # The script learns which PDF was asked for: one that rebuilds only what changed must still rebuild
+        # this one when the source did not change (an Apply whose comments changed no text left the PDF as it was).
+        subprocess.run(["bash", str(sh)], cwd=sh.parent, check=True, capture_output=True, timeout=300,
+                       env={**os.environ, "MD2PDF_OUT": str(Path(out).resolve())})
         if marked.exists():
-            spec = importlib.util.spec_from_file_location("carry", Path(__file__).with_name("pdf-carry-marks.py"))
-            carry = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(carry)
             built = Path(tmp) / "built.pdf"
             built.write_bytes(Path(out).read_bytes())
-            n, moved, stayed = carry.carry_file(str(marked), str(built))
-            if n:
+            n0 = built.stat().st_size
+            carry_marks(marked, built, out, keep_marks)
+            if built.stat().st_size != n0:
                 Path(out).write_bytes(built.read_bytes())
-                print(f"[md2pdf] carried {n} marks ({moved} re-anchored, {stayed} in place)", file=sys.stderr)
     print(f"[md2pdf] built with {sh.name}", file=sys.stderr)
     if not keep_marks:
         applying_flag(out).unlink(missing_ok=True)
@@ -95,17 +169,17 @@ def main(src: str, out: str, keep_marks: bool = False) -> int:
         page = Path(tmp) / "page.html"
         page.write_text(html, encoding="utf-8")
         built = Path(tmp) / "out.pdf"
+        # No --allow-file-access-from-files: with it a script in the source read any file of this user into the
+        # PDF or sent it out (burn review F2). Without it a file:// page cannot read another file, also when the
+        # policy above is bypassed; a picture still loads (test/md2pdf-inert.py). Not --blink-settings=
+        # scriptEnabled=false: with it this Chromium's headless print writes no PDF at all (tried 2026-11-14).
         subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-                        "--allow-file-access-from-files", f"--print-to-pdf={built}", page.as_uri()],
+                        f"--print-to-pdf={built}", page.as_uri()],
                        check=True, capture_output=True, timeout=120)
-        if Path(out).exists() and keep_marks:  # his own text edit: keep his review marks across the rebuild
-            spec = importlib.util.spec_from_file_location("carry", Path(__file__).with_name("pdf-carry-marks.py"))
-            carry = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(carry)
-            n, moved, stayed = carry.carry_file(out, built)
-            if n:
-                print(f"[md2pdf] carried {n} marks ({moved} re-anchored, {stayed} in place)", file=sys.stderr)
-        Path(out).write_bytes(built.read_bytes())  # one write over the open file, so the viewer reloads once
+        with file_lock(out):  # the marks are read and the file written with no save in between
+            # his own text edit (--keep-marks): every mark; an Apply: those made after the round's marked copy
+            carry_marks(Path(out), built, out, keep_marks)
+            Path(out).write_bytes(built.read_bytes())  # one write over the open file, so the viewer reloads once
     if not keep_marks:
         applying_flag(out).unlink(missing_ok=True)
     return 0

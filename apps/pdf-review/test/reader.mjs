@@ -56,7 +56,9 @@ try {
   await open();
   await page.evaluate(() => { PDFViewerApplication.page = 1; }); // pdf.js remembers the last page seen
   await page.waitForSelector('.page[data-page-number="1"] .textLayer span');
+  await page.click("#readerSettings");
   await page.selectOption("#readerSpeed", "2");
+  await page.click("#readerSettingsDialog .recentClose");
 
   // 1. Read from the top of page 1.
   await page.click("#readerPlay");
@@ -67,11 +69,10 @@ try {
   check(m1.page === 1 && m1.idx >= 2, "position saved as it reads", `p.${m1.page} #${m1.idx}: “${m1.text?.slice(0, 50)}”`);
   await page.screenshot({ path: "/tmp/reader-highlight.png" });
 
-  // 2. Turn the page while listening: reading follows to the top of that page.
+  // 2. Turn the page while listening: the view stays where you put it and the reading goes on in order.
   await page.evaluate(() => { PDFViewerApplication.page = 3; });
-  await until((m) => m.page === 3, 20000, "reading to move to page 3");
-  check(true, "turning the page moves the reading there");
-  await until((m) => m.page === 3 && m.idx >= 1, 30000, "sentence 2 on page 3");
+  await until((m) => m.page === 1 && m.idx >= m1.idx + 1, 30000, "the next sentence on page 1");
+  check((await page.evaluate(() => PDFViewerApplication.page)) === 3, "turning the page leaves the reading where it was");
   await page.click("#readerPlay"); // pause
   const m2 = await mark();
   check(await page.evaluate(() => document.getElementById("readerPlay").textContent.includes("Read")), "pause button pauses");
@@ -158,7 +159,7 @@ try {
     (await page.textContent("#readerPlay")).includes("Pause"), "▶ reads from the selection, even mid-reading", `p.${m7.page}, want “${w7}…”`);
   await page.click("#readerPlay");
 
-  // 8. Space plays and pauses: on a page with nothing selected it starts at the top of that page.
+  // 8. Space plays and pauses: with nothing selected it goes on from the remembered sentence, not the top of the page in view.
   await page.evaluate(() => { getSelection().removeAllRanges(); PDFViewerApplication.page = 4; });
   await page.waitForSelector('.page[data-page-number="4"] .textLayer span');
   const p4 = await page.evaluate(() => window.pdfReader.sentences(4));
@@ -166,8 +167,8 @@ try {
   spoken.length = 0;
   await page.keyboard.press("Space");
   await page.waitForTimeout(1500);
-  check(spoken[0]?.startsWith(p4[0].text.slice(0, 30)) && (await page.textContent("#readerPlay")).includes("Pause"),
-    "Space starts reading at the top of the page", `“${spoken[0]?.slice(0, 40)}”`);
+  check(!spoken[0]?.startsWith(p4[0].text.slice(0, 30)) && (await page.textContent("#readerPlay")).includes("Pause"),
+    "Space goes on from the remembered sentence", `“${spoken[0]?.slice(0, 40)}”`);
   await page.keyboard.press("Space");
   await page.waitForTimeout(300);
   check((await page.textContent("#readerPlay")).includes("Read") && (await page.evaluate(() => window.pdfReader.audio.paused)),

@@ -25,7 +25,9 @@
 import {
   isPrivateSource,
   retryPick,
+  SECOND_OPINION_ONLY_SUPPLIES,
   supplyOfKey,
+  UNFUNDED_BY_DEFAULT_SUPPLIES,
   type OutcomeRead,
   type RetryPick,
   type TaskDomain,
@@ -134,7 +136,11 @@ export function createRefusalWatcher(d: RefusalDeps) {
       unfunded:
         process.env.OPENCLAW_THALAMUS_ALLOW_OPENROUTER === "on"
           ? undefined
-          : new Set(["openrouter"] as const),
+          : UNFUNDED_BY_DEFAULT_SUPPLIES,
+      secondOpinionOnly:
+        process.env.OPENCLAW_THALAMUS_ALLOW_GOOGLE === "on"
+          ? undefined
+          : SECOND_OPINION_ONLY_SUPPLIES,
       contextWindowFor: board.contextWindowFor,
       ...(priv ? { allowedProviders: cfg.privacy.approvedProviders } : {}),
       nowMs,

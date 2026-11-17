@@ -2117,9 +2117,13 @@ function patchHeartbeatRunnerTasksAndTranscript() {
 
 // ---------------------------------------------------------------------------
 // embedded-agent-runner/extensions.ts — engram/hybrid-retrieval runtime imports
-// (createEventStore, createIngestionPipeline, globalFtsSearch,
-// createOllamaEmbeddingProvider, createEmbeddingCache, createEmbeddingWorker)
+// (createEventStore, createIngestionPipeline, globalFtsSearch, and createEmbeddingProvider
+// for the LIMBIC semantic upgrade)
 // + resolveCompactionMode must return `"engram"` for the fork cognitive path.
+// FORK 2026-10-29: the ENGRAM vector worker was removed (its vectors had no reader, and it
+// pinned an embedding model by name; TINKER_UI_DESIGN_BIBLE/embedder-fit.md). Its three
+// imports left the required list, where every merge would warn about them, and a merge
+// that brings the worker or the model literal back warns instead.
 // ---------------------------------------------------------------------------
 function patchExtensionsEngramImports() {
   const file = "src/agents/embedded-agent-runner/extensions.ts";
@@ -2128,13 +2132,19 @@ function patchExtensionsEngramImports() {
     "createEventStore",
     "createIngestionPipeline",
     "globalFtsSearch",
-    "createOllamaEmbeddingProvider",
-    "createEmbeddingCache",
-    "createEmbeddingWorker",
+    "createEmbeddingProvider",
   ];
   for (const name of required) {
     if (!new RegExp(`import.*\\b${name}\\b.*from`).test(src)) {
       console.warn(`  ⚠️  ${file} — missing import: ${name}`);
+    }
+  }
+  for (const [label, pattern] of [
+    ["the mxbai-embed-large model literal", /mxbai-embed-large/],
+    ["createEmbeddingWorker", /\bcreateEmbeddingWorker\b/],
+  ]) {
+    if (pattern.test(src)) {
+      console.warn(`  ⚠️  ${file} — removed embedding wiring is back: ${label}`);
     }
   }
   if (!/"default" \| "safeguard" \| "engram"/.test(src)) {

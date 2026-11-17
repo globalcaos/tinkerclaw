@@ -15,6 +15,7 @@ import {
   shortModel,
   switchWords,
   SWITCH_WORDS,
+  coolingFor,
   type ThalamusV4Panel,
   type ThalamusV4View,
   type V4Decision,
@@ -208,9 +209,9 @@ describe("off means absent", () => {
 });
 
 describe("the closed line: always true, one line", () => {
-  it("names the mode, the calls today and how many would have changed", () => {
+  it("names the mode, the calls recorded today and how many would differ", () => {
     expect(text(renderThalamusV4(ok(), opts))).toContain(
-      "Thalamus: shadow · 14 calls today · would have changed 3",
+      "Thalamus: shadow · 14 calls recorded today, 3 would differ",
     );
   });
 
@@ -219,12 +220,17 @@ describe("the closed line: always true, one line", () => {
       "Thalamus: shadow · no calls yet today",
     );
     expect(text(renderThalamusV4(ok({ today: { calls: 1, wouldChange: 0 } }), opts))).toContain(
-      "1 call today · would have changed 0",
+      "1 call recorded today, 0 would differ",
     );
   });
 
-  it("calls enforce mode enforcing", () => {
-    expect(text(renderThalamusV4(ok({ mode: "enforce" }), opts))).toContain("Thalamus: enforcing");
+  // 2026-11-13: "enforcing" read as if the calls below were applied. None ever is; a turn and a sub-agent are.
+  it("in enforce mode says where it acts, and calls the per-call list a record", () => {
+    const t = text(renderThalamusV4(ok({ mode: "enforce" }), opts));
+    expect(t).toContain(
+      "Thalamus: picks each turn and sub-agent · 14 calls recorded today, 3 would differ",
+    );
+    expect(t).not.toContain("enforcing");
   });
 
   it("is quiet when the gateway answers with an error: one line, and the reason inside", () => {
@@ -365,7 +371,9 @@ describe("recent calls", () => {
   });
 
   it("the group label counts the calls and says when the last one was", () => {
-    expect(text(renderThalamusV4(ok(), opts))).toContain("Recent calls · 1 call · last 2 min ago");
+    expect(text(renderThalamusV4(ok(), opts))).toContain(
+      "Recent calls, recorded and not applied · 1 call · last 2 min ago",
+    );
   });
 });
 
@@ -595,5 +603,22 @@ describe("small helpers", () => {
     expect(eur(0.00312)).toBe("€0.0031");
     expect(eur(2.5)).toBe("€2.50");
     expect(clock(NOW)).toMatch(/^\d\d:\d\d$/);
+  });
+});
+
+describe("coolingFor (2026-11-13)", () => {
+  const cooling = [
+    { key: "model:fable", until: 2_000, detail: "You've hit your Fable limit" },
+    { key: "openai", until: 2_000, detail: "usage limit" },
+  ];
+  it("strikes out Fable alone for a Fable limit, and every model of a cooling supply", () => {
+    expect(coolingFor(cooling, "claude-fable-5-2", "claude-code", 1_000)?.key).toBe("model:fable");
+    expect(coolingFor(cooling, "claude-opus-5-5", "claude-code", 1_000)).toBeUndefined();
+    expect(coolingFor(cooling, "gpt-6-sol", "openai-codex", 1_000)?.key).toBe("openai");
+    expect(coolingFor(cooling, "grok-4.7", "xai", 1_000)).toBeUndefined();
+  });
+  it("forgets an entry once its reset has passed, and a panel with no cooling closes nothing", () => {
+    expect(coolingFor(cooling, "claude-fable-5-2", "claude-code", 3_000)).toBeUndefined();
+    expect(coolingFor(undefined, "claude-fable-5-2", "claude-code", 1_000)).toBeUndefined();
   });
 });

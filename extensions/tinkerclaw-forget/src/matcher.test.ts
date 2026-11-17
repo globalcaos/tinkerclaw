@@ -44,10 +44,11 @@ describe("buildMatcher", () => {
     expect(hits(m.replace, jsonLine)).toBe(true);
   });
 
-  it("scans raw bytes: a non-ASCII fact is found in latin1-decoded UTF-8", () => {
+  it("scans UTF-8 text: a non-ASCII fact is found next to curly quotes and in any case", () => {
     const m = buildMatcher("Carrer Martí 12");
-    const raw = Buffer.from("viu al Carrer Martí 12", "utf8").toString("latin1");
-    expect(hits(m.scan, raw)).toBe(true);
+    expect(hits(m.scan, "viu al Carrer Martí 12")).toBe(true);
+    expect(hits(m.scan, "viu al “CARRER MARTÍ 12”")).toBe(true);
+    expect(hits(m.scan, "viu al Carrer Martí 123")).toBe(false);
   });
 });
 

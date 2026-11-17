@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 // FORK 2026-10-01 — single owner of the `stream:"thalamus"` agent-event contract.
 //
 // WHY. The owner asked for a THALAMUS panel that shows only the present turn: the models and efforts involved, and
@@ -43,7 +46,7 @@ export interface ThalamusTurnSuggestion {
   model: string;
   effort: string;
   /** Moved: why. `better` = another rung won after the prior; the rest are the reasons the job could not use it. */
-  cause?: "better" | "cooling" | "spent" | "unfunded" | "capacity" | "engagement";
+  cause?: "better" | "cooling" | "spent" | "unfunded" | "metered" | "capacity" | "engagement";
   /** Moved for a better rung: how far the winner leads, in percent, on the task's measured domain strength. */
   gainPct?: number;
 }
@@ -209,12 +212,60 @@ export function buildThalamusTurnDecision(i: ThalamusTurnDecisionInput): Thalamu
   };
 }
 
+/**
+ * THE DECISION THAT RAN, KEPT (2026-11-13). The turn's decision was only an event for the open page: nothing
+ * durable held it, so "which model did Thalamus choose" was answered from the per-call record, which is a
+ * shadow that is never applied and named another model. One JSON line per auto turn, in
+ * `<state dir>/data/thalamus-v4/turn-decisions.jsonl`; `why-model.py` reads it first. Never throws; a test
+ * run writes nothing unless it names a file.
+ */
+export const THALAMUS_TURN_LOG_MAX_BYTES = 8 * 1024 * 1024;
+export function thalamusTurnLogPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.OPENCLAW_THALAMUS_TURN_LOG) return env.OPENCLAW_THALAMUS_TURN_LOG;
+  if (env.VITEST) return undefined;
+  const state = env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw");
+  return path.join(state, "data", "thalamus-v4", "turn-decisions.jsonl");
+}
+export function recordThalamusTurnDecision(
+  sessionKey: string,
+  decision: ThalamusTurnDecision,
+  file: string | undefined = thalamusTurnLogPath(),
+): void {
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    try {
+      if (fs.statSync(file).size > THALAMUS_TURN_LOG_MAX_BYTES) fs.renameSync(file, `${file}.1`);
+    } catch {
+      /* no file yet */
+    }
+    const row = {
+      at: new Date().toISOString(),
+      session: sessionKey,
+      model: decision.model,
+      effort: decision.effort,
+      effortWhy: decision.effortWhy,
+      tier: decision.tier,
+      biasIdx: decision.biasIdx,
+      domain: decision.domain,
+      why: decision.why,
+      ...(decision.instead ? { instead: decision.instead } : {}),
+      ...(decision.suggestion ? { suggestion: decision.suggestion } : {}),
+      reason: decision.reason,
+    };
+    fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+  } catch {
+    /* the record never breaks the turn */
+  }
+}
+
 /** Publish the turn's decision for the session's tab. Fire-and-forget: telemetry never throws into the reply path. */
 export function emitThalamusTurnDecision(
   sessionKey: string | undefined,
   decision: ThalamusTurnDecision,
 ): void {
   if (!sessionKey) return;
+  recordThalamusTurnDecision(sessionKey, decision);
   try {
     emitAgentEvent({
       runId: `thalamus:${sessionKey}`,

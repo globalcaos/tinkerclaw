@@ -37,6 +37,13 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       too: check the input's source (the sender's message, a drawing), and when it cannot settle it,
       deliver both readings. (2026-10-09: six landscape options for a print that
       was 13 wide by 20 tall, when it had to be portrait.)
+- [ ] **A known limit in a design doc is a hedge that outlives the turn.** Read the "known limits"
+      the turn wrote into the bible, a README or a comment. One he will meet in his own daily use
+      (the phone and the laptop open at once, two windows, a reload to see the truth) hands him the
+      repair: fix it while the parts are at hand, or ask him; never file it as "not a bug".
+      (2026-10-27: the unread mark synced between devices only at load, filed in done-signals §2c
+      as a known limit although the 2026-10-19 live tab re-sync already re-read the same file;
+      2026-11-14 he asked for that exact fix, bug `unread-glow-per-device`.)
 - [ ] **Waiters on someone else.** A hedge that waits on someone ("live once X happens", "when the
       other session merges", "after his answer") is covered only once you checked X can still
       happen: the session's last write, the person's reply, the job's state. A waiter on a dead
@@ -75,10 +82,16 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       whole class over its whole history; a reply that checked a slice without saying so in its
       first line is a gap. (2026-10-09: five sessions checked, he wanted every fractal turn ever
       run; the census covered 2,675; recipe `fractal-census`.)
-- [ ] **Long jobs need the card.** A job that outlives the turn is unfinished until he can see it
-      running: the longjob card in this chat (skill `longjob`), then end the turn and let the wake
-      come back. A "progress?" on a long job with no card is a gap. (2026-10-06: the owner
-      found no long-job card had been started; same miss 2026-09-29.)
+- [ ] **Fractal waits until the longjob ends.** A job that spans turns is one task. Do not start
+      a reflection on an early `final` while the card is still running; the thinking line stays
+      below until the work is over. (2026-10-25, raised twice in one night.) Sister of the
+      2026-10-09 moved-trigger miss above. The gate is code. This line is the doctrine so the next
+      reflection does not re-derive it.
+- [ ] **Long jobs need the card, in this chat, before the work.** A job that outlives the turn is
+      unfinished until he can see it running: start the longjob card (skill `longjob`), then end
+      the turn and let the wake come back. A question about progress, about whether the wake will
+      come, or a missing progress bar is a gap: the recipe already exists, skipping it is the miss.
+      (2026-09-29; 2026-10-06; 2026-10-18.)
 - [ ] **A named-file delete is one inode.** `ls -li` before, delete that inode, `ls -li` after. A
       sweep, a glob or a "while I am here" tidy is a gap. (2026-10-07: an ask to delete one
       corrupted file became ~10 GB gone, two datasets among them.)
@@ -99,14 +112,14 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       none is the change appearing where he looks. Climb only as far as the claim needs, never
       claim above where you climbed:
 
-  | claim about…                                | valid green                                                     |
-  | ------------------------------------------- | --------------------------------------------------------------- |
-  | text / wiring / a value being present       | find the string in the SERVED output                            |
-  | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at: screenshot or drive the browser  |
-  | a motion / blink / pulse / animation        | the same LOOK: a screenshot or a driven UI. Sound is not green  |
-  | a control that appears only after an action | DRIVE the interaction first, then look in THAT state            |
-  | code you edited but did not deploy          | say **written, not running**: source ≠ built ≠ restarted        |
-  | a file / document he should open            | a clickable path or a media attachment; naming it is not a link |
+  | claim about…                                | valid green                                                                                                                                                             |
+  | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | text / wiring / a value being present       | find the string in the SERVED output                                                                                                                                    |
+  | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at: screenshot or drive the browser                                                                                                          |
+  | a motion / blink / pulse / animation        | the same LOOK: a screenshot or a driven UI. Sound is not green                                                                                                          |
+  | a control that appears only after an action | DRIVE the interaction first, then look in THAT state                                                                                                                    |
+  | code you edited but did not deploy          | say **written, not running**: source ≠ built ≠ restarted                                                                                                                |
+  | a file / document he should open            | a clickable path or a media attachment; naming it is not a link. A path that was hard to click (2026-10-18 11:29, the Ink & Switch PDF) is the same miss as 2026-09-16. |
 
 - [ ] A precondition in his report IS the test setup. If you cannot render it, the appearance is
       UNVERIFIED; never upgrade a string match into a claim about what he will see.

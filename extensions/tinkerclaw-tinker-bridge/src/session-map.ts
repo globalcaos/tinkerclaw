@@ -268,6 +268,19 @@ export function rebindResumeSessionId(from: string, to: string): number {
   return moved.length;
 }
 
+/**
+ * FORK 2026-11-13 (Rewind of a whole conversation): the amygdala points a tab at an id with this prefix when the owner
+ * rewinds the first exchange of its claude-cli session, so nothing is left to resume. No transcript is ever written
+ * under such an id. The worker reads it as "start fresh" (worker.ts), and the binding stays until the fresh session
+ * reports its own id, so an Undo can still point the tab back. Must equal `REWOUND_ALL_PREFIX` in
+ * extensions/tinkerclaw-amygdala/src/rewind.ts; rewind-seam.test.ts compares them (extensions cannot import each other).
+ */
+export const REWOUND_ALL_PREFIX = "rewound-";
+
+export function isRewoundAllSessionId(sessionId: string | undefined): boolean {
+  return typeof sessionId === "string" && sessionId.startsWith(REWOUND_ALL_PREFIX);
+}
+
 export function clearSessionMap(): void {
   cache = {};
   try {

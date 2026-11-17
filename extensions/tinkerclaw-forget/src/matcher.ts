@@ -7,8 +7,9 @@
  * if the caller passes that spelling as a variant. Anything else matches as text, case-insensitive,
  * any run of whitespace for a space, and not inside a longer word.
  *
- * Each shape is built twice: `scan` tests raw bytes decoded as latin1 (fast, never splits a
- * multi-byte character, safe on any file), `replace` rewrites decoded UTF-8 text.
+ * Each shape is built twice from the same pattern: `scan` tests decoded UTF-8 text and keeps no
+ * state, `replace` rewrites it. Both see the same characters, so a curly quote, a dash or an emoji
+ * next to the fact, or an accented letter in another case, is found by both.
  */
 
 const MIN_VISIBLE_CHARS = 4;
@@ -23,7 +24,7 @@ export type FactMatcher = {
   kind: FactKind;
   /** How many spellings the matcher covers (the fact plus its variants, deduplicated). */
   variants: number;
-  /** Tests one latin1-decoded chunk of raw bytes. Not global: `test` keeps no state. */
+  /** Tests one chunk of decoded UTF-8 text. Not global: `test` keeps no state. */
   scan: RegExp;
   /** Rewrites UTF-8 text. Global. */
   replace: RegExp;
@@ -63,10 +64,6 @@ function jsonEscaped(fact: string): string | null {
   return escaped === fact ? null : escaped;
 }
 
-function toLatin1(s: string): string {
-  return Buffer.from(s, "utf8").toString("latin1");
-}
-
 /** Trim, collapse whitespace, and refuse what would match too much or nothing useful. */
 export function normalizeFact(raw: unknown): string {
   if (typeof raw !== "string") {
@@ -95,7 +92,7 @@ export function buildMatcher(fact: string, variants: readonly string[] = []): Fa
     const forms = [s, jsonEscaped(s)].filter((f): f is string => f !== null);
     for (const form of forms) {
       const pattern = isNumberLike(form) ? numberPattern : textPattern;
-      scanParts.push(pattern(toLatin1(form)));
+      scanParts.push(pattern(form));
       replaceParts.push(pattern(form));
       maxBytes = Math.max(maxBytes, Buffer.byteLength(form) * 4);
     }

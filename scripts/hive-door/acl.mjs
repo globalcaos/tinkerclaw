@@ -20,17 +20,22 @@ const MAX_INHERIT_DEPTH = 6;
 /** Background lanes nobody chats in: at migration they stay admin-only, never shared with legacy users. */
 const SYSTEM_FAMILIES = new Set(["cron", "fractal-reflection", "orchestrator", "heartbeat"]);
 
-/** Session keys arrive as `tinker:abc` or `agent:main:tinker:abc`; the store keeps the long form. */
+/**
+ * Session keys arrive as `tinker:abc` or `agent:main:tinker:abc`; the store keeps the long form.
+ * Lowercased because the gateway lowercases every key before it resolves one
+ * (src/sessions/session-key-utils.ts parseAgentSessionKey): `…:alice:MAIN` IS Alice's Main there,
+ * so here it must not look like a new chat that the caller may claim.
+ */
 export function canonKey(key, defaultAgent = "main") {
   if (typeof key !== "string") return null;
-  const k = key.trim();
+  const k = key.trim().toLowerCase();
   if (!k || k.length > 400) return null;
   return k.startsWith("agent:") ? k : `agent:${defaultAgent}:${k}`;
 }
 
 /** Each person's own Main chat. Ends in ":main" so the UI files it as the Main tab. */
 export function userMainKey(operatorId, defaultAgent = "main") {
-  return `agent:${defaultAgent}:hive:${operatorId}:main`;
+  return `agent:${defaultAgent}:hive:${operatorId}:main`.toLowerCase();
 }
 
 /** Pure visibility rule. `user` = { operatorId, admin }. */
@@ -80,7 +85,12 @@ export function createAcl(o) {
     try {
       const st = fs.statSync(o.gatewayStoreFile);
       if (st.mtimeMs !== storeCache.mtimeMs) {
-        storeCache = { mtimeMs: st.mtimeMs, data: readJson(o.gatewayStoreFile, {}) };
+        // Indexed by lowercase key, the same folding as canonKey: a chat the gateway stored with
+        // capitals is still a known chat, never a new one to claim.
+        const raw = readJson(o.gatewayStoreFile, {});
+        const data = {};
+        for (const [k, v] of Object.entries(raw ?? {})) data[k.toLowerCase()] = v;
+        storeCache = { mtimeMs: st.mtimeMs, data };
       }
     } catch {
       storeCache = { mtimeMs: -1, data: {} };

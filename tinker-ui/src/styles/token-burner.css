@@ -1,0 +1,247 @@
+/* The Token burner tab (src/panels/token-burner-tab.ts). Same woody surfaces as the other
+   alt-view tabs (--surface/--surface2/--border); the flame colour --tb is the tab's nav colour and
+   marks the chosen objective, so the one choice reads at a glance. */
+.tb-view {
+  --tb: #e8603c;
+  max-width: 860px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0 24px;
+  color: var(--text);
+}
+.tb-headline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--tb) 45%, var(--border));
+  border-left: 4px solid var(--tb);
+  border-radius: 4px 8px 8px 4px;
+  background: color-mix(in srgb, var(--tb) 10%, var(--surface));
+}
+.tb-flame {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  fill: none;
+  stroke: var(--tb);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tb-headline-text {
+  font-size: 17px;
+  font-weight: 700;
+}
+.tb-headline-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.tb-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px 14px;
+}
+.tb-section h3 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+.tb-help {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tb-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+.tb-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px 10px 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.tb-card:hover {
+  border-color: color-mix(in srgb, var(--tb) 50%, var(--border));
+}
+.tb-card input[type="radio"] {
+  position: absolute;
+  left: 11px;
+  top: 12px;
+  margin: 0;
+  accent-color: var(--tb);
+}
+.tb-card.is-on {
+  border-color: var(--tb);
+  background: color-mix(in srgb, var(--tb) 16%, var(--surface2));
+  box-shadow: 0 0 0 1px var(--tb) inset;
+}
+.tb-card-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.tb-card-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.tb-custom-name,
+.tb-strategy {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 9px;
+  outline: none;
+}
+.tb-custom-name {
+  margin-top: 6px;
+}
+.tb-strategy {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.5;
+}
+.tb-custom-name:focus,
+.tb-strategy:focus {
+  border-color: color-mix(in srgb, var(--tb) 60%, var(--border));
+}
+.tb-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.tb-btn {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tb-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.tb-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.tb-btn--primary {
+  background: color-mix(in srgb, var(--tb) 70%, var(--surface2));
+  border-color: var(--tb);
+  color: #fff;
+  font-weight: 600;
+}
+.tb-dirty {
+  font-size: 11px;
+  color: var(--yellow);
+}
+.tb-prompt {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+}
+.tb-prompt .fs-link {
+  cursor: pointer;
+  word-break: break-all;
+}
+.tb-prompt-time {
+  color: var(--muted);
+  font-size: 11px;
+}
+.tb-notice {
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  margin-top: 8px;
+}
+.tb-notice--ok {
+  border-color: color-mix(in srgb, var(--green) 60%, var(--border));
+  background: color-mix(in srgb, var(--green) 14%, var(--surface));
+}
+.tb-notice--error {
+  border-color: color-mix(in srgb, var(--red) 60%, var(--border));
+  background: color-mix(in srgb, var(--red) 14%, var(--surface));
+}
+.tb-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tb-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--tb) 30%, transparent);
+  border-top-color: var(--tb);
+  border-radius: 50%;
+  animation: tb-spin 0.9s linear infinite;
+}
+@keyframes tb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.tb-draft {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px dashed var(--tb);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--tb) 7%, var(--surface2));
+}
+.tb-draft-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tb);
+  font-weight: 700;
+}
+.tb-draft-headline {
+  font-size: 14px;
+  margin: 4px 0;
+}
+.tb-draft-why {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.tb-draft-strategy {
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 12.5px;
+  margin: 8px 0 0;
+}
+.tb-dash {
+  padding: 10px 16px;
+}
+.tb-dash-link {
+  color: var(--accent);
+  font-size: 12px;
+}

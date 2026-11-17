@@ -46,7 +46,52 @@ export function withoutRouteTwins(
 // MORE MODELS.
 // Input is sorted smartest first; everything up to and including the first `copilot/` id is
 // kept. No Copilot in the catalog = no cut.
+// 2026-11-12: DeepInfra is the one metered seller with credit, so its two best models are
+// always kept, also when they score under Copilot. Kept in rank order, so the list stays
+// sorted.
+const PAID_OPEN_PREFIX = "deepinfra/";
+const PAID_OPEN_KEPT = 2;
+
 export function panelIdsDownToCopilot(idsSmartestFirst: string[]): string[] {
   const i = idsSmartestFirst.findIndex((id) => id.startsWith("copilot/"));
-  return i < 0 ? idsSmartestFirst : idsSmartestFirst.slice(0, i + 1);
+  if (i < 0) {
+    return idsSmartestFirst;
+  }
+  const paidOpen = new Set(
+    idsSmartestFirst.filter((id) => id.startsWith(PAID_OPEN_PREFIX)).slice(0, PAID_OPEN_KEPT),
+  );
+  return idsSmartestFirst.filter((id, at) => at <= i || paidOpen.has(id));
+}
+
+// 2026-11-13 (the architect): the picker shows one Fable, one Opus, one Astra and one Sol, the newest of each.
+// Older versions stay in config and in MORE MODELS; only the picker drops them. Twins of the newest
+// version (the same model on two routes) all stay.
+const PICKER_ONE_PER_FAMILY =
+  /claude-(fable|opus)-(\d+(?:[-.]\d+)*)|gpt-(\d+(?:\.\d+)*)-(astra|sol)\b/i;
+function familyVersion(id: string): { family: string; version: number[] } | null {
+  const m = PICKER_ONE_PER_FAMILY.exec(id);
+  if (!m) return null;
+  const family = (m[1] ?? m[4]).toLowerCase();
+  const raw = m[2] ?? m[3];
+  return { family, version: raw.split(/[-.]/).map(Number) };
+}
+function compareVersion(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+export function latestOfFamily(ids: string[]): string[] {
+  const newest = new Map<string, number[]>();
+  for (const id of ids) {
+    const fv = familyVersion(id);
+    if (!fv) continue;
+    const cur = newest.get(fv.family);
+    if (!cur || compareVersion(fv.version, cur) > 0) newest.set(fv.family, fv.version);
+  }
+  return ids.filter((id) => {
+    const fv = familyVersion(id);
+    return !fv || compareVersion(fv.version, newest.get(fv.family)!) === 0;
+  });
 }

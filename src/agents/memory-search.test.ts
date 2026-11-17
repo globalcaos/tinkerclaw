@@ -1,5 +1,14 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import {
+  __resetEmbedderFitForTest,
+  cheapFingerprint,
+  writeEmbedderFit,
+  type FitDecision,
+} from "../fork/embedder-fit.js";
 import {
   clearMemoryEmbeddingProviders,
   registerMemoryEmbeddingProvider,
@@ -7,6 +16,40 @@ import {
 import { resolveMemorySearchConfig, resolveMemorySearchSyncConfig } from "./memory-search.js";
 
 const asConfig = (cfg: OpenClawConfig): OpenClawConfig => cfg;
+
+// FORK 2026-10-29: an embedder-fit record measured on this machine (its fingerprint is this
+// process's own), written into the test's temp state dir.
+function writeFitRecord(decision: Pick<FitDecision, "mode" | "provider" | "model">): void {
+  const fixture = (value: number, unit: string) => ({
+    value,
+    unit,
+    provenance: "estimated" as const,
+    source: "test fixture",
+  });
+  writeEmbedderFit({
+    schemaVersion: 1,
+    createdAt: "2026-10-29T08:00:00.000Z",
+    fingerprint: cheapFingerprint(),
+    inventory: {
+      ollama: { baseUrl: "http://127.0.0.1:11434", reachable: true, models: [] },
+      nodeLlamaCpp: false,
+      remoteKeys: [],
+    },
+    candidates: [],
+    missCostSec: fixture(21.57, "s"),
+    nonEnglishShare: fixture(0, "share"),
+    fitWallSeconds: fixture(150, "s"),
+    decision: {
+      dormantUntilDemand: false,
+      reasons: ["test fixture"],
+      verdicts: [],
+      ...decision,
+    },
+    consent: { remote: null },
+    tool: { command: "openclaw embedder fit", version: "test" },
+    history: [],
+  });
+}
 
 function registerBaseMemoryEmbeddingProviders(options?: { includeGemini?: boolean }): void {
   registerMemoryEmbeddingProvider({
@@ -61,13 +104,28 @@ function registerBaseMemoryEmbeddingProviders(options?: { includeGemini?: boolea
 }
 
 describe("memory search config", () => {
+  // FORK 2026-10-29: resolveMemorySearchConfig reads this machine's embedder-fit record from the
+  // state dir. Each test gets a fresh empty one, so a real record on the host never changes what
+  // an unset provider resolves to.
+  let stateDir = "";
+  const savedStateDir = process.env.OPENCLAW_STATE_DIR;
+
   beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-search-config-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    __resetEmbedderFitForTest();
     clearMemoryEmbeddingProviders();
     registerBaseMemoryEmbeddingProviders();
   });
 
   afterEach(() => {
     clearMemoryEmbeddingProviders();
+    if (savedStateDir === undefined) {
+      delete process.env.OPENCLAW_STATE_DIR;
+    } else {
+      process.env.OPENCLAW_STATE_DIR = savedStateDir;
+    }
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   function configWithDefaultProvider(provider: string): OpenClawConfig {
@@ -184,7 +242,9 @@ describe("memory search config", () => {
     expect(resolved).toBeNull();
   });
 
-  it("defaults provider to auto when unspecified", () => {
+  // FORK 2026-10-29: an unset provider means "auto", and the embedder-fit seam turns "auto" into
+  // this machine's measured choice, or "none" (word index only) while no fit is recorded.
+  it("defaults an unspecified provider to none (word index only) without an embedder fit", () => {
     const cfg = asConfig({
       agents: {
         defaults: {
@@ -195,8 +255,42 @@ describe("memory search config", () => {
       },
     });
     const resolved = resolveMemorySearchConfig(cfg, "main");
-    expect(resolved?.provider).toBe("auto");
+    expect(resolved?.provider).toBe("none");
+    expect(resolved?.model).toBe("");
     expect(resolved?.fallback).toBe("none");
+  });
+
+  it("takes provider and model from an embedder fit measured on this machine", () => {
+    writeFitRecord({ mode: "memory", provider: "ollama", model: "fit-chosen-model" });
+    const cfg = asConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.provider).toBe("ollama");
+    expect(resolved?.model).toBe("fit-chosen-model");
+  });
+
+  it("keeps an explicit provider and model when an embedder fit is recorded", () => {
+    writeFitRecord({ mode: "memory", provider: "ollama", model: "fit-chosen-model" });
+    const cfg = asConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            model: "text-embedding-3-small",
+          },
+        },
+      },
+    });
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.provider).toBe("openai");
+    expect(resolved?.model).toBe("text-embedding-3-small");
   });
 
   it("resolves custom provider ids through their configured api owner", () => {

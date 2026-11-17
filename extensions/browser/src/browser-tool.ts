@@ -914,6 +914,11 @@ export function createBrowserTool(opts?: {
           if (!request) {
             throw new Error("request required");
           }
+          // A tab chosen at the top level applies to the action too; without this the
+          // route falls back to the first shared tab.
+          if (!request.targetId && typeof params.targetId === "string" && params.targetId) {
+            request.targetId = params.targetId;
+          }
           return await executeActAction({
             request,
             baseUrl,

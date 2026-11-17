@@ -17,6 +17,12 @@
         "default": "shadow",
         "description": "shadow = decide and log, enforce nothing through the judge; enforce = the judge's responses reach the agent through the hooks."
       },
+      "selfModification": {
+        "type": "string",
+        "enum": ["locked", "unlocked"],
+        "default": "locked",
+        "description": "locked = restarting the agent's own system needs proof and weakening a check over its own repo code is held. unlocked = both are lifted. Deletes, secrets and outbound steps are the same in both."
+      },
       "families": {
         "type": "object",
         "additionalProperties": false,
@@ -156,6 +162,22 @@
             "default": ["claude-code/claude-sonnet-5-5", "claude-code/claude-haiku-4-5"],
             "description": "Models that judge the flags, first that answers wins. Earned activation counts only the `earned.judge` model's reviews."
           }
+        }
+      },
+      "factCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "After a turn in one of the owner's chats, a Claude model checks the reply's statements of absence or cause against that turn's own evidence; one the evidence does not carry asks the agent, in the same chat, to recheck it or say it as a hypothesis.",
+        "properties": {
+          "mode": { "type": "string", "enum": ["off", "shadow", "wake"], "default": "wake" },
+          "ladder": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^claude-code/" },
+            "default": ["claude-code/claude-sonnet-5-5", "claude-code/claude-haiku-4-5"],
+            "description": "Claude models only: the check reads tool output."
+          },
+          "timeoutMs": { "type": "number", "default": 120000 },
+          "dailyCap": { "type": "number", "default": 120 }
         }
       },
       "earned": {

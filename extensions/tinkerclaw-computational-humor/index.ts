@@ -201,7 +201,8 @@ export default definePluginEntry({
     // Read humor calibration from Identity Persistence (or config defaults)
     const calibration = readIdentityHumorCalibration(frequency, sensitivityThreshold);
 
-    // Create the runtime (starts with FNV-1a fallback; ollama upgrade is async)
+    // FNV-1a hash vectors only: no provider is passed, and nothing in this plugin upgrades them.
+    // The embedder-fit upgrade, governed, exists only for inline LIMBIC in the embedded runner.
     const runtime = createLimbicRuntime({ calibration });
     const trigger = createHumorTrigger(runtime);
 

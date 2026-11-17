@@ -76,11 +76,39 @@ type DetachedFromTargetEvent = {
   targetId?: string;
 };
 
+// sessionId/targetId are relay-side ids: namespaced with the owner's prefix (see ExtensionBrowser).
 type ConnectedTarget = {
   sessionId: string;
   targetId: string;
   targetInfo: TargetInfo;
+  owner: number;
 };
+
+type PendingExtensionRequest = {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+};
+
+// One connected browser (one extension). Several can be connected at once, e.g. the local
+// Chromium and a Chrome on another machine. Tab session ids are small per-browser counters
+// (`tc-tab-1`), so ids from browsers in slot >= 1 get a `b<key>:` prefix on the way in and lose
+// it on the way out; slot 0 keeps raw ids, so a single-browser setup sees exactly what it did
+// before multi-browser support.
+type ExtensionBrowser = {
+  key: number;
+  prefix: string;
+  // Stable id the extension sends (`?browserId=`), so an MV3 worker reconnect lands in the
+  // same slot. Without one, a reconnecting socket inherits a slot whose socket is gone.
+  browserId?: string;
+  ws: WebSocket | null;
+  upgrading: boolean;
+  pending: Map<number, PendingExtensionRequest>;
+  cleanupTimer: NodeJS.Timeout | null;
+};
+
+const BROWSER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const NAMESPACED_ID_PATTERN = /^b(\d+):/;
 
 const RELAY_AUTH_HEADER = "x-openclaw-relay-token";
 const DEFAULT_EXTENSION_RECONNECT_GRACE_MS = 20_000;
@@ -276,31 +304,77 @@ export async function ensureChromeExtensionRelayServer(opts: {
     const relayAuthToken = await resolveRelayAuthTokenForPort(info.port);
     const relayAuthTokens = new Set(await resolveRelayAcceptedTokensForPort(info.port));
 
-    let extensionWs: WebSocket | null = null;
+    const browsers = new Map<number, ExtensionBrowser>();
     const cdpClients = new Set<WebSocket>();
     const connectedTargets = new Map<string, ConnectedTarget>();
-    const extensionConnected = () => extensionWs?.readyState === WebSocket.OPEN;
-    const hasConnectedTargets = () => connectedTargets.size > 0;
-    let extensionDisconnectCleanupTimer: NodeJS.Timeout | null = null;
-    const extensionReconnectWaiters = new Set<(connected: boolean) => void>();
-
-    const flushExtensionReconnectWaiters = (connected: boolean) => {
-      if (extensionReconnectWaiters.size === 0) {
-        return;
+    const isBrowserOpen = (browser: ExtensionBrowser | undefined) =>
+      browser?.ws?.readyState === WebSocket.OPEN;
+    const extensionConnected = () => {
+      for (const browser of browsers.values()) {
+        if (isBrowserOpen(browser)) {
+          return true;
+        }
       }
-      const waiters = Array.from(extensionReconnectWaiters);
-      extensionReconnectWaiters.clear();
-      for (const waiter of waiters) {
-        waiter(connected);
+      return false;
+    };
+    const hasConnectedTargets = () => connectedTargets.size > 0;
+    const firstOpenBrowser = (): ExtensionBrowser | undefined => {
+      const keys = Array.from(browsers.keys()).toSorted((a, b) => a - b);
+      for (const key of keys) {
+        const browser = browsers.get(key);
+        if (isBrowserOpen(browser)) {
+          return browser;
+        }
+      }
+      return undefined;
+    };
+
+    // Waiters re-check their condition on every extension connection; `giveUp` settles them
+    // all (server stop, or the last browser gone).
+    const extensionReconnectWaiters = new Set<(giveUp: boolean) => void>();
+
+    const notifyExtensionWaiters = (giveUp: boolean) => {
+      for (const waiter of Array.from(extensionReconnectWaiters)) {
+        waiter(giveUp);
       }
     };
 
-    const clearExtensionDisconnectCleanupTimer = () => {
-      if (!extensionDisconnectCleanupTimer) {
+    const waitForExtension = async (ready: () => boolean, timeoutMs: number): Promise<boolean> => {
+      if (ready()) {
+        return true;
+      }
+      return await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const waiter = (giveUp: boolean) => {
+          if (settled || (!giveUp && !ready())) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          extensionReconnectWaiters.delete(waiter);
+          resolve(ready());
+        };
+        const timer = setTimeout(() => {
+          waiter(true);
+        }, timeoutMs);
+        extensionReconnectWaiters.add(waiter);
+      });
+    };
+
+    const rejectBrowserPending = (browser: ExtensionBrowser, reason: string) => {
+      for (const [, pending] of browser.pending) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error(reason));
+      }
+      browser.pending.clear();
+    };
+
+    const clearBrowserCleanupTimer = (browser: ExtensionBrowser) => {
+      if (!browser.cleanupTimer) {
         return;
       }
-      clearTimeout(extensionDisconnectCleanupTimer);
-      extensionDisconnectCleanupTimer = null;
+      clearTimeout(browser.cleanupTimer);
+      browser.cleanupTimer = null;
     };
 
     const closeCdpClientsAfterExtensionDisconnect = () => {
@@ -313,57 +387,178 @@ export async function ensureChromeExtensionRelayServer(opts: {
         }
       }
       cdpClients.clear();
-      flushExtensionReconnectWaiters(false);
+      notifyExtensionWaiters(true);
     };
 
-    const scheduleExtensionDisconnectCleanup = () => {
-      clearExtensionDisconnectCleanupTimer();
-      extensionDisconnectCleanupTimer = setTimeout(() => {
-        extensionDisconnectCleanupTimer = null;
-        if (extensionConnected()) {
+    // The browser did not come back within the grace period: forget it and its tabs. CDP
+    // clients stay open while another browser is connected or still has tabs.
+    const dropBrowser = (browser: ExtensionBrowser) => {
+      if (browsers.get(browser.key) !== browser) {
+        return;
+      }
+      browsers.delete(browser.key);
+      rejectBrowserPending(browser, "extension disconnected");
+      const removed: ConnectedTarget[] = [];
+      for (const [sessionId, target] of connectedTargets) {
+        if (target.owner === browser.key) {
+          connectedTargets.delete(sessionId);
+          removed.push(target);
+        }
+      }
+      if (!extensionConnected() && !hasConnectedTargets()) {
+        closeCdpClientsAfterExtensionDisconnect();
+        return;
+      }
+      for (const target of removed) {
+        broadcastDetachedTarget(target);
+      }
+    };
+
+    const scheduleBrowserCleanup = (browser: ExtensionBrowser) => {
+      clearBrowserCleanupTimer(browser);
+      browser.cleanupTimer = setTimeout(() => {
+        browser.cleanupTimer = null;
+        if (isBrowserOpen(browser)) {
           return;
         }
-        closeCdpClientsAfterExtensionDisconnect();
+        dropBrowser(browser);
       }, extensionReconnectGraceMs);
     };
 
-    const waitForExtensionReconnect = async (timeoutMs: number): Promise<boolean> => {
-      if (extensionConnected()) {
-        return true;
-      }
-      return await new Promise<boolean>((resolve) => {
-        let settled = false;
-        const waiter = (connected: boolean) => {
-          if (settled) {
-            return;
+    // Same browser reconnecting (by browserId, or for id-less sockets any slot whose socket is
+    // gone) keeps its slot, so its tab ids stay the same; otherwise a new slot.
+    const claimBrowserSlot = (browserId: string | undefined): ExtensionBrowser | "busy" => {
+      const keys = Array.from(browsers.keys()).toSorted((a, b) => a - b);
+      for (const key of keys) {
+        const browser = browsers.get(key);
+        if (!browser) {
+          continue;
+        }
+        if (browserId) {
+          if (browser.browserId !== browserId) {
+            continue;
           }
-          settled = true;
-          clearTimeout(timer);
-          extensionReconnectWaiters.delete(waiter);
-          resolve(connected);
-        };
-        const timer = setTimeout(() => {
-          waiter(false);
-        }, timeoutMs);
-        extensionReconnectWaiters.add(waiter);
-      });
+        } else if (browser.browserId || browser.upgrading || isBrowserOpen(browser)) {
+          continue;
+        }
+        if (browser.upgrading || isBrowserOpen(browser)) {
+          return "busy";
+        }
+        return browser;
+      }
+      let key = 0;
+      while (browsers.has(key)) {
+        key++;
+      }
+      const browser: ExtensionBrowser = {
+        key,
+        prefix: key === 0 ? "" : `b${key}:`,
+        browserId,
+        ws: null,
+        upgrading: false,
+        pending: new Map(),
+        cleanupTimer: null,
+      };
+      browsers.set(key, browser);
+      return browser;
     };
 
-    const pendingExtension = new Map<
-      number,
-      {
-        resolve: (v: unknown) => void;
-        reject: (e: Error) => void;
-        timer: NodeJS.Timeout;
+    const namespaceId = (browser: ExtensionBrowser, id: unknown) =>
+      typeof id === "string" ? browser.prefix + id : id;
+
+    const stripId = (browser: ExtensionBrowser, id: unknown) =>
+      typeof id === "string" && browser.prefix && id.startsWith(browser.prefix)
+        ? id.slice(browser.prefix.length)
+        : id;
+
+    // Prefix the id fields of an event's params (sessionId, targetId, openerId, targetInfo.*).
+    const namespaceEventParams = (browser: ExtensionBrowser, value: unknown): unknown => {
+      if (!browser.prefix || !value || typeof value !== "object" || Array.isArray(value)) {
+        return value;
       }
-    >();
+      const out = { ...(value as Record<string, unknown>) };
+      for (const key of ["sessionId", "targetId", "openerId"]) {
+        if (typeof out[key] === "string") {
+          out[key] = namespaceId(browser, out[key]);
+        }
+      }
+      if (out.targetInfo && typeof out.targetInfo === "object") {
+        out.targetInfo = namespaceEventParams(browser, out.targetInfo);
+      }
+      return out;
+    };
+
+    const stripCommandParams = (browser: ExtensionBrowser, value: unknown): unknown => {
+      if (!browser.prefix || !value || typeof value !== "object" || Array.isArray(value)) {
+        return value;
+      }
+      const out = { ...(value as Record<string, unknown>) };
+      for (const key of ["sessionId", "targetId"]) {
+        if (typeof out[key] === "string") {
+          out[key] = stripId(browser, out[key]);
+        }
+      }
+      return out;
+    };
+
+    const browserForNamespacedId = (id: unknown): ExtensionBrowser | undefined => {
+      if (typeof id !== "string") {
+        return undefined;
+      }
+      const match = id.match(NAMESPACED_ID_PATTERN);
+      const key = match ? Number(match[1]) : 0;
+      return key >= 1 ? browsers.get(key) : undefined;
+    };
+
+    // Which browser owns the tab a command is about: by session, then by target, then by an
+    // id prefix (e.g. a child session), else the first connected browser.
+    const resolveCommandOwner = (
+      sessionId: string | undefined,
+      params: unknown,
+    ): ExtensionBrowser | undefined => {
+      const p = (params ?? {}) as { targetId?: unknown; sessionId?: unknown };
+      for (const sid of [sessionId, p.sessionId]) {
+        const target = typeof sid === "string" ? connectedTargets.get(sid) : undefined;
+        if (target) {
+          return browsers.get(target.owner);
+        }
+      }
+      if (typeof p.targetId === "string") {
+        for (const target of connectedTargets.values()) {
+          if (target.targetId === p.targetId) {
+            return browsers.get(target.owner);
+          }
+        }
+      }
+      for (const id of [sessionId, p.targetId, p.sessionId]) {
+        const browser = browserForNamespacedId(id);
+        if (browser) {
+          return browser;
+        }
+      }
+      return firstOpenBrowser();
+    };
+
     let nextExtensionId = 1;
 
-    const sendToExtension = async (payload: ExtensionForwardCommandMessage): Promise<unknown> => {
-      const ws = extensionWs;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+    const sendToExtension = async (
+      browser: ExtensionBrowser | undefined,
+      command: { method: string; params?: unknown; sessionId?: string },
+    ): Promise<unknown> => {
+      const ws = browser?.ws;
+      if (!browser || !ws || ws.readyState !== WebSocket.OPEN) {
         throw new Error("Chrome extension not connected");
       }
+      // Relay-side ids are unique across browsers; each browser only resolves its own.
+      const payload: ExtensionForwardCommandMessage = {
+        id: nextExtensionId++,
+        method: "forwardCDPCommand",
+        params: {
+          method: command.method,
+          sessionId: stripId(browser, command.sessionId) as string | undefined,
+          params: stripCommandParams(browser, command.params),
+        },
+      };
       ws.send(JSON.stringify(payload));
       // Liveness: a forwardCDPCommand frame genuinely left for the extension. One site covers
       // both dispatch paths (the /cdp client socket and the /json/activate|close HTTP routes).
@@ -371,10 +566,10 @@ export async function ensureChromeExtensionRelayServer(opts: {
       noteInstrumentFired("browser:relay-forward", "client->ext");
       return await new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
-          pendingExtension.delete(payload.id);
+          browser.pending.delete(payload.id);
           reject(new Error(`extension request timeout: ${payload.params.method}`));
         }, 30_000);
-        pendingExtension.set(payload.id, { resolve, reject, timer });
+        browser.pending.set(payload.id, { resolve, reject, timer });
       });
     };
 
@@ -538,15 +733,14 @@ export async function ensureChromeExtensionRelayServer(opts: {
           throw new Error("target not found");
         }
         default: {
-          const id = nextExtensionId++;
-          return await sendToExtension({
-            id,
-            method: "forwardCDPCommand",
-            params: {
-              method: cmd.method,
-              sessionId: cmd.sessionId,
-              params: cmd.params,
-            },
+          const owner = resolveCommandOwner(cmd.sessionId, cmd.params);
+          if (owner && !isBrowserOpen(owner)) {
+            await waitForExtension(() => isBrowserOpen(owner), extensionCommandReconnectWaitMs);
+          }
+          return await sendToExtension(owner, {
+            method: cmd.method,
+            sessionId: cmd.sessionId,
+            params: cmd.params,
           });
         }
       }
@@ -675,10 +869,9 @@ export async function ensureChromeExtensionRelayServer(opts: {
         }
         void (async () => {
           try {
-            await sendToExtension({
-              id: nextExtensionId++,
-              method: "forwardCDPCommand",
-              params: { method: cdpMethod, params: { targetId } },
+            await sendToExtension(resolveCommandOwner(undefined, { targetId }), {
+              method: cdpMethod,
+              params: { targetId },
             });
           } catch {
             // ignore
@@ -737,21 +930,34 @@ export async function ensureChromeExtensionRelayServer(opts: {
             return;
           }
         }
-        // MV3 worker reconnect races can leave a stale non-OPEN socket reference.
-        if (extensionWs && extensionWs.readyState !== WebSocket.OPEN) {
-          try {
-            extensionWs.terminate();
-          } catch {
-            // ignore
-          }
-          extensionWs = null;
-        }
-        if (extensionConnected()) {
+        const rawBrowserId = url.searchParams.get("browserId")?.trim();
+        const browserId =
+          rawBrowserId && BROWSER_ID_PATTERN.test(rawBrowserId) ? rawBrowserId : undefined;
+        const browser = claimBrowserSlot(browserId);
+        if (browser === "busy") {
+          // The same browser already holds an open socket.
           rejectUpgrade(socket, 409, "Extension already connected");
           return;
         }
+        // MV3 worker reconnect races can leave a stale non-OPEN socket reference.
+        if (browser.ws && browser.ws.readyState !== WebSocket.OPEN) {
+          const stale = browser.ws;
+          browser.ws = null;
+          rejectBrowserPending(browser, "extension disconnected");
+          try {
+            stale.terminate();
+          } catch {
+            // ignore
+          }
+        }
+        browser.upgrading = true;
+        if (!browser.cleanupTimer) {
+          // Cleared once the socket attaches; drops the slot if the upgrade never completes.
+          scheduleBrowserCleanup(browser);
+        }
         wssExtension.handleUpgrade(req, socket, head, (ws) => {
-          wssExtension.emit("connection", ws, req);
+          browser.upgrading = false;
+          attachExtensionSocket(browser, ws);
         });
         return;
       }
@@ -773,10 +979,10 @@ export async function ensureChromeExtensionRelayServer(opts: {
       rejectUpgrade(socket, 404, "Not Found");
     });
 
-    wssExtension.on("connection", (ws) => {
-      extensionWs = ws;
-      clearExtensionDisconnectCleanupTimer();
-      flushExtensionReconnectWaiters(true);
+    const attachExtensionSocket = (browser: ExtensionBrowser, ws: WebSocket) => {
+      browser.ws = ws;
+      clearBrowserCleanupTimer(browser);
+      notifyExtensionWaiters(false);
 
       const ping = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) {
@@ -786,7 +992,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }, 5000);
 
       ws.on("message", (data) => {
-        if (extensionWs !== ws) {
+        if (browser.ws !== ws) {
           return;
         }
         let parsed: ExtensionMessage | null = null;
@@ -802,11 +1008,11 @@ export async function ensureChromeExtensionRelayServer(opts: {
           "id" in parsed &&
           typeof parsed.id === "number"
         ) {
-          const pending = pendingExtension.get(parsed.id);
+          const pending = browser.pending.get(parsed.id);
           if (!pending) {
             return;
           }
-          pendingExtension.delete(parsed.id);
+          browser.pending.delete(parsed.id);
           clearTimeout(pending.timer);
           if ("error" in parsed && typeof parsed.error === "string" && parsed.error.trim()) {
             pending.reject(new Error(parsed.error));
@@ -825,8 +1031,9 @@ export async function ensureChromeExtensionRelayServer(opts: {
           }
           const evt = parsed as ExtensionForwardEventMessage;
           const method = evt.params?.method;
-          const params = evt.params?.params;
-          const sessionId = evt.params?.sessionId;
+          // Relay-side ids from here on (prefixed for browsers in slot >= 1).
+          const params = namespaceEventParams(browser, evt.params?.params);
+          const sessionId = namespaceId(browser, evt.params?.sessionId) as string | undefined;
           if (!method || typeof method !== "string") {
             return;
           }
@@ -850,6 +1057,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
                 sessionId: attached.sessionId,
                 targetId: nextTargetId,
                 targetInfo: attached.targetInfo,
+                owner: browser.key,
               });
               if (changedTarget && prevTargetId) {
                 broadcastToCdpClients({
@@ -910,18 +1118,14 @@ export async function ensureChromeExtensionRelayServer(opts: {
 
       ws.on("close", () => {
         clearInterval(ping);
-        if (extensionWs !== ws) {
+        if (browser.ws !== ws) {
           return;
         }
-        extensionWs = null;
-        for (const [, pending] of pendingExtension) {
-          clearTimeout(pending.timer);
-          pending.reject(new Error("extension disconnected"));
-        }
-        pendingExtension.clear();
-        scheduleExtensionDisconnectCleanup();
+        browser.ws = null;
+        rejectBrowserPending(browser, "extension disconnected");
+        scheduleBrowserCleanup(browser);
       });
-    });
+    };
 
     wssCdp.on("connection", (ws) => {
       cdpClients.add(ws);
@@ -941,7 +1145,10 @@ export async function ensureChromeExtensionRelayServer(opts: {
         }
 
         if (!extensionConnected()) {
-          const reconnected = await waitForExtensionReconnect(extensionCommandReconnectWaitMs);
+          const reconnected = await waitForExtension(
+            extensionConnected,
+            extensionCommandReconnectWaitMs,
+          );
           if (!reconnected || !extensionConnected()) {
             sendResponseToCdp(ws, {
               id: cmd.id,
@@ -1048,17 +1255,19 @@ export async function ensureChromeExtensionRelayServer(opts: {
       extensionConnected,
       stop: async () => {
         relayRuntimeByPort.delete(port);
-        clearExtensionDisconnectCleanupTimer();
-        flushExtensionReconnectWaiters(false);
-        for (const [, pending] of pendingExtension) {
-          clearTimeout(pending.timer);
-          pending.reject(new Error("server stopping"));
-        }
-        pendingExtension.clear();
-        try {
-          extensionWs?.close(1001, "server stopping");
-        } catch {
-          // ignore
+        const stopping = Array.from(browsers.values());
+        browsers.clear();
+        notifyExtensionWaiters(true);
+        for (const browser of stopping) {
+          clearBrowserCleanupTimer(browser);
+          rejectBrowserPending(browser, "server stopping");
+          const ws = browser.ws;
+          browser.ws = null;
+          try {
+            ws?.close(1001, "server stopping");
+          } catch {
+            // ignore
+          }
         }
         for (const ws of cdpClients) {
           try {

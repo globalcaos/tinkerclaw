@@ -694,7 +694,7 @@ export const SC_CTX_RULES: { match: RegExp; ctx: number }[] = [
   // the generic /claude/i rule below gives it 200k, and since circle AREA is
   // proportional to context window the chart's highest-scoring model would draw
   // 2.24x too small — wrong on the one channel a reader cannot check by hovering.
-  { match: /claude-fable-5[.-]1/i, ctx: 1_000_000 },
+  { match: /claude-fable-5[.-][12]/i, ctx: 1_000_000 },
   { match: /claude-opus-5[.-]5/i, ctx: 1_000_000 },
   { match: /claude-sonnet-5[.-]5/i, ctx: 1_000_000 },
   { match: /longcat-2\.0/i, ctx: 1_048_756 },
@@ -761,6 +761,8 @@ export function scTaskShiftDecades(modelId: string, effortLvl: string): number {
 // 2026-08-25 removing from its Y axis.
 export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   // Anthropic — anthropic.com/pricing. Opus 5 re-verified on AA 2026-08-27 ($5/$25).
+  // Fable 5.2 list is $8/$40 (live OpenRouter 2026-11-10), not Fable 5.1's $10/$50. Must sit ABOVE /fable/i.
+  { match: /fable-5[.-]2/i, out: 40 },
   { match: /fable/i, out: 50 },
   // Opus 5.5 list is $4/$20 (live OpenRouter 2026-09-23), not Opus 5's $5/$25.
   { match: /opus-5[.-]5/i, out: 20 },

@@ -453,6 +453,19 @@ async function runMemorySearchHealthContribution(ctx: DoctorHealthFlowContext): 
   if (ctx.options.deep === true) {
     await noteMemoryRecallHealth(ctx.cfg);
   }
+  // FORK 2026-10-29: the per-machine embedder fit (TINKER_UI_DESIGN_BIBLE/embedder-fit.md): every
+  // verdict with its provenance, the fingerprint match and the governor's snapshot. --fix
+  // re-measures in the foreground and asks only in a terminal; config is never changed.
+  const { noteEmbedderFit } = await import("../fork/embedder-fit-runtime.js");
+  const { note } = await import("../terminal/note.js");
+  await noteEmbedderFit({
+    cfg: ctx.cfg,
+    repair: ctx.prompter.shouldRepair,
+    deep: ctx.options.deep === true,
+    note,
+    interactive: ctx.prompter.repairMode.canPrompt,
+    log: (line) => ctx.runtime.log(line),
+  });
 }
 
 async function runDevicePairingHealth(ctx: DoctorHealthFlowContext): Promise<void> {

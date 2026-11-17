@@ -4336,7 +4336,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     type: "string",
                     title: "Memory Search Provider",
                     description:
-                      'Selects the embedding backend used to build/query memory vectors: "openai", "gemini", "voyage", "mistral", "bedrock", "lmstudio", "ollama", or "local". Keep your most reliable provider here and configure fallback for resilience.',
+                      'Selects the embedding backend used to build/query memory vectors: "openai", "gemini", "voyage", "mistral", "bedrock", "lmstudio", "ollama", "local", or "none" (word index only, no embedding calls). Unset or "auto" uses the provider and model `openclaw embedder fit` measured as the best fit for this machine, or "none" when no model fits or the machine has not been measured yet. Auto never picks a remote provider unless you allow it with `openclaw embedder fit --allow-remote <provider>`, because memory text would leave the machine. An explicit provider is kept as set; the fit only proposes a change.',
                   },
                   remote: {
                     type: "object",
@@ -4434,7 +4434,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         maximum: 9007199254740991,
                         title: "Remote Non-Batch Embedding Concurrency",
                         description:
-                          "Controls concurrent inline embedding requests during non-batch memory indexing. Use a low value for local or small self-hosted providers such as Ollama; batch embedding concurrency is configured separately under remote.batch.",
+                          "Controls concurrent inline embedding requests during non-batch memory indexing. The memory-core plugin uses it as the request count (default: 1 for Ollama, 4 otherwise). The core memory index treats it as a ceiling: it sends one request at a time to a local server unless `openclaw embedder fit` measured a gain from two in flight, and at most 4 to a hosted provider. Batch embedding concurrency is configured separately under remote.batch.",
                       },
                       batch: {
                         type: "object",
@@ -4667,7 +4667,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         maximum: 9007199254740991,
                         title: "Embedding Batch Timeout (s)",
                         description:
-                          "Overrides the timeout for inline embedding batches during memory indexing. Leave unset to use provider defaults: 600 seconds for local/self-hosted providers such as local, Ollama, and LM Studio, and 120 seconds for hosted providers.",
+                          "Overrides the timeout for inline embedding batches in the memory-core plugin's index. Left unset, the plugin defaults to 600 seconds for local, Ollama and LM Studio, and 120 seconds for hosted providers. The core memory index does not read this key: it derives each batch deadline from throughput measured on this machine (the `openclaw embedder fit` record, then live calls), capped at 600 seconds; a hosted provider starts at 120 seconds until 20 calls are measured.",
                       },
                       sessions: {
                         type: "object",
@@ -26195,7 +26195,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.defaults.memorySearch.provider": {
       label: "Memory Search Provider",
-      help: 'Selects the embedding backend used to build/query memory vectors: "openai", "gemini", "voyage", "mistral", "bedrock", "lmstudio", "ollama", or "local". Keep your most reliable provider here and configure fallback for resilience.',
+      help: 'Selects the embedding backend used to build/query memory vectors: "openai", "gemini", "voyage", "mistral", "bedrock", "lmstudio", "ollama", "local", or "none" (word index only, no embedding calls). Unset or "auto" uses the provider and model `openclaw embedder fit` measured as the best fit for this machine, or "none" when no model fits or the machine has not been measured yet. Auto never picks a remote provider unless you allow it with `openclaw embedder fit --allow-remote <provider>`, because memory text would leave the machine. An explicit provider is kept as set; the fit only proposes a change.',
       tags: ["advanced"],
     },
     "agents.defaults.memorySearch.remote.baseUrl": {
@@ -26216,7 +26216,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.defaults.memorySearch.remote.nonBatchConcurrency": {
       label: "Remote Non-Batch Embedding Concurrency",
-      help: "Controls concurrent inline embedding requests during non-batch memory indexing. Use a low value for local or small self-hosted providers such as Ollama; batch embedding concurrency is configured separately under remote.batch.",
+      help: "Controls concurrent inline embedding requests during non-batch memory indexing. The memory-core plugin uses it as the request count (default: 1 for Ollama, 4 otherwise). The core memory index treats it as a ceiling: it sends one request at a time to a local server unless `openclaw embedder fit` measured a gain from two in flight, and at most 4 to a hosted provider. Batch embedding concurrency is configured separately under remote.batch.",
       tags: ["performance"],
     },
     "agents.defaults.memorySearch.remote.batch.enabled": {
@@ -26331,7 +26331,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.defaults.memorySearch.sync.embeddingBatchTimeoutSeconds": {
       label: "Embedding Batch Timeout (s)",
-      help: "Overrides the timeout for inline embedding batches during memory indexing. Leave unset to use provider defaults: 600 seconds for local/self-hosted providers such as local, Ollama, and LM Studio, and 120 seconds for hosted providers.",
+      help: "Overrides the timeout for inline embedding batches in the memory-core plugin's index. Left unset, the plugin defaults to 600 seconds for local, Ollama and LM Studio, and 120 seconds for hosted providers. The core memory index does not read this key: it derives each batch deadline from throughput measured on this machine (the `openclaw embedder fit` record, then live calls), capped at 600 seconds; a hosted provider starts at 120 seconds until 20 calls are measured.",
       tags: ["performance"],
     },
     "agents.defaults.memorySearch.sync.sessions.deltaBytes": {

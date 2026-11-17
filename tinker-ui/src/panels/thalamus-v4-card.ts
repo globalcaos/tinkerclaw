@@ -98,6 +98,37 @@ export interface ThalamusV4Panel {
   uses: V4Use[];
   cardNames: Record<string, { name: string; kind: string }>;
   plans: V4Plan[];
+  /** Closed now: a supply (`anthropic`) or one model family's own cap (`model:fable`), and when it reopens. */
+  cooling?: { key: string; until: number; detail: string }[];
+}
+
+/**
+ * FORK 2026-11-13 — the cooling entry that closes this picker model, or undefined. `model:<family>` closes the
+ * Claude models of that family (Fable's own cap); a supply name closes every model on it.
+ */
+const SUPPLY_OF_PROVIDER: Record<string, string> = {
+  anthropic: "anthropic",
+  "claude-code": "anthropic",
+  "openai-codex": "openai",
+  openai: "openai",
+  xai: "xai",
+  google: "google",
+  openrouter: "openrouter",
+  "github-copilot": "copilot",
+};
+export function coolingFor(
+  cooling: ThalamusV4Panel["cooling"],
+  modelId: string,
+  provider: string,
+  nowMs: number,
+): { key: string; until: number; detail: string } | undefined {
+  const id = modelId.toLowerCase();
+  const supply = SUPPLY_OF_PROVIDER[provider] ?? provider;
+  return (cooling ?? []).find((c) => {
+    if (c.until <= nowMs) return false;
+    if (c.key.startsWith("model:")) return supply === "anthropic" && id.includes(c.key.slice(6));
+    return c.key === supply;
+  });
 }
 export type ThalamusV4View =
   | { state: "ok"; panel: ThalamusV4Panel }
@@ -157,6 +188,7 @@ export const VETO_WORDS: Readonly<Record<string, string>> = {
   "supply-spent": "plan used up",
   "supply-cooling": "rate-limited",
   "supply-unfunded": "no credit",
+  "supply-metered": "paid per call (2nd opinion only)",
   capacity: "too big for it",
   engagement: "it refused this kind of work before",
   "not-allowed": "not allowed here",
@@ -346,7 +378,7 @@ function callsSection(p: ThalamusV4Panel, o: V4RenderOptions): string {
     )
     .join("");
   return group(
-    `Recent calls · ${plural(p.decisions.length, "call")} · last ${esc(ago(o.nowMs - last))}`,
+    `Recent calls, recorded and not applied · ${plural(p.decisions.length, "call")} · last ${esc(ago(o.nowMs - last))}`,
     rows,
   );
 }
@@ -479,8 +511,12 @@ function plansSection(p: ThalamusV4Panel, o: V4RenderOptions): string {
 
 // ── the block ────────────────────────────────────────────────────────────────────────────────
 
+// FORK 2026-11-13 — WHAT ACTS AND WHAT ONLY RECORDS. The line read "enforcing · N calls today · would have changed
+// M", and the calls below it are the per-call router's picks. None of those picks is ever applied (39,516 rows that
+// day, none applied): what enforce mode applies is the model of a turn and of a sub-agent. So the word says where it
+// acts, and the calls are named a record.
 function modeWord(mode: string): string {
-  return mode === "enforce" ? "enforcing" : mode;
+  return mode === "enforce" ? "picks each turn and sub-agent" : mode;
 }
 
 function closedLine(view: ThalamusV4View): string {
@@ -490,7 +526,7 @@ function closedLine(view: ThalamusV4View): string {
   const tail =
     p.today.calls === 0
       ? "no calls yet today"
-      : `${plural(p.today.calls, "call")} today · would have changed ${p.today.wouldChange}`;
+      : `${plural(p.today.calls, "call")} recorded today, ${p.today.wouldChange} would differ`;
   return `Thalamus: ${esc(modeWord(p.mode))} <span style="${MUTED}">· ${tail}</span>`;
 }
 

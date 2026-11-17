@@ -108,6 +108,28 @@ export function noteOwnFinal(rec: SeenRecord | undefined, at: number, now: numbe
   return { s: base.s, f: Math.max(base.f ?? 0, at) };
 }
 
+/**
+ * FORK 2026-11-14 — stamps another page wrote (the phone, the laptop) folded into ours: per chat the
+ * later `s` and the later `f`, since both only ever rise. A chat read on one device stops being
+ * unread on the other. Same rule as mergeSeenMaps in scripts/tinker-prod-ui.mjs, which merges every
+ * write to the desk file. `changed` = some stamp here rose (or a chat was new to this map).
+ */
+export function mergeSeenMaps(ours: SeenMap, theirs: SeenMap): { map: SeenMap; changed: boolean } {
+  const map: SeenMap = { ...ours };
+  let changed = false;
+  for (const [key, rec] of Object.entries(theirs)) {
+    const cur = map[key];
+    const s = Math.max(cur?.s ?? 0, rec.s);
+    const f = Math.max(cur?.f ?? 0, rec.f ?? 0);
+    if (cur && s === cur.s && f === (cur.f ?? 0)) {
+      continue;
+    }
+    map[key] = f > 0 ? { s, f } : { s };
+    changed = true;
+  }
+  return { map, changed };
+}
+
 // ─── The window title ───
 
 /** The spinner the window title turns while the active chat is busy (the old longjob card's). */

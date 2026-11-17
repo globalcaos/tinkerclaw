@@ -47,6 +47,11 @@ export type LongjobRowDeps = {
   dotColor: (model: string, provider: string) => string;
   /** The wall-clock bounce phase (thinkingDotsPhase), so a repaint does not restart the dots. */
   phaseMs: number;
+  /**
+   * FORK 2026-11-14 — whether the job's trail (job-trail.ts) is open. Given: a process or agents row is
+   * clickable and shows ▸ / ▾ (a background task has no trail to open). Absent: rows as before.
+   */
+  trailOpen?: (id: string) => boolean;
 };
 
 /** The kind the bridge gives a chat's live Claude Code background task (ccBridge.backgroundTasks). */
@@ -194,10 +199,17 @@ function rowHtml(spec: RowSpec, now: number, deps: LongjobRowDeps): string {
     spec.pct === null
       ? ""
       : `<div class="job-run-line"><div class="job-run-fill" style="width:${spec.pct.toFixed(1)}%"></div></div>`;
-  return `<div class="thinking-run job-run${spec.stall ? " job-run-stalled" : ""}" data-job-id="${deps.esc(job.id)}" data-job-kind="${deps.esc(job.kind === "agents" || job.kind === BACKGROUND_JOB_KIND ? job.kind : "process")}"${spec.model ? ` data-job-model="${deps.esc(spec.model)}"` : ""} data-started-at="${started}" style="--thinking-dot-color:${spec.color}">
+  // FORK 2026-11-14 — a row with a trail (job-trail.ts) opens it.
+  const openable = !!deps.trailOpen && job.kind !== BACKGROUND_JOB_KIND;
+  const open = openable && deps.trailOpen!(job.id);
+  const chev = openable ? `\n  <span class="job-run-chev">${open ? "▾" : "▸"}</span>` : "";
+  const affordance = openable
+    ? ` title="${open ? "Hide the work behind this job" : "Show the work behind this job, from its start"}"`
+    : "";
+  return `<div class="thinking-run job-run${spec.stall ? " job-run-stalled" : ""}${openable ? " job-run-openable" : ""}${open ? " job-run-open" : ""}" data-job-id="${deps.esc(job.id)}" data-job-kind="${deps.esc(job.kind === "agents" || job.kind === BACKGROUND_JOB_KIND ? job.kind : "process")}"${spec.model ? ` data-job-model="${deps.esc(spec.model)}"` : ""} data-started-at="${started}"${affordance} style="--thinking-dot-color:${spec.color}">
   <div class="thinking-dots" style="--thinking-phase:${deps.phaseMs}ms"><span></span><span></span><span></span></div>
   <span class="thinking-model">${spec.head}${tail}</span>
-  <span class="thinking-elapsed">${longjobDuration((now - started) / 1000)}</span>
+  <span class="thinking-elapsed">${longjobDuration((now - started) / 1000)}</span>${chev}
   ${line}
 </div>`;
 }

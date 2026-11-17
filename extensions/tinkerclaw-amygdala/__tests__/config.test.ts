@@ -76,3 +76,11 @@ describe("parseConfig", () => {
     expect(parseConfig({ mode: "loud" }).mode).toBe("shadow");
   });
 });
+
+describe("selfModification", () => {
+  it("defaults to locked, reads unlocked, and treats anything else as locked", () => {
+    expect(parseConfig({}).selfModification).toBe("locked");
+    expect(parseConfig({ selfModification: "unlocked" }).selfModification).toBe("unlocked");
+    expect(parseConfig({ selfModification: "yes" }).selfModification).toBe("locked");
+  });
+});

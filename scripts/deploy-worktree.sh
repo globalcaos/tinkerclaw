@@ -116,8 +116,19 @@ say "node $(node -v) | pnpm $(pnpm -v)"
 git -C "$REPO" worktree add --detach "$WT" "$SHA"
 [ $? -eq 0 ] || die 10 "git worktree add failed"
 
+# FORK 2026-10-29: install and build with the tsx disk cache off (TSX_DISABLE_CACHE=1
+# on these two commands only). Several build steps run through `node --import tsx`
+# (scripts/build-all.mjs), and tsx caches each transform in ${TMPDIR:-/tmp}/tsx-<uid>
+# with the absolute source path in its key. $WT is a new path on every deploy, so no
+# later deploy can read what one build caches, and tsx 4.21.0 keeps each entry for
+# 8-9 days. Where /tmp is tmpfs, that dead cache lives in RAM, then in swap. Measured
+# read-only on 2026-10-29: the cache held 1.46 GB, and ~95% of a random sample of its
+# files came from deleted deploy worktrees. Cost: tsx processes within one build stop
+# sharing cache hits (not measured). Not exported script-wide: without the systemd
+# unit, phase 4 starts the gateway from this shell, and it would inherit the switch.
+# Revisit if deploys ever build at a reused path, where the cache can hit.
 T_PHASE=$SECONDS
-( cd "$WT" && pnpm install --frozen-lockfile )
+( cd "$WT" && TSX_DISABLE_CACHE=1 pnpm install --frozen-lockfile )
 if [ $? -ne 0 ]; then
   say "worktree left at $WT for inspection (remove: git -C $REPO worktree remove --force $WT)"
   die 11 "pnpm install failed — NOT building on top of a failed install"
@@ -125,7 +136,7 @@ fi
 say "pnpm install: $((SECONDS - T_PHASE))s"
 
 T_PHASE=$SECONDS
-( cd "$WT" && pnpm build )
+( cd "$WT" && TSX_DISABLE_CACHE=1 pnpm build )
 if [ $? -ne 0 ]; then
   say "worktree left at $WT for inspection (remove: git -C $REPO worktree remove --force $WT)"
   die 12 "pnpm build failed"

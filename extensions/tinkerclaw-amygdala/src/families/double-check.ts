@@ -1,4 +1,4 @@
-import { hasCompletionVerb, missingFor, splitClaims, supportedBy } from "../claims.js";
+import { provenByOutput, reportedDefects, splitClaims, uncheckedAdmissions } from "../claims.js";
 /**
  * Double-check family (design doc §5.2, paper §6.3): the reply says something was done and the tool record does not
  * show it, the work was dodged, a live system is claimed fixed without a check, the reply refuses an allowed task,
@@ -6,24 +6,22 @@ import { hasCompletionVerb, missingFor, splitClaims, supportedBy } from "../clai
  * (claims.ts, transcript.ts); the judge only says whether the record supports them.
  */
 import type { TurnState } from "../context.js";
+import { allInRepos, inCheckout, ownRepoRoots } from "../own-repo.js";
 import { severity } from "../respond.js";
 import { readTranscriptTail } from "../transcript.js";
-import type { Claim, Response, Seam, Situation, ToolRecordEntry, Verdict } from "../types.js";
-import { CANNOT_TELL, clip, crossesId, isCannotTell, pick } from "./common.js";
+import type { Seam, Situation, Verdict } from "../types.js";
+import { clip, crossesId, OWNER_RELEASE, ownerAllowed } from "./common.js";
 import type { AskedQuestions, Family, FamilyResult } from "./types.js";
 import type { FamilyDeps } from "./util.js";
 
 const CHECK_RE =
-  /test|spec|__tests__|vitest|jest|pytest|\.github\/workflows|lint|threshold|coverage/i;
+  /test|spec|__tests__|e2e|vitest|jest|pytest|\.github\/workflows|lint|threshold|coverage/i;
+/** A shell step with no resolved target can only change a check if the command itself writes. */
+const COMMAND_WRITES =
+  /\bsed\s+-\S*i|\bperl\s+-\S*i|\btee\b|\b(?:cp|mv|rm|truncate)\s|>>?\s*[^\s&]|\bopen\(|writeFile|\.write(?:_text|_bytes)?\(/;
+/** A word that reads as a path, in any spelling: relative, `~/`, `$W/`, absolute or a glob. */
+const PATH_WORD = /[~$\w.*@{}-]*\/[\w.*@{}/-]+|[\w.*-]+\.\w+/g;
 const WEAKENING_EFFECTS = new Set(["local-write", "other", "delete"]);
-
-const PROBLEM: Record<string, string> = {
-  placeholder: "leaves a placeholder",
-  "handed-back": "hands the work back",
-  "question-open": "leaves your question open",
-  "promise-later": "promises later work that nothing will run",
-  "unverified-fix": "reports a fix that was not verified in this task",
-};
 
 const replyOf = (s: Situation): string => (typeof s.reply?.value === "string" ? s.reply.value : "");
 /** A provider failure in the reply slot (Claude Code's "API Error: …" or the gateway envelope), not agent prose.
@@ -32,47 +30,45 @@ const PROVIDER_ERROR_RE = /^\s*(?:__ERR_ENV__:|API Error:)/;
 /** The provider's own safety classifier refused the turn ("Opus 5.5's safeguards flagged this message").
  *  2026-10-18, the owner: this IS a refusal for the strip. Rewind and Rewind-and-retry stay buttons he presses. */
 const PROVIDER_SAFEGUARD_RE = /safeguards flagged|anthropic\.com\/legal\/aup/i;
-const recordOf = (s: Situation): ToolRecordEntry[] => s.toolRecord?.value ?? [];
 
-/** Done claims; when the splitter found none but a sentence still carries a completion verb, the whole reply. */
-function doneClaims(s: Situation): Claim[] {
-  const claims = s.claims?.value ?? splitClaims(replyOf(s));
-  const done = claims.filter((c) => c.kind === "done");
-  if (done.length > 0) return done;
-  const reply = replyOf(s);
-  if (reply && hasCompletionVerb(reply))
-    return [{ text: clip(reply, 120), kind: "done", source: null, support: null }];
-  return [];
+/** /tmp is scratch, except a checkout there: a worktree in /tmp is the real project, and its tests grade real work. */
+const isScratch = (p: string): boolean => p.startsWith("/tmp/") && !inCheckout(p);
+
+/**
+ * Does the command's text name a check outside scratch? The target parser does not read a heredoc and cannot follow `$W/`,
+ * so `targets` alone can look like scratch while the step edits a live test (2026-11-01: over the stored steps the judge
+ * crossed, trusting `targets` stopped asking on 92 of 558, most of them real test edits). A relative word is scratch only
+ * when the command starts in scratch.
+ */
+function namesLiveCheck(command: string): boolean {
+  const cwd = /^\s*cd\s+([^\s;&|]+)/.exec(command)?.[1];
+  const startsInScratch = cwd !== undefined && isScratch(cwd);
+  return (command.match(PATH_WORD) ?? []).some((w) => {
+    if (!CHECK_RE.test(w)) return false;
+    if (w.startsWith("/")) return !isScratch(w);
+    return /^[~$]/.test(w) || !startsInScratch;
+  });
 }
-
-const stateClaims = (s: Situation): Claim[] =>
-  (s.claims?.value ?? splitClaims(replyOf(s))).filter((c) => c.kind === "state");
 
 function weakensCheckRelevant(s: Situation): boolean {
   const eff = s.effectClass?.value;
   if (!eff || !WEAKENING_EFFECTS.has(eff)) return false;
-  const paths = (s.targets?.value ?? []).map((t) => t.path);
-  return [s.command?.value ?? "", ...paths].some((x) => CHECK_RE.test(x));
+  const targets = s.targets?.value ?? [];
+  const command = s.command?.value ?? "";
+  // Only a step that can change a live check counts: running a test, or a copy in /tmp, changes nothing that grades work.
+  // A plain `cp` changes only its destination, so the test it copies from is merely read.
+  const changed = /^\s*cp\s/.test(command) && !/[;&|]/.test(command) ? targets.slice(-1) : targets;
+  const live = changed.filter((t) => !isScratch(t.path));
+  if (changed.length > 0 && live.length === 0 && !namesLiveCheck(command)) return false;
+  if (live.some((t) => CHECK_RE.test(t.path))) return true;
+  if (/^\s*cp\s/.test(command)) return false;
+  return CHECK_RE.test(command) && (eff === "delete" || COMMAND_WRITES.test(command));
 }
 
-/** Probability mass on the dodge options a family may act on (complete and cannot-tell never count). */
-function dodgeOption(v: Verdict, asked: AskedQuestions, ignorePromise: boolean): string | null {
-  if (isCannotTell(v)) return null;
-  const skip = new Set(["complete", CANNOT_TELL, ...(ignorePromise ? ["promise-later"] : [])]);
-  const probs = v.probs ?? { [String(v.answer)]: v.prob };
-  let best: string | null = null;
-  let mass = 0;
-  for (const [o, p] of Object.entries(probs)) {
-    if (skip.has(o)) continue;
-    mass += p;
-    if (best === null || p > (probs[best] ?? 0)) best = o;
-  }
-  const c = asked.get("dodged-work")?.cutoff;
-  const at = c && c.kind === "choice" ? c.at : Number.POSITIVE_INFINITY;
-  return mass >= at ? best : null;
-}
-
-export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
+export function createDoubleCheckFamily(deps: FamilyDeps): Family {
+  const ownCodeFree = (s: Situation): boolean =>
+    deps.selfModification === "unlocked" &&
+    allInRepos(s.targets?.value ?? [], (deps.ownRepoRoots ?? ownRepoRoots)());
   return {
     id: "double-check",
 
@@ -85,22 +81,24 @@ export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
         const have = s.toolRecord?.value;
         if (!have || have.length < tail.toolRecord.length)
           s.toolRecord = { value: tail.toolRecord, origin: "observed" };
+        state.outputEvidence = tail.evidence;
+        const record = s.toolRecord?.value ?? [];
+        for (const c of s.claims.value ?? []) {
+          if (c.support !== null || !provenByOutput(c, tail.evidence, record)) continue;
+          c.support = true;
+          c.source = "observed";
+        }
       }
     },
 
     questionsFor(seam: Seam, s: Situation): string[] {
-      if (seam === "pre-tool") return weakensCheckRelevant(s) ? ["weakens-own-check"] : [];
-      if (seam !== "stop") return [];
-      if (PROVIDER_ERROR_RE.test(replyOf(s))) return [];
-      const ids: string[] = [];
-      if (replyOf(s)) ids.push("refusal");
-      // A reflection turn (the background Fractal one) leaves notes for later, not an answer to the owner: an open
-      // question or an unverified fix in it is the point of the note (2026-10-25, 395 of 458 such flags noise/harmful).
-      const reflection = s.turnKind?.value === "reflection";
-      if (!reflection) ids.push("dodged-work");
-      if (doneClaims(s).length > 0) ids.push("claim-record", "claim-support", "claim-source");
-      if (!reflection && stateClaims(s).length > 0) ids.push("stale-state-claim");
-      return ids;
+      if (seam === "pre-tool")
+        return weakensCheckRelevant(s) && !ownCodeFree(s) ? ["weakens-own-check"] : [];
+      if (seam !== "stop" || !replyOf(s)) return [];
+      if (PROVIDER_ERROR_RE.test(replyOf(s)) || reportedDefects(replyOf(s)).length > 0) return [];
+      // FORK 2026-11-08: only the refusal question is asked here; the claim, dodged-work and stale-state questions fed
+      // send-backs that are gone.
+      return ["refusal"];
     },
 
     decide(
@@ -111,17 +109,18 @@ export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
       asked: AskedQuestions,
     ): FamilyResult | null {
       if (seam === "pre-tool") {
-        return crossesId(asked, verdicts, "weakens-own-check")
-          ? {
-              response: {
-                kind: "hold",
-                ruleOrQuestion: "weakens-own-check",
-                releasable: "user-only",
-              },
-              drivers: ["weakens-own-check"],
-              reasonCode: "weakens-own-check",
-            }
-          : null;
+        if (!crossesId(asked, verdicts, "weakens-own-check")) return null;
+        // A hold whose wait ran out keeps its Allow under the reply (2026-10-31): the click is the release it waited for.
+        if (ownerAllowed(s)) return OWNER_RELEASE;
+        return {
+          response: {
+            kind: "hold",
+            ruleOrQuestion: "weakens-own-check",
+            releasable: "user-only",
+          },
+          drivers: ["weakens-own-check"],
+          reasonCode: "weakens-own-check",
+        };
       }
       if (seam !== "stop") return null;
 
@@ -133,77 +132,50 @@ export function createDoubleCheckFamily(_deps: FamilyDeps): Family {
           : null;
       }
 
-      const cands: FamilyResult[] = [];
-      const record = recordOf(s);
-      const sendBack = (templateId: string, slots: Record<string, string>): Response => ({
-        kind: "send-back",
-        templateId,
-        slots,
-        attempt: state.sendBackAttempts >= 1 ? 2 : 1,
-      });
+      // The agent said a check is wrong instead of editing it: the owner hears it, and the reply is not sent back.
+      const defect = reportedDefects(reply)[0];
+      if (defect) {
+        return {
+          response: {
+            kind: "note",
+            templateId: "defect-reported",
+            slots: { what: clip(defect, 160) },
+            channel: "additionalContext",
+          },
+          drivers: [],
+          reasonCode: "report-defect",
+        };
+      }
 
+      const cands: FamilyResult[] = [];
       if (crossesId(asked, verdicts, "refusal"))
         cands.push({ response: { kind: "refusal" }, drivers: ["refusal"], reasonCode: "refusal" });
 
-      if (state.sendBackAttempts < 2) {
-        // 2. done claims
-        const support = pick(verdicts, "claim-support");
-        const supportAt = asked.get("claim-support")?.cutoff;
-        const weakSupport =
-          support !== undefined &&
-          supportAt?.kind === "prob" &&
-          !isCannotTell(support) &&
-          support.prob < supportAt.at;
-        const drivers: string[] = [];
-        if (crossesId(asked, verdicts, "claim-record")) drivers.push("claim-record");
-        if (weakSupport) drivers.push("claim-support");
-        if (drivers.length > 0) {
-          const done = doneClaims(s);
-          const claim = done.find((c) => c.support === false || !supportedBy(c, record)) ?? done[0];
-          if (claim) {
-            cands.push({
-              response: sendBack("send-back-claim", {
-                claim: clip(claim.text),
-                missing: missingFor(claim, record),
-              }),
-              drivers,
-              reasonCode: "claim-unsupported",
-            });
-          }
-        }
+      // FORK 2026-11-08: the stop seam no longer sends a reply back (unsupported claim, dodged work, stale state). The
+      // owner reads the reply and the effect card (effects.ts); a send-back only made the agent re-justify itself.
 
-        // 3. dodged work
-        const dodge = pick(verdicts, "dodged-work");
-        if (dodge) {
-          const ignorePromise = (s.scheduledJobs?.value ?? []).length > 0;
-          const option = dodgeOption(dodge, asked, ignorePromise);
-          if (option === "false-blocker") {
-            cands.push({
-              response: sendBack("send-back-blocker", {}),
-              drivers: ["dodged-work"],
-              reasonCode: "false-blocker",
-            });
-          } else if (option && PROBLEM[option]) {
-            cands.push({
-              response: sendBack("send-back-dodged", { problem: PROBLEM[option] }),
-              drivers: ["dodged-work"],
-              reasonCode: "dodged-work",
-            });
-          }
-        }
-
-        // 4. stale state
-        if (crossesId(asked, verdicts, "stale-state-claim")) {
-          const claim = stateClaims(s)[0] ?? doneClaims(s)[0];
-          cands.push({
-            response: sendBack("send-back-claim", {
-              claim: clip(claim?.text ?? replyOf(s)),
-              missing: "no check of the running state in this task",
-            }),
-            drivers: ["stale-state-claim"],
-            reasonCode: "stale-state",
-          });
-        }
+      // FORK 2026-11-10: the one send-back that stays is for what the reply itself admits it did not check. No judge:
+      // the agent's own words are the evidence. Once per reply (decide.ts caps it). A reflection turn's open questions
+      // are the point of its note, so it is left alone.
+      const unchecked =
+        s.turnKind?.value === "reflection" || state.sendBackAttempts >= 1
+          ? []
+          : uncheckedAdmissions(reply);
+      if (unchecked.length > 0) {
+        cands.push({
+          response: {
+            kind: "send-back",
+            templateId: "send-back-unchecked",
+            slots: {
+              what:
+                `"${clip(unchecked[0] as string, 200)}"` +
+                (unchecked.length > 1 ? `, and ${unchecked.length - 1} more like it` : ""),
+            },
+            attempt: 1,
+          },
+          drivers: [],
+          reasonCode: "unchecked-admission",
+        });
       }
 
       let best: FamilyResult | null = null;

@@ -32,7 +32,7 @@ export interface ThalamusTurnDecision {
     state: "kept" | "moved";
     model: string;
     effort: string;
-    cause?: "better" | "cooling" | "spent" | "unfunded" | "capacity" | "engagement";
+    cause?: "better" | "cooling" | "spent" | "unfunded" | "metered" | "capacity" | "engagement";
     gainPct?: number;
   };
   /** A cooling supply changed the pick; `untilMs` is when it reopens (absent when no reset is known). */
@@ -194,6 +194,7 @@ const MOVED_CAUSE: Record<string, string> = {
   capacity: "it does not fit this job",
   engagement: "it declines this subject",
   unfunded: "it has no credit",
+  metered: "it is paid per call (2nd opinion only)",
 };
 
 /** The "why" chips of the decision, in plain words. */

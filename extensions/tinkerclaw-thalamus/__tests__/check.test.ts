@@ -220,4 +220,32 @@ describe("enforce with the flag on", () => {
     const t = setup({ caller: async () => ({ text: "PROBLEMS:" }) });
     expect(await t.svc.finalize({ runId: "run-1", lastAssistantMessage: CLAIM })).toBeUndefined();
   });
+  it("keeps pay-per-call Google out when a subscription checker exists, and uses Google strictly when none does", async () => {
+    const carbon = {
+      key: "google/gemini-4-carbon",
+      effort: "high",
+      smart: 60,
+      cost: 2.0,
+      basis: "measured" as const,
+    };
+    const withGrok = setup({
+      base: {
+        rungs: [R.opus, R.grok],
+        secondOpinionOnly: new Set(["google"]),
+        secondOpinionRungs: [carbon],
+      },
+    });
+    await withGrok.svc.finalize({ runId: "run-1", lastAssistantMessage: CLAIM });
+    expect(withGrok.caller.mock.calls[0][0].modelKey).toBe("xai/grok-4.7");
+
+    const noSubOther = setup({
+      base: {
+        rungs: [R.opus, R.sonnet],
+        secondOpinionOnly: new Set(["google"]),
+        secondOpinionRungs: [carbon],
+      },
+    });
+    await noSubOther.svc.finalize({ runId: "run-1", lastAssistantMessage: CLAIM });
+    expect(noSubOther.caller.mock.calls[0][0].modelKey).toBe("google/gemini-4-carbon");
+  });
 });
