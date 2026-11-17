@@ -5,8 +5,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import type { Explanation, ExplanationEvent, ExplanationRow } from "./explain.js";
 import type { PassReview, Review, ReviewReportRow, ReviewRow } from "./review.js";
@@ -45,6 +45,60 @@ export interface VerdictSpend {
   skipped: number;
 }
 
+/**
+ * FORK 2026-10-29: verdict sums of whole past days by day key, and the end of the latest day they cover. `conns` are
+ * the connections of the stores open on the file; `versions` holds the PRAGMA data_version each of them read before
+ * the first cached day was summed, or null while no day is cached (`forgetIfOutsideCommit`).
+ */
+interface ClosedDaySpend {
+  days: Map<string, VerdictSpend>;
+  until: number;
+  conns: Set<Database.Database>;
+  versions: Map<Database.Database, number> | null;
+}
+
+// FORK 2026-10-29: ".v2" since the entries carry `conns` and `versions`; one an older build left in this process has
+// neither.
+const CLOSED_DAY_SPEND = Symbol.for("tinkerclaw.amygdala.closedDaySpend.v2");
+
+/**
+ * FORK 2026-10-29: one closed-day cache per database file in this process. The gateway runs register() several times
+ * in one process (four starts in 100 s on 2026-10-22), so several stores can be open on one file, and the write that
+ * must drop the cache (a replay) can reach a different store than the feed that reads it. The key is the file's real
+ * path: keyed by resolve(), a store opened through a symlink and one opened through the real path had a cache each,
+ * and a backdated verdict written through one left the other summing the old days. Called once the store has opened
+ * the file, so the file exists; resolve() stands in only if realpath fails. An in-memory database keeps its own.
+ * Opening a store empties the cache of its file.
+ */
+function closedDaySpendFor(path: string, db: Database.Database): ClosedDaySpend {
+  const fresh = (): ClosedDaySpend => ({
+    days: new Map(),
+    until: Number.NEGATIVE_INFINITY,
+    conns: new Set(),
+    versions: null,
+  });
+  if (path === ":memory:") {
+    const own = fresh();
+    own.conns.add(db);
+    return own;
+  }
+  const g = globalThis as { [CLOSED_DAY_SPEND]?: Map<string, ClosedDaySpend> };
+  const all = (g[CLOSED_DAY_SPEND] ??= new Map<string, ClosedDaySpend>());
+  let key: string;
+  try {
+    key = realpathSync(path);
+  } catch {
+    key = resolve(path);
+  }
+  const c = all.get(key) ?? fresh();
+  c.days.clear();
+  c.until = Number.NEGATIVE_INFINITY;
+  c.versions = null;
+  c.conns.add(db);
+  all.set(key, c);
+  return c;
+}
+
 function json(v: unknown): string {
   return JSON.stringify(v);
 }
@@ -53,8 +107,37 @@ function parse<T>(s: unknown): T {
   return JSON.parse(String(s)) as T;
 }
 
+/**
+ * A session's last four typed orders in a day (2026-11-02). In the store and not the tracker because a restart empties the
+ * tracker, and a job's wake-up often follows one. Four: the two jobs misread on 2026-11-02 sat 2 and 3 orders back, an
+ * Allow code among them. CROSS JOIN keeps `d_ts` in front, so the walk is bounded by time and not by the session: 3 ms on
+ * the live store, where leading with the session took 3.5 s on a 103k-row session.
+ */
+export const OWNER_ORDERS_SQL =
+  "SELECT json_extract(s.record_json, '$.request.value') AS request " +
+  "FROM decisions d CROSS JOIN situations s ON s.id = d.situation_id " +
+  "WHERE d.ts >= ? AND d.ts < ? AND d.seam = 'prompt' AND s.session = ? " +
+  "AND json_extract(s.record_json, '$.turnKind.value') = 'owner' " +
+  "AND json_extract(s.record_json, '$.request.value') IS NOT NULL " +
+  "ORDER BY d.ts DESC LIMIT 4";
+
+/**
+ * The typed orders of every session in a day, newest first (2026-11-17), for a turn whose own session never holds one:
+ * the relay, where each fan-out unit started with no parent reports its end. The caller keeps the newest four of his
+ * own chats. Bounded by time like OWNER_ORDERS_SQL: 11 ms and 59 rows on the live store for the day before 11-17 00:39.
+ */
+export const OWNER_CHAT_ORDERS_SQL =
+  "SELECT s.session AS session, json_extract(s.record_json, '$.request.value') AS request " +
+  "FROM decisions d CROSS JOIN situations s ON s.id = d.situation_id " +
+  "WHERE d.ts >= ? AND d.ts < ? AND d.seam = 'prompt' AND s.session NOT LIKE 'temp:%' " +
+  "AND json_extract(s.record_json, '$.turnKind.value') = 'owner' " +
+  "AND json_extract(s.record_json, '$.request.value') IS NOT NULL " +
+  "ORDER BY d.ts DESC";
+
 export class AmygdalaStore {
   private readonly db: Database.Database;
+  /** FORK 2026-10-29: shared with every store open on the same file (`closedDaySpendFor`). */
+  private readonly closedDays: ClosedDaySpend;
 
   constructor(path: string | ":memory:") {
     if (path !== ":memory:") {
@@ -100,6 +183,18 @@ export class AmygdalaStore {
     // 2.6 ms on a copy of the live columns. Built once, on the first open after the upgrade.
     this.db.exec("CREATE INDEX IF NOT EXISTS v_sit ON verdicts(situation_id, ts)");
     this.db.exec("CREATE INDEX IF NOT EXISTS v_ts ON verdicts(ts)");
+    // FORK 2026-10-29: the stop seam's turn queries (flaggedDecisionsForTurn, unjudgedPassesForTurn, turnStartTs)
+    // run on the gateway's main thread before the hook gets its answer, and they were full-history scans: no index
+    // led with situations.turn_id and decisions had none on situation_id, so each walked every stored decision
+    // through d_ts (live store, 273k decisions: 1.5-2.2 s warm per stop, a third of stop hooks at the 5 s fail-open).
+    // With these two they are seeks returning the same rows in the same order, under 1 ms each on a copy of the live
+    // key columns; s_turn carries ts so turnStartTs reads MIN(ts) from the index alone. The first open of a large
+    // existing store builds both once, on this thread (0.65 s on that copy; the live file is unmeasured). d_sit
+    // would also re-plan decisionsSinceForSession, so that query pins its old plan (see there).
+    this.db.exec("CREATE INDEX IF NOT EXISTS s_turn ON situations(turn_id, ts)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS d_sit ON decisions(situation_id)");
+    // FORK 2026-10-29: last, so the file exists for realpath and a failed open joins no cache (closedDaySpendFor).
+    this.closedDays = closedDaySpendFor(path, this.db);
   }
 
   saveReview(r: ReviewRow): void {
@@ -221,6 +316,24 @@ export class AmygdalaStore {
       .prepare("SELECT MIN(ts) AS ts FROM situations WHERE turn_id = ?")
       .get(turnId) as Row | undefined;
     return typeof r?.ts === "number" ? r.ts : null;
+  }
+
+  /** The owner's last typed orders in a session, oldest first: see OWNER_ORDERS_SQL. */
+  ownerOrders(sessionKey: string, before: number): string[] {
+    const rows = this.db
+      .prepare(OWNER_ORDERS_SQL)
+      .all(before - 86_400_000, before, sessionKey) as Row[];
+    return rows.map((r) => String(r.request)).reverse();
+  }
+
+  /** The owner's last four typed orders in his own chats, oldest first: see OWNER_CHAT_ORDERS_SQL. */
+  ownerChatOrders(before: number, ownChat: (sessionKey: string) => boolean): string[] {
+    const rows = this.db.prepare(OWNER_CHAT_ORDERS_SQL).all(before - 86_400_000, before) as Row[];
+    return rows
+      .filter((r) => ownChat(String(r.session)))
+      .slice(0, 4)
+      .map((r) => String(r.request))
+      .reverse();
   }
 
   /**
@@ -380,6 +493,9 @@ export class AmygdalaStore {
   }
 
   close(): void {
+    // FORK 2026-10-29: a closed connection has no data_version to read, and forgetIfOutsideCommit reads every one left.
+    this.closedDays.conns.delete(this.db);
+    this.closedDays.versions?.delete(this.db);
     this.db.close();
   }
 
@@ -439,6 +555,11 @@ export class AmygdalaStore {
         );
       }
     })();
+    // FORK 2026-10-29: a verdict stamped inside a cached closed day changes that day's sum. A replay stamps its
+    // verdicts with the exchange's own time, and a judge call can straddle midnight; a live verdict lands after `until`.
+    if (vs.some((v) => v.ts < this.closedDays.until)) {
+      this.forgetClosedDays();
+    }
   }
 
   saveDecision(d: Decision, meta: { id: string; seam: Seam; ts: number }): void {
@@ -955,10 +1076,79 @@ export class AmygdalaStore {
     };
   }
 
+  /**
+   * FORK 2026-10-29: the verdict sums of whole local days that are over, added up (the 30-day spend, spend.ts
+   * `spendLast30Days`). Each day is summed once, by `verdictSpend` over its [start, end), and kept under its day key
+   * until a write could change it: `saveVerdicts` with a verdict stamped before the end of the latest cached day,
+   * `deleteReplayTurn` removing verdicts, `pruneRecords`, or a commit by a connection that is none of this process's
+   * stores on the file (`forgetIfOutsideCommit`). A day not asked for is dropped, so the cache holds one window. Pass
+   * only days that are over: a day still running would keep the sum it had when it was asked.
+   */
+  closedDaysSpend(days: readonly { start: number; end: number }[]): VerdictSpend {
+    this.forgetIfOutsideCommit();
+    const kept = new Map<string, VerdictSpend>();
+    const total: VerdictSpend = { usd: 0, tokensIn: 0, tokensOut: 0, calls: 0, skipped: 0 };
+    let until = Number.NEGATIVE_INFINITY;
+    for (const d of days) {
+      const key = `${d.start}-${d.end}`;
+      const s = this.closedDays.days.get(key) ?? this.verdictSpend(d.start, d.end);
+      kept.set(key, s);
+      until = Math.max(until, d.end);
+      total.usd += s.usd;
+      total.tokensIn += s.tokensIn;
+      total.tokensOut += s.tokensOut;
+      total.calls += s.calls;
+      total.skipped += s.skipped;
+    }
+    this.closedDays.days = kept;
+    this.closedDays.until = until;
+    return total;
+  }
+
+  /** FORK 2026-10-29: forget every cached closed-day sum; the next 30-day spend sums those days again. */
+  private forgetClosedDays(): void {
+    this.closedDays.days.clear();
+    this.closedDays.until = Number.NEGATIVE_INFINITY;
+    this.closedDays.versions = null;
+  }
+
+  /**
+   * FORK 2026-10-29: forget the cached days when a connection that is none of this process's stores on the file (a
+   * script, another process) committed after the first of them was summed: no store's write path saw that commit. A
+   * connection's PRAGMA data_version moves on every commit by another connection, a sibling store's included, and
+   * never on its own. A sibling's commit leaves that sibling's version alone, and its write path already dropped what
+   * the commit changed; an outside commit moves every version. So the days stay while one open store still reads the
+   * version it read when they began. Two stores that both committed meanwhile look like an outside commit: one
+   * recount, never a stale sum. The versions are read before any day is summed, so no cached day is older than them.
+   */
+  private forgetIfOutsideCommit(): void {
+    const c = this.closedDays;
+    const seen = new Map<Database.Database, number>();
+    for (const db of c.conns) {
+      seen.set(db, db.pragma("data_version", { simple: true }) as number);
+    }
+    const before = c.versions;
+    if (before && ![...seen].some(([db, v]) => before.get(db) === v)) {
+      this.forgetClosedDays();
+    }
+    c.versions ??= seen;
+  }
+
   decisionsSince(ts: number): DecisionRow[] {
     return (
       this.db.prepare("SELECT * FROM decisions WHERE ts >= ? ORDER BY ts, rowid").all(ts) as Row[]
     ).map((r) => this.decisionFromRow(r));
+  }
+
+  /**
+   * FORK 2026-10-29: the decisions since `ts` (no upper bound, as `decisionsSince`), counted per response kind in SQL.
+   * The `kind` column holds `response.kind`: saveDecision writes both from the same value and no path updates them.
+   */
+  decisionKindCountsSince(ts: number): Map<string, number> {
+    const rows = this.db
+      .prepare("SELECT kind, COUNT(*) AS n FROM decisions WHERE ts >= ? GROUP BY kind")
+      .all(ts) as Row[];
+    return new Map(rows.map((r): [string, number] => [String(r.kind), r.n as number]));
   }
 
   /**
@@ -968,6 +1158,7 @@ export class AmygdalaStore {
    */
   deleteReplayTurn(turnId: string): number {
     if (!turnId.includes("#replay-")) throw new Error("only replay turns can be deleted");
+    let verdictsGone = 0;
     const del = this.db.transaction((id: string) => {
       const sids = (
         this.db.prepare("SELECT id FROM situations WHERE turn_id = ?").all(id) as Row[]
@@ -980,20 +1171,32 @@ export class AmygdalaStore {
         for (const did of dids)
           this.db.prepare("DELETE FROM interventions WHERE decision_id = ?").run(did);
         n += this.db.prepare("DELETE FROM decisions WHERE situation_id = ?").run(sid).changes;
-        this.db.prepare("DELETE FROM verdicts WHERE situation_id = ?").run(sid);
+        verdictsGone += this.db
+          .prepare("DELETE FROM verdicts WHERE situation_id = ?")
+          .run(sid).changes;
         this.db.prepare("DELETE FROM situations WHERE id = ?").run(sid);
       }
       return n;
     });
-    return del(turnId) as number;
+    const removed = del(turnId) as number;
+    // FORK 2026-10-29: a replay's verdicts carry the exchange's own time, so the rows deleted can sit in a cached
+    // closed day.
+    if (verdictsGone > 0) {
+      this.forgetClosedDays();
+    }
+    return removed;
   }
 
   /** One tab's decisions since `ts`, oldest first. Filter BEFORE any limit: a quiet tab's old rows must survive. */
   decisionsSinceForSession(ts: number, sessionKey: string): DecisionRow[] {
+    // FORK 2026-10-29: CROSS JOIN only fixes the join order, never the rows: decisions are the outer loop, read
+    // through d_ts, so the cost follows the time window. With a plain JOIN, d_sit (see the constructor) lets the
+    // planner, which has no table statistics here, start from s_sess and walk every situation the tab ever had. On
+    // a copy of the live key columns, a tab with 103k situations went from 25 ms to 220 ms per call that way.
     return (
       this.db
         .prepare(
-          "SELECT d.* FROM decisions d JOIN situations s ON s.id = d.situation_id WHERE d.ts >= ? AND s.session = ? ORDER BY d.ts, d.rowid",
+          "SELECT d.* FROM decisions d CROSS JOIN situations s ON s.id = d.situation_id WHERE d.ts >= ? AND s.session = ? ORDER BY d.ts, d.rowid",
         )
         .all(ts, sessionKey) as Row[]
     ).map((r) => this.decisionFromRow(r));
@@ -1020,8 +1223,14 @@ export class AmygdalaStore {
 
   /** Retention: nulls record_json only; redacted_json, verdicts and decisions stay. Returns rows changed. */
   pruneRecords(olderThanTs: number): number {
-    return this.db
+    const n = this.db
       .prepare("UPDATE situations SET record_json = NULL WHERE ts < ? AND record_json IS NOT NULL")
       .run(olderThanTs).changes;
+    // FORK 2026-10-29: no verdict moves here, so no day's sum changes. The cached days are dropped all the same, so
+    // that a retention which one day deletes verdicts cannot leave a stale 30-day total.
+    if (n > 0) {
+      this.forgetClosedDays();
+    }
+    return n;
   }
 }

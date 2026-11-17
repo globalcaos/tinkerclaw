@@ -54,6 +54,7 @@ import {
   type WorkerProvider,
   type WorkerSpawnExtras,
   type WorkerSpawnInfo,
+  readThalamusCooling,
 } from "openclaw/plugin-sdk/fork-thalamus";
 import { anticipateReport } from "./anticipate-report.js";
 import { createCacheFeed, newLedgerHolder, type AgentEventLike } from "./cache-feed.js";
@@ -1221,6 +1222,12 @@ export function createRuntime(deps: RuntimeDeps) {
         uses,
         cardNames,
         plans,
+        // What is closed now and until when: the picker strikes these models out (2026-11-13).
+        cooling: Object.entries(readThalamusCooling({ nowMs: at }).entries).map(([key, e]) => ({
+          key,
+          until: e.until,
+          detail: e.detail ?? "",
+        })),
       };
     },
 

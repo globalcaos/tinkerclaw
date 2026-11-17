@@ -4,6 +4,7 @@ import {
   chainOf,
   chainOfSession,
   createRope,
+  healChains,
   linkTabs,
   nextChainColor,
   pairChainedRows,
@@ -128,6 +129,32 @@ describe("tab chains — the pair behaves as one object (2026-09-25)", () => {
     expect(chainOf(next, "a")).toBeUndefined();
     expect(chainOf(next, "a2")).toMatchObject({ slave: "b2", color: 1, masterKey: "kA" });
     expect(chainOf(next, "x")).toBeDefined();
+  });
+
+  it("moves an end whose tab closed onto the open tab holding its session (2026-11-14)", () => {
+    const stale = withChainKeys(linkTabs([], "old-m", "old-s"), (id) =>
+      id === "old-m" ? "agent:main:tinker:M" : "agent:main:tinker:S",
+    );
+    const open = [
+      { id: "new-m", sessionKey: "agent:main:tinker:M" },
+      { id: "new-s", sessionKey: "tinker:S" },
+    ];
+    expect(healChains(stale, open, match)).toEqual([
+      { ...stale[0], master: "new-m", slave: "new-s" },
+    ]);
+    expect(healChains(stale, [], match)[0]).toBe(stale[0]);
+  });
+
+  it("never moves an open end, and never takes a tab another chain holds", () => {
+    let c = withChainKeys(linkTabs([], "a", "gone"), () => undefined);
+    c = c.map((x) => ({ ...x, masterKey: "kA", slaveKey: "kB" }));
+    c = linkTabs(c, "b", "c");
+    const open = [
+      { id: "a", sessionKey: "kA-after-clear" },
+      { id: "b", sessionKey: "kB" },
+      { id: "c", sessionKey: "kC" },
+    ];
+    expect(healChains(c, open, match)).toEqual(c);
   });
 
   it("releases every chain touching a deleted session", () => {

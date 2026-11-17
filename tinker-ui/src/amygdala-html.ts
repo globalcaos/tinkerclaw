@@ -80,3 +80,17 @@ export function fmtAnswer(d: Pick<JevDecision, "answer" | "prob">): string {
   if (typeof d.answer === "boolean") return d.answer ? "yes" : "no";
   return String(d.answer);
 }
+
+/** A rule an action rests on (2026-11-03): a Jev question (its .md) or a fixed rule (rules.ts). */
+export interface RuleRef {
+  name: string;
+  file?: string;
+}
+
+/** One "Rule" line in an opened bubble; with a file, the name opens it through the app's `.fs-link` handler. */
+export function ruleLine(r: RuleRef): string {
+  const name = r.file
+    ? `<code class="fs-link amy-qlink" data-path="${esc(r.file)}" title="Open the file that holds this rule, to read or change it">${esc(r.name)}</code>`
+    : esc(r.name);
+  return `<div class="amy-jx-rule"><span class="amy-mt">Rule</span>${name}</div>`;
+}

@@ -31,7 +31,7 @@ import {
 import { getUsageSnapshot } from "../../infra/usage-snapshot-store.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import { taskEffort } from "../../shared/thalamus-effort.js";
+import { stopEffortStands, taskEffort } from "../../shared/thalamus-effort.js";
 import {
   classifyTaskDomain,
   type TaskDomain,
@@ -44,7 +44,14 @@ import {
   type ReservedReason,
   type RungVeto,
 } from "../../shared/thalamus-plan.js";
-import { type SupplyId, type SupplyState } from "../../shared/thalamus-supply.js";
+import {
+  SECOND_OPINION_ONLY_SUPPLIES,
+  supplyOf,
+  supplyOfKey,
+  UNFUNDED_BY_DEFAULT_SUPPLIES,
+  type SupplyId,
+  type SupplyState,
+} from "../../shared/thalamus-supply.js";
 import { userTaskText } from "../../shared/user-task-text.js";
 import { formatProviderModelRef } from "../model-runtime.js";
 import type { ThinkLevel } from "./directives.js";
@@ -498,6 +505,34 @@ export async function createModelSelectionState(params: {
     params.hasResolvedHeartbeatModelOverride === true ||
     (Boolean(storedOverride?.model) && !storedOverrideIsAuto);
   if (!hasExplicitModelSelection) {
+    const unfundedAuto =
+      process.env.OPENCLAW_THALAMUS_ALLOW_OPENROUTER === "on"
+        ? undefined
+        : UNFUNDED_BY_DEFAULT_SUPPLIES;
+    const secondOpinionAuto =
+      process.env.OPENCLAW_THALAMUS_ALLOW_GOOGLE === "on"
+        ? undefined
+        : SECOND_OPINION_ONLY_SUPPLIES;
+    const isAutoBlockedKey = (key: string): boolean => {
+      const s = supplyOfKey(key);
+      return Boolean(unfundedAuto?.has(s) || secondOpinionAuto?.has(s));
+    };
+    const quotaAllowedKeys = ((): ReadonlySet<string> => {
+      if (allowedModelKeys.size > 0) {
+        return new Set([...allowedModelKeys].filter((k) => !isAutoBlockedKey(k)));
+      }
+      const raw = Object.keys(cfg.agents?.defaults?.models ?? {});
+      if (raw.length === 0) return allowedModelKeys;
+      const kept = new Set<string>();
+      for (const rawKey of raw) {
+        const slash = rawKey.indexOf("/");
+        if (slash <= 0 || slash === rawKey.length - 1) continue;
+        const ref = normalizeModelRef(rawKey.slice(0, slash), rawKey.slice(slash + 1));
+        const k = modelKey(ref.provider, ref.model);
+        if (!isAutoBlockedKey(k)) kept.add(k);
+      }
+      return kept;
+    })();
     // `snapshot` and `nowMs` are ARGUMENTS, never read inside the resolver: it is pure so every
     // decision is reproducible in a test, and so the gateway and the browser cannot disagree about
     // the same window from two hidden clocks (same rule as `src/shared/quota-window.ts`).
@@ -511,7 +546,7 @@ export async function createModelSelectionState(params: {
       cfg,
       provider,
       model,
-      allowedModelKeys,
+      allowedModelKeys: quotaAllowedKeys,
       // `?? undefined`: the store returns `| null`, the resolver's param is `| undefined`. Both
       // mean "no quota data", and the resolver reads either as UNKNOWN — never as headroom.
       snapshot: getUsageSnapshot() ?? undefined,
@@ -520,8 +555,13 @@ export async function createModelSelectionState(params: {
     if (substitute) {
       const normalizedSubstitute = normalizeModelRef(substitute.provider, substitute.model);
       const substituteKey = modelKey(normalizedSubstitute.provider, normalizedSubstitute.model);
-      // An agent model allowlist is a hard boundary: Auto never routes outside it.
-      if (allowedModelKeys.size === 0 || allowedModelKeys.has(substituteKey)) {
+      const subSupply = supplyOf(normalizedSubstitute.provider);
+      // An agent model allowlist is a hard boundary, and pay-per-call / unfunded supplies never take Auto turns.
+      if (
+        !unfundedAuto?.has(subSupply) &&
+        !secondOpinionAuto?.has(subSupply) &&
+        (allowedModelKeys.size === 0 || allowedModelKeys.has(substituteKey))
+      ) {
         quotaSubstitution = {
           originalProvider: provider,
           originalModel: model,
@@ -602,17 +642,18 @@ export async function createModelSelectionState(params: {
         // CONTEXT WINDOWS come from the live catalog, never from a table in this tree: the
         // catalog is the only copy that moves when a vendor raises a limit. A model the catalog
         // does not describe is UNKNOWN and passes the capacity veto (see `fitsContext`).
-        const { reachable, rungs, supplies, contextWindowFor } = buildThalamusBoardParts({
-          catalog: thalamusCatalog,
-          thalamusCandidates,
-          // `?? undefined`: the store returns `| null`, the module's param is `| undefined`. Both mean
-          // "no quota data", read as UNKNOWN, never headroom.
-          snapshot,
-          nowMs,
-          allowedModelKeys,
-          suggestedModelKey: suggestion?.key,
-          windowRows: allowedModelCatalog,
-        });
+        const { reachable, rungs, secondOpinionRungs, supplies, contextWindowFor } =
+          buildThalamusBoardParts({
+            catalog: thalamusCatalog,
+            thalamusCandidates,
+            // `?? undefined`: the store returns `| null`, the module's param is `| undefined`. Both mean
+            // "no quota data", read as UNKNOWN, never headroom.
+            snapshot,
+            nowMs,
+            allowedModelKeys,
+            suggestedModelKey: suggestion?.key,
+            windowRows: allowedModelCatalog,
+          });
         const domain = classifyTaskDomain(params.promptText ?? "");
         // THE SUGGESTION AND THE COOLING STORE (the architect, 2026-10-02, full deploy). The dial's stop may carry a
         // suggested model and effort; the router starts from it and moves off only for a reason (a limit, a
@@ -623,6 +664,7 @@ export async function createModelSelectionState(params: {
         const cooled = readThalamusCooling({ nowMs });
         const plan = thalamusPlan({
           rungs,
+          secondOpinionRungs,
           supplies,
           biasIdx: biasNow,
           domain,
@@ -631,6 +673,7 @@ export async function createModelSelectionState(params: {
           coolingUntil: cooled.until,
           suggestion,
           contextWindowFor,
+          excluded: reachable.excluded,
           // OPENROUTER IS UNFUNDED BY POLICY (2026-09-03: OpenRouter stays without
           // credits unless needed, since routing to it caused too many mistakes and it costs too
           // much for regular use). It is METERED, so it
@@ -639,7 +682,13 @@ export async function createModelSelectionState(params: {
           unfunded:
             process.env.OPENCLAW_THALAMUS_ALLOW_OPENROUTER === "on"
               ? undefined
-              : (new Set<SupplyId>(["openrouter"]) as ReadonlySet<SupplyId>),
+              : UNFUNDED_BY_DEFAULT_SUPPLIES,
+          // GOOGLE IS METERED OUT OF POCKET (2026-11-13: no subscription; reserved strictly for
+          // Nano Banana image generation and last-resort cross-family second opinions).
+          secondOpinionOnly:
+            process.env.OPENCLAW_THALAMUS_ALLOW_GOOGLE === "on"
+              ? undefined
+              : SECOND_OPINION_ONLY_SUPPLIES,
           nowMs,
         });
         // J-series row (logging.md §4.12 j.route.decision): the plan's own decision — domain,
@@ -684,6 +733,9 @@ export async function createModelSelectionState(params: {
           // reading as "routine" and dropping to low.
           // `OPENCLAW_THALAMUS_TASK_EFFORT=off` keeps the rung's effort byte for byte.
           const taskText = userTaskText(params.promptText);
+          const smartEffortStands = stopEffortStands(
+            route?.biasIdx ?? biasNow ?? THALAMUS_DEFAULT_BIAS_IDX,
+          );
           const chosenEffort =
             process.env.OPENCLAW_THALAMUS_TASK_EFFORT !== "off" && rungEffort && taskText
               ? taskEffort({
@@ -692,7 +744,12 @@ export async function createModelSelectionState(params: {
                   ladder: rungs.filter((r) => r.key === route.rung.key).map((r) => r.effort),
                 })
               : undefined;
-          const turnEffort = chosenEffort?.level ?? rungEffort;
+          // At the smart band the task is still read (it decides the fan-out), and the stop's effort stands.
+          const turnEffort = smartEffortStands ? rungEffort : (chosenEffort?.level ?? rungEffort);
+          const turnEffortWhy =
+            smartEffortStands && chosenEffort && !chosenEffort.ultracode
+              ? "the smart stop's effort stands"
+              : (chosenEffort?.why ?? "");
           // smart and cost belong to the RUNG that runs, not to the one the frontier priced.
           const turnRung =
             turnEffort === rungEffort
@@ -723,7 +780,7 @@ export async function createModelSelectionState(params: {
                 model: normalized.model,
                 effort: turnEffort,
                 ultracode: chosenEffort?.ultracode ?? false,
-                effortWhy: chosenEffort?.why ?? "",
+                effortWhy: turnEffortWhy,
                 domain: routeDomain,
                 smart: turnRung.smart ?? 0,
                 cost: turnRung.cost ?? 0,
@@ -753,7 +810,7 @@ export async function createModelSelectionState(params: {
                   routedKey: routeKey,
                   effort: turnEffort,
                   ultracode: chosenEffort?.ultracode ?? false,
-                  effortWhy: chosenEffort?.why ?? "",
+                  effortWhy: turnEffortWhy,
                   biasIdx: routeBias,
                   domain: routeDomain,
                   subject: plan?.subject,

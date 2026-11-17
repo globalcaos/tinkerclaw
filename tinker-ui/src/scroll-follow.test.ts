@@ -131,11 +131,18 @@ describe("app.ts owner-send wiring", () => {
   const appSrc = readFileSync(findAppSource(), "utf8");
 
   it("both composer sends (Enter and the send button) go through sendFromComposer", () => {
-    const composerSends = appSrc.match(/\b(?:sendFromComposer|send)\(ta\.value\)/g) ?? [];
-    expect(composerSends, "the composer send sites moved").toEqual([
-      "sendFromComposer(ta.value)",
-      "sendFromComposer(ta.value)",
-    ]);
+    // Since the record button (2026-11-03) Enter and Send share sendComposer, which stops a live
+    // recording and then hands the text to sendFromComposer. No composer site may skip that helper.
+    expect(appSrc.match(/\b(?:sendFromComposer|send)\(ta\.value\)/g) ?? []).toEqual([]);
+    expect(
+      appSrc.match(/\bvoid sendComposer\((?:true|false)\)/g) ?? [],
+      "the composer send sites moved",
+    ).toEqual(["void sendComposer(false)", "void sendComposer(true)"]);
+    const helper = appSrc.indexOf("const sendComposer = async (refocus: boolean) => {");
+    expect(helper, "sendComposer moved or was renamed").toBeGreaterThan(-1);
+    expect(appSrc.slice(helper, appSrc.indexOf("\n  };\n", helper))).toContain(
+      "sendFromComposer(text);",
+    );
   });
 
   it("only sendFromComposer raises the owner-intent flag, and send() consumes it FIRST", () => {

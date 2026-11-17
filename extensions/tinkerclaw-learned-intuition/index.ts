@@ -108,6 +108,8 @@ export interface AmygdalaHookEvent {
   toolUseId: string | null;
   sessionId: string | null;
   enforced: boolean;
+  /** 2026-10-29: a hard-rule deny's owner grant code; the page's Allow button sends "allow <grant>". */
+  grant?: string | null;
 }
 
 /** Spool `ts` is ISO (the hook writes `new Date().toISOString()`); the event carries ms. 0 when
@@ -143,6 +145,7 @@ export function hookEventFromRow(raw: unknown): AmygdalaHookEvent | null {
   const ts = hookRowTs(h.ts);
   const rule = optString(h.rule);
   const toolUseId = optString(h.toolUseId);
+  const grant = optString(h.grant);
   return {
     id: hookRowId(ts, toolUseId, rule),
     ts,
@@ -153,6 +156,39 @@ export function hookEventFromRow(raw: unknown): AmygdalaHookEvent | null {
     toolUseId,
     sessionId: optString(h.sessionId),
     enforced: Boolean(h.enforced),
+    ...(grant ? { grant } : {}),
+  };
+}
+
+/**
+ * A spool row as `amygdala.feed` serves it. FORK 2026-10-15: it carries the raw hook decision, the
+ * tool call it judged and the same id the live `amygdala.hook` event uses, so the chat can pin the
+ * row to its tool row and dedupe against what it already saw live. `decision` stays the mapped
+ * value the feed panel reads (hard_block / soft_block / allow). The grant rides along too: the page
+ * seeds from this feed, and a deny seeded without it has no Allow button.
+ */
+export function hookFeedRow(h: Record<string, unknown>): Record<string, unknown> {
+  const dcn = String(h.decision ?? "allow");
+  const mapped = dcn === "deny" ? "hard_block" : dcn === "observe" ? "soft_block" : "allow";
+  const rule = optString(h.rule);
+  const toolUseId = optString(h.toolUseId);
+  const grant = optString(h.grant);
+  return {
+    id: hookRowId(hookRowTs(h.ts), toolUseId, rule),
+    ts: h.ts,
+    tool: h.tool,
+    target: h.target,
+    decision: mapped,
+    hookDecision: dcn,
+    rule,
+    toolUseId,
+    sessionId: optString(h.sessionId),
+    blocked: dcn !== "allow",
+    enforced: Boolean(h.enforced),
+    mode: "hook",
+    signal: "aegis",
+    reason: h.rule ? `AEGIS [${h.rule}]` : undefined,
+    ...(grant ? { grant } : {}),
   };
 }
 
@@ -723,23 +759,29 @@ export default definePluginEntry({
     // -- Hook: before_tool_call --
     api.on(
       "before_tool_call",
-      async (event: { toolName: string; args: Record<string, unknown> }) => {
+      // The host sends the tool input as `params` (src/plugins/hook-types.ts
+      // PluginHookBeforeToolCallEvent); `args` is kept as a fallback for older hosts.
+      async (event: {
+        toolName: string;
+        params?: Record<string, unknown>;
+        args?: Record<string, unknown>;
+      }) => {
         await ensureInit();
         if (!hookReady) {
           return; // Initialization failed -- allow everything
         }
 
         try {
-          const argsStr = JSON.stringify(event.args ?? {});
+          const toolArgs = event.params ?? event.args ?? {};
           const target =
-            (event.args?.path as string) ||
-            (event.args?.file_path as string) ||
-            (event.args?.command as string) ||
-            (event.args?.target as string) ||
+            (toolArgs.path as string) ||
+            (toolArgs.file_path as string) ||
+            (toolArgs.command as string) ||
+            (toolArgs.target as string) ||
             event.toolName;
 
           const result = await hook.evaluate(
-            { type: event.toolName, target, metadata: event.args },
+            { type: event.toolName, target, metadata: toolArgs },
             {
               topic: "active-session",
               emotionalState: "calm",
@@ -1178,32 +1220,7 @@ export default definePluginEntry({
           hookRows = lines
             .map((l) => {
               try {
-                const h = JSON.parse(l) as Record<string, unknown>;
-                const dcn = String(h.decision ?? "allow");
-                const mapped =
-                  dcn === "deny" ? "hard_block" : dcn === "observe" ? "soft_block" : "allow";
-                // FORK 2026-10-15: carry the raw hook decision, the tool call it judged and the
-                // same id the live `amygdala.hook` event uses, so the chat can pin the row to
-                // its tool row and dedupe against what it already saw live. `decision` stays
-                // the mapped value the feed panel reads (hard_block / soft_block / allow).
-                const rule = optString(h.rule);
-                const toolUseId = optString(h.toolUseId);
-                return {
-                  id: hookRowId(hookRowTs(h.ts), toolUseId, rule),
-                  ts: h.ts,
-                  tool: h.tool,
-                  target: h.target,
-                  decision: mapped,
-                  hookDecision: dcn,
-                  rule,
-                  toolUseId,
-                  sessionId: optString(h.sessionId),
-                  blocked: dcn !== "allow",
-                  enforced: Boolean(h.enforced),
-                  mode: "hook",
-                  signal: "aegis",
-                  reason: h.rule ? `AEGIS [${h.rule}]` : undefined,
-                } as FeedDecision;
+                return hookFeedRow(JSON.parse(l) as Record<string, unknown>) as FeedDecision;
               } catch {
                 return null;
               }

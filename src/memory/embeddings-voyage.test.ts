@@ -1,3 +1,6 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FetchMock, withFetchPreconnect } from "../test-utils/fetch-mock.js";
 import { mockPublicPinnedHostname } from "./test-helpers/ssrf.js";
@@ -145,5 +148,123 @@ describe("voyage embedding provider", () => {
     expect(normalizeVoyageModel("voyage-4-large")).toBe("voyage-4-large");
     expect(normalizeVoyageModel("  voyage-lite  ")).toBe("voyage-lite");
     expect(normalizeVoyageModel("")).toBe("voyage-4-large"); // Default
+  });
+});
+
+// FORK 2026-10-30: the call's AbortSignal reaches Voyage's request
+// (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). Against a 127.0.0.1 server that takes the request and
+// never answers, an abort rejects the call at once and the server sees the connection close; a
+// call without a signal still embeds.
+
+/** How soon an aborted call must reject; before the fix it stayed pending until an answer came. */
+const ABORT_PROMPT_MS = 200;
+
+type Loopback = {
+  baseUrl: string;
+  state: { paths: string[]; closed: number };
+  close: () => Promise<void>;
+};
+
+const loopbacks: Loopback[] = [];
+
+/**
+ * A server on 127.0.0.1 and an ephemeral port. It answers every request with `reply` as JSON, or
+ * for "hold" reads the request and never answers. `state.closed` counts the connections that close.
+ */
+async function startLoopback(reply: "hold" | Record<string, unknown>): Promise<Loopback> {
+  const state = { paths: [] as string[], closed: 0 };
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      state.paths.push(req.url ?? "");
+      if (reply !== "hold") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(reply));
+      }
+    });
+  });
+  server.on("connection", (socket) => {
+    socket.once("close", () => {
+      state.closed += 1;
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  const loopback: Loopback = {
+    baseUrl: `http://127.0.0.1:${port}`,
+    state,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+  loopbacks.push(loopback);
+  return loopback;
+}
+
+/**
+ * Starts a call against a server that holds it and aborts it once the server has the request. The
+ * call must reject within ABORT_PROMPT_MS and the server must see the connection close. The race
+ * keeps the control from hanging: on the code before the fix it came back "still pending".
+ */
+async function expectAbortStopsTheRequest(
+  server: Loopback,
+  start: (signal: AbortSignal) => Promise<unknown>,
+): Promise<void> {
+  const controller = new AbortController();
+  const outcome = start(controller.signal).then(
+    () => "resolved",
+    (err: unknown) => err,
+  );
+  await vi.waitFor(() => expect(server.state.paths).toHaveLength(1), { timeout: 5_000 });
+  controller.abort();
+  const settled = await Promise.race([outcome, sleep(ABORT_PROMPT_MS, "still pending")]);
+  expect(settled).toBeInstanceOf(Error);
+  await vi.waitFor(() => expect(server.state.closed).toBe(1), { timeout: 2_000 });
+}
+
+describe("voyage embedding provider abort", () => {
+  beforeEach(() => {
+    // Tests above stub the hostname resolver with a public address; the real one keeps these
+    // requests on 127.0.0.1.
+    vi.restoreAllMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all(loopbacks.splice(0).map((server) => server.close()));
+  });
+
+  async function loopbackVoyage(baseUrl: string) {
+    const { provider } = await createVoyageEmbeddingProvider({
+      config: {} as never,
+      provider: "voyage",
+      model: "voyage-4-large",
+      fallback: "none",
+      remote: { baseUrl, apiKey: "loopback-test-key" }, // pragma: allowlist secret
+    });
+    return provider;
+  }
+
+  it.each(["embedQuery", "embedBatch"] as const)(
+    "%s: an abort rejects at once and closes the held request",
+    async (entry) => {
+      const server = await startLoopback("hold");
+      const provider = await loopbackVoyage(server.baseUrl);
+
+      await expectAbortStopsTheRequest(server, (signal) =>
+        entry === "embedQuery"
+          ? provider.embedQuery("q", { signal })
+          : provider.embedBatch(["a", "b"], { signal }),
+      );
+    },
+  );
+
+  it("embeds as before when the call carries no signal", async () => {
+    const server = await startLoopback({ data: [{ embedding: [0.1, 0.2] }] });
+    const provider = await loopbackVoyage(server.baseUrl);
+
+    await expect(provider.embedQuery("q")).resolves.toEqual([0.1, 0.2]);
+    expect(server.state.paths).toEqual(["/embeddings"]);
   });
 });

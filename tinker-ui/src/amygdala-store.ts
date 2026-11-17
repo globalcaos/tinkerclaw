@@ -12,6 +12,7 @@ import type {
   JevDecision,
   MarkerView,
   QuestionRow,
+  RuleRow,
   StatusView,
   TurnView,
 } from "./amygdala-types.js";
@@ -32,6 +33,8 @@ export interface AmygdalaState {
   spend: { eur: number; eur30: number; calls: number } | null;
   counts: { checks: number; held: number; asked: number } | null;
   questions: QuestionRow[];
+  /** The hard rules' chat words (2026-11-03); empty from an older gateway. */
+  rules: RuleRow[];
   precedents: number;
   changes: ChangeView[];
 }
@@ -107,6 +110,7 @@ export class AmygdalaStore {
     spend: null,
     counts: null,
     questions: [],
+    rules: [],
     precedents: 0,
     changes: [],
   };
@@ -174,6 +178,10 @@ export class AmygdalaStore {
         for (const x of feed.explanations) changed = this.mergeExplanation(x) || changed;
       if (Array.isArray(feed.questions) && !same(feed.questions, this.st.questions)) {
         this.st = { ...this.st, questions: feed.questions };
+        changed = true;
+      }
+      if (Array.isArray(feed.rules) && !same(feed.rules, this.st.rules)) {
+        this.st = { ...this.st, rules: feed.rules };
         changed = true;
       }
       if (isNum(feed.precedents) && feed.precedents !== this.st.precedents) {

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { DID_WORD, GLYPH } from "./amygdala-html.js";
+import { DID_WORD, GLYPH, type RuleRef } from "./amygdala-html.js";
 import {
   actionDecisionId,
   actionsOf,
   actionsSummary,
   checksSummary,
+  judgeName,
   renderJevActions,
   renderJevChecks,
   renderJevNotConsulted,
@@ -404,13 +405,13 @@ describe("renderJevActions: the actions to review", () => {
     expect(render({ shadow: false }).querySelector(".amy-jkind")!.textContent).toBe("acted");
   });
 
-  it("one card per action: a single line by default, the step and the reasons behind the toggle, no vote", () => {
+  it("one line per action: the amygdala's words and a caret; opened, the rules behind it, never the step (2026-11-03)", () => {
     const el = render();
     const rows = el.querySelectorAll(".amy-jact");
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.textContent).toContain("Would have held this step");
-    expect(rows[0]!.querySelector(".amy-ja-time")!.textContent).toBe("09:38");
-    expect(rows[0]!.querySelector(".amy-jc-step")).toBeNull();
+    expect(rows[0]!.querySelector(".amy-jline")!.textContent).toBe("Would have held this step");
+    expect(rows[0]!.querySelector(".amy-ja-time")).toBeNull();
+    expect(rows[0]!.querySelector(".amy-jo")).toBeNull();
     const head = rows[0]!.querySelector(".amy-jc-head")!;
     expect(head.getAttribute("data-amy-act")).toBe("jev-act-detail");
     expect(rows[1]!.textContent).toContain("Would have sent the reply back to be finished");
@@ -418,11 +419,27 @@ describe("renderJevActions: the actions to review", () => {
     const opened = render({
       openDetails: new Set([head.getAttribute("data-action")!]),
     }).querySelector(".amy-jact")!;
-    expect(opened.querySelector(".amy-jc-step")!.textContent).toMatch(/^step \S/);
-    const why = opened.querySelector(".amy-jc-why")!.textContent!;
-    expect(why).toContain("because Jev answered");
-    expect(why).toContain("Danger level: how hard is this step to undo? → 3");
-    expect(why).toContain("Planted instructions");
+    expect(opened.querySelector(".amy-jc-step")).toBeNull();
+    const rules = [...opened.querySelectorAll(".amy-jx-rule")].map((r) => r.textContent!);
+    expect(rules).toContain("RuleDanger level: how hard is this step to undo?");
+    expect(rules.some((r) => r.includes("Planted instructions"))).toBe(true);
+    expect(opened.textContent).not.toContain("→");
+  });
+
+  it("the feed's words replace the fallback line, and each rule opens its file", () => {
+    const words = (): { line?: string; rules: RuleRef[] } => ({
+      line: "This is hard to undo. Are you sure?",
+      rules: [{ name: "Danger level", file: "/q/safety/danger-level.md" }],
+    });
+    const key = render().querySelector(".amy-jc-head")!.getAttribute("data-action")!;
+    const opened = render({ words, openDetails: new Set([key]) }).querySelector(".amy-jact")!;
+    expect(opened.querySelector(".amy-jline")!.textContent).toBe(
+      "This is hard to undo. Are you sure?",
+    );
+    const link = opened.querySelector(".amy-jx-rule code.fs-link")!;
+    expect(link.getAttribute("data-path")).toBe("/q/safety/danger-level.md");
+    // A click on the link opens the file; it must not also fold the bubble.
+    expect(link.closest("[data-amy-act]")).toBeNull();
   });
 
   it("enforce mode says what it did", () => {
@@ -448,7 +465,7 @@ describe("renderJevActions: the actions to review", () => {
     };
     const el = parse(renderJevActions("t1", [turn([], [], [m])], { open: true }));
     expect(el.querySelector(".amy-jev-act .amy-marker")!.textContent).toBe(
-      "still unsupported after two attempts: claims",
+      "still unsupported after one send-back: claims",
     );
     expect(el.querySelector(".amy-jsm")!.textContent).toBe("nothing to review");
   });
@@ -466,12 +483,12 @@ describe("renderJevActions: the actions to review", () => {
     expect([...rows].map((r) => r.getAttribute("data-turn"))).toEqual(["t1", "t2"]);
   });
 
-  it("escapes names and steps", () => {
+  it("escapes the names it shows", () => {
     const evil = "<img src=x onerror=alert(1)>";
     const t = turn([dec("e", { codeDid: "note", questionName: evil, stepLabel: evil })]);
     const el = render({ openDetails: new Set(actionsOf([t]).map((a) => a.key)) }, t);
     expect(el.querySelector("img")).toBeNull();
-    expect(el.querySelector(".amy-jc-step")!.textContent).toContain(evil);
+    expect(el.querySelector(".amy-jx-rule")!.textContent).toContain(evil);
   });
 });
 
@@ -510,29 +527,27 @@ describe("renderJevActions: the explainer's words", () => {
   const render = (o: Partial<Parameters<typeof renderJevActions>[2]> = {}) =>
     parse(renderJevActions("t1", [turn(held)], { open: true, ...o }));
 
-  it("collapsed, the line carries the judge's verdict; opened, what the agent was doing, Jev's worry and the judge's reason", () => {
+  it("collapsed, the line ends with the judge's note; opened, the worry and the judge's reason, not what the agent did", () => {
     const row = render({ explain: () => x() }).querySelector(".amy-jact")!;
-    expect(row.querySelector(".amy-jverdict")!.textContent).toBe("grok-4.6: wrong call");
+    expect(row.querySelector(".amy-jverdict")!.textContent).toBe("Grok: wrong call");
     expect(row.querySelector(".amy-jverdict")!.classList.contains("amy-jv-bad")).toBe(true);
-    expect(row.querySelector(".amy-jx-doing")).toBeNull();
-    expect(row.querySelector(".amy-jc-step")).toBeNull();
+    expect(row.querySelector(".amy-jx-jev")).toBeNull();
     expect(row.querySelector("[data-amy-act=jev-act-detail]")!.getAttribute("data-action")).toBe(
       key(),
     );
     const opened = render({ explain: () => x(), openDetails: new Set([key()]) }).querySelector(
       ".amy-jact",
     )!;
-    expect(opened.querySelector(".amy-jx-doing")!.textContent).toBe(
-      "Cleaning up its own login test files.",
-    );
-    expect(opened.querySelector(".amy-jx-jev")!.textContent).toContain(
+    // What the agent was doing is its tool row, right above the bubble.
+    expect(opened.textContent).not.toContain("Cleaning up its own login test files.");
+    expect(opened.querySelector(".amy-jx-jev")!.textContent).toBe(
       "Would have held it because files were deleted.",
     );
-    expect(opened.querySelector(".amy-jx-verdict")!.textContent).toContain(
-      "Just its own test files.",
+    expect(opened.querySelector(".amy-jx-verdict")!.textContent).toBe(
+      "GrokJust its own test files.",
     );
-    expect(opened.querySelector(".amy-jc-step")).not.toBeNull();
-    expect(opened.querySelector(".amy-jc-why")!.textContent).toContain("Danger level");
+    expect(opened.querySelector(".amy-jc-step")).toBeNull();
+    expect(opened.querySelector(".amy-jx-rule")!.textContent).toContain("Danger level");
   });
 
   it("asks the owner nothing: no vote buttons, with or without the judge's words", () => {
@@ -541,7 +556,7 @@ describe("renderJevActions: the explainer's words", () => {
     const right = render({
       explain: () => x({ explanation: { ...x().explanation!, suggest: 1 } }),
     }).querySelector(".amy-jverdict")!;
-    expect(right.textContent).toBe("grok-4.6: right call");
+    expect(right.textContent).toBe("Grok: right call");
     expect(right.classList.contains("amy-jv-ok")).toBe(true);
   });
 
@@ -555,6 +570,14 @@ describe("renderJevActions: the explainer's words", () => {
     }).querySelector(".amy-jact")!;
     expect(failed.querySelector(".amy-jverdict")).toBeNull();
     expect(failed.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("names the judge by its family, the way a person would", () => {
+    expect(judgeName("xai/grok-4.7")).toBe("Grok");
+    expect(judgeName("anthropic/claude-sonnet-4-6")).toBe("Sonnet");
+    expect(judgeName("openai/gpt-5.5")).toBe("GPT");
+    expect(judgeName("local/odd-model")).toBe("odd-model");
+    expect(judgeName(undefined)).toBe("Judge");
   });
 
   it("actionDecisionId names the decision an action's vote and words belong to", () => {

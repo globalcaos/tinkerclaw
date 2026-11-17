@@ -3141,7 +3141,7 @@
         {
           "tool_use_id": "toolu_01HM6Bm2XfYw5KHoxuWuGF6b",
           "type": "tool_result",
-          "content": "Command did not complete within its 590s timeout and was moved to the background (ID: b1rj1xw0u). Output is being written to: /tmp/claude-1000/-home-globalcaos--openclaw-jarvis-workspace/e1a90b77-4305-48f9-9209-8ef4be7945c6/tasks/b1rj1xw0u.output. You will be notified when it completes. To check interim output, use Read on that file path.\nSession cwd remains /home/u/.openclaw/jarvis-works…",
+          "content": "Command did not complete within its 590s timeout and was moved to the background (ID: b1rj1xw0u). Output is being written to: /tmp/claude-1000/-home-user--openclaw-jarvis-workspace/e1a90b77-4305-48f9-9209-8ef4be7945c6/tasks/b1rj1xw0u.output. You will be notified when it completes. To check interim output, use Read on that file path.\nSession cwd remains /home/u/.openclaw/jarvis-works…",
           "is_error": false,
           "name": "Bash"
         }

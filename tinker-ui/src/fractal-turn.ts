@@ -40,6 +40,7 @@
  * the run's final).
  */
 
+import { supplyKind, supplyOfKey } from "../../src/shared/thalamus-supply.js";
 import { FRACTAL_DOCTRINE_SEAM_MARKER } from "./fractal-prompt-strip.js";
 import { fractalRunIdFor, fractalParentOf, isFractalRunId } from "./fractal-run-id.js";
 import type { CallTimelineStore } from "./panels/call-timeline.js";
@@ -470,20 +471,27 @@ export function replyTextOf(message: unknown): string {
  * The model the Fractal turn is sent with (charter M2): the chat's explicit pin when it has one,
  * else the model the reflected run actually used, as `provider/model` so the route is the same one
  * (a bare id could resolve to another provider and lose the cache). Undefined: send none, as before.
+ *
+ * FORK 2026-11-15 — never a pay-per-call model. On 2026-11-13 the owner picked Gemini 4 Carbon by hand
+ * to test it, and that turn's reflection went to Carbon too: 60 calls, about 3.55 USD of his own money.
+ * An explicit model skips Thalamus and its Google gate. A key whose provider bills per call (Thalamus'
+ * `metered` supplies: google, openrouter, and any provider it does not know, such as deepinfra) now
+ * sends none, so Thalamus routes the reflection on a subscription. A bare id passes as before.
  */
 export function fractalModelFor(opts: {
   pin?: string;
   run?: { model: string; provider?: string };
 }): string | undefined {
-  if (opts.pin) {
-    return opts.pin;
+  let key = opts.pin;
+  if (!key) {
+    const model = opts.run?.model;
+    if (!model) {
+      return undefined;
+    }
+    const provider = opts.run?.provider;
+    key = provider && !model.startsWith(`${provider}/`) ? `${provider}/${model}` : model;
   }
-  const model = opts.run?.model;
-  if (!model) {
-    return undefined;
-  }
-  const provider = opts.run?.provider;
-  return provider && !model.startsWith(`${provider}/`) ? `${provider}/${model}` : model;
+  return key.includes("/") && supplyKind(supplyOfKey(key)) === "metered" ? undefined : key;
 }
 
 // ─── The message ───

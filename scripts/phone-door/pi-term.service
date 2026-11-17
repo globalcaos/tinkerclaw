@@ -11,6 +11,8 @@ Description=Jarvis phone terminal session (tmux -L jarvis, Claude Code in ~/src/
 Type=forking
 WorkingDirectory=%h/src/jarvis-icu
 Environment=TERM=xterm-256color COLORTERM=truecolor
+# 2026-10-30: programs that "open a browser" here (Claude Code /login) open it on the phone instead.
+Environment=BROWSER=%h/src/tinkerclaw/scripts/phone-door/open-on-phone
 ExecStart=/usr/bin/tmux -L jarvis -f %h/src/tinkerclaw/scripts/phone-door/pi-term.tmux.conf new-session -d -s jarvis -x 80 -y 24 -c %h/src/jarvis-icu "bash -lic 'claude; exec bash -il'"
 ExecStop=/usr/bin/tmux -L jarvis kill-server
 Restart=always

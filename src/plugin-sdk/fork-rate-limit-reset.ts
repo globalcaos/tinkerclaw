@@ -8,7 +8,12 @@
  * declares the dependency for a plugin that is published on its own (FOUNDATION #9).
  *
  * Narrow on purpose: the two pure readers, nothing that schedules or reaches the gateway.
+ *
+ * FORK 2026-11-13: plus the one writer a limit needs. The CLI's Fable-limit line names a cap of one model;
+ * the bridge records it in Thalamus's cooling store so the next auto turn goes to the best model still open.
  */
 
 export { parseRateLimitReset } from "../auto-reply/reply/rate-limit-retry.js";
 export { isLongUsageWindow, usageWindowOf } from "../shared/usage-window.js";
+export { modelLimitFamily } from "../shared/thalamus-supply.js";
+export { recordModelLimit } from "../infra/thalamus-cooling.js";

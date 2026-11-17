@@ -5,6 +5,13 @@ export type GatewayBroadcastStateVersion = {
 
 export type GatewayBroadcastOpts = {
   dropIfSlow?: boolean;
+  /**
+   * FORK 2026-11-04 — only with `dropIfSlow`: a later frame on the same stream carries everything
+   * this one does (a chat delta or an assistant agent event holding the whole text so far), so a
+   * slow client may lose it early, above DROP_IF_SLOW_BUFFERED_BYTES. Every other droppable frame
+   * is dropped only above MAX_BUFFERED_BYTES, because nothing sends its content again.
+   */
+  supersededByNext?: boolean;
   stateVersion?: GatewayBroadcastStateVersion;
 };
 

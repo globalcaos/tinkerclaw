@@ -165,6 +165,8 @@ data/
 state/
 # pdf-review's links to the owner's own PDFs (papers/open/...) and test fixtures: runtime, named after real files
 apps/pdf-review/papers/
+# the app's Python venv; a /tmp test worktree links it from the main checkout (no slash: matches the symlink)
+apps/pdf-review/.venv
 db/
 crm_data/
 sessions/

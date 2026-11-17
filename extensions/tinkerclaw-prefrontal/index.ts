@@ -154,6 +154,150 @@ let adviceModule: Promise<AdviceModule | undefined> | undefined;
 const loadAdvice = (): Promise<AdviceModule | undefined> =>
   (adviceModule ??= import("./recipe-advice.js").catch(() => undefined));
 
+// FORK 2026-10-29: the client half of the J13 semantic recipe lane behind
+// PREFRONTAL_SEMANTIC_MATCH_ENABLED (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). The gateway's
+// fork.prefrontal.embed embeds only the prompt: it keeps the recipe vectors in a cache it fills
+// once in the background, and it retires the lane through a trial that counts rescues (#25). This
+// half reports the rescues it saw since its previous request, waits for the per-turn budget the
+// gateway derived plus a round-trip allowance, and turns every answer without vectors into an
+// error, so the matcher records that state and stays lexical for the turn. The state sits on a
+// globalThis slot because the gateway runs register() several times per process.
+
+/**
+ * The per-turn budget before the gateway has derived one: EMBED_CEILINGS.laneBudgetMs in core
+ * (1,000 ms), restated because an extension cannot import core; the gateway clamps every budget
+ * it receives to that ceiling. Objective: the first weak-lexical turn after a start waits at most
+ * 1 s for its prompt embed. Each answer's budgetMs, min(1,000 ms, 2 x the endpoint's measured
+ * query p95), replaces it; an unanswered call restores it. Changes with that ceiling.
+ */
+const SEMANTIC_LANE_OPENING_BUDGET_MS = 1_000;
+
+/**
+ * Time allowed for the round trip around the embed: a call times out at the per-turn budget
+ * plus this. Objective: an answer the gateway gives within its budget is never dropped for its
+ * transport (a new loopback WebSocket and its handshake, config and provider resolution, about
+ * 100 vectors of JSON), however small the budget, while a turn still waits at most budget + 1 s,
+ * so at most 2 s. Derived from: the lane ceiling, since the round trip is not measured yet.
+ * Break-even: below the real round trip, answers the gateway already counted as invocations are
+ * dropped, which pushes the trial toward retiring a lane that works. Changes once the round trip
+ * is measured (then its p95).
+ */
+const SEMANTIC_LANE_ROUND_TRIP_MS = 1_000;
+
+const SEMANTIC_LANE_SLOT = Symbol.for("openclaw.prefrontalSemanticLane.v1");
+
+type SemanticLaneClient = {
+  /** The per-turn budget the gateway returned last, or the opening one. */
+  budgetMs: number;
+  /** Rescues seen since the previous request; the next request reports them to the trial. */
+  pendingRecovered: number;
+  /** The state logged last: one line per change, never one per turn. */
+  state: string;
+};
+
+/** fork.prefrontal.embed's answer; every field is checked before use. */
+type PrefrontalEmbedReply = {
+  embeddings?: unknown;
+  budgetMs?: unknown;
+  warming?: unknown;
+  missing?: unknown;
+  armed?: unknown;
+  reason?: unknown;
+  degraded?: unknown;
+  error?: unknown;
+};
+
+type SemanticLaneLog = { info?: (message: string) => void };
+
+function semanticLaneClient(): SemanticLaneClient {
+  const slot = globalThis as Record<PropertyKey, unknown>;
+  let lane = slot[SEMANTIC_LANE_SLOT] as SemanticLaneClient | undefined;
+  if (!lane) {
+    lane = { budgetMs: SEMANTIC_LANE_OPENING_BUDGET_MS, pendingRecovered: 0, state: "" };
+    slot[SEMANTIC_LANE_SLOT] = lane;
+  }
+  return lane;
+}
+
+function noteSemanticLaneState(log: SemanticLaneLog, state: string, detail: string): void {
+  const lane = semanticLaneClient();
+  if (lane.state === state) {
+    return;
+  }
+  const from = lane.state || "start";
+  lane.state = state;
+  log.info?.(`[semantic-matcher] lane ${from} -> ${state} (${detail})`);
+}
+
+/**
+ * The embed seam behind PREFRONTAL_SEMANTIC_MATCH_ENABLED: [prompt, ...recipe texts] in, one
+ * vector per text out, or an Error naming the lane's state (warming, not armed, degraded, error,
+ * unanswered), which the matcher records before it stays lexical.
+ */
+async function embedThroughPrefrontalRpc(
+  texts: string[],
+  log: SemanticLaneLog,
+): Promise<number[][]> {
+  const lane = semanticLaneClient();
+  const budgetMs = lane.budgetMs;
+  const prevRecovered = lane.pendingRecovered;
+  // The gateway counts them when the request arrives, so each rescue is reported once.
+  lane.pendingRecovered = 0;
+  let reply: PrefrontalEmbedReply;
+  try {
+    const answer = await callGateway<PrefrontalEmbedReply>({
+      method: "fork.prefrontal.embed",
+      params: { texts, budgetMs, prevRecovered },
+      timeoutMs: budgetMs + SEMANTIC_LANE_ROUND_TRIP_MS,
+    });
+    reply = answer && typeof answer === "object" ? answer : {};
+  } catch (err) {
+    // An unanswered call carries no new budget, so the next call opens with the first one
+    // again, which also gives it the longest timeout.
+    lane.budgetMs = SEMANTIC_LANE_OPENING_BUDGET_MS;
+    const detail = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    noteSemanticLaneState(log, "unanswered", detail);
+    throw new Error(`semantic lane unanswered: ${detail}`, { cause: err });
+  }
+  const {
+    budgetMs: nextBudgetMs,
+    warming,
+    missing,
+    armed,
+    reason,
+    degraded,
+    error: failure,
+  } = reply;
+  if (typeof nextBudgetMs === "number" && Number.isFinite(nextBudgetMs) && nextBudgetMs > 0) {
+    lane.budgetMs = nextBudgetMs;
+  }
+  if (warming === true) {
+    const count = typeof missing === "number" ? missing : "some";
+    noteSemanticLaneState(log, "warming", `${count} recipe vectors filling in the background`);
+    throw new Error(`semantic lane warming: ${count} recipe vectors missing`);
+  }
+  if (armed === false) {
+    const why = typeof reason === "string" ? reason : "not armed";
+    noteSemanticLaneState(log, `not armed: ${why.split(":")[0]}`, why);
+    throw new Error(`semantic lane not armed: ${why}`);
+  }
+  if (typeof degraded === "string") {
+    noteSemanticLaneState(log, `degraded: ${degraded}`, `no prompt vector within ${budgetMs} ms`);
+    throw new Error(`semantic lane degraded: ${degraded}`);
+  }
+  if (typeof failure === "string") {
+    noteSemanticLaneState(log, "error", failure);
+    throw new Error(`semantic lane error: ${failure}`);
+  }
+  const vectors = Array.isArray(reply.embeddings) ? (reply.embeddings as number[][]) : [];
+  noteSemanticLaneState(
+    log,
+    "ready",
+    `${vectors.length} vectors, per-turn budget ${lane.budgetMs} ms`,
+  );
+  return vectors;
+}
+
 export default function register(api: OpenClawPluginApi) {
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const config = api.config as Record<string, any>;
@@ -370,8 +514,8 @@ export default function register(api: OpenClawPluginApi) {
 
   // ─── Main Session Tracking ───
   api.on("llm_input", (event: PluginHookLlmInputEvent, ctx: PluginHookAgentContext) => {
-    // P0: Reset exploration gate for each new LLM turn
-    explorationGate.resetTurn();
+    // P0: Reset exploration gate for each new LLM turn, for this chat only
+    explorationGate.resetTurn(ctx.sessionKey);
     log.info?.(
       `[prefrontal] HOOK llm_input sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} provider=${event.provider} model=${event.model}`,
     );
@@ -487,12 +631,13 @@ export default function register(api: OpenClawPluginApi) {
         const gateResult = explorationGate.checkTool(event.toolName, {
           trigger: ctx.trigger,
           isSubagent: ctx.sessionKey?.includes(":subagent:"),
+          sessionKey: ctx.sessionKey,
         });
         if (gateResult.blocked) {
           return { block: true, blockReason: gateResult.message };
         }
         // Record the tool call for gate tracking
-        explorationGate.recordToolCall(event.toolName);
+        explorationGate.recordToolCall(event.toolName, ctx.sessionKey);
       }
 
       // P3: Permission hooks — user-defined shell scripts gate tool calls
@@ -1180,30 +1325,16 @@ export default function register(api: OpenClawPluginApi) {
 
         // 2) Recipe matching + provenance.
         // J13 semantic recipe-match lane, gated default-OFF. Only when
-        // PREFRONTAL_SEMANTIC_MATCH_ENABLED === "true" do we build the embed seam against the
-        // gateway's /v1/embeddings endpoint (routes to the configured memorySearch provider).
-        // Otherwise embedFn stays undefined → lexical-only, behavior unchanged. The seam fails
-        // safe: any embed error inside the lane degrades to the lexical result.
+        // PREFRONTAL_SEMANTIC_MATCH_ENABLED === "true" is the embed seam built: the gateway's
+        // internal fork.prefrontal.embed RPC over loopback callGateway (FORK 2026-05-31; POST
+        // /v1/embeddings 404s unless the openAiCompat HTTP surface is enabled).
+        // FORK 2026-10-29: the RPC embeds only the prompt against cached recipe vectors, within
+        // the budget it derives, and every answer without vectors becomes an error
+        // (embedThroughPrefrontalRpc), so the lane falls back to the lexical result. Without the
+        // switch embedFn stays undefined: lexical only.
         let embedFn: EmbedFn | undefined;
         if (process.env.PREFRONTAL_SEMANTIC_MATCH_ENABLED === "true") {
-          // FORK 2026-05-31: embed via the scoped internal fork.prefrontal.embed
-          // RPC (loopback callGateway, default backend mode) instead of POST
-          // /v1/embeddings — that route 404s unless the openAiCompat HTTP surface
-          // is enabled. The RPC reuses the same in-process ollama/mxbai provider
-          // with no new HTTP surface. Fails safe: any error → no embeddings → the
-          // semantic lane degrades to lexical-only (behavior unchanged).
-          embedFn = async (texts: string[]): Promise<number[][]> => {
-            try {
-              const res = await callGateway<{ embeddings?: number[][] }>({
-                method: "fork.prefrontal.embed",
-                params: { texts },
-              });
-              return res?.embeddings ?? [];
-            } catch (err) {
-              log.warn?.(`[semantic-matcher] embed RPC failed (lexical-only): ${String(err)}`);
-              return [];
-            }
-          };
+          embedFn = (texts: string[]) => embedThroughPrefrontalRpc(texts, log);
         }
         // FORK 2026-06 (U1) + 2026-06-01 (U12): build the empirical-fitness +
         // marketplace-rating lookups ONCE per turn and thread them into the match so
@@ -1235,6 +1366,12 @@ export default function register(api: OpenClawPluginApi) {
             ? { allowSeed: advice.allowSeedFrom(ranking) }
             : {}),
         });
+        // FORK 2026-10-29: the lane's trial counts rescues, and this turn's go out with the next
+        // request. They are added, not assigned: a turn that never asks (a clear lexical winner)
+        // must not erase a rescue that has not been reported yet.
+        if (embedFn) {
+          semanticLaneClient().pendingRecovered += outcome.recoveredBySemantic?.length ?? 0;
+        }
 
         if (outcome.catalogSize > 0) {
           emitTrail("searched", `scored ${outcome.catalogSize} recipes`, "match", {

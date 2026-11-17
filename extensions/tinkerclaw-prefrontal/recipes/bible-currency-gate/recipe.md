@@ -74,22 +74,22 @@ Keep the project's design docs (`{{design_docs_dir}}`) current with what the tas
 
 Run `{{invariants_cmd}}` from `{{repo_root}}`. Fix any verify block your change broke.
 
-The full suite outlasts one five-minute tool call. Run it through skill `longjob`, or, when the change
-sits in one optic's domain, run that optic alone (11 s for `subagents-and-recipes.md` on 2026-10-07):
+The full suite outlasts one five-minute tool call. Run it through skill `longjob`, or name the optics
+your change touched (one call, about a second for two optics on 2026-11-14):
 
 ```
-D=$(mktemp -d {{repo_root}}/.bible-scope-XXXX); cp TINKER_UI_DESIGN_BIBLE/<optic>.md "$D"/
-BIBLE_DIR="$D" node scripts/test-invariants.mjs; rm "$D"/<optic>.md && rmdir "$D"
+BIBLE_DIR=<checkout>/TINKER_UI_DESIGN_BIBLE node scripts/test-invariants.mjs <optic>.md [<optic>.md …]
 ```
 
-The scope folder has to sit inside the repo, because some checks run `cd "${BIBLE_DIR}/.."`. In a
-one-file scope the four meta checks (INDEX.md, see_also, the single-owner count, design-principles.md)
-always fail; every other line must pass.
+Named files run only their own verify blocks; the meta-verify still reads the whole bible, so a
+named run is green or red for real (no scope folder, nothing to remove afterwards). Point
+`BIBLE_DIR` at the worktree that holds your edit. A worktree checked out sparse fails a check that
+reads a path outside its sparse set (ENOENT): that line is not yours; run the same names on the
+shared checkout to see it pass.
 
-Several optics: copy each one you touched into the same scope folder. To tell your red checks from
-ones already red, run the same scope a second time on the committed copies
-(`git show HEAD:TINKER_UI_DESIGN_BIBLE/<optic>.md > "$D"/<optic>.md`) and compare the two `✗` lists.
-Only the lines that are new are yours to fix; name the rest as pre-existing.
+To tell your red checks from ones already red, run the same names on the shared checkout's develop
+(`BIBLE_DIR` unset) before you merge, and compare the two `✗` lists. Only the lines that are new are
+yours to fix; name the rest as pre-existing.
 
 ### 5. Claim
 
@@ -104,6 +104,7 @@ Only the lines that are new are yours to fix; name the rest as pre-existing.
 
 ## Failures Overcome
 
+- 2026-11-14: the unread-glow fix (three optics, a sparse worktree) could not use the scope folder: removing a folder made inside the repo through a shell variable is held by the delete guard. The turn wrote its own runner for the three optics' verify blocks, then a second one for six checks that read paths outside the sparse set, then the full suite (12 red checks, all already red). `test-invariants.mjs` now takes optic names; Step 4 is one call with a whole-bible meta-verify, and the scope folder is gone.
 - 2026-10-16: two bible entries (bug-log, tinker-ui §5.8AE) were checked without this recipe being opened: the full suite was cut at 280 s again, a second run took 7 min, and 13 red checks had to be sorted by hand into 1 mine and 12 already there. Step 4 now covers several optics and the `HEAD` baseline; next time 2 runs of minutes become 2 scoped runs of seconds.
 
 - 2026-10-07: after authoring a recipe, the full suite was cut at 280 s with no output, and a retry scoped to a folder in `/tmp` failed three recipe checks that pass in the repo (they `cd` to the bible folder's parent). Step 4 now says how to run one optic in seconds and which failures that scope always shows.

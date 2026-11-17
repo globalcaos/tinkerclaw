@@ -689,4 +689,67 @@ describe("what the ledger taught the scheduler (phase F)", () => {
       d0.placements.map((p) => p.routeKey),
     );
   });
+
+  it("honours board.cooling (such as model:fable) when pricing units, and merges it with full-lane spill", () => {
+    const cooledBoard = board({
+      rungs: [R.fable, R.opus, R.sonnet, R.grok],
+      dialIdx: 6,
+      suggestion: { key: R.fable.key, effort: R.fable.effort },
+      cooling: new Set(["model:fable" as never]),
+    });
+    const { sched } = make({}, {}, cooledBoard);
+    const d = sched.simulate({
+      id: "cooled-fable",
+      task: { kind: "general", urgency: "waiting", shape: "parts" },
+      units: [unit("u1"), unit("u2")],
+    })!;
+    expect(d.placements.map((p) => p.routeKey)).toEqual([R.opus.key, R.opus.key]);
+  });
+
+  it("check units use subscription rivals first, and admit board.secondOpinionRungs (Google) strictly when no subscription rival survives", () => {
+    const carbon = {
+      key: "google/gemini-4-carbon",
+      effort: "high",
+      smart: 78,
+      cost: 2.5,
+      basis: "measured" as const,
+    };
+    const twoUnitCheck: PlanRequest = {
+      id: "check-google",
+      task: { kind: "general", urgency: "waiting", shape: "parts" },
+      units: [
+        unit("build", { outputs: ["draft"], estIn: 2000, estOut: 500 }),
+        unit("verify", { kind: "check", inputs: ["draft"], estIn: 2000, estOut: 300 }),
+      ],
+    };
+    // 1. While subscription rival (xai/grok) is open, Google never checks.
+    const withSubRival = board({
+      rungs: [R.opus, R.sonnet, R.grok],
+      secondOpinionRungs: [carbon],
+      dialIdx: 6,
+    });
+    const dSub = make(
+      { scheduler: { providerCaps: { "claude-code": 6, xai: 6, google: 6 } } },
+      {},
+      withSubRival,
+    ).sched.simulate(twoUnitCheck)!;
+    expect(of(dSub, "build").routeKey).toBe(R.opus.key);
+    expect(of(dSub, "verify").routeKey).toBe(R.grok.key);
+
+    // 2. When every non-builder subscription family is spent, check admits Google as last-resort second opinion.
+    const allSubsDown = board({
+      rungs: [R.opus, R.sonnet, R.grok],
+      secondOpinionRungs: [carbon],
+      supplies: supplies({ xai: { spent: true } }),
+      dialIdx: 6,
+    });
+    const dGoogle = make(
+      { scheduler: { providerCaps: { "claude-code": 6, xai: 6, google: 6 } } },
+      {},
+      allSubsDown,
+    ).sched.simulate(twoUnitCheck)!;
+    expect(of(dGoogle, "build").routeKey).toBe(R.opus.key);
+    expect(of(dGoogle, "verify").routeKey).toBe(carbon.key);
+    expect(of(dGoogle, "verify").checker).toBe("picked");
+  });
 });

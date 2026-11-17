@@ -113,6 +113,9 @@ Check the SUBSCRIPTION routes first, because they are the ones that look absent:
 
 Next, a **direct API key we already hold** (Google via `GEMINI_API_KEY`, xAI, DeepInfra):
 list that provider's own models endpoint and look for the id there before going metered.
+For Google each step is one call in the model-rank-refresh skill: `google_models.py <filter>`
+lists the ids Google serves, and `google_models.py --probe <id>` probes the id and its `-9-9`
+control. Both load the key themselves; never read the key inline.
 
 The route sets the BILLING LABEL only, never whether the model is onboarded (the architect,
 2026-10-13: "no model should be left out"). A model no catalog sells yet still gets its
@@ -139,8 +142,12 @@ the file still parses.
   the plan already paid; a **metered** route carries the live catalog's real prices.
 - Panel entry under `agents.defaults.models`: `{rank, intelligenceIndex}`. Ranks are
   ordinals — inserting one shifts the rest.
-- Write atomically (temp file + replace), 2-space indent, trailing newline. The
-  `auth-reload` plugin picks it up; no gateway restart.
+- Write it with the CLI, not by hand. Build one merge patch holding the new entry and
+  every entry whose rank moves down, run
+  `openclaw config set agents.defaults.models '<patch>' --strict-json --merge --dry-run`,
+  then the same command without `--dry-run`. Diff the model list before and after: outside
+  the new entry, only ranks may change. The `auth-reload` plugin picks it up; the config
+  itself needs no gateway restart (the cost rows of step 3 do, see step 7).
 
 ### 3. The cost row — and key it on the ROUTE, not on the spelling
 
@@ -299,7 +306,9 @@ functions and prints, for the new id:
 
 Then delete the scratch file and add the surviving assertions as REAL regression tests
 next to the existing ones. Run `pnpm test:tinker-ui` from the repo root — the canonical
-harness; `--root tinker-ui` lacks jsdom and reports false reds.
+harness; `--root tinker-ui` lacks jsdom and reports false reds. From a `/tmp` worktree,
+`refresh_model_surfaces.sh --repo <worktree> --verify-only --new-model <provider/id>`
+(model-rank-refresh skill) runs every coverage gate and that suite against the tree in one call.
 
 ### 6b. Census the picker against Smart + More
 
@@ -327,7 +336,9 @@ has been driven and looked at.
 
 The daily-driver Tinker UI is the production build served at **:18793/tinker/**. Vite on
 `:18790` was retired 2026-09-10. Source changes are therefore **not live** until the UI is
-rebuilt; no gateway restart is needed:
+rebuilt. A page-only change needs no gateway restart, but a cost row in `src/shared`
+(`rel-cost-table.ts`, `thalamus-price-table.ts`) is compiled into the gateway: a new route
+needs the gateway rebuilt and restarted too (2026-11-13, Gemini 4 Hydrogen):
 
 ```bash
 cd ~/src/tinkerclaw/tinker-ui && npx vite build
@@ -351,6 +362,14 @@ screenshot. Source ≠ built ≠ served ≠ rendered.
 
 ## Failures Overcome
 
+- **2026-11-13 — a Gemini served on our own key sat greyed for a day.** Gemini 4 Hydrogen
+  shipped on 11-12, and Google's own model list carried it next to Carbon and Argon. The
+  nightly census asked only DeepInfra and OpenRouter, so the picker showed it greyed with an
+  OpenRouter link. The gap script dropped every first-party slug. The 05:45 report said no
+  model arrived, because the census printed only a count. Second time for this class: Gemini 4
+  Carbon sat unchecked from 10-31 to 11-04. The census now reads Google's list and prints one
+  `ARRIVED` line per new entry, tagged ONBOARD or PROBE when a route we hold reaches it, and
+  the gap script lists first-party models with that route. → Step 1.
 - **2026-09-30 — three GPT models on the picker with no triangle.** GPT-6 Sol and Luna
   (onboarded 09-23) and GPT-6.1 Sol (09-30) got config, cost row and scores, but no
   `SC_API_PRICE` row, so the chart drew no API triangle and no OpenAI plan marks for any of

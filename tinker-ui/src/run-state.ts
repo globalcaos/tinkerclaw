@@ -768,3 +768,29 @@ export function transcriptWriterIsLive(params: {
   }
   return clientRunIsFresh(streamRun, now);
 }
+
+/**
+ * FORK 2026-11-12: Rewind greyed out after a provider safeguard with "Wait for the reply to finish".
+ *
+ * The page used to ask `sending || streamRunId !== null || streamMsgUid !== null`. A terminal
+ * `state:"error"` (Anthropic's safeguard block is one) left the stream cursor set on purpose for a
+ * recoverable retry's next delta, and never deleted the run from `activeRuns`. Nothing else then
+ * spoke, so Rewind stayed grey for the life of the page. Ask the same liveness question as
+ * loadChat: is anything actually writing. A leftover cursor whose run is gone, or silent past
+ * RUN_STALE_MS, is not a reply in flight.
+ */
+export function rewindBlockedByLiveReply(params: {
+  sendingNow: boolean;
+  lastDeltaAt: number;
+  streamRun: ClientRun | undefined | null;
+  now: number;
+}): boolean {
+  return (
+    params.sendingNow ||
+    transcriptWriterIsLive({
+      lastDeltaAt: params.lastDeltaAt,
+      streamRun: params.streamRun,
+      now: params.now,
+    })
+  );
+}

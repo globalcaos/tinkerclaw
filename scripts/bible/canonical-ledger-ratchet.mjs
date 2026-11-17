@@ -106,6 +106,16 @@ export const LEDGER = [
     cap: 2,
     pattern: String.raw`^\s*(export )?function estimateTokensFromChars`,
   },
+  {
+    // 2026-10-29: the per-machine embedding decision (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
+    // Before it the model choice had two derivations, memorySearch and a literal model in the
+    // embedded runner, and the second ran an embedder on the live host with no reader. The
+    // pattern is a name prefix on purpose: a decideEmbedderFitFor... helper is a second opinion
+    // about the same machine, so it should trip this row.
+    concept: "decideEmbedderFit",
+    cap: 1,
+    pattern: String.raw`^\s*(export )?function decideEmbedderFit`,
+  },
 ];
 
 /** Where an implementation can live. Anything outside these trees is not shipped code. */

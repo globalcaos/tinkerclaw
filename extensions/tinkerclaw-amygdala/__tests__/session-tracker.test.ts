@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SessionTracker } from "../src/session-tracker.js";
+import { isFreshPath, SessionTracker } from "../src/session-tracker.js";
 
 const post = (
   tool: string,
@@ -47,6 +47,18 @@ describe("SessionTracker", () => {
     }
   });
 
+  it("keeps a job's words for the reviewers until his next turn; a reflection and his own turn have none", () => {
+    const t = new SessionTracker();
+    t.notePrompt("tab", "[Mon 2026-11-02 21:00 GMT+1] gather the report");
+    expect(t.wakeWords("tab")).toBeUndefined();
+    t.notePrompt("tab", "[Mon 2026-11-02 22:20 GMT+1] ⟦AGENT:⏱ Background⟧ the job ended");
+    expect(t.wakeWords("tab")).toBe("the job ended");
+    t.notePrompt("tab", "⟦AGENT:🌿 Fractal · prompt 1⟧ reflect");
+    expect(t.wakeWords("tab")).toBeUndefined();
+    t.notePrompt("tab", "[Mon 2026-11-02 22:30 GMT+1] thanks");
+    expect(t.wakeWords("tab")).toBeUndefined();
+  });
+
   it("with no request from the owner yet, an agent's prompt stays the request (a subagent's task)", () => {
     const t = new SessionTracker();
     t.notePrompt("sub", "[Day 2026-09-29 17:45 GMT+2] ⟦AGENT:main⟧ please fix it");
@@ -84,6 +96,46 @@ describe("SessionTracker", () => {
     }
   });
 
+  // 2026-11-13: the hard-rule hook has let the agent delete files born in the last five minutes since 2026-10-16
+  // (hooks/hard-rules.mjs, isFresh). This layer did not read that clock, so the same clean-up was let through there and
+  // asked about here.
+  it("a file or folder born in the last five minutes is fresh; an older or missing one is not (2026-11-13)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amy-fresh-"));
+    try {
+      const cache = join(dir, "__pycache__");
+      mkdirSync(cache);
+      const pyc = join(cache, "m.pyc");
+      writeFileSync(pyc, "x");
+      const c = new SessionTracker({ homeDir: dir }).sessionContext("tab");
+      expect(c.freshPath?.(pyc)).toBe(true);
+      expect(c.freshPath?.(cache)).toBe(true);
+      expect(c.freshPath?.(join(dir, "missing"))).toBe(false);
+      const later = new SessionTracker({ homeDir: dir, now: () => Date.now() + 6 * 60_000 });
+      expect(later.sessionContext("tab").freshPath?.(pyc)).toBe(false);
+      expect(later.sessionContext("tab").freshPath?.(cache)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a new folder holding an older file is not fresh: a file moved in keeps its own birth time (2026-11-13)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amy-fresh-"));
+    try {
+      const old = join(dir, "old.txt");
+      writeFileSync(old, "x");
+      await new Promise((r) => setTimeout(r, 300));
+      const box = join(dir, "box");
+      mkdirSync(box);
+      const born = lstatSync(box).birthtimeMs;
+      expect(isFreshPath(box, born + 20, 150)).toBe(true);
+      renameSync(old, join(box, "old.txt"));
+      expect(isFreshPath(join(box, "old.txt"), born + 20, 150)).toBe(false);
+      expect(isFreshPath(box, born + 20, 150)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("remembers who started the turn for the later seams (2026-10-25)", () => {
     const t = new SessionTracker();
     expect(t.sessionContext("tab").turnKind).toBeUndefined();
@@ -116,6 +168,19 @@ describe("SessionTracker", () => {
 
   // 2026-10-02: the counter restarts with every gateway process, so a tab's first turn after each restart was "#1"
   // again and three turns of one chat merged into one; the Jev window showed only under the first of them.
+  // 2026-11-16: the runtime that `agent_end` reaches reads this to leave a Claude Code turn's reviews to its Stop hook.
+  it("remembers that a Claude Code Stop hook queued this turn's reviews, until the next prompt", () => {
+    const t = new SessionTracker();
+    expect(t.hookReviewed("tab")).toBe(false);
+    t.notePrompt("tab", "do it");
+    expect(t.hookReviewed("tab")).toBe(false);
+    t.noteHookReviews("tab");
+    expect(t.hookReviewed("tab")).toBe(true);
+    expect(t.hookReviewed("other")).toBe(false);
+    t.notePrompt("tab", "and the next one");
+    expect(t.hookReviewed("tab")).toBe(false);
+  });
+
   it("an epoch keeps turn ids apart across processes", () => {
     const a = new SessionTracker({ epoch: "p1" });
     const b = new SessionTracker({ epoch: "p2" });

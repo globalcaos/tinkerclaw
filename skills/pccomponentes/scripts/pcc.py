@@ -12,6 +12,8 @@ listing pages carry an ItemList with each item's URL and price.
 
 Read-only: it never logs in, adds to a basket or buys.
 """
+import shutil
+import tempfile
 import html as htmllib
 import json
 import re
@@ -24,14 +26,20 @@ CHROMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browse
 
 
 def render(url):
+    profile = tempfile.mkdtemp(prefix="pcc-")
     for chrome in CHROMES:
         try:
             out = subprocess.run(
                 [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 # Chromium on a desktop-less box (the Pi) waits forever on the keyring
+                 # without these two, until the 120 s timeout kills it.
+                 "--password-store=basic", f"--user-data-dir={profile}",
                  "--virtual-time-budget=15000", f"--user-agent={UA}", "--dump-dom", url],
                 capture_output=True, text=True, timeout=120)
         except FileNotFoundError:
             continue
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
         return out.stdout
     sys.exit("BLOCKED: no headless Chrome/Chromium found")
 
@@ -82,15 +90,19 @@ def product(url):
     body = lines[start + 1:] if start else lines
     pvpr = after(body, "PVPR")
     image = prod.get("image")
+    availability = (offer.get("availability") or "").rsplit("/", 1)[-1] or None
+    # A sold-out page has no delivery line of its own: the first "Entrega el ..." on it
+    # belongs to a similar-product tile further down.
+    delivery = None if availability == "OutOfStock" else first(body, r"^(Recíbelo|Entrega el)")
     return {
         "url": url,
         "name": name,
         "price_eur": offer.get("price"),
         "price_valid_until": offer.get("priceValidUntil"),
-        "availability": (offer.get("availability") or "").rsplit("/", 1)[-1] or None,
+        "availability": availability,
         "list_price": pvpr,
         "seller": (offer.get("offeredBy") or {}).get("name") or after(body, "Vendido y enviado por"),
-        "delivery": first(body, r"^(Recíbelo|Entrega el)"),
+        "delivery": delivery,
         "image": image[0] if isinstance(image, list) and image else image,
         "mpn": prod.get("mpn") or prod.get("sku"),
         "os": first(body, r"FreeDOS|^Sin sistema operativo|no incluye sistema operativo|^Windows 1[01] (Home|Pro)"),

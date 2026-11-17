@@ -160,6 +160,30 @@ const SKIP_EAGER_WARMUP_PRIMARY_COMMANDS = new Set([
   "status",
   "update",
   "webhooks",
+  // FORK 2026-10-29: commands whose handlers never read context tokens in this process. Most
+  // only call the gateway over RPC; the rest do local work that needs no context-window data
+  // (QR setup codes, the node host service, channel login and config edits). Walking each
+  // registrar's static and dynamic imports reaches neither this module nor any caller of
+  // lookupContextTokens / resolveContextTokensForModel, and no extension calls them. They
+  // still paid the warmup below, because code shared by every CLI start loads this module.
+  // A/B on the built CLI, changing only the basename this gate checks (4-core ARM board):
+  // the warmup added 11.1 s wall, 17.1 CPU-s and 122 MB peak RSS to `cron list` (n=3) and
+  // 14.3 s, 15.7 CPU-s and 125 MB to `nodes status` (n=2), with the same stdout. One day's
+  // log held 168 warm CLI starts, about 140 of them from a 15-minute timer calling `nodes`.
+  // Membership is categorical, not a tuned number. Break-even is zero reads: with none, the
+  // warmup buys nothing; with one, skipping it means the first read sees only config-backed
+  // windows, because lookupContextTokens starts discovery without waiting for it. If a
+  // handler of a command below starts reading context tokens, move it out of this block.
+  // All nine audited candidates qualified; commands missing from this Set were not audited.
+  "approvals",
+  "channels",
+  "cron",
+  "devices",
+  "message",
+  "node",
+  "nodes",
+  "qr",
+  "system",
 ]);
 
 export function shouldEagerWarmContextWindowCache(argv: string[] = process.argv): boolean {

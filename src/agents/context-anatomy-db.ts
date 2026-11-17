@@ -1065,6 +1065,7 @@ interface AnatomyRow {
   user_message: Buffer | string | null;
   assistant_response: Buffer | string | null;
   snapshot: string | null;
+  effort: string | null;
 }
 
 /**
@@ -1127,6 +1128,8 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
     // Extended fields not yet on the canonical type
     runId: row.run_id ?? undefined,
     durationMs: row.duration_ms ?? undefined,
+    // FORK 2026-11-12: the thinking effort the turn ran at was stored (v4) and never read back.
+    effort: row.effort ?? undefined,
     stopReason: row.stop_reason ?? undefined,
     toolsTriggered: decompressJson(row.tools_triggered),
     responseThinkingTokens: row.response_thinking_tokens ?? undefined,

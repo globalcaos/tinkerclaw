@@ -20,6 +20,13 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import ai.openclaw.app.jarvis.JarvisBuzz
+import ai.openclaw.app.jarvis.JarvisVerbs
+import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -82,6 +89,7 @@ fun SettingsSheet(viewModel: MainViewModel) {
   val locationMode by viewModel.locationMode.collectAsState()
   val locationPreciseEnabled by viewModel.locationPreciseEnabled.collectAsState()
   val preventSleep by viewModel.preventSleep.collectAsState()
+  var buzzChoice by remember { mutableStateOf(JarvisBuzz.chosen(context)) }
   val canvasDebugStatusEnabled by viewModel.canvasDebugStatusEnabled.collectAsState()
   val notificationForwardingEnabled by viewModel.notificationForwardingEnabled.collectAsState()
   val notificationForwardingMode by viewModel.notificationForwardingMode.collectAsState()
@@ -1127,6 +1135,44 @@ fun SettingsSheet(viewModel: MainViewModel) {
           style = mobileCaption1.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
           color = mobileAccent,
         )
+      }
+      // FORK 2026-11-12: the buzz that says an answer is ready (JarvisBuzz.kt). A tap picks a pattern and plays it.
+      item {
+        Column(modifier = Modifier.settingsRowModifier()) {
+          ListItem(
+            modifier = Modifier.fillMaxWidth(),
+            colors = listItemColors,
+            headlineContent = { Text("Answer Buzz", style = mobileHeadline) },
+            supportingContent = {
+              Column {
+                Text("How the phone buzzes when an answer is ready. Dash = long, dot = short.", style = mobileCallout)
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  JarvisBuzz.patterns.forEachIndexed { i, p ->
+                    val on = i == buzzChoice
+                    Box(
+                      modifier =
+                        Modifier
+                          .weight(1f)
+                          .height(40.dp)
+                          .border(if (on) 2.dp else 1.dp, if (on) mobileAccent else mobileBorder, RoundedCornerShape(8.dp))
+                          .clickable {
+                            JarvisBuzz.choose(context, i)
+                            buzzChoice = i
+                            runCatching { JarvisVerbs.run(context, "buzz", JsonObject(emptyMap())) }
+                          }.semantics { contentDescription = "Buzz ${p.label}" },
+                      contentAlignment = Alignment.Center,
+                    ) {
+                      Text(p.morse, style = mobileCallout.copy(fontWeight = FontWeight.Bold), maxLines = 1)
+                    }
+                  }
+                }
+              }
+            },
+          )
+        }
       }
       item {
         Column(modifier = Modifier.settingsRowModifier()) {

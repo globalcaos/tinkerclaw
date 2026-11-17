@@ -9,6 +9,10 @@
  * The plugin only delivers: each chat turn of the main agent gets the contract plus the passion map, a private
  * markdown file in the workspace (never in this repo), re-read every minute. The agent researches with its own tools
  * and keeps the map current.
+ *
+ * FORK 2026-11-05 (the architect): the bridge. When an objectives file exists, the turn also gets its "## For the prompt"
+ * section and two rules: offer one seed that links a passion to the objectives (unfinished, never criticised on
+ * arrival, the principal judges last), and end a multi-turn passion thread on its next rung.
  */
 import { join } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
@@ -27,6 +31,8 @@ export default function register(api: OpenClawPluginApi) {
     profilePath?: unknown;
     sessionPrefix?: unknown;
     maxProfileChars?: unknown;
+    principalName?: unknown;
+    objectivesPath?: unknown;
   };
   const profilePath =
     typeof c.profilePath === "string" && c.profilePath
@@ -37,15 +43,26 @@ export default function register(api: OpenClawPluginApi) {
   const maxChars =
     typeof c.maxProfileChars === "number" && c.maxProfileChars > 200 ? c.maxProfileChars : 3500;
 
+  const principal =
+    typeof c.principalName === "string" && c.principalName.trim()
+      ? c.principalName.trim()
+      : undefined;
+  const objectivesPath =
+    typeof c.objectivesPath === "string" && c.objectivesPath
+      ? c.objectivesPath
+      : join(workspaceDir(), "OBJECTIVES.md");
+
   let profile = "";
+  let objectives = "";
   const refresh = () => {
     profile = readProfile(profilePath, maxChars);
+    objectives = readProfile(objectivesPath, 1200);
   };
   refresh();
   const timer = setInterval(refresh, REFRESH_MS);
   timer.unref?.();
   api.logger.info(
-    `[curiosity] on for ${sessionPrefix}* (map ${profile ? `${profile.length} chars` : "empty"}: ${profilePath})`,
+    `[curiosity] on for ${sessionPrefix}* (map ${profile ? `${profile.length} chars` : "empty"}: ${profilePath}; objectives ${objectives ? `${objectives.length} chars` : "none, no bridge"}: ${objectivesPath})`,
   );
 
   api.on(
@@ -55,6 +72,9 @@ export default function register(api: OpenClawPluginApi) {
         sessionPrefix,
         profile,
         profilePath,
+        principal,
+        objectives,
+        objectivesPath,
       });
       return block ? { prependSystemContext: block } : undefined;
     },

@@ -237,6 +237,13 @@ function collectSkillIds(root: TreeNode | null): Set<string> {
 // + token spend, joined from the topology graph onto each tree node. Renders a
 // compact sub-line under the subagent row so "how is each subagent going" is
 // visible without expanding the chat tool rows.
+// Module scope, not inside mountPrefrontalTree: renderVitals and renderDecisionTrail below call it too.
+function el(tag: string, className: string): HTMLElement {
+  const e = document.createElement(tag);
+  e.className = className;
+  return e;
+}
+
 function renderVitals(node: TreeNode): HTMLElement | null {
   const bits: string[] = [];
   const phase = (node.phase ?? "").trim();
@@ -1125,12 +1132,6 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       wrap.appendChild(sub);
     }
     return wrap;
-  }
-
-  function el(tag: string, className: string): HTMLElement {
-    const e = document.createElement(tag);
-    e.className = className;
-    return e;
   }
 
   // Inject styles once

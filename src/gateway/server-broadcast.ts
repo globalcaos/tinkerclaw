@@ -14,7 +14,7 @@ import type {
   GatewayBroadcastStateVersion,
   GatewayBroadcastToConnIdsFn,
 } from "./server-broadcast-types.js";
-import { MAX_BUFFERED_BYTES } from "./server-constants.js";
+import { DROP_IF_SLOW_BUFFERED_BYTES, MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
 
@@ -172,9 +172,26 @@ function logChatDelivery(event: string, payload: unknown, counts: GatewayBroadca
   recordChatDeliver(chat.sessionKey, counts, textLen);
 }
 
+/** ` stream=… state=… sessionKey=… runId=…` for the fields a frame's payload has, else "". */
+function describeSlowCloseFrame(payload: unknown): string {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+  const p = payload as Record<string, unknown>;
+  let out = "";
+  for (const key of ["stream", "state", "sessionKey", "runId"]) {
+    const value = p[key];
+    if (typeof value === "string" && value.length > 0) {
+      out += ` ${key}=${value}`;
+    }
+  }
+  return out;
+}
+
 export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient> }) {
   const clientSeq = new WeakMap<GatewayWsClient, number>();
   const reportedSlowPayloadClients = new WeakSet<GatewayWsClient>();
+  const slowClosedClients = new WeakSet<GatewayWsClient>();
 
   const broadcastInternal = (
     event: string,
@@ -215,15 +232,26 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
         continue;
       }
       const nextSeq = (clientSeq.get(c) ?? 0) + 1;
-      const slow = c.socket.bufferedAmount > MAX_BUFFERED_BYTES;
-      if (!slow) {
+      // FORK 2026-11-04 — two limits. A droppable frame that a later frame makes whole again
+      // (`supersededByNext`: a delta holding the whole text so far) is dropped above
+      // DROP_IF_SLOW_BUFFERED_BYTES. With one limit, those queued up to it and the next frame that
+      // had to arrive (a final) closed the socket and was lost with it. Every other frame keeps
+      // MAX_BUFFERED_BYTES, as before: nothing sends a tool row, a rail row or an approval again, so
+      // a droppable one is dropped only there, and a frame that must arrive closes the socket there.
+      const buffered = c.socket.bufferedAmount;
+      const limitBytes =
+        opts?.dropIfSlow && opts.supersededByNext
+          ? DROP_IF_SLOW_BUFFERED_BYTES
+          : MAX_BUFFERED_BYTES;
+      const slow = buffered > limitBytes;
+      if (buffered <= DROP_IF_SLOW_BUFFERED_BYTES) {
         reportedSlowPayloadClients.delete(c);
-      } else if (!reportedSlowPayloadClients.has(c)) {
+      } else if (slow && !reportedSlowPayloadClients.has(c)) {
         reportedSlowPayloadClients.add(c);
         logRejectedLargePayload({
           surface: "gateway.ws.outbound_buffer",
-          bytes: c.socket.bufferedAmount,
-          limitBytes: MAX_BUFFERED_BYTES,
+          bytes: buffered,
+          limitBytes,
           reason: opts?.dropIfSlow ? "ws_send_buffer_drop" : "ws_send_buffer_close",
         });
       }
@@ -237,6 +265,14 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
         continue;
       }
       if (slow) {
+        // FORK 2026-11-04 — said once per socket: which connection, how full, and the frame that
+        // tipped it. Every later frame until the socket is gone lands in `attempted` only.
+        if (!slowClosedClients.has(c)) {
+          slowClosedClients.add(c);
+          console.log(
+            `[ws-slow-close] connId=${c.connId} bufferedAmount=${buffered} limit=${MAX_BUFFERED_BYTES} event=${event}${describeSlowCloseFrame(payload)}`,
+          );
+        }
         try {
           c.socket.close(1008, "slow consumer");
         } catch {

@@ -11,6 +11,6 @@ export {
   ownerWords,
   stripPromptEnvelope,
 } from "../shared/prompt-envelope.js";
-// FORK 2026-10-22: the bridge's `<turn_context>` header in front of the owner's words (Rewind needs it off the prompt it
-// hands back to the composer; `stripPromptEnvelope` leaves it on).
+// FORK 2026-10-22: the bridge's `<turn_context>` header in front of the owner's words, for a reader that wants only
+// that block off. `stripPromptEnvelope` takes it off too since 2026-10-30.
 export { withoutLeadingPromptBlocks } from "../shared/appended-prompt-blocks.js";

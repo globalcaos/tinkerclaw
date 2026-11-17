@@ -13,7 +13,7 @@
 //   ChatGPT  5-hour + weekly    · two clocks
 //   Copilot  monthly premium    · one slow clock
 //   xAI      weekly ONLY        · no short window at all — see fanOutSupply()
-//   Google   rpm/rpd            · free tier
+//   Google   rpm/rpd            · METERED: API key paid per call, no subscription
 //   OpenRouter  nothing         · METERED: unspent credit is money, not a deadline
 //
 // Under a subscription, an unspent token at reset is DESTROYED — its true price was zero. Under
@@ -78,6 +78,7 @@ const PROVIDER_SUPPLY: Readonly<Record<string, SupplyId>> = {
   copilot: "copilot",
   xai: "xai",
   google: "google",
+  "google-gemini-cli": "google",
   gemini: "google",
   openrouter: "openrouter",
 };
@@ -94,6 +95,7 @@ const WINDOW_KEY_SUPPLY: Readonly<Record<string, SupplyId>> = {
   copilot: "copilot",
   xai: "xai",
   google: "google",
+  "google-gemini-cli": "google",
   gemini: "google",
 };
 
@@ -102,17 +104,57 @@ const SUPPLY_KIND: Readonly<Record<SupplyId, SupplyKind>> = {
   openai: "subscription",
   copilot: "subscription",
   xai: "subscription",
-  google: "free-tier",
-  // METERED. This one line is why "keep OpenRouter unfunded unless necessary" needs no
+  // METERED (2026-11-13). Google has no subscription and the old CLI free tier ended; every call
+  // is paid per token from the owner's own balance, so it never wins on burn and never carries
+  // fan-out bursts.
+  google: "metered",
+  // METERED. This one line is why keeping OpenRouter unfunded unless needed requires no
   // special case anywhere else: a metered supply can never be cheap-by-deadline, so it can
   // never win on the burn term, only on genuine merit.
   openrouter: "metered",
   unknown: "metered",
 };
 
+/**
+ * Supplies billed per call from the owner's own money rather than a flat subscription (2026-11-13).
+ * Auto routing never uses them for primary turns, fallback chains, sub-agent leaves, digests,
+ * rewrites or refusal retries — only for a cross-family second opinion when no subscription
+ * family outside the builder's is available, or when explicitly invoked for image generation
+ * (Nano Banana) or a hand pick.
+ */
+export const SECOND_OPINION_ONLY_SUPPLIES: ReadonlySet<SupplyId> = new Set<SupplyId>(["google"]);
+
+/** Supplies kept without prepaid credit by default unless explicitly enabled. */
+export const UNFUNDED_BY_DEFAULT_SUPPLIES: ReadonlySet<SupplyId> = new Set<SupplyId>([
+  "openrouter",
+]);
+
+export function isSecondOpinionOnlyKey(key: string): boolean {
+  return SECOND_OPINION_ONLY_SUPPLIES.has(supplyOfKey(key));
+}
+
 export function supplyOf(provider: string | undefined): SupplyId {
   if (!provider) return "unknown";
   return PROVIDER_SUPPLY[provider] ?? "unknown";
+}
+
+/**
+ * FORK 2026-11-13 — A LIMIT ON ONE MODEL, NOT ON THE SUPPLY. Claude's weekly plan gives Fable a cap of its own
+ * (half a seat week), so the CLI's Fable-limit line leaves Opus and Sonnet open on the same seat. Cooling the
+ * whole supply would close them too; not cooling anything sent every auto turn back to Fable, where each one
+ * ended at once with the limit message (2026-11-13, every tab, until the owner pinned Opus by hand). The cooling
+ * store keeps such a limit under `model:<family>`; the feasibility veto reads it for the models of that family.
+ */
+const CLAUDE_FAMILY_RE = /(fable|mythos|opus|sonnet|haiku)/;
+export function modelCoolingKey(key: string): string | undefined {
+  if (supplyOfKey(key) !== "anthropic") return undefined;
+  const family = CLAUDE_FAMILY_RE.exec((key.split("/").pop() ?? "").toLowerCase())?.[1];
+  return family ? `model:${family}` : undefined;
+}
+/** The model family a "You've hit your <family> limit" text names, or undefined for a seat-wide limit. */
+export function modelLimitFamily(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  return /hit your (fable|mythos|opus|sonnet|haiku) limit/i.exec(raw)?.[1]?.toLowerCase();
 }
 
 /** The supply a `provider/model` route key draws on. */

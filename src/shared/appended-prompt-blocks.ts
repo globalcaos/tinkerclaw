@@ -30,6 +30,16 @@ export const CHAT_ROW_CONTRACT_RE = /\n\s*<!-- TINKERCLAW chat-row contract -->/
 export const LEADING_PROMPT_BLOCKS: readonly RegExp[] = [
   /^\s*<turn_context>[\s\S]*?<\/turn_context>\s*/,
   /^\s*\[Background Fractal reflection on an earlier turn of this chat\.[\s\S]*?\n---\n\s*/,
+  // FORK 2026-11-13 (bug-log.md `fresh-session-no-recap`): the chat's last turns as text, which the bridge puts in
+  // front of the first prompt of a session that could not resume the chat's Claude session (tinker-bridge
+  // fresh-start-recap.ts). The bridge wrote it; no word of it is the owner's request of this turn.
+  /^\s*<earlier_conversation source="tinkerclaw-bridge">[\s\S]*?<\/earlier_conversation>\s*/,
+  // total-recall's shared bank on a chat's first turn and on a subagent's prompt, and its session recall
+  // (`## Retrieved Memory Context`), which comes first when both sit outside `<turn_context>` (2026-11-13: a gateway
+  // restart report then kept 8 KB of memory in front of its `[System]` line, so the amygdala screened it as the owner's
+  // request). No closing tag: it ends at the LAST line opening with a delivery stamp, so a stamp quoted inside a memory
+  // stays out of the owner's words.
+  /^\s*## (?:Retrieved Memory Context|From the Shared Memory Bank)\n[\s\S]*\n(?=\s*\[[^\]\n]*\d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]\n]*\])/,
 ];
 
 /** The owner's prompt without the leading blocks above (repeated: a prompt can carry both). */

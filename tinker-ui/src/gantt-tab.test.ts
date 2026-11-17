@@ -51,6 +51,24 @@ describe("gantt tab — board list from the server", () => {
     expect(parseGanttBoards(null)).toEqual([]);
     expect(parseGanttBoards({ boards: "nope" })).toEqual([]);
   });
+
+  it("keeps a board whose plan file is missing, and marks it", () => {
+    expect(parseGanttBoards({ boards: [{ ...board, missing: true }] })).toEqual([
+      { ...board, missing: true },
+    ]);
+    expect(parseGanttBoards({ boards: [{ ...board, missing: "yes" }] })).toEqual([board]);
+  });
+
+  it("still shows a missing plan's board on its master", () => {
+    const chains: TabChain[] = [{ master: "tab-m", slave: "tab-s", color: 1 }];
+    const map = ganttBoardsByMaster(
+      chains,
+      [{ ...board, missing: true }],
+      () => "tinker:m1",
+      match,
+    );
+    expect(map.get("tab-m")?.missing).toBe(true);
+  });
 });
 
 describe("gantt tab — markup", () => {
@@ -75,6 +93,19 @@ describe("gantt tab — markup", () => {
     );
     expect(html).toContain("tab-gantt tab-active");
     expect(html).toContain("a &quot;b&quot; &lt;c>");
+  });
+
+  it("greys out when its plan file is missing and names where the plan was", () => {
+    const html = ganttTabHtml(
+      "tab-m",
+      { ...board, missing: true },
+      { active: false, color: "#d4a94a", escape },
+    );
+    expect(html).toContain('class="tab tab-gantt tab-gantt-missing"');
+    expect(html).toContain('data-hint="Gantt chart · SV2 · plan file missing: /x/gantt.json"');
+    expect(ganttTabHtml("tab-m", board, { active: false, color: "#fff", escape })).not.toContain(
+      "tab-gantt-missing",
+    );
   });
 
   it("loads the chart for the master's own session", () => {

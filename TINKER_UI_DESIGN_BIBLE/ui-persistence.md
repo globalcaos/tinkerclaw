@@ -85,6 +85,7 @@ Both tiers hold the SAME three maps. Only their durability and their access mode
 
 1. **Last-writer-wins across browser tabs.** The mirror POSTs a WHOLE snapshot and the server replaces the file with it. A field-level merge cannot work here, and the reason is THE INVARIANT itself: "the user set this back to its default" is expressed as a **deleted key**, and a merge cannot distinguish a deletion from a key the other tab simply never had. Two tabs changing different chrome concurrently means the last POST wins for all of it. Accepted — the alternative is a per-key tombstone protocol for chrome state, which is not worth it.
    **Exception (2026-09-21): the tab list DOES get tombstones.** A close used to be only an absence from the list, so any stale writer (second window, failed-hydrate page, a mirror lost in its 250 ms debounce on Ctrl+Shift+R, the rehydrate merge re-adding "file-only" tabs) resurrected it. `closeTab` now records `tab id → closedAt`; the cache, the file and BOTH servers (`scripts/tinker-prod-ui.mjs`, the Vite handler) UNION the map and filter every tab list through it, and `pagehide` flushes a pending mirror. Safe as a union because tab ids are minted fresh per tab and never reused; `tab-main` is never tombstoned. Newest 500 kept.
+   **Exception (2026-11-14): the unread glow's seen stamps (choice `tab:seen`) are MERGED by `scripts/tinker-prod-ui.mjs`.** The laptop and the phone write one desk file, and the last writer used to drop what the other had seen (or even lower it), so a chat read on one device kept glowing on the other. Per chat the server keeps the later `s` and the later `f` (both only rise, so a max is always right, as a union is for tombstones), the 200 chats seen last, and pushes a raise to every open page of the desk (done-signals.md §2c, bug `unread-glow-per-device`). The Vite handler still replaces it whole: its page opens no event stream.
 2. **Dev-server only.** The middleware is `apply: "serve"`, so it exists only under `vite dev` on **:18790**. If the UI is loaded from the gateway's built `/tinker` route instead, `/api/ui-state` is absent: `hydrateUiState()` resolves as a no-op and each mirror POST fails harmlessly, so the client degrades to **localStorage-only** — exactly the pre-2026-08-02 behaviour, no worse. Accepted because :18790 is the architect's actual serving path. Promoting the endpoint into the gateway plugin (beside `/tinker/api/save-file`) is the known next move if `/tinker` ever becomes the primary surface.
 
 ## The owning module
@@ -119,27 +120,27 @@ It is the only **array**, the only one whose entries this module refuses to inte
 
 Ids are namespaced by prefix so one flat map per namespace cannot collide.
 
-| Namespace | Id                                                                                           | Default                         |
-| --------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
-| collapsed | `sessions-panel`, `models-panel`, `budget-panel`, `prefrontal-panel`, `amygdala-panel`       | expanded                        |
-| collapsed | `model:models`, `model:more-models`                                                          | **collapsed**                   |
-| collapsed | `model:eeg` (seismograph), `model:cache`, `model:thinking` (sliders), `model:thalamus`       | expanded                        |
-| collapsed | `exec:<axisId>`, `exec:__unsorted__`                                                         | expanded                        |
-| collapsed | `cron:card:<jobId>`                                                                          | expanded                        |
-| collapsed | `cron:dismissed:<jobId>`                                                                     | **collapsed**                   |
-| flag      | `topbar:exec`                                                                                | off                             |
-| flag      | `topbar:fractal`                                                                             | **on**                          |
-| flag      | `topbar:timeline`, `topbar:models`                                                           | **on**                          |
-| choice    | `tab:active`                                                                                 | `""`                            |
-| choice    | `exec:tab`                                                                                   | `today`                         |
-| choice    | `exec:filter`                                                                                | `unfinished`                    |
-| choice    | `exec:focus-order` (JSON array of taskIds)                                                   | `[]`                            |
-| choice    | `cron:cardOrder` (JSON array of jobIds)                                                      | `[]`                            |
-| choice    | `cron:filter`                                                                                | `all`                           |
-| choice    | `cron:taxonomy` (JSON `{groups, membership}`)                                                | `{groups:[],membership:{}}`     |
-| collapsed | `cron:group:<groupId>` (incl. `__unsorted__`)                                                | expanded                        |
-| choice    | `chat:scroll:<tabId>` (JSON `{v:1, id, part, y}`: the transcript row a tab was left reading) | `""` = following the latest row |
-| choice    | `tab:seen` (JSON `{<sessionKey>: {s, f?}}`: when each tab was last seen, done-signals §2c)   | `{}` = no tab tracked yet       |
+| Namespace | Id                                                                                                                                                  | Default                         |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| collapsed | `sessions-panel`, `models-panel`, `budget-panel`, `prefrontal-panel`, `amygdala-panel`                                                              | expanded                        |
+| collapsed | `model:models`, `model:more-models`                                                                                                                 | **collapsed**                   |
+| collapsed | `model:eeg` (seismograph), `model:cache`, `model:thinking` (sliders), `model:thalamus`                                                              | expanded                        |
+| collapsed | `exec:<axisId>`, `exec:__unsorted__`                                                                                                                | expanded                        |
+| collapsed | `cron:card:<jobId>`                                                                                                                                 | expanded                        |
+| collapsed | `cron:dismissed:<jobId>`                                                                                                                            | **collapsed**                   |
+| flag      | `topbar:exec`                                                                                                                                       | off                             |
+| flag      | `topbar:fractal`                                                                                                                                    | **on**                          |
+| flag      | `topbar:timeline`, `topbar:models`                                                                                                                  | **on**                          |
+| choice    | `tab:active`                                                                                                                                        | `""`                            |
+| choice    | `exec:tab`                                                                                                                                          | `today`                         |
+| choice    | `exec:filter`                                                                                                                                       | `unfinished`                    |
+| choice    | `exec:focus-order` (JSON array of taskIds)                                                                                                          | `[]`                            |
+| choice    | `cron:cardOrder` (JSON array of jobIds)                                                                                                             | `[]`                            |
+| choice    | `cron:filter`                                                                                                                                       | `all`                           |
+| choice    | `cron:taxonomy` (JSON `{groups, membership}`)                                                                                                       | `{groups:[],membership:{}}`     |
+| collapsed | `cron:group:<groupId>` (incl. `__unsorted__`)                                                                                                       | expanded                        |
+| choice    | `chat:scroll:<tabId>` (JSON `{v:1, id, part, y}`: the transcript row a tab was left reading)                                                        | `""` = following the latest row |
+| choice    | `tab:seen` (JSON `{<sessionKey>: {s, f?}}`: when each tab was last seen, done-signals §2c; merged per chat by tinker-prod-ui, not last-writer-wins) | `{}` = no tab tracked yet       |
 
 **2026-10-02 — `chat:scroll:<tabId>` is where each tab's chat was LEFT** (need: keep the point a chat was left at across tab switches, gateway restarts and computer restarts). The design and the in-memory half live in `tinker-ui.md` §5.20 and `tinker-ui/src/chat-viewport.ts`; this row is only the durable half. Three decisions:
 

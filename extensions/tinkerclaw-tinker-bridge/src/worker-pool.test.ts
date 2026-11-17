@@ -13,7 +13,7 @@ const GiB = 2 ** 30;
 // FORK 2026-10-19: the pool also sweeps on a timer and sheds idle workers under memory pressure.
 // The policy tests that predate those rules turn both off (no timer, plenty of free memory), so
 // only the rule under test acts and the machine's real free memory never decides a result.
-const QUIET = { sweepIntervalMs: 0, freeMemBytes: () => 64 * GiB };
+const QUIET = { sweepIntervalMs: 0, freeMemBytes: () => 64 * GiB, chooseSeat: () => "primary" };
 
 // A minimal stand-in for ClaudeCodeWorker. The pool only needs sessionKey,
 // isAlive(), isBusy(), kill(), sessionId and on("exit"). No real claude
@@ -691,5 +691,79 @@ describe("SessionWorkerPool 2026-10-19 rules: one-shot sessions, timed sweep, me
     expect(defaultMaxWorkers(2 * GiB)).toBe(4);
     expect(defaultMaxWorkers(15.84 * GiB)).toBe(15); // the Pi
     expect(defaultMaxWorkers(128 * GiB)).toBe(32);
+  });
+});
+
+// FORK 2026-11-03 (THALAMUS seat routing): the seat a worker runs on follows the chooser. A change
+// respawns an idle worker on the new seat (with --resume, like a model change), never a busy one.
+describe("SessionWorkerPool Claude seat", () => {
+  function makePool(seat: { now: string }) {
+    const created: Array<{ worker: FakeWorker; params: WorkerSpawnParams }> = [];
+    const pool = new SessionWorkerPool({
+      ...QUIET,
+      chooseSeat: () => seat.now,
+      createWorker: (params) => {
+        const worker = new FakeWorker(params);
+        created.push({ worker, params });
+        return worker as unknown as ReturnType<SessionWorkerPool["getOrCreate"]>;
+      },
+    });
+    return { pool, created };
+  }
+
+  it("adds no seat to the spawn while the primary login is the choice", () => {
+    const { pool, created } = makePool({ now: "primary" });
+    pool.getOrCreate(makeParams("A"));
+    expect(created[0].params.claudeSeat).toBeUndefined();
+  });
+
+  it("respawns an idle worker on the new seat, and back when the first seat has room again", () => {
+    const seat = { now: "primary" };
+    const { pool, created } = makePool(seat);
+    pool.getOrCreate(makeParams("A"));
+    seat.now = "anthropic:seat-b";
+    pool.getOrCreate(makeParams("A"));
+    expect(created[0].worker.killed).toBe(true);
+    expect(created[1].params.claudeSeat).toBe("anthropic:seat-b");
+    // Same seat next turn: the warm worker is kept.
+    pool.getOrCreate(makeParams("A"));
+    expect(created).toHaveLength(2);
+    seat.now = "primary";
+    pool.getOrCreate(makeParams("A"));
+    expect(created[1].worker.killed).toBe(true);
+    expect(created[2].params.claudeSeat).toBeUndefined();
+  });
+
+  it("keeps a busy worker on its seat until its turn ends", () => {
+    const seat = { now: "primary" };
+    const { pool, created } = makePool(seat);
+    const first = pool.getOrCreate(makeParams("A")) as unknown as FakeWorker;
+    first.setBusy(true);
+    seat.now = "anthropic:seat-b";
+    expect(pool.getOrCreate(makeParams("A"))).toBe(first as unknown);
+    expect(first.killed).toBe(false);
+    first.setBusy(false);
+    pool.getOrCreate(makeParams("A"));
+    expect(first.killed).toBe(true);
+    expect(created[1].params.claudeSeat).toBe("anthropic:seat-b");
+  });
+
+  it("a chooser that throws keeps the primary login", () => {
+    const { created } = (() => {
+      const created: WorkerSpawnParams[] = [];
+      const pool = new SessionWorkerPool({
+        ...QUIET,
+        chooseSeat: () => {
+          throw new Error("store unreadable");
+        },
+        createWorker: (params) => {
+          created.push(params);
+          return new FakeWorker(params) as unknown as ReturnType<SessionWorkerPool["getOrCreate"]>;
+        },
+      });
+      pool.getOrCreate(makeParams("A"));
+      return { created };
+    })();
+    expect(created[0].claudeSeat).toBeUndefined();
   });
 });

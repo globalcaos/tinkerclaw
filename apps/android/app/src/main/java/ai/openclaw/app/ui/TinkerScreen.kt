@@ -3,10 +3,12 @@ package ai.openclaw.app.ui
 import ai.openclaw.app.BuildConfig
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.jarvis.JarvisDoor
+import ai.openclaw.app.jarvis.JarvisLocalDoor
 import ai.openclaw.app.jarvis.JarvisNativeBridge
 import ai.openclaw.app.jarvis.JarvisScreen
 import ai.openclaw.app.jarvis.isSameJarvisOrigin
 import ai.openclaw.app.jarvis.jarvisDocumentStartScript
+import ai.openclaw.app.jarvis.normalizeJarvisDoorOrigin
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -105,6 +107,11 @@ private const val TINKER_PATH = "/tinker/"
 private const val OFFLINE_RETRY_MS = 15_000L
 private const val BACK_SCRIPT = "window.__jarvisBack ? window.__jarvisBack() : false"
 
+// 2026-11-10 (the architect flies, wants to read and mark up PDFs with no connection): the PDF viewer's
+// service worker serves this page with no network, but only on a secure (https) door, and only after
+// the viewer was opened there once while online. It hosts the viewer in a full-size iframe.
+private const val OFFLINE_READER_PATH = "/pdf/viewer/web/offline.html"
+
 internal sealed interface DoorState {
   data object Resolving : DoorState
 
@@ -132,6 +139,15 @@ private class TinkerWebHolder {
   var backCallback: OnBackPressedCallback? = null
   var bridge: JarvisNativeBridge? = null
   var bridgeOrigin: String? = null
+
+  /** True while the offline PDF reader is on screen (see [OFFLINE_READER_PATH]). */
+  var reader: Boolean = false
+
+  /** Leaves the offline reader; set by the composable, called by the back callback. */
+  var leaveReader: (() -> Unit)? = null
+
+  /** After leaving the reader, the next real page drops the history (back must not return to it). */
+  var clearHistoryPending: Boolean = false
 
   fun isTrustedPage(): Boolean = isSameJarvisOrigin(currentUrl, origin)
 }
@@ -174,6 +190,12 @@ private fun TinkerWebHost(
   var pageShown by remember { mutableStateOf(false) }
   val pairGeneration by viewModel.jarvisPairGeneration.collectAsState()
   val candidates by viewModel.jarvisDoorCandidates.collectAsState()
+  // The offline PDF reader lives on the first https door in the list (a service worker needs a
+  // secure origin); no https door, no reader button. Non-null while the reader is on screen.
+  // 2026-11-10: the reader lives on this phone's own address (JarvisLocalDoor), a secure origin with no
+  // door name to resolve. The https door it used before never answered on the real phone.
+  val readerDoor: String? = JarvisLocalDoor.ORIGIN
+  var readerOrigin by remember { mutableStateOf<String?>(null) }
 
   val fileChooser =
     rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -204,7 +226,19 @@ private fun TinkerWebHost(
         },
         onRequestMic = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
         onMainFrameError = { description ->
-          doorState.value = DoorState.Offline(description)
+          if (holder.reader) {
+            // The page never reached the phone's copy: back to the card, with the reason.
+            holder.reader = false
+            holder.clearHistoryPending = true
+            readerOrigin = null
+            doorState.value =
+              DoorState.Offline(
+                "The offline reader did not open. $description It works with no network only after a PDF " +
+                  "was opened once through the https door while online.",
+              )
+          } else {
+            doorState.value = DoorState.Offline(description)
+          }
         },
         onPageShown = { pageShown = true },
         onRendererGone = onRendererGone,
@@ -256,13 +290,27 @@ private fun TinkerWebHost(
       doorState.value = DoorState.Offline("This phone is not paired with a door yet.")
       return@LaunchedEffect
     }
-    val origin = viewModel.resolveJarvisDoor()
-    if (origin == null) {
+    val door = viewModel.resolveJarvisDoor()
+    if (door == null) {
       val tried = viewModel.jarvisDoorCandidates.value.joinToString(", ")
       doorState.value = DoorState.Offline("No door answered ($tried). Is Tailscale on?")
       return@LaunchedEffect
     }
+    JarvisDoor.installDeviceCookie(door, token)
+    // Pages load through the relay on this phone (a secure origin, so the PDF viewer keeps itself for
+    // offline use). The relay needs a plain http door; without one the door's own address is used.
+    val relayDoor =
+      if (door.startsWith("http://")) door
+      else viewModel.jarvisDoorCandidates.value.mapNotNull(::normalizeJarvisDoorOrigin).firstOrNull { it.startsWith("http://") }
+    val origin = relayDoor?.let { JarvisLocalDoor.pointAt(it) } ?: door
     JarvisDoor.installDeviceCookie(origin, token)
+    // The door came back while the offline reader is up: loading Tinker now would throw the architect out
+    // of the PDF mid-comment. Mark the door online and leave page, origin and bridge alone; the
+    // viewer syncs by itself, and leaving the reader resolves the door again.
+    if (holder.reader) {
+      doorState.value = DoorState.Online(origin)
+      return@LaunchedEffect
+    }
     holder.origin = origin
     installDocumentStartScript(webView, holder, origin)
     installNativeBridge(webView, holder, origin)
@@ -276,6 +324,34 @@ private fun TinkerWebHost(
     }
   }
   val state = doorState.value
+
+  // Opens the offline reader on [door] in this WebView, door online or not. The page's origin
+  // becomes the trusted one, so its links stay in the app and JarvisNative (phone voice) works.
+  fun openReader(door: String) {
+    val url = "$door$OFFLINE_READER_PATH"
+    viewModel.jarvisDeviceToken()?.let { JarvisDoor.installDeviceCookie(door, it) }
+    holder.origin = door
+    installDocumentStartScript(webView, holder, door)
+    installNativeBridge(webView, holder, door)
+    holder.reader = true
+    readerOrigin = door
+    // Set before loading: page scripts can call JarvisNative before onPageStarted arrives.
+    holder.currentUrl = url
+    webView.loadUrl(url)
+  }
+
+  // Back out of the reader: blank the page and resolve the door again (Tinker when it answers,
+  // the offline card when not). The next Tinker page drops the history, so back never returns here.
+  fun leaveReader() {
+    if (!holder.reader) return
+    holder.reader = false
+    holder.clearHistoryPending = true
+    readerOrigin = null
+    holder.currentUrl = "about:blank"
+    webView.loadUrl("about:blank")
+    retryKey += 1
+  }
+
   LaunchedEffect(state) {
     if (state is DoorState.Offline) {
       delay(OFFLINE_RETRY_MS)
@@ -291,6 +367,10 @@ private fun TinkerWebHost(
         override fun handleOnBackPressed() {
           webView.evaluateJavascript(BACK_SCRIPT) { result ->
             if (result == "true") return@evaluateJavascript
+            if (holder.reader) {
+              holder.leaveReader?.invoke()
+              return@evaluateJavascript
+            }
             if (webView.canGoBack()) {
               webView.goBack()
               return@evaluateJavascript
@@ -304,7 +384,7 @@ private fun TinkerWebHost(
             }
             isEnabled = false
             dispatcher?.onBackPressed()
-            isEnabled = holder.visible && holder.online
+            isEnabled = holder.visible && (holder.online || holder.reader)
           }
         }
       }
@@ -318,7 +398,8 @@ private fun TinkerWebHost(
   SideEffect {
     holder.visible = visible
     holder.online = state is DoorState.Online
-    holder.backCallback?.isEnabled = visible && state is DoorState.Online
+    holder.leaveReader = ::leaveReader
+    holder.backCallback?.isEnabled = visible && (state is DoorState.Online || readerOrigin != null)
   }
 
   Box(modifier = Modifier.fillMaxSize()) {
@@ -329,7 +410,9 @@ private fun TinkerWebHost(
         webView
       },
       update = { view ->
-        view.visibility = if (visible && state !is DoorState.Offline) View.VISIBLE else View.INVISIBLE
+        // The offline reader shows while the door is still offline.
+        val showPage = state !is DoorState.Offline || readerOrigin != null
+        view.visibility = if (visible && showPage) View.VISIBLE else View.INVISIBLE
       },
     )
 
@@ -340,10 +423,11 @@ private fun TinkerWebHost(
       )
     }
 
-    if (state is DoorState.Offline) {
+    if (state is DoorState.Offline && readerOrigin == null) {
       OfflineCard(
         detail = state.detail,
         onRetry = { retryKey += 1 },
+        onReadOffline = readerDoor?.let { door -> { openReader(door) } },
         onOpenNative = onOpenNative,
         modifier = Modifier.align(Alignment.Center).padding(20.dp),
       )
@@ -358,6 +442,7 @@ private fun TinkerWebHost(
 private fun OfflineCard(
   detail: String,
   onRetry: () -> Unit,
+  onReadOffline: (() -> Unit)?,
   onOpenNative: (JarvisScreen) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -383,6 +468,9 @@ private fun OfflineCard(
       }
       Text(detail, color = Color(0xFFCBBBA4), fontSize = 14.sp)
       Text("Trying again every 15 seconds.", color = Color(0xFF9C8B75), fontSize = 12.sp)
+      if (onReadOffline != null) {
+        Button(onClick = onReadOffline, modifier = Modifier.fillMaxWidth()) { Text("📄 Read offline") }
+      }
       Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = onRetry) { Text("Retry") }
         OutlinedButton(
@@ -461,7 +549,7 @@ private fun createTinkerWebView(
   webView.setBackgroundColor(android.graphics.Color.rgb(0x1C, 0x14, 0x0F))
   CookieManager.getInstance().setAcceptCookie(true)
   holder.bridge?.close()
-  holder.bridge = JarvisNativeBridge(context = context, onOpenNative = onOpenNative)
+  holder.bridge = JarvisNativeBridge(context = context, onOpenNative = onOpenNative, requestMic = onRequestMic)
 
   // In-page edge swipes open Tinker's drawers; Android allows at most 200 dp per edge.
   webView.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ -> applyEdgeSwipeExclusion(view) }
@@ -517,6 +605,11 @@ private fun createTinkerWebView(
         url: String?,
       ) {
         holder.currentUrl = url
+        // First Tinker page after leaving the offline reader: back must not walk into the reader.
+        if (holder.clearHistoryPending && !holder.reader && isTinkerPage(url, holder.origin)) {
+          holder.clearHistoryPending = false
+          view.clearHistory()
+        }
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) && holder.isTrustedPage()) {
           view.evaluateJavascript(jarvisDocumentStartScript(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), null)
         }
@@ -636,6 +729,11 @@ private fun installNativeBridge(
   }
   holder.bridgeOrigin = origin
 }
+
+private fun isTinkerPage(
+  url: String?,
+  origin: String?,
+): Boolean = url != null && isSameJarvisOrigin(url, origin) && Uri.parse(url).path?.startsWith(TINKER_PATH) == true
 
 /** 48 dp strips on both edges, 200 dp tall, vertically centred. */
 internal fun applyEdgeSwipeExclusion(view: View) {

@@ -55,6 +55,9 @@ export function readThalamusBoard(
   const cooled = readThalamusCooling({ nowMs });
   return {
     rungs: parts.rungs,
+    ...(parts.secondOpinionRungs.length > 0
+      ? { secondOpinionRungs: parts.secondOpinionRungs }
+      : {}),
     supplies: parts.supplies,
     contextWindowFor: parts.contextWindowFor,
     dialIdx,

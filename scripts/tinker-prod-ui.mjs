@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 import { checkoutDrift } from "./lib/checkout-drift.mjs";
+import { createTrailReader, jobTrailBody } from "./lib/longjob-trail.mjs";
 
 const PORT = Number(process.env.TINKER_PROD_PORT || 18793);
 const GW_HOST = process.env.TINKER_GATEWAY_HOST || "127.0.0.1";
@@ -141,6 +142,71 @@ function withoutClosedTabs(tabs, closed) {
   return tabs.filter(
     (t) => typeof t.id !== "string" || t.id === "tab-main" || typeof closed[t.id] !== "number",
   );
+}
+
+// FORK 2026-11-14 — the unread glow's SEEN stamps (tinker-ui/src/tab-attention.ts; ui-state choice
+// "tab:seen": chat session key → { s: seen up to, f?: a final the page recorded itself }).
+// the architect: a chat opened on the phone stayed green on the laptop, and the other way round. Both
+// devices write this one desk file, but each page sent its whole snapshot, so the file took the
+// last writer's stamps (a page that had not seen the chat could even lower one), and an open page
+// never learnt what the other had seen. Now the stamps are MERGED like the tombstones above (per
+// chat the later `s` and the later `f`; both only ever rise), and a write that raises one is pushed
+// to every open page of the desk (pushTabSeen). Mirrors parseSeenMap and mergeSeenMaps in
+// tinker-ui/src/tab-attention.ts.
+const TAB_SEEN_CHOICE = "tab:seen";
+const MAX_SEEN = 200;
+function seenStamp(x) {
+  return typeof x === "number" && Number.isFinite(x) && x > 0 ? x : undefined;
+}
+function parseSeenMap(raw) {
+  const out = Object.create(null);
+  let parsed;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : null;
+  } catch {
+    return out;
+  }
+  if (!isPlainObject(parsed)) return out;
+  for (const [key, v] of Object.entries(parsed)) {
+    const s = seenStamp(v?.s);
+    if (!key || s === undefined) continue;
+    const f = seenStamp(v?.f);
+    out[key] = f === undefined ? { s } : { s, f };
+  }
+  return out;
+}
+/** Per chat the later stamps, for the MAX_SEEN chats seen last (a page keeps only its open tabs). */
+function mergeSeenMaps(...maps) {
+  const all = Object.create(null);
+  for (const map of maps) {
+    for (const [key, rec] of Object.entries(map)) {
+      const s = Math.max(all[key]?.s ?? 0, rec.s);
+      const f = Math.max(all[key]?.f ?? 0, rec.f ?? 0);
+      all[key] = f > 0 ? { s, f } : { s };
+    }
+  }
+  const out = Object.create(null);
+  const newest = Object.entries(all)
+    .sort((a, b) => b[1].s - a[1].s)
+    .slice(0, MAX_SEEN);
+  for (const [key, rec] of newest) out[key] = rec;
+  return out;
+}
+/** The chats whose stamps `after` raised over `before` (a chat new to the file counts). */
+function seenRaised(before, after) {
+  return Object.keys(after).filter(
+    (key) =>
+      !before[key] || after[key].s > before[key].s || (after[key].f ?? 0) > (before[key].f ?? 0),
+  );
+}
+/** As the page stores it (serializeSeenMap): keys sorted, so equal maps are equal strings. */
+function serializeSeenMap(map) {
+  const out = Object.create(null);
+  for (const key of Object.keys(map).sort()) out[key] = map[key];
+  return JSON.stringify(out);
+}
+function tabSeenEvent(map) {
+  return `event: tab-seen\ndata: ${serializeSeenMap(map)}\n\n`;
 }
 
 // FORK 2026-09-21 — tab-resurrection tracing (the architect: closed tabs came back after a rebuild).
@@ -317,6 +383,12 @@ async function handleUiState(req, res) {
     if (snapshot.tabs !== undefined) snapshot.tabs = withoutClosedTabs(snapshot.tabs, closedTabs);
   }
   logTabChange(req, current.state.tabs, sentTabs, snapshot.tabs);
+  // FORK 2026-11-14 — seen stamps are merged, never replaced (TAB_SEEN_CHOICE above).
+  const seenBefore = parseSeenMap(current.state.choices[TAB_SEEN_CHOICE]);
+  const seenAfter = mergeSeenMaps(seenBefore, parseSeenMap(snapshot.choices[TAB_SEEN_CHOICE]));
+  if (Object.keys(seenAfter).length > 0) {
+    snapshot.choices[TAB_SEEN_CHOICE] = serializeSeenMap(seenAfter);
+  }
   // FORK 2026-09-24 — a POST that dies in the browser never reaches this handler, so the trace
   // above is blind to it (that blindness hid the keepalive-budget freeze for seven weeks). The
   // client counts its failed mirrors and names the streak on the first write that gets through.
@@ -339,7 +411,10 @@ async function handleUiState(req, res) {
       /* ignore */
     }
     json(res, 500, { error: writeErr.message ?? "Write failed" });
+    return true;
   }
+  const raised = seenRaised(seenBefore, seenAfter);
+  if (raised.length > 0) pushTabSeen(seatId, seenAfter, raised, req);
   return true;
 }
 
@@ -398,13 +473,17 @@ function readGanttBoards() {
     return [];
   }
   if (!isPlainObject(boards)) return [];
+  // FORK 2026-11-14: a board whose plan file is gone stays listed with `missing`, so its tab shows
+  // greyed and its chart says where the plan was. Dropping it hid the SV2 tab for weeks after the
+  // plan stayed behind on the laptop when Jarvis moved to the Pi.
   return Object.entries(boards)
-    .filter(([, b]) => isPlainObject(b) && typeof b.plan === "string" && fs.existsSync(b.plan))
+    .filter(([, b]) => isPlainObject(b) && typeof b.plan === "string" && b.plan)
     .map(([session, b]) => ({
       session,
       plan: b.plan,
       title: typeof b.title === "string" ? b.title : "",
       at: typeof b.at === "string" ? b.at : null,
+      ...(fs.existsSync(b.plan) ? {} : { missing: true }),
     }));
 }
 
@@ -460,8 +539,10 @@ function sendCompressed(req, res, status, type, body) {
   res.end(out);
 }
 
-const GANTT_EMPTY_PAGE = (msg) =>
-  `<!doctype html><meta charset="utf-8"><body style="margin:0;padding:24px;background:#1a140e;color:#b8a888;font:13px ui-sans-serif,system-ui,sans-serif">${msg}</body>`;
+const GANTT_EMPTY_PAGE = (msg, refreshSeconds = 0) =>
+  `<!doctype html><meta charset="utf-8">${refreshSeconds ? `<meta http-equiv="refresh" content="${refreshSeconds}">` : ""}<body style="margin:0;padding:24px;background:#1a140e;color:#b8a888;font:13px ui-sans-serif,system-ui,sans-serif">${msg}</body>`;
+const ganttEscape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const ganttMissingMsg = (board) => `The plan file is missing: ${board.plan}`;
 
 async function handleGantt(sub, url, req, res) {
   if (sub === "boards") {
@@ -494,6 +575,7 @@ async function handleGantt(sub, url, req, res) {
       ? readGanttBoards().find((b) => ganttKeysMatch(b.session, session))
       : null;
     if (!board) return json(res, 404, { error: "No Gantt plan is attached to this chat." });
+    if (board.missing) return json(res, 404, { error: ganttMissingMsg(board) });
     const r = await ganttMachines(board.plan);
     let body = null;
     try {
@@ -520,6 +602,19 @@ async function handleGantt(sub, url, req, res) {
         404,
         "text/html; charset=utf-8",
         sub === "view" ? GANTT_EMPTY_PAGE(msg) : msg,
+      );
+    }
+    if (board.missing) {
+      // An open chart shows this text in its "not updated" line; the page form reloads itself,
+      // so the chart comes back once the file is there again.
+      const msg = ganttMissingMsg(board);
+      const page = `${ganttEscape(msg)}<br><br>The chart comes back by itself once the file is there again.`;
+      return sendCompressed(
+        req,
+        res,
+        404,
+        "text/html; charset=utf-8",
+        sub === "view" ? GANTT_EMPTY_PAGE(page, 15) : msg,
       );
     }
     const r = await ganttRender(board.plan, sub);
@@ -591,18 +686,43 @@ function handleUiEvents(req, res) {
     "Cache-Control": "no-store",
     Connection: "keep-alive",
   });
-  const page = { res, have: have.slice(0, 120), since: Date.now() };
+  // FORK 2026-11-14 — `seat`: the desk this page writes (a door sets it; none = the owner desk), so
+  // seen stamps reach only the pages of the same desk.
+  const seat = seatIdFromReq(req);
+  const page = { res, have: have.slice(0, 120), since: Date.now(), seat };
   uiPages.add(page);
   // FORK 2026-10-03: a page that connects after a push still learns its cause, but only for the
   // build that push announced; for any other build the honest answer is "unknown" (null).
   const served = servedBundle();
   const cause = lastPush && lastPush.bundle === served ? lastPush.cause : null;
   res.write(`retry: 3000\n${uiBuildEvent(served, cause)}`);
+  // FORK 2026-11-14 — and the desk's seen stamps: a page whose stream slept (the phone) catches up
+  // at once on the chats read elsewhere meanwhile.
+  if (seat || !REQUIRE_SEAT) {
+    const seen = parseSeenMap(readState(stateFileFor(seat)).state.choices[TAB_SEEN_CHOICE]);
+    if (Object.keys(seen).length > 0) res.write(tabSeenEvent(seen));
+  }
   const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
   req.on("close", () => {
     clearInterval(ping);
     uiPages.delete(page);
   });
+}
+
+// FORK 2026-11-14 — a write raised a seen stamp: every open page of that desk adopts it, which
+// clears the glow of a chat just read on another device. The writer gets it too and finds nothing
+// new in it. Read with: journalctl --user -u tinker-prod-ui | grep tab-seen
+function pushTabSeen(seat, map, raised, req) {
+  const event = tabSeenEvent(map);
+  let pages = 0;
+  for (const p of uiPages) {
+    if (p.seat !== seat) continue;
+    p.res.write(event);
+    pages += 1;
+  }
+  console.log(
+    `[ui-state] tab-seen raised [${raised.join(", ")}] → ${pages} open page(s) build=${req.headers["x-tinker-build"] ?? "?"}`,
+  );
 }
 
 let lastServedBundle = null;
@@ -1033,7 +1153,17 @@ function freezeThawStatus() {
 // (DNS rebinding arrives under a domain name); an Origin, when sent, must be this very host.
 // The bug-report route (2026-09-26) writes files, so it takes the same guard under its own header.
 function isPageCaller(req, action) {
-  if (req.headers["x-tinker-action"] !== action) return false;
+  return req.headers["x-tinker-action"] === action && isOwnPage(req);
+}
+
+// FORK 2026-11-14 (burn review s1-http-doors F1, s3-zen-mail F1): this server listens on loopback
+// and adds the gateway Bearer (or Zen Mail's own Origin) to what it forwards, so a page of another
+// site opened in a browser on this machine could write repo files through save-file and run them
+// through /api/gantt/. isPageCaller's rule without its header: the Host must be an IP or localhost
+// (DNS rebinding arrives under a domain name); an Origin, when sent, must be this very host ("null",
+// a local file or a sandboxed frame, is not). The phone door rewrites Host and Origin to the
+// loopback form first, and local tools send no Origin, so both pass.
+function isOwnPage(req) {
   const host = String(req.headers.host ?? "");
   const hostname = host.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
   if (hostname !== "localhost" && !net.isIP(hostname)) return false;
@@ -1372,6 +1502,24 @@ async function handlePageLoad(req, res) {
   res.end();
 }
 
+// FORK 2026-11-11: the page's script (1.8 MB) and styles went out as they are on disk, and a rebuild
+// gives the script a new name, so every rebuild cost each device the whole file again. Packed, they are
+// a third. Packed once per file version and kept; pictures are packed already and stay as they are.
+const GZIP_EXT = new Set([".js", ".mjs", ".css", ".html", ".svg", ".json", ".map", ".txt"]);
+const gzipKept = new Map(); // file -> { mtimeMs, size, body }
+function gzipOnce(file, stat, data) {
+  const hit = gzipKept.get(file);
+  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) {
+    return hit.body;
+  }
+  const body = zlib.gzipSync(data, { level: 6 });
+  if (gzipKept.size > 200) {
+    gzipKept.clear();
+  }
+  gzipKept.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, body });
+  return body;
+}
+
 function serveIndex(res) {
   const raw = fs.readFileSync(path.join(DIST, "index.html"), "utf8");
   const tag = `<script>window.__TINKER_CONFIG=${JSON.stringify({ token: TOKEN })}</script>`;
@@ -1554,6 +1702,22 @@ async function handleLongjobList(url, res) {
   json(res, 200, { jobs });
 }
 
+// FORK 2026-11-14 — the owner asked to see the work hidden behind a long job's row. The agents behind a long job
+// and their work since they started, read from their Claude Code transcripts (lib/longjob-trail.mjs). The page
+// sends a byte cursor per agent (`?c=key:byte,…`) and gets only what is new. A job with no agent (a download, a
+// build) answers with the tail of its own output instead. Same-origin only: a trail holds whatever the agent
+// read and ran.
+const trailReader = createTrailReader({ home: HOME });
+
+async function handleLongjobTrail(id, url, req, res) {
+  const r = await jobTrailBody(trailReader, LONGJOB_ROOT, id, url.searchParams.get("c"));
+  if (r.status !== 200) {
+    json(res, r.status, r.body);
+    return;
+  }
+  sendCompressed(req, res, 200, "application/json; charset=utf-8", JSON.stringify(r.body));
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   const pathname = url.pathname;
@@ -1584,6 +1748,31 @@ const server = http.createServer((req, res) => {
       });
       res.end(err ? '{"error":"no such job"}' : buf);
     });
+    return;
+  }
+  const ljTrail = /^\/api\/longjob\/([a-z0-9][a-z0-9-]{0,63})\/trail$/.exec(pathname);
+  if (ljTrail) {
+    if (!isOwnPage(req)) {
+      json(res, 403, { error: "not from this page" });
+      return;
+    }
+    void handleLongjobTrail(ljTrail[1], url, req, res);
+    return;
+  }
+  // FORK 2026-11-14: the routes that write files, run a script, carry the gateway Bearer or borrow
+  // Zen Mail's Origin answer only this page and local tools (isOwnPage).
+  if (
+    (pathname === "/api/ui-state" ||
+      pathname === "/api/open-file" ||
+      pathname.startsWith("/api/gantt/") ||
+      pathname === "/api/kit-content" ||
+      pathname === "/api/save-file" ||
+      pathname.startsWith("/zen/") ||
+      pathname.startsWith("/tinker/api/") ||
+      pathname === "/tinker/api") &&
+    !isOwnPage(req)
+  ) {
+    json(res, 403, { error: "not from this page" });
     return;
   }
   if (pathname === "/api/ui-state") {
@@ -1685,13 +1874,24 @@ const server = http.createServer((req, res) => {
     const stat = fs.statSync(filePath);
     if (stat.isFile()) {
       const data = fs.readFileSync(filePath);
-      res.writeHead(200, {
+      const headers = {
         "Content-Type": CONTENT_TYPES[ext] ?? "application/octet-stream",
         "Cache-Control": rel.startsWith("/assets/")
           ? "public, max-age=31536000, immutable"
           : "no-cache",
-      });
-      res.end(data);
+      };
+      let body = data;
+      if (
+        GZIP_EXT.has(ext) &&
+        data.length > 1400 &&
+        /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""))
+      ) {
+        body = gzipOnce(filePath, stat, data);
+        headers["Content-Encoding"] = "gzip";
+        headers.Vary = "Accept-Encoding";
+      }
+      res.writeHead(200, headers);
+      res.end(body);
       return;
     }
   } catch {

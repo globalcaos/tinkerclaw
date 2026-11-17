@@ -160,7 +160,11 @@ export function shouldSwitchToLiveModel(params: {
   const storePath = resolveStorePath(cfg.session?.store, {
     agentId: params.agentId?.trim(),
   });
-  const entry = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+  // FORK 2026-10-29: clone:false (failures.md M21 audit). skipCache parses a private object
+  // nothing else can reach, and this reads one entry's flag after every run attempt, so the
+  // whole-store structuredClone (125-135 ms on a 7.9 MB sessions.json) bought nothing.
+  // skipCache stays, so the flag is still read fresh from disk.
+  const entry = loadSessionStore(storePath, { skipCache: true, clone: false })[sessionKey];
   if (!entry?.liveModelSwitchPending) {
     return undefined;
   }

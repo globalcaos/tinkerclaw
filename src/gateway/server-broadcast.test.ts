@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGatewayBroadcaster } from "./server-broadcast.js";
-import { MAX_BUFFERED_BYTES } from "./server-constants.js";
+import { DROP_IF_SLOW_BUFFERED_BYTES, MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
 type TestSocket = {
@@ -244,6 +244,123 @@ describe("gateway broadcaster", () => {
       ).toEqual([
         "[chat-deliver] sessionKey=agent:main:main runId=run-1 attempted=1 sent=1 scopeSkipped=0 droppedSlow=0 sendThrew=0 textLen=5",
       ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
+// FORK 2026-11-04 — a droppable frame the next one makes whole again has its own, lower limit, so
+// those frames can no longer fill a stalled client's queue up to the close limit and take the next
+// must-arrive frame down with it. Every other droppable frame keeps the close limit.
+describe("gateway broadcaster — slow clients", () => {
+  it("drops a superseded delta above DROP_IF_SLOW_BUFFERED_BYTES and still sends a final", () => {
+    const stalled = makeRecordingSocket();
+    stalled.bufferedAmount = DROP_IF_SLOW_BUFFERED_BYTES + 1;
+    const clients = new Set<GatewayWsClient>([makeReadClient("c-stalled", stalled)]);
+    const { broadcast } = createGatewayBroadcaster({ clients });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const delta = broadcast(
+        "chat",
+        { runId: "run-1", sessionKey: "agent:main:main", state: "delta" },
+        { dropIfSlow: true, supersededByNext: true },
+      );
+      expect(delta.droppedSlow).toBe(1);
+      expect(delta.sent).toBe(0);
+
+      const final = broadcast("chat", {
+        runId: "run-1",
+        sessionKey: "agent:main:main",
+        state: "final",
+        message: { role: "assistant", content: [{ type: "text", text: "whole reply" }] },
+      });
+      expect(final.sent).toBe(1);
+      expect(stalled.close).not.toHaveBeenCalled();
+      expect(stalled.frames.map((f) => f.event)).toEqual(["chat"]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("queues a droppable frame no later frame repeats until MAX_BUFFERED_BYTES", () => {
+    const stalled = makeRecordingSocket();
+    stalled.bufferedAmount = DROP_IF_SLOW_BUFFERED_BYTES + 1;
+    const clients = new Set<GatewayWsClient>([makeReadClient("c-stalled", stalled)]);
+    const { broadcast } = createGatewayBroadcaster({ clients });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const sessionKey = "agent:main:main";
+
+    try {
+      // Between the two limits a tool row is still queued while the delta next to it is dropped.
+      expect(
+        broadcast(
+          "session.tool",
+          { runId: "run-1", sessionKey, stream: "tool", data: { phase: "start" } },
+          { dropIfSlow: true },
+        ),
+      ).toMatchObject({ sent: 1, droppedSlow: 0 });
+      expect(
+        broadcast(
+          "chat",
+          { runId: "run-1", sessionKey, state: "delta" },
+          { dropIfSlow: true, supersededByNext: true },
+        ),
+      ).toMatchObject({ sent: 0, droppedSlow: 1 });
+      // `supersededByNext` alone does not make a frame droppable.
+      expect(
+        broadcast(
+          "agent",
+          { runId: "run-1", sessionKey, stream: "lifecycle" },
+          { supersededByNext: true },
+        ),
+      ).toMatchObject({ sent: 1, droppedSlow: 0 });
+
+      // Past the close limit the droppable frame is dropped and the socket stays open, as before.
+      stalled.bufferedAmount = MAX_BUFFERED_BYTES + 1;
+      expect(
+        broadcast("sessions.changed", { sessionKey, phase: "end" }, { dropIfSlow: true }),
+      ).toMatchObject({ sent: 0, droppedSlow: 1 });
+      expect(stalled.close).not.toHaveBeenCalled();
+      expect(stalled.frames.map((f) => f.event)).toEqual(["session.tool", "agent"]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("closes a client past MAX_BUFFERED_BYTES and says which one, once", () => {
+    const stalled = makeRecordingSocket();
+    stalled.bufferedAmount = MAX_BUFFERED_BYTES + 1;
+    const clients = new Set<GatewayWsClient>([makeReadClient("c-stalled", stalled)]);
+    const { broadcast } = createGatewayBroadcaster({ clients });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const payload = {
+        runId: "run-1",
+        sessionKey: "agent:main:main",
+        state: "final",
+        message: { role: "assistant", content: [{ type: "text", text: "12345" }] },
+      };
+      expect(broadcast("chat", payload)).toEqual({
+        attempted: 1,
+        sent: 0,
+        scopeSkipped: 0,
+        droppedSlow: 0,
+        sendThrew: 0,
+      });
+      broadcast("chat", payload);
+      expect(stalled.close).toHaveBeenCalledWith(1008, "slow consumer");
+
+      const lines = log.mock.calls.map((call) => String(call[0]));
+      expect(lines.filter((line) => line.startsWith("[ws-slow-close] "))).toEqual([
+        `[ws-slow-close] connId=c-stalled bufferedAmount=${MAX_BUFFERED_BYTES + 1} limit=${MAX_BUFFERED_BYTES} event=chat state=final sessionKey=agent:main:main runId=run-1`,
+      ]);
+      // The existing delivery line keeps its exact format.
+      expect(lines.find((line) => line.startsWith("[chat-deliver] "))).toBe(
+        "[chat-deliver] sessionKey=agent:main:main runId=run-1 attempted=1 sent=0 scopeSkipped=0 droppedSlow=0 sendThrew=0 textLen=5",
+      );
     } finally {
       log.mockRestore();
     }

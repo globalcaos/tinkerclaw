@@ -21,8 +21,9 @@
  * SEARCH reuses the existing retrieval machinery rather than reinventing it:
  *   - semantic: the recall-tool embedding path (an injected EmbedFn embeds the
  *     query AND all live skill texts in ONE batch — no N+1), cosine-ranked.
- *   - keyword:  a token-overlap fallback when no EmbedFn is wired (and used to
- *     merge with the semantic ranking), matching textSimilarity in recall-tool.
+ *   - keyword:  a token-overlap fallback when no EmbedFn is wired or the embed
+ *     call fails, matching textSimilarity in recall-tool (FORK 2026-10-29: an
+ *     embedding error never fails the search; TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
  *
  * The Cerebellum owns the library + fitness; the Prefrontal recipe-runner owns
  * execution (skill-invocation.ts records the outcome back here) — the same
@@ -322,18 +323,26 @@ export function createSkillLibrary(options: SkillLibraryOptions): SkillLibrary {
         return [];
       }
 
-      let scored: { skill: Skill; score: number }[];
+      let scored: { skill: Skill; score: number }[] | undefined;
 
       if (embedFn) {
         // ONE batch embed: [query, ...skillTexts] — no N+1 (recall-tool path).
-        const texts = [query, ...skills.map((s) => skillText(s))];
-        const vectors = await embedFn(texts);
-        const queryVec = vectors[0];
-        scored = skills.map((s, i) => ({
-          skill: s,
-          score: cosine(queryVec, vectors[i + 1]),
-        }));
-      } else {
+        // FORK 2026-10-29: any embedding error (the governor refusing, a deadline, an endpoint
+        // that is down, a malformed answer) falls back to the keyword ranking below. It used to
+        // fail the whole fork.skill.search RPC (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
+        try {
+          const texts = [query, ...skills.map((s) => skillText(s))];
+          const vectors = await embedFn(texts);
+          const queryVec = vectors[0];
+          scored = skills.map((s, i) => ({
+            skill: s,
+            score: cosine(queryVec, vectors[i + 1]),
+          }));
+        } catch {
+          scored = undefined;
+        }
+      }
+      if (!scored) {
         // Keyword fallback: token-overlap relevance (matches recall-tool textSimilarity).
         scored = skills.map((s) => ({
           skill: s,

@@ -118,6 +118,15 @@ before(async () => {
 
   upstream = http.createServer((q, s) => {
     upHttp.push({ url: q.url, seat: q.headers["x-tinker-seat"] });
+    if (q.url.includes("leak=1")) {
+      // the gateway secret inside a JSON body, split across two writes
+      const body = JSON.stringify({ token: GW });
+      const cut = body.indexOf(GW) + 6;
+      s.writeHead(200, { "content-type": "application/json" });
+      s.write(body.slice(0, cut));
+      setTimeout(() => s.end(body.slice(cut)), 30);
+      return;
+    }
     s.writeHead(200, { "content-type": "application/json" }).end("{}");
   });
   const wss = new WebSocketServer({ server: upstream });
@@ -290,6 +299,100 @@ describe("multi-user door", () => {
     const last = upHttp.at(-1);
     assert.equal(last.url, "/tinker/api/ui-state");
     assert.equal(last.seat, "bob");
+  });
+
+  it("a case variant of someone else's chat is refused and never reaches the gateway", async () => {
+    const before = upSeen.length;
+    for (const sessionKey of ["agent:main:hive:alice:MAIN", "Agent:main:tinker:a1"]) {
+      assert.equal((await bob.call("chat.history", { sessionKey })).ok, false, sessionKey);
+      assert.equal(
+        (await bob.call("chat.send", { sessionKey, message: "x" })).ok,
+        false,
+        sessionKey,
+      );
+    }
+    assert.equal(upSeen.length, before);
+  });
+
+  it("HTTP: a regular person is refused the gateway's file, admin and other people's routes", async () => {
+    const enc = encodeURIComponent;
+    const refused = [
+      ["GET", "/tinker/api/anything?path=/.openclaw/data/door/tokens.json"],
+      ["GET", "/tinker/api/file-read?path=/home/x/.openclaw/openclaw.json"],
+      ["GET", "/tinker/api/kit-content?path=README.md"],
+      ["GET", "/tinker/api/media?path=/home/x/a.png"],
+      ["POST", "/tinker/api/save-file"],
+      ["POST", "/tinker/api/jarvis-mute"],
+      ["GET", "/tinker/api/jarvis-voice/latest"],
+      ["POST", "/tinker/api/jarvis-voice/away"],
+      ["GET", "/tinker/api/context-anatomy/recent"],
+      ["GET", "/tinker/api/context-anatomy/before?ts=1"],
+      ["GET", `/tinker/api/context-anatomy/${enc("agent:main:tinker:a1")}`],
+      ["GET", `/tinker/api/context-anatomy/${enc("agent:main:hive:alice:MAIN")}/latest`],
+      ["GET", "/tinker/assets/../api/file-read?path=/etc/passwd"],
+      ["GET", "//tinker/api/file-read?path=/etc/passwd"],
+      ["POST", "/tinker/"],
+      ["POST", "/tools/invoke"],
+      ["POST", "/v1/chat/completions"],
+      ["GET", "/plugins/amygdala2/notes"],
+    ];
+    const before = upHttp.length;
+    for (const [method, p] of refused) {
+      const r = await httpReq(method, p, {
+        headers: { cookie: bob.cookie, "content-type": "application/json" },
+        body: method === "POST" ? JSON.stringify({ path: "x", content: "y" }) : undefined,
+      });
+      assert.equal(r.status, 403, `${method} ${p}`);
+    }
+    assert.equal(upHttp.length, before, "nothing refused was forwarded upstream");
+  });
+
+  it("HTTP: a regular person still reaches everything the chat page loads", async () => {
+    const own = encodeURIComponent("agent:main:hive:bob:main");
+    const allowed = [
+      ["GET", "/tinker/"],
+      ["GET", "/tinker/assets/index-abc.js"],
+      ["GET", "/tinker/api/seat"],
+      ["GET", "/tinker/api/ui-state"],
+      ["POST", "/tinker/api/ui-state"],
+      ["GET", "/tinker/api/jarvis-mute"],
+      ["GET", `/tinker/api/context-anatomy/${own}?limit=10`],
+      ["GET", `/tinker/api/context-anatomy/${own}/latest`],
+    ];
+    for (const [method, p] of allowed) {
+      const before = upHttp.length;
+      const r = await httpReq(method, p, {
+        headers: { cookie: bob.cookie, "content-type": "application/json" },
+        body: method === "POST" ? "{}" : undefined,
+      });
+      assert.equal(r.status, 200, `${method} ${p}`);
+      assert.equal(upHttp.length, before + 1, `${method} ${p} forwarded`);
+      assert.equal(upHttp.at(-1).url, p);
+    }
+    // ?tree=1 adds other chats' subagent rows: dropped for a regular person, kept for an admin
+    const tree = `/tinker/api/context-anatomy/${own}?tree=1&limit=5`;
+    await httpReq("GET", tree, { headers: { cookie: bob.cookie } });
+    assert.equal(upHttp.at(-1).url, `/tinker/api/context-anatomy/${own}?limit=5`);
+    await httpReq("GET", tree, { headers: { cookie: alice.cookie } });
+    assert.equal(upHttp.at(-1).url, tree);
+  });
+
+  it("HTTP: an admin keeps the gateway's file routes", async () => {
+    const p = "/tinker/api/file-read?path=/x";
+    const r = await httpReq("GET", p, { headers: { cookie: alice.cookie } });
+    assert.equal(r.status, 200);
+    assert.equal(upHttp.at(-1).url, p);
+  });
+
+  it("HTTP: the gateway secret is scrubbed from non-HTML answers too, even split across chunks", async () => {
+    for (const who of [bob, alice]) {
+      const r = await httpReq("GET", "/tinker/api/seat?leak=1", {
+        headers: { cookie: who.cookie },
+      });
+      assert.equal(r.status, 200);
+      assert.ok(!r.body.includes(GW), r.body);
+      assert.deepEqual(JSON.parse(r.body), { token: "door-session" });
+    }
   });
 
   it("admin API: regular users are refused; admins add, rotate, revoke and delete people", async () => {

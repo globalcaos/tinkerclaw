@@ -103,6 +103,11 @@ export interface RunMsgKind {
    * run, the dominant-answer guard below simply does not engage and classification is unchanged.
    */
   textLen?: number;
+  /**
+   * A stop check sent the reply back right after this bubble: the answer it judged ends here.
+   * Absent on every message of a turn no check sent back, and then nothing below changes.
+   */
+  sentBackAfter?: boolean;
 }
 
 /**
@@ -127,6 +132,54 @@ function dominantAnswerIdx(kinds: RunMsgKind[]): number {
     }
   }
   return tied ? -1 : best;
+}
+
+// FORK 2026-11-13 (bug: a finished reply folded into "Reasoning" after a stop-check send-back).
+//
+// A stop check judges an answer the agent had FINISHED. When it sends the reply back the same run
+// goes on: the agent calls a tool to check what it was told to check, then writes a short result.
+// The judged answer is now "text with a tool after it", which is this module's definition of
+// narration, and the size rule spares it only while it is the run's single largest bubble. It
+// loses when the run holds a text at least as long (the result, when it repeats the closing card;
+// an earlier answer in a run of several turns) and when it reached the page as several bubbles.
+//
+// No row inside the run says a reply was sent back: the bridge forwards only tool results from
+// the CLI's user lines, and a "Stop hook feedback" row that did reach the page would be a prompt
+// and end the run. The Amygdala's own record does say it, so chat-units.ts marks the bubble the
+// check judged (`sentBackAfter`) and this rule reads the mark:
+//
+//   THE TEXT A STOP CHECK JUDGED BEFORE IT SENT THE REPLY BACK IS AN ANSWER. NEVER COLLAPSE IT.
+//
+// That is the marked bubble and the text bubbles before it, back to the last tool: an answer
+// written as several bubbles is one answer. Like the cutoff and the size rule it can only SHRINK
+// the narration set, so it is safe to apply after the freeze too. With no mark it returns nothing.
+
+/**
+ * Run-relative indices of the text bubbles a stop check judged before it sent the reply back: each
+ * marked bubble, and the text bubbles between it and the last tool before it.
+ */
+export function sentBackAnswerIndices(kinds: RunMsgKind[]): number[] {
+  const out: number[] = [];
+  let from = 0;
+  for (let p = 0; p < kinds.length; p++) {
+    if (kinds[p].sentBackAfter !== true) {
+      continue;
+    }
+    // A bubble AT the last tool position is not before it (the reading narrationIndices has too).
+    let start = from;
+    for (let j = from; j <= p; j++) {
+      if (kinds[j].hasTool) {
+        start = j;
+      }
+    }
+    for (let j = start; j <= p; j++) {
+      if (kinds[j].isAssistantText) {
+        out.push(j);
+      }
+    }
+    from = p + 1;
+  }
+  return out;
 }
 
 /**
@@ -163,5 +216,7 @@ export function narrationIndices(kinds: RunMsgKind[]): number[] {
       out.push(i);
     }
   }
-  return out;
+  // What a stop check judged before it sent the reply back is an answer (fork note 2026-11-13).
+  const judged = sentBackAnswerIndices(kinds);
+  return judged.length === 0 ? out : out.filter((i) => !judged.includes(i));
 }

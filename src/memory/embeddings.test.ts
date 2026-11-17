@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { __resetEmbedGovernorsForTest, governorFor } from "../fork/embedder-governor.js";
 import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "./embeddings-gemini.js";
 import { mockPublicPinnedHostname } from "./test-helpers/ssrf.js";
 
@@ -42,6 +43,12 @@ let DEFAULT_LOCAL_MODEL: EmbeddingsModule["DEFAULT_LOCAL_MODEL"];
 beforeAll(async () => {
   authModule = await import("../agents/model-auth.js");
   ({ createEmbeddingProvider, DEFAULT_LOCAL_MODEL } = await import("./embeddings.js"));
+});
+
+// FORK 2026-10-29: every provider createEmbeddingProvider returns is governed; each test starts with
+// no governor state (no breaker, queue or demand carried over from the test before).
+beforeEach(() => {
+  __resetEmbedGovernorsForTest();
 });
 
 afterEach(() => {
@@ -740,5 +747,49 @@ describe("FTS-only fallback when no provider available", () => {
       expect(result.fallbackFrom, testCase.name).toBe(testCase.fallbackFrom);
       expect(result.providerUnavailableReason, testCase.name).toContain(testCase.reasonIncludes);
     }
+  });
+});
+
+describe("FORK 2026-10-29: provider 'none' and the embedder governor", () => {
+  it("returns no provider and builds no client for provider 'none'", async () => {
+    const fetchMock = createFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createEmbeddingProvider({
+      config: {} as never,
+      provider: "none",
+      model: "",
+      fallback: "openai",
+    });
+
+    expect(result.provider).toBeNull();
+    expect(result.requestedProvider).toBe("none");
+    expect(result.providerUnavailableReason).toBe(
+      "memorySearch.provider is none: the word index answers, no embedding calls",
+    );
+    expect(result.openAi ?? result.gemini ?? result.voyage ?? result.mistral).toBeUndefined();
+    expect(result.ollama).toBeUndefined();
+    expect(authModule.resolveApiKeyForProvider).not.toHaveBeenCalled();
+    expect(importNodeLlamaCppMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns an Ollama provider governed, with its id and model unchanged", async () => {
+    const result = await createEmbeddingProvider({
+      config: {} as never,
+      provider: "ollama",
+      remote: { baseUrl: "http://127.0.0.1:11434", apiKey: "ollama-test-key" }, // pragma: allowlist secret
+      model: "nomic-embed-text",
+      fallback: "none",
+    });
+
+    const provider = requireProvider(result);
+    expect(provider.id).toBe("ollama");
+    expect(provider.model).toBe("nomic-embed-text");
+    expect((provider as { endpointKey?: string }).endpointKey).toBe(
+      "ollama|http://127.0.0.1:11434",
+    );
+    expect(governorFor(provider)?.endpointClass).toBe("local-http");
+    expect(result.ollama?.baseUrl).toBe("http://127.0.0.1:11434");
   });
 });

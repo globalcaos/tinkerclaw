@@ -102,6 +102,7 @@ export function validateQuestion(q: unknown): string[] {
   for (const k of ["purpose", "origin", "retirement", "name"] as const) {
     if (!nonEmpty(q[k])) p.push(`${k} must be non-empty`);
   }
+  if (q.says !== undefined && !nonEmpty(q.says)) p.push("says must be a non-empty string");
   if (!Array.isArray(q.mustCatch) || !q.mustCatch.every((m) => typeof m === "string")) {
     p.push("mustCatch must be a string array");
   }

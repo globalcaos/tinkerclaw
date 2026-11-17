@@ -1,5 +1,6 @@
 // Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import { applyMMRToHybridResults, type MMRConfig, DEFAULT_MMR_CONFIG } from "./mmr.js";
+import { extractKeywords } from "./query-expansion.js";
 import {
   applyTemporalDecayToHybridResults,
   type TemporalDecayConfig,
@@ -31,17 +32,37 @@ export type HybridKeywordResult = {
   textScore: number;
 };
 
+/**
+ * Builds the FTS5 MATCH expression for a free-text query: its keywords (extractKeywords drops
+ * stop words, bare numbers and Latin words under three letters), each quoted as a phrase and
+ * joined with OR. When no keyword survives ("what is that"), the raw tokens are ORed instead.
+ * Returns null when the query has no word characters (letters, digits, underscore).
+ *
+ * Until 2026-10-29 this was an AND of every raw token. On an agent-memory eval (100 files,
+ * 40 natural-language queries frozen before any run, 30 EN and 10 ES/CA), that AND returned
+ * zero rows for 40 of 40 queries, so the configured 0.7/0.3 hybrid was really vector-only.
+ * The OR of keywords raised word-search R@5 from 0.475 (one search per keyword, best score
+ * kept) to 0.625, and hybrid R@5 by +0.05 to +0.225 for five of the six embedding models run
+ * on that corpus (the sixth was unchanged). BM25 adds a score for each matched term, so, other
+ * things equal, a row that matches more keywords ranks first. Cost on an 11.5 GB live index:
+ * 276 ms p50, 377 ms p95 over 12 read-only OR queries.
+ * Revisit if a re-run of that eval shows a stricter query (AND, phrase, NEAR) beating the OR.
+ * Known limit: the default unicode61 tokenizer indexes a CJK run without spaces as one token,
+ * so the CJK characters and bigrams from extractKeywords match only standalone tokens.
+ */
 export function buildFtsQuery(raw: string): string | null {
-  const tokens =
+  const rawTokens =
     raw
       .match(/[\p{L}\p{N}_]+/gu)
       ?.map((t) => t.trim())
       .filter(Boolean) ?? [];
-  if (tokens.length === 0) {
+  if (rawTokens.length === 0) {
     return null;
   }
-  const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`);
-  return quoted.join(" AND ");
+  const keywords = extractKeywords(raw);
+  const terms = keywords.length > 0 ? keywords : rawTokens;
+  const quoted = terms.map((t) => `"${t.replaceAll('"', "")}"`);
+  return quoted.join(" OR ");
 }
 
 export function bm25RankToScore(rank: number): number {

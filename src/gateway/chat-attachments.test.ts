@@ -146,6 +146,24 @@ describe("parseMessageWithAttachments", () => {
     expect(logs).toHaveLength(0);
   });
 
+  it("keeps audio/webm for a browser recording that file-type sniffs as video/webm", async () => {
+    // Minimal EBML header with DocType "webm": file-type names it video/webm.
+    const webm = Buffer.from(
+      "1a45dfa39f4286810142f7810142f2810442f381084282847765626d42878104428581021853806701",
+      "hex",
+    ).toString("base64");
+    const recorded = await parseWithWarnings("summarize", [
+      { type: "audio", mimeType: "audio/webm", fileName: "recording.webm", content: webm },
+    ]);
+    expect(recorded.parsed.offloadedRefs[0]?.mimeType).toBe("audio/webm");
+    expect(recorded.logs).toHaveLength(0);
+    // Without the caller's audio type the sniff still decides.
+    const unlabeled = await parseWithWarnings("x", [
+      { type: "file", fileName: "clip.webm", content: webm },
+    ]);
+    expect(unlabeled.parsed.offloadedRefs[0]?.mimeType).toBe("video/webm");
+  });
+
   it("offloads opaque binary when sniff and provided mime are both absent", async () => {
     const unknown = Buffer.from("just some bytes that do not match any signature").toString(
       "base64",
@@ -294,6 +312,17 @@ describe("parseMessageWithAttachments", () => {
 });
 
 describe("parseMessageWithAttachments validation errors", () => {
+  it("accepts a multi-megabyte base64 payload without overflowing the stack", async () => {
+    const audio = Buffer.alloc(9 * 1024 * 1024, 0x4f).toString("base64");
+    await expect(
+      parseMessageWithAttachments(
+        "x",
+        [{ type: "file", mimeType: "audio/ogg", fileName: "long.ogg", content: audio }],
+        { log: { warn: () => {} }, acceptNonImage: true, maxBytes: 50_000_000 },
+      ),
+    ).resolves.toBeDefined();
+  });
+
   it("throws UnsupportedAttachmentError on empty payload", async () => {
     await expect(
       parseMessageWithAttachments(

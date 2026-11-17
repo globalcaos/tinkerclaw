@@ -1,0 +1,13 @@
+#!/bin/sh
+# open-on-phone: the BROWSER of the phone terminal (pi-term.service). Claude Code's /login and any
+# other program that "opens a browser" on the Pi calls it with a URL; it leaves the URL in the phone
+# door's term-open folder and the door opens it in the phone's browser (term.mjs, 2026-10-30).
+dir="${PHONE_DOOR_DIR:-$HOME/.openclaw/data/phone-door}/term-open"
+mkdir -p "$dir" && chmod 700 "$dir"
+ok=1
+for u in "$@"; do
+  case "$u" in http://* | https://*) ;; *) continue ;; esac
+  f="$dir/$(date +%s%N)-$$"
+  printf '%s\n' "$u" >"$f.tmp" && mv "$f.tmp" "$f.url" && ok=0
+done
+exit "$ok"

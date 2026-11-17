@@ -77,6 +77,7 @@ fun parseJarvisBridgeCall(raw: String?): JarvisBridgeCall? {
 class JarvisNativeBridge(
   private val context: Context,
   private val onOpenNative: (JarvisScreen) -> Unit,
+  private val requestMic: () -> Unit = {},
 ) {
   private val main = Handler(Looper.getMainLooper())
 
@@ -84,6 +85,12 @@ class JarvisNativeBridge(
   // message came in on; the page turns them into a "jarvis-native" event.
   private var reply: ((String) -> Unit)? = null
   private var tts: JarvisTts? = null
+
+  // 2026-11-04: the record button, recorded by the app (the http door has no getUserMedia).
+  private val recorder by lazy {
+    JarvisRecorder(context, emit = { msg -> reply?.invoke(msg) }, requestMic = { main.post(requestMic) })
+  }
+  private var recorderUsed = false
 
   private fun voice(): JarvisTts =
     tts ?: JarvisTts(context) { id, state, message ->
@@ -104,10 +111,16 @@ class JarvisNativeBridge(
       }
     }
 
+  private val readerEmit: (String) -> Unit = { msg ->
+    main.post { runCatching { reply?.invoke(msg) }.onFailure { Log.w(LOG_TAG, "reader reply failed: ${it.message}") } }
+  }
+
   /** Releases the phone voice; the WebView that owned this bridge is gone. */
   fun close() {
+    if (JarvisReader.emit === readerEmit) JarvisReader.emit = null // the reading itself goes on
     tts?.shutdown()
     tts = null
+    if (recorderUsed) recorder.close()
   }
 
   /** A message the door's main frame posted on the port. The caller has checked the sender. */
@@ -134,6 +147,22 @@ class JarvisNativeBridge(
           language = call.args.getOrNull(3).orEmpty(),
         )
       "stopSpeaking" -> tts?.stop()
+      // 2026-11-12: the reader hands over its whole reading list, so reading goes on with the screen
+      // locked (JarvisReader.kt). Its position comes back as {ev:"reader"} events.
+      "readQueue" -> {
+        JarvisReader.emit = readerEmit
+        JarvisReader.load(context, first.orEmpty())
+      }
+      "readAppend" -> JarvisReader.append(first.orEmpty())
+      "readCtl" -> {
+        JarvisReader.emit = readerEmit
+        JarvisReader.ctl(context, first.orEmpty(), call.args.getOrNull(1).orEmpty())
+      }
+      "recStart" -> {
+        recorderUsed = true
+        recorder.start()
+      }
+      "recStop" -> if (recorderUsed) recorder.stop()
       "voices" ->
         voice().voices { list ->
           val arr =
@@ -293,6 +322,14 @@ fun jarvisDocumentStartScript(
             // id; its "done" or "error" comes back as a "jarvis-native" event on this window.
             speak: function (id, text, rate, lang) { send("speak", [str(id), str(text), str(rate), str(lang)]); },
             stopSpeaking: function () { send("stopSpeaking", []); },
+            // 2026-11-12: the whole reading list, read by the app with the screen on or off.
+            readQueue: function (json) { send("readQueue", [str(json)]); },
+            readAppend: function (json) { send("readAppend", [str(json)]); },
+            readCtl: function (cmd, arg) { send("readCtl", [str(cmd), str(arg)]); },
+            // 2026-11-04: the record button. Answers come back as "jarvis-native" events:
+            // {ev:"rec", state:"started"|"tick"|"error"} and the file as {ev:"rec-chunk", seq, total, b64}.
+            recStart: function () { send("recStart", []); },
+            recStop: function () { send("recStop", []); },
             voices: function () { send("voices", []); },
             synth: function (id, text, rate, lang) { send("synth", [str(id), str(text), str(rate), str(lang)]); },
             // 2026-10-23 (layer 1 verbs, JarvisVerbs.kt): the same six actions the Pi and pack scripts

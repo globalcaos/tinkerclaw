@@ -25,7 +25,7 @@
 ## Run
 
 ```bash
-node scripts/phone-door/devices.mjs add "the architect Flip6"   # prints the token ONCE and a pairing URL (15 min, one use)
+node scripts/phone-door/devices.mjs add "the architect flip phone"   # prints the token ONCE and a pairing URL (15 min, one use)
 PHONE_DOOR_BIND=100.64.0.20 node scripts/phone-door/door.mjs
 ```
 

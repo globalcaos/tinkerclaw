@@ -42,6 +42,7 @@ import {
   describeReplyContext,
   extractLocationData,
   extractContactContext,
+  extractIsForwarded,
   extractMediaPlaceholder,
   extractMentionedJids,
   extractText,
@@ -201,7 +202,9 @@ export async function attachWebInboxToSocket(
       const conversationKey = msg.chatType === "group" ? msg.chatId : msg.from;
       return `${msg.accountId}:${conversationKey}:${senderKey}`;
     },
-    shouldDebounce: options.shouldDebounce,
+    // A forwarded message is never batched with typed ones: the merged body would
+    // lose its forwarded mark (burn review 2026-11-14, b1113-s8 F1).
+    shouldDebounce: (msg) => msg.forwarded !== true && (options.shouldDebounce?.(msg) ?? true),
     onFlush: async (entries) => {
       const last = entries.at(-1);
       if (!last) {
@@ -735,6 +738,7 @@ export async function attachWebInboxToSocket(
       selfLid: self.lid ?? undefined,
       selfE164: self.e164 ?? undefined,
       fromMe: Boolean(msg.key?.fromMe),
+      forwarded: extractIsForwarded(msg.message ?? undefined) || undefined,
       location: enriched.location ?? undefined,
       untrustedStructuredContext: enriched.contactContext
         ? [

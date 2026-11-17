@@ -133,7 +133,8 @@ describe("pack scripts (prelude + factory main.js, as JarvisScript.kt runs them)
     const r = run(factory, "answer", { text: "Sir, your answer is ready." });
     assert.equal(r.handled, true);
     assert.deepEqual(r.calls, [
-      { verb: "buzz", args: { pattern: [180] } },
+      // Since 6cfc3e21ea1f the pattern is the owner's choice, kept on the phone: the pack names none.
+      { verb: "buzz", args: {} },
       { verb: "say", args: { text: "Sir, your answer is ready.", voice: {} } },
     ]);
   });

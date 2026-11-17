@@ -86,6 +86,15 @@ export function turnEndTitleAction(input: TurnEndTitleInput): "first" | "retry" 
 }
 
 /**
+ * The send-time trigger: a placeholder (fortune) tab is named the moment its FIRST prompt is sent,
+ * not after the reply ends — a long first turn used to leave the cookie name up for minutes.
+ * The turn-end rule above stays as the retry; the caller's in-flight guard stops a double ask.
+ */
+export function sendTitleAction(kind: TitleKind, tabTurns: number): "first" | null {
+  return kind === "fortune" && tabTurns === 1 ? "first" : null;
+}
+
+/**
  * Strip a leading emoji/symbol cluster and normalise for comparison. Kept regex-only
  * (no Intl segmenter) so it is cheap and deterministic in tests. Mirrors what the
  * app's `leadingEmoji` splits off, generously: any run of non-letter/non-digit

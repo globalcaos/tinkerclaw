@@ -37,3 +37,21 @@ export function detailedModelLabel(id: string): string {
   }
   return "";
 }
+
+const EFFORT_LABELS: Record<string, string> = {
+  off: "Auto",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "xHigh",
+  max: "Max",
+};
+
+// FORK 2026-11-12: the thinking indicator and the answer rail name the thinking effort beside the
+// model. The word for a level as the gateway records it; "off" is the picker's Auto stop (no
+// budget set, the model decides). "" when no level is known: an unrecorded effort is not Auto.
+export function effortLabel(level: string | null | undefined): string {
+  const lv = (level ?? "").trim().toLowerCase();
+  return lv ? (EFFORT_LABELS[lv] ?? lv) : "";
+}

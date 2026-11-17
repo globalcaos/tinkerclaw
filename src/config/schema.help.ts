@@ -1008,8 +1008,9 @@ export const FIELD_HELP: Record<string, string> = {
     "Sets the maximum bytes allowed per multimodal file before it is skipped during memory indexing. Use this to cap upload cost and indexing latency, or raise it for short high-quality audio clips.",
   "agents.defaults.memorySearch.experimental.sessionMemory":
     "Indexes session transcripts into memory search so responses can reference prior chat turns. Keep this off unless transcript recall is needed, because indexing cost and storage usage both increase.",
+  // FORK 2026-10-29: "none" and the per-machine embedder fit (src/fork/embedder-fit.ts).
   "agents.defaults.memorySearch.provider":
-    'Selects the embedding backend used to build/query memory vectors: "openai", "gemini", "voyage", "mistral", "bedrock", "lmstudio", "ollama", or "local". Keep your most reliable provider here and configure fallback for resilience.',
+    'Selects the embedding backend used to build/query memory vectors: "openai", "gemini", "voyage", "mistral", "bedrock", "lmstudio", "ollama", "local", or "none" (word index only, no embedding calls). Unset or "auto" uses the provider and model `openclaw embedder fit` measured as the best fit for this machine, or "none" when no model fits or the machine has not been measured yet. Auto never picks a remote provider unless you allow it with `openclaw embedder fit --allow-remote <provider>`, because memory text would leave the machine. An explicit provider is kept as set; the fit only proposes a change.',
   "agents.defaults.memorySearch.model":
     "Embedding model override used by the selected memory provider when a non-default model is required. Set this only when you need explicit recall quality/cost tuning beyond provider defaults.",
   "agents.defaults.memorySearch.inputType":
@@ -1026,8 +1027,9 @@ export const FIELD_HELP: Record<string, string> = {
     "Supplies a dedicated API key for remote embedding calls used by memory indexing and query-time embeddings. Use this when memory embeddings should use different credentials than global defaults or environment variables.",
   "agents.defaults.memorySearch.remote.headers":
     "Adds custom HTTP headers to remote embedding requests, merged with provider defaults. Use this for proxy auth and tenant routing headers, and keep values minimal to avoid leaking sensitive metadata.",
+  // FORK 2026-10-29: a ceiling for the core memory index; memory-core uses it as the count.
   "agents.defaults.memorySearch.remote.nonBatchConcurrency":
-    "Controls concurrent inline embedding requests during non-batch memory indexing. Use a low value for local or small self-hosted providers such as Ollama; batch embedding concurrency is configured separately under remote.batch.",
+    "Controls concurrent inline embedding requests during non-batch memory indexing. The memory-core plugin uses it as the request count (default: 1 for Ollama, 4 otherwise). The core memory index treats it as a ceiling: it sends one request at a time to a local server unless `openclaw embedder fit` measured a gain from two in flight, and at most 4 to a hosted provider. Batch embedding concurrency is configured separately under remote.batch.",
   "agents.defaults.memorySearch.remote.batch.enabled":
     "Enables provider batch APIs for embedding jobs when supported (OpenAI/Gemini), improving throughput on larger index runs. Keep this enabled unless debugging provider batch failures or running very small workloads.",
   "agents.defaults.memorySearch.remote.batch.wait":
@@ -1147,8 +1149,9 @@ export const FIELD_HELP: Record<string, string> = {
     "Watches memory files and schedules index updates from file-change events (chokidar). Enable for near-real-time freshness; disable on very large workspaces if watch churn is too noisy.",
   "agents.defaults.memorySearch.sync.watchDebounceMs":
     "Debounce window in milliseconds for coalescing rapid file-watch events before reindex runs. Increase to reduce churn on frequently-written files, or lower for faster freshness.",
+  // FORK 2026-10-29: memory-core only; the core memory index derives its own batch deadlines.
   "agents.defaults.memorySearch.sync.embeddingBatchTimeoutSeconds":
-    "Overrides the timeout for inline embedding batches during memory indexing. Leave unset to use provider defaults: 600 seconds for local/self-hosted providers such as local, Ollama, and LM Studio, and 120 seconds for hosted providers.",
+    "Overrides the timeout for inline embedding batches in the memory-core plugin's index. Left unset, the plugin defaults to 600 seconds for local, Ollama and LM Studio, and 120 seconds for hosted providers. The core memory index does not read this key: it derives each batch deadline from throughput measured on this machine (the `openclaw embedder fit` record, then live calls), capped at 600 seconds; a hosted provider starts at 120 seconds until 20 calls are measured.",
   "agents.defaults.memorySearch.sync.sessions.deltaBytes":
     "Requires at least this many newly appended bytes before session transcript changes trigger reindex (default: 100000). Increase to reduce frequent small reindexes, or lower for faster transcript freshness.",
   "agents.defaults.memorySearch.sync.sessions.deltaMessages":

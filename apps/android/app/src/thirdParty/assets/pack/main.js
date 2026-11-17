@@ -9,10 +9,14 @@ jarvis.on("start", function () {});
 // The answer to a prompt sent from the phone just before its screen locked. The page is frozen
 // then, so the Pi hands the line here (jarvis-call --buzz): buzz first, then speak it.
 // A line in another language comes with its wav (2026-10-27): the phone's own voice is English only.
+// 2026-11-12: the Pi sends this at the END of the turn. The buzz is the owner's own pattern, kept on the
+// phone (app settings, JarvisBuzz.kt): no pattern is named here unless the Pi sends one. A muted voice
+// sends no line: the buzz alone.
 jarvis.on("answer", function (ev) {
-  jarvis.buzz([180]);
+  if (ev.pattern && ev.pattern.length) jarvis.buzz(ev.pattern);
+  else jarvis.buzz();
   if (ev.wav) jarvis.play(ev.wav);
-  else jarvis.say(ev.text);
+  else if (ev.text) jarvis.say(ev.text);
 });
 
 // A Firebase wake from the gateway. Nothing to do yet; the app already checks for a new pack.

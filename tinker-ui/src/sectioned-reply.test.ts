@@ -6,6 +6,7 @@ import {
   splitLeadingNarration,
   splitReasoningFromAnswer,
   isFractalSectionText,
+  isSectionedBubble,
 } from "./sectioned-reply";
 
 // FORK 2026-08-15 — the predicate app.ts's run classifier keys on. The literal test it replaces
@@ -338,6 +339,47 @@ describe("splitReasoningFromAnswer", () => {
     const r = splitReasoningFromAnswer(text);
     expect(typeof r.answer).toBe("string");
     expect(r.answer.length).toBeGreaterThan(0);
+  });
+});
+
+describe("✨ DEEPER with a closing card and no 🌿 section (2026-10-31)", () => {
+  // Since the reflection became its own background turn a reply no longer carries 🌿, so answer + ✨ DEEPER +
+  // card is the common shape. The block-array render path tested `answer || fractal` only and drew it as plain
+  // prose; the card also sits in the deeper body, because the curiosity contract puts it right after that section.
+  const card = '```html-render\n<div style="color:#3b2a1a">Summary</div>\n```';
+  const reply = `**Jarvis:** *Done.*\n\nThe answer.\n\n✨ DEEPER\n\n**Question:** why?\n\n${card}`;
+
+  it("counts as a sectioned bubble, so both render paths take it", () => {
+    expect(isSectionedBubble(splitSectionedReply(reply))).toBe(true);
+    expect(isSectionedBubble(splitSectionedReply("Answer.\n\n🌿 FRACTAL: clean."))).toBe(true);
+    expect(isSectionedBubble(splitSectionedReply("A plain reply."))).toBe(false);
+  });
+
+  it("draws the closing card after the yellow bubble, not inside it", () => {
+    const html = renderSectionedReply(
+      splitSectionedReply(reply)!,
+      "",
+      (t) => `<p>${t}</p>`,
+      (t) => t,
+    );
+    const yellow = html.indexOf("msg-deeper");
+    const question = html.indexOf("**Question:**");
+    const cardAt = html.indexOf("html-render");
+    expect(question).toBeGreaterThan(yellow);
+    expect(cardAt).toBeGreaterThan(question);
+    expect(html.slice(yellow, cardAt)).toContain('</div><div class="msg assistant">');
+    expect(html.split("html-render").length).toBe(2);
+  });
+
+  it("a deeper section holding only the card draws no empty yellow bubble", () => {
+    const html = renderSectionedReply(
+      splitSectionedReply(`The answer.\n\n✨ DEEPER\n\n${card}`)!,
+      "",
+      (t) => `<p>${t}</p>`,
+      (t) => t,
+    );
+    expect(html).not.toContain("msg-deeper");
+    expect(html).toContain("html-render");
   });
 });
 

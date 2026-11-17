@@ -20,6 +20,8 @@
 //      ANSWER bubble inline so nothing falls on the floor and nothing is hidden.
 // 🌿 FRACTAL splitting + collapsed rendering is preserved exactly.
 
+import { endsInsideCard } from "./cut-card.js";
+
 export type SectionedReply = {
   answer?: string;
   /** FORK 2026-10-01 — the curiosity sense's extra: discoveries, a teaching step, a deep question (✨ DEEPER). */
@@ -60,6 +62,11 @@ const FRACTAL_OPENER_RE =
 /** True when this bubble OPENS with a 🌿 FRACTAL marker — i.e. it is the reflection block, not a reply. */
 export function isFractalSectionText(text: string): boolean {
   return FRACTAL_OPENER_RE.test(text ?? "");
+}
+
+/** True when a reply must take the sectioned layout. Both render paths in app.ts ask this one question. */
+export function isSectionedBubble(sec: SectionedReply | null): sec is SectionedReply {
+  return !!sec && !!(sec.answer || sec.deeper || sec.fractal);
 }
 
 export function splitSectionedReply(text: string): SectionedReply | null {
@@ -355,6 +362,26 @@ export function splitReasoningFromAnswer(text: string): { reasoning: string; ans
 //      appending the verdict to the BOTTOM of the chat instead of under its own answer;
 //   2. the level-3 transcript graft keyed off the same attribute and mounted nowhere.
 // The tag goes on the <details> itself so the graft can select it directly.
+const TRAILING_CARD_RE = /(```html-render[ \t]*\r?\n[\s\S]*```)\s*$/;
+
+/**
+ * The closing card at the end of a ✨ DEEPER body: where it starts, and its fenced source. A body
+ * that ends INSIDE an open card (still streaming, or cut across bubbles by a writer, cut-card.ts)
+ * gets its fence closed here, so the card draws as a card after the yellow bubble instead of as
+ * escaped source inside it.
+ */
+export function trailingCard(body: string): { at: number; fence: string } | null {
+  const m = body.match(TRAILING_CARD_RE);
+  if (m && m.index !== undefined) {
+    return { at: m.index, fence: m[1] ?? "" };
+  }
+  if (!endsInsideCard(body)) {
+    return null;
+  }
+  const at = body.lastIndexOf("```html-render");
+  return { at, fence: body.slice(at).trimEnd() + "\n```" };
+}
+
 export function renderSectionedReply(
   sec: SectionedReply,
   elapsed: string,
@@ -454,10 +481,19 @@ export function renderSectionedReply(
     return { html: ln ? esc(ln) : fallback, cls: "" };
   };
   if (sec.deeper) {
+    // FORK 2026-10-31 — the closing card follows ✨ DEEPER, so the split leaves it in this body. It is the
+    // whole reply's summary, not part of the extra: it goes after the yellow bubble.
+    const card = trailingCard(sec.deeper);
+    const deeperBody = card ? sec.deeper.slice(0, card.at).trim() : sec.deeper;
     // Expanded, not folded: this is the part the architect asked to SEE (2026-10-01).
-    h +=
-      `<div class="msg assistant msg-deeper"${idAttrs("deeper")}>` +
-      `<div class="deeper-label">✨ Deeper</div>${md(scrubResidualSectionMarkers(sec.deeper))}</div>`;
+    if (deeperBody) {
+      h +=
+        `<div class="msg assistant msg-deeper"${idAttrs("deeper")}>` +
+        `<div class="deeper-label">✨ Deeper</div>${md(scrubResidualSectionMarkers(deeperBody))}</div>`;
+    }
+    if (card) {
+      h += `<div class="msg assistant"${idAttrs("card")}>${md(card.fence)}</div>`;
+    }
   }
   if (sec.fractal) {
     const s = artifactSummary(sec.fractal, "<em>Fractal</em> — reflection");

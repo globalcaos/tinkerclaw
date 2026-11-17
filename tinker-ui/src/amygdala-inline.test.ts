@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   HOOK_BUBBLE_DECISIONS,
   hookActionFrom,
+  hookAsk,
   renderHookBubble,
   renderJevBubble,
 } from "./amygdala-inline.js";
+import type { RuleRow } from "./amygdala-types.js";
 
 const T0 = new Date(2026, 9, 15, 12, 27, 0).getTime();
 
@@ -89,68 +91,115 @@ describe("hookActionFrom", () => {
   });
 });
 
+function dom(html: string): HTMLElement {
+  const el = document.createElement("div");
+  el.innerHTML = html;
+  return el;
+}
+
+const RULE: RuleRow = {
+  id: "DELETE_UNREQUESTED",
+  explanation: "Deletes files or caches the owner did not explicitly ask to delete",
+  says: "Nobody asked you to delete that.",
+  ask: "Allow deleting {target}?",
+  noun: "these files",
+  file: "/repo/extensions/tinkerclaw-amygdala/src/rules.ts",
+};
+
 describe("renderHookBubble", () => {
-  it("draws the pink shell with the verb, the rule and the escaped target", () => {
+  it("one line in the amygdala's voice and a caret; the command stays on its tool row (2026-11-03)", () => {
     const html = renderHookBubble(hookActionFrom({ ...live, target: "echo <b>&'\"" })!, {
       focused: false,
+      rule: RULE,
     });
     expect(html).toContain('class="amy-inline"');
     expect(html).toContain('data-amy-bubble="hook-abc123def456"');
     expect(html).toContain('data-tool-use="toolu_01"');
     expect(html).toContain('<span class="amy-inline-icon">🧠</span>');
-    expect(html).toContain("<strong>AMYGDALA</strong> <em>blocked · DELETE_UNREQUESTED</em>");
-    expect(html).toContain("Bash echo &lt;b&gt;&amp;&#39;&quot;");
-    expect(html).not.toContain("<b>&");
-    expect(html).toContain("12:27");
+    const el = dom(html);
+    expect(el.querySelector(".amy-jline")!.textContent).toBe("Nobody asked you to delete that.");
+    expect(el.textContent).not.toContain("AMYGDALA");
+    expect(el.textContent).not.toContain("echo");
+    expect(el.querySelector(".amy-jx-rule")).toBeNull();
+    const toggle = el.querySelector('[data-amy-act="amy-detail"]')!;
+    expect(toggle.getAttribute("data-action")).toBe("hook-abc123def456");
   });
 
-  it("uses the owner verbs and marks focus", () => {
-    const words = (d: string) =>
-      renderHookBubble(hookActionFrom({ ...live, decision: d })!, { focused: true });
-    expect(words("owner-intent")).toContain("<em>let through on your words</em>");
-    expect(words("owner-pasted-secret")).toContain("<em>stored the secret you pasted</em>");
-    expect(words("owner-allow")).toContain("<em>let through on your allow code</em>");
-    expect(words("owner-allow")).toContain('class="amy-inline amy-focus"');
+  it("opened, it names the rule and links the file that holds it, outside the toggle", () => {
+    const el = dom(
+      renderHookBubble(hookActionFrom(live)!, { focused: false, open: true, rule: RULE }),
+    );
+    const link = el.querySelector(".amy-jx-rule code.fs-link")!;
+    expect(link.textContent).toBe(RULE.explanation);
+    expect(link.getAttribute("data-path")).toBe(RULE.file);
+    // A click on the link opens the file; it must not also fold the bubble.
+    expect(link.closest("[data-amy-act]")).toBeNull();
   });
 
-  it("clips the tool+target line to 160 chars and tolerates a missing tool-use id", () => {
-    const a = hookActionFrom({ ...live, toolUseId: null, target: "x".repeat(400) })!;
-    const html = renderHookBubble(a, { focused: false });
+  it("without the feed's words it still says something plain, and names the rule id opened", () => {
+    const el = dom(renderHookBubble(hookActionFrom(live)!, { focused: false, open: true }));
+    expect(el.querySelector(".amy-jline")!.textContent).toBe("A fixed rule stopped that.");
+    expect(el.querySelector(".amy-jx-rule")!.textContent).toBe("RuleDELETE_UNREQUESTED");
+    expect(el.querySelector(".amy-jx-rule code")).toBeNull();
+  });
+
+  it("a step let through says so in the amygdala's voice; focus marks the bubble", () => {
+    const line = (d: string): string =>
+      dom(
+        renderHookBubble(hookActionFrom({ ...live, decision: d })!, { focused: true }),
+      ).querySelector(".amy-jline")!.textContent!;
+    expect(line("owner-intent")).toBe("That was asked for. Go ahead.");
+    expect(line("owner-pasted-secret")).toBe("That secret was pasted in on purpose. Keep it safe.");
+    expect(line("owner-allow")).toBe("Allowed once. Go ahead.");
+    expect(
+      renderHookBubble(hookActionFrom({ ...live, decision: "owner-allow" })!, { focused: true }),
+    ).toContain('class="amy-inline amy-focus"');
+  });
+
+  it("an unenforced deny says so, and a missing tool-use id is tolerated", () => {
+    const html = renderHookBubble(hookActionFrom({ ...live, toolUseId: null, enforced: false })!, {
+      focused: false,
+      rule: RULE,
+    });
     expect(html).toContain('data-tool-use=""');
-    const line = /<div class="amy-inline-line">([^<]*)</.exec(html)![1];
-    expect(line.length).toBe(160);
-    expect(line.endsWith("…")).toBe(true);
+    expect(dom(html).querySelector(".amy-jverdict")!.textContent).toBe("not enforced");
+  });
+});
+
+describe("hookAsk", () => {
+  it("puts the deleted path or the secret's name in the question, else the rule's noun", () => {
+    expect(hookAsk(RULE, "rm -rf ~/src/x")).toBe("Allow deleting ~/src/x?");
+    expect(hookAsk(RULE, "docker system prune -f")).toBe("Allow deleting these files?");
+    const secret: RuleRow = {
+      id: "SECRET_UNREQUESTED",
+      explanation: "e",
+      says: "s",
+      ask: "Allow using {target}?",
+      noun: "a stored password",
+    };
+    expect(hookAsk(secret, "set -a; source ./app/.env; set +a")).toBe("Allow using .env?");
+    expect(hookAsk(secret, "true")).toBe("Allow using a stored password?");
+    expect(hookAsk(undefined, "anything")).toBe("Allow this step?");
   });
 });
 
 describe("renderJevBubble", () => {
   const row =
     '<div class="amy-jact" data-turn="t1" data-action="k"><button data-amy-act="label">👍</button></div>';
-  it("wraps the action row unchanged, worded would / acted", () => {
-    const would = renderJevBubble(row, {
-      id: "jev-k",
-      toolUseId: "toolu_01",
-      focused: false,
-      would: true,
-    });
-    expect(would).toContain(row);
-    expect(would).toContain("<strong>AMYGDALA</strong> <em>would have</em>");
-    expect(would).toContain('data-amy-bubble="jev-k"');
-    expect(would).toContain('data-tool-use="toolu_01"');
-    const acted = renderJevBubble(row, {
-      id: "jev-k",
-      toolUseId: null,
-      focused: true,
-      would: false,
-    });
-    expect(acted).toContain("<em>acted</em>");
-    expect(acted).toContain('class="amy-inline amy-focus"');
-    expect(acted).toContain('data-tool-use=""');
+  it("wraps the action row unchanged, under the brain and nothing else", () => {
+    const html = renderJevBubble(row, { id: "jev-k", toolUseId: "toolu_01", focused: false });
+    expect(html).toContain(row);
+    expect(html).not.toContain("AMYGDALA");
+    expect(html).toContain('data-amy-bubble="jev-k"');
+    expect(html).toContain('data-tool-use="toolu_01"');
+    const focused = renderJevBubble(row, { id: "jev-k", toolUseId: null, focused: true });
+    expect(focused).toContain('class="amy-inline amy-focus"');
+    expect(focused).toContain('data-tool-use=""');
   });
 
   it("escapes the id attribute", () => {
-    expect(
-      renderJevBubble(row, { id: 'a"b', toolUseId: null, focused: false, would: true }),
-    ).toContain('data-amy-bubble="a&quot;b"');
+    expect(renderJevBubble(row, { id: 'a"b', toolUseId: null, focused: false })).toContain(
+      'data-amy-bubble="a&quot;b"',
+    );
   });
 });

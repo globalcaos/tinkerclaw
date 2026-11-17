@@ -148,6 +148,7 @@ function parseRow(row: any) {
     memoriesInjected: decompressJson(row.memories_injected) ?? { autoRecall: [], searched: [] },
     runId: row.run_id ?? undefined,
     durationMs: row.duration_ms ?? undefined,
+    effort: row.effort ?? undefined,
     stopReason: row.stop_reason ?? undefined,
     toolsTriggered: decompressJson(row.tools_triggered),
     responseThinkingTokens: row.response_thinking_tokens ?? undefined,
@@ -172,6 +173,12 @@ function eegFields(ev: any): Record<string, unknown> {
     sessionKey: ev?.sessionKey,
     runId: ev?.runId,
     durationMs: ev?.durationMs,
+    effort: ev?.effort,
+    // FORK 2026-11-13: the turn's own token counts. Without them a reloaded EEG drew every turn from the
+    // gateway's prompt estimate alone, so a five-minute build and a two-line status had the same length.
+    responseTokens: ev?.responseTokens,
+    cacheReadTokens: ev?.cacheReadTokens,
+    cacheCreationTokens: ev?.cacheCreationTokens,
     ...(typeof total === "number" ? { contextSent: { totalTokens: total } } : {}),
     ...(um !== undefined ? { userMessage: um.length > 300 ? um.slice(0, 300) : um } : {}),
   };
@@ -902,6 +909,11 @@ const plugin = {
               return true;
             }
             const content = fs.readFileSync(resolved, "utf-8");
+            // resolveInsideRoots returns a realpath, so compare against the kits folder's.
+            const kitsRoot = fs.existsSync(WORKSPACE_KITS)
+              ? fs.realpathSync(WORKSPACE_KITS)
+              : WORKSPACE_KITS;
+            const inWorkspaceKits = resolved.startsWith(kitsRoot + path.sep);
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json; charset=utf-8");
             res.setHeader("Cache-Control", "no-cache");

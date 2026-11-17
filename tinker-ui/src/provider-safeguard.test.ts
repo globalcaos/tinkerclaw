@@ -97,6 +97,6 @@ describe("provider safeguard notice", () => {
     );
     const app = readFileSync(new NodeURL("./app.ts", import.meta.url), "utf8");
     expect(app).not.toMatch(/editSafeguardPrompt|originalPromptBefore|data-safeguard-edit/);
-    expect(app).toContain("amyUi.afterRun(userMsg, nextUserMsg, safeguard)");
+    expect(app).toContain("amyUi.afterRun(userMsg, nextUserMsg, safeguard, placed)");
   });
 });

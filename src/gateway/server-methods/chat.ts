@@ -14,6 +14,7 @@ import type { PromptDisposition } from "../../auto-reply/get-reply-options.types
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import type { TurnThinkLevelContext } from "../../auto-reply/reply/get-reply-directives.js";
+import { notePreReplyAck } from "../../auto-reply/reply/pre-reply-stage.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
@@ -3255,6 +3256,8 @@ export const chatHandlers: GatewayRequestHandlers = {
           agentId,
         }));
       } catch (err) {
+        // Full stack, so a rejected attachment names the step that failed, not only its message.
+        console.error("[chat.send] attachment handling failed", err);
         respond(
           false,
           undefined,
@@ -3320,6 +3323,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         sessionKey,
         since: now,
       });
+      // FORK 2026-10-29: the ack instant, so the prompt's first pre-reply step can close `pre:ack`
+      // (pre-reply-stage.ts). Read here, not `now`, which predates the duplicate checks and attachments.
+      notePreReplyAck(clientRunId, sessionKey);
       // FORK 2026-10-01 (lifecycles.md L4b; bug-log.md [chat-divergence] cause 6): the restart drain
       // waits for this prompt over the same span. Until the reply pipeline places it, no runner
       // participant knows it exists: on 2026-09-30 a staged-build restart drained `held=1 ended=0

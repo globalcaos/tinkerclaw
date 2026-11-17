@@ -57,6 +57,12 @@ export interface EegSample {
   thinkingChars?: number; // measured thinking CHARACTERS (never tokens); fallback effort column when no executed level is echoed
   inputTokens?: number; // billed prompt tokens (summed across the run's rounds)
   outputTokens?: number; // generated tokens (run total)
+  // FORK 2026-11-13 — what the turn read from and wrote to the prompt cache, summed over its rounds. SHOWN in
+  // the hover text, NOT priced: on a long chat they are most of the traffic (one turn measured that day made
+  // 56,740 tokens and re-read 35.6 million), but the cost table's rates were fitted to the invoices with the
+  // output + 0.2 x input blend, so pricing them needs the rates refitted first (see eegWeightedTokens).
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   startedAt: number; // epoch ms
   endedAt?: number; // epoch ms (absent = still running)
 }
@@ -94,6 +100,42 @@ export const EEG_PROVIDER_COLORS: Record<string, string> = {
   xai: "#B7BBC2", // FORK 2026-07-21 (the architect): Grok = light gray (black brand is invisible on the #2a2318 paper; gray keeps the trace legible + distinct from the neutral `unknown` gray).
   unknown: "#8A8F98", // local / anything unrecognized = neutral gray
 };
+
+/**
+ * FORK 2026-11-13 — one shade per Claude family. Every Claude model drew the brand orange, so a turn that
+ * used Fable, Opus and a Sonnet sub-agent showed three strands of one colour, told apart by width alone;
+ * the owner asked for a paper that shows which model did what. The hues stay in the brand's warm range
+ * (deep for the strongest, pale for the lightest) and keep clear of Mistral's #FA520F. Opus keeps the
+ * brand orange, so every older picture still reads the same for the model that drew most of it.
+ */
+export const EEG_CLAUDE_SHADES: Record<string, string> = {
+  fable: "#B8321A",
+  mythos: "#B8321A",
+  opus: EEG_PROVIDER_COLORS.anthropic,
+  sonnet: "#F0A63C",
+  haiku: "#F5D69A",
+};
+export function eegClaudeShade(vendorKey: string): string {
+  const family = /fable|mythos|opus|sonnet|haiku/.exec(vendorKey)?.[0];
+  return (family && EEG_CLAUDE_SHADES[family]) || EEG_PROVIDER_COLORS.anthropic;
+}
+
+/**
+ * FORK 2026-11-13 — one shade per GPT family, same idea as the Claude shades: deep green for the strongest
+ * (Astra), the brand green for Sol, lighter for Terra, palest for Luna. Anything else keeps the brand green.
+ * Copilot twins resolve earlier and keep their own blue. The codename is matched as a whole word, so
+ * `solar-pro4` is not Sol.
+ */
+export const EEG_GPT_SHADES: Record<string, string> = {
+  astra: "#0A5C47",
+  sol: EEG_PROVIDER_COLORS.openai,
+  terra: "#4FC49D",
+  luna: "#A8E2CB",
+};
+export function eegGptShade(vendorKey: string): string {
+  const family = /\b(astra|sol|terra|luna)\b/.exec(vendorKey)?.[1];
+  return (family && EEG_GPT_SHADES[family]) || EEG_PROVIDER_COLORS.openai;
+}
 
 // FORK 2026-06-13 (eeg): infer the brand from EITHER a provider string OR a bare
 // MODEL name — the live trace gets the cc-bridge model id ("claude-fable-5", no
@@ -154,10 +196,10 @@ export function eegProviderPaint(
     p === "anthropic" ||
     /claude|fable|opus|sonnet|haiku/.test(vendorKey)
   ) {
-    return { stroke: EEG_PROVIDER_COLORS.anthropic, isRainbow: false };
+    return { stroke: eegClaudeShade(vendorKey), isRainbow: false };
   }
   if (p === "openai" || /gpt|codex|(^|[^a-z])o\d/.test(vendorKey)) {
-    return { stroke: EEG_PROVIDER_COLORS.openai, isRainbow: false };
+    return { stroke: eegGptShade(vendorKey), isRainbow: false };
   }
   if (/grok|xai|x-ai/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.xai, isRainbow: false };
   if (/deepseek/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.deepseek, isRainbow: false };
@@ -180,18 +222,50 @@ export interface EegToolIdentity {
   provider: string;
   model: string;
 }
+/**
+ * FORK 2026-11-13 — what a shell command RUNS, not what it mentions. The first test matched a provider's
+ * name anywhere in the command, so `cat ~/.claude/skills/x.md` drew an Anthropic call, `grep -r openai notes`
+ * an OpenAI one and `ls gemini-notes` a Gemini rainbow: colour that no model earned. Now each piped or chained
+ * part gives its program (the first word, by base name) and, for an interpreter or a runner, the script it starts (a path among
+ * the next two words). A bare CLI name must BE the program; a skill's folder name must be in the program's or script's path.
+ */
+const TOOL_RUNNERS = /^(python[0-9.]*|node|bash|sh|zsh|uv|uvx|npx|bun|tsx|deno)$/;
+const TOOL_SPLIT = /\|\||&&|[|;&\n]|\$\(/;
+function commandPrograms(command: string): { names: string[]; paths: string[] } {
+  const names: string[] = [];
+  const paths: string[] = [];
+  for (const part of command.split(TOOL_SPLIT)) {
+    const words = part
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    if (words.length === 0) continue;
+    names.push(words[0].split("/").pop() ?? "");
+    paths.push(words[0]);
+    // The script an interpreter or a runner starts: `python3 x.py`, `uv run x.py`, `node x.mjs`.
+    if (TOOL_RUNNERS.test(names[names.length - 1])) {
+      for (const w of words.slice(1, 3)) {
+        if (/[./]/.test(w) && !w.startsWith("-")) paths.push(w);
+      }
+    }
+  }
+  return { names, paths };
+}
 export function eegToolIdentity(toolName: string, command?: string): EegToolIdentity {
-  const hay = `${(toolName || "").toLowerCase()} ${(command || "").toLowerCase()}`;
-  // Gemini-backed skills: image gen (nano-banana), nano-pdf, napkin, gemini CLI, summarize.
-  if (/nano-banana|generate_image|nano-pdf|napkin|\bgemini\b|gemma/.test(hay)) {
+  const tool = (toolName || "").toLowerCase();
+  const { names, paths } = commandPrograms((command || "").toLowerCase());
+  const runs = (re: RegExp) => names.some((n) => re.test(n));
+  const from = (re: RegExp) => re.test(tool) || paths.some((x) => re.test(x));
+  // Gemini-backed skills: image gen (nano-banana), nano-pdf, napkin, gemini CLI.
+  if (from(/nano-banana|generate_image|nano-pdf|napkin/) || runs(/^(gemini|gemma)$/)) {
     return { provider: "google", model: "gemini-3-pro-image" };
   }
-  // OpenAI-backed: codex, whisper-api, openai image gen, explicit gpt models.
-  if (/\bcodex\b|openai|whisper-api|\bgpt-/.test(hay)) {
+  // OpenAI-backed: codex, whisper-api, the openai CLI.
+  if (from(/whisper-api|openai-image-gen/) || runs(/^(codex|openai)$/)) {
     return { provider: "openai", model: "gpt-5" };
   }
   // Anthropic-backed: oracle / coding-agent / a nested claude CLI.
-  if (/\boracle\b|coding-agent|claude-code|\bclaude\b/.test(hay)) {
+  if (from(/coding-agent/) || runs(/^(oracle|claude)$/)) {
     return { provider: "anthropic", model: "claude-opus-5" };
   }
   // Everything else = local housekeeping (grep/read/edit/write/webfetch/plain bash).
@@ -396,13 +470,12 @@ export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["claude-haiku-4-5", 0.57], // 2026-10-10 seat re-measurement (was 0.66); off the floor since the 2026-09-23 measured-seat re-base
   ["xai/grok-4.5", 0.68], // 2026-10-10 seat re-measurement (was 0.79); off the floor since the 2026-09-23 measured-seat re-base
   ["deepseek/deepseek-v4-flash-0731", 0.87], // re-priced 2026-10-26 live endpoints (was 0.78px). 0.1333 (Baidu fp8, -11%; was Sail Research $0.15) — re-checked 2026-10-24 live endpoints (was 0.87px)
-  ["deepseek/deepseek-v4.1-flash", 1.05], // 0.18 (Decart, +20%; was Sail Research $0.15) — re-checked 2026-10-23 live endpoints
   ["claude-sonnet-5", 1.14], // 2026-10-10 seat re-measurement (was 1.32); 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4.1-flash", 1.18], // 0.2028 (Baidu fp8, +13%; was Decart $0.18) — re-checked 2026-11-14 live endpoints
   ["claude-opus-4-8", 2.84], // 2026-10-10 seat re-measurement (was 3.31); 2026-09-23 measured-seat re-base
   ["tencent/hy3", 3.07], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
   ["deepseek/deepseek-v4-flash-vision-exp", 3.76], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
   ["xiaomi/mimo-v2.6-pro", 4.3], // 0.7395 (GMICloud bf16, −5.6%; was 0.783 DeepInfra via OR) — re-checked 2026-10-28 live endpoints
-  ["deepseek/deepseek-v4-pro-0813", 4.65], // re-priced 2026-10-26 live endpoints (was 2.3px). 0.396 (Baidu fp8, -50%; Baidu promo back, may revert; was $0.80) — re-checked 2026-10-24 live endpoints (was 4.65px)
   ["codex/gpt-5.6-terra", 4.77], // 2026-09-23 measured-seat re-base
   ["minimax/minimax-m3", 5.12], // re-priced 2026-10-27 live endpoints (was 5.58px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
   ["claude-fable-5", 5.68], // 2026-10-10 seat re-measurement (was 6.62); 2026-09-23 measured-seat re-base
@@ -410,14 +483,15 @@ export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["z-ai/glm-5.3", 8.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
   ["z-ai/glm-5.2", 8.37], // re-priced 2026-10-26 live endpoints (was 3.45px). 0.594 (Baidu fp8, -59%; was DeepInfra, our route, $1.44) — re-checked 2026-10-24 live endpoints (was 8.37px)
   ["moonshotai/kimi-k2.6", 10.47], // re-priced 2026-10-27 live endpoints (was 11.34px). re-priced 2026-10-26 live endpoints (was 11.0px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 11.34px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
+  ["deepseek/deepseek-v4-pro-0813", 11.51], // re-priced 2026-11-04 live endpoints (was 4.65px). 1.98 (StreamLake and DeepSeek, +147%; Sail Research now $2.40 out, was $0.80)
   ["openai-codex/gpt-5.5", 11.93], // 2026-09-23 measured-seat re-base
   ["google/gemini-3.8-flash", 21.8], // $3.75 promo, same as 3.7
   ["google/gemini-3.7-flash", 21.8],
   ["qwen/qwen3.7-max", 25.73],
   ["qwen/qwen3.8-max", 34.88],
-  ["moonshotai/kimi-k3", 47.97], // re-priced 2026-10-27 live endpoints (was 31.98px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["github-copilot/gpt-5.4", 48.61],
   ["google/gemini-3.5-flash", 52.33],
+  ["moonshotai/kimi-k3", 55.23], // re-priced 2026-11-05 live endpoints (was 47.97px): Chutes mxfp4 $1.85/$9.50, Decart left $8.25. Earlier: re-priced 2026-10-27 live endpoints (was 31.98px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["github-copilot/claude-opus-4.7", 80.99],
   ["github-copilot/gpt-5.5", 97.15],
 ] as const;
@@ -541,13 +615,12 @@ export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["claude-haiku-4-5", 8.33], // 2026-10-10 seat re-measurement (was 8.83); 2026-09-23 measured-seat re-base
   ["xai/grok-4.5", 8.93], // 2026-10-10 seat re-measurement (was 9.44); 2026-09-23 measured-seat re-base
   ["deepseek/deepseek-v4-flash-0731", 9.75], // re-priced 2026-10-26 live endpoints (was 9.35px). 0.15 (Sail Research fp4, -17%; was DeepInfra, our route, $0.18) — re-checked 2026-10-24 live endpoints
-  ["deepseek/deepseek-v4.1-flash", 10.35], // 0.18 (Decart, +20%; was Sail Research $0.15) — re-checked 2026-10-23 live endpoints
   ["claude-sonnet-5", 10.62], // 2026-10-10 seat re-measurement (was 11.13); 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4.1-flash", 10.74], // 0.2028 (Baidu fp8, +13%; was Decart $0.18) — re-checked 2026-11-14 live endpoints
   ["claude-opus-4-8", 13.66], // 2026-10-10 seat re-measurement (was 14.16); 2026-09-23 measured-seat re-base
   ["tencent/hy3", 13.91], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
   ["deepseek/deepseek-v4-flash-vision-exp", 14.59], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
   ["xiaomi/mimo-v2.6-pro", 15.03], // 0.7395 (GMICloud bf16, −5.6%; was 0.783 DeepInfra via OR) — re-checked 2026-10-28 live endpoints
-  ["deepseek/deepseek-v4-pro-0813", 15.29], // re-priced 2026-10-26 live endpoints (was 12.96px). 0.80 (Sail Research fp4, +37%; was $0.582) — re-checked 2026-10-24 live endpoints
   ["codex/gpt-5.6-terra", 15.38], // 2026-09-23 measured-seat re-base
   ["minimax/minimax-m3", 15.61], // re-priced 2026-10-27 live endpoints (was 15.89px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
   ["claude-fable-5", 15.95], // 2026-10-10 seat re-measurement (was 16.46); 2026-09-23 measured-seat re-base
@@ -556,6 +629,7 @@ export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["z-ai/glm-5.2", 17.24], // re-priced 2026-10-26 live endpoints (was 14.3px). 1.44 (DeepInfra, our route, -20%; was $1.80) — re-checked 2026-10-24 live endpoints
   ["deepseek/deepseek-v4-pro", 17.37], // re-priced 2026-10-26 live endpoints (was 13.12px). 0.4157 (Baidu, -78%; was StreamLake $1.8966) — re-checked 2026-10-25 live endpoints (was 18.15px). Earlier: 1.8966 (StreamLake still cheapest, +126% vs $0.8376; GMICloud $1.914 next) — re-checked 2026-10-10 live endpoints
   ["moonshotai/kimi-k2.6", 17.98], // re-priced 2026-10-27 live endpoints (was 18.24px). re-priced 2026-10-26 live endpoints (was 18.14px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 18.24px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
+  ["deepseek/deepseek-v4-pro-0813", 18.29], // re-priced 2026-11-04 live endpoints (was 15.29px). 1.98 (StreamLake and DeepSeek, +147%; Sail Research now $2.40 out, was $0.80)
   ["openai-codex/gpt-5.5", 18.41], // 2026-09-23 measured-seat re-base
   ["z-ai/glm-5.1", 19.56], // re-priced 2026-10-27 live endpoints (was 19.71px). 3.036 — re-checked 2026-09-10 live (StreamLake still cheapest)
   ["moonshotai/kimi-k2.7-code", 19.67], // 3.0 (StreamLake, was the $3.50 list) — re-checked 2026-10-01 live endpoints
@@ -565,8 +639,8 @@ export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["qwen/qwen3.7-max", 20.96],
   ["qwen/qwen3.8-2.4t-a95b", 21.96],
   ["qwen/qwen3.8-max", 21.96],
-  ["moonshotai/kimi-k3", 23.02], // re-priced 2026-10-27 live endpoints (was 21.68px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
   ["google/gemini-3.5-flash", 23.31],
+  ["moonshotai/kimi-k3", 23.49], // re-priced 2026-11-05 live endpoints (was 23.02px): Chutes mxfp4 $1.85/$9.50, Decart left $8.25. Earlier: re-priced 2026-10-27 live endpoints (was 21.68px). 5.5 (Sail Research fp4, -33%; was Decart $8.25) — re-checked 2026-10-23 live endpoints
 ] as const;
 
 /**
@@ -645,6 +719,28 @@ export function resolveEegPaint(run: EegRun): EegPaint {
 // model glows with exactly the color its EEG trace draws. The rainbow trace has
 // no single CSS color, so google gets a solid brand-blue fallback.
 export const EEG_GOOGLE_GLOW = "#4285F4";
+/** The four Google colours of the EEG rainbow, in order from a strand's left edge to its right edge. */
+export const EEG_GOOGLE_STOPS =
+  `<stop offset="0%" stop-color="#4285F4"/>` +
+  `<stop offset="33%" stop-color="#EA4335"/>` +
+  `<stop offset="66%" stop-color="#FBBC05"/>` +
+  `<stop offset="100%" stop-color="#34A853"/>`;
+
+/**
+ * FORK 2026-11-13 — the Google rainbow for ONE strand, laid ACROSS its width: a horizontal gradient from the
+ * strand's left edge (`x - width/2`) to its right edge, so the four colours run side by side along the whole
+ * line. The owner asked for it rotated 90 degrees from the first fix of the same night, whose colours
+ * changed ALONG the line. Paper units (userSpaceOnUse), because SVG ignores a bounding-box gradient on a
+ * straight line, and a trunk segment's box has no width; one gradient per strand, because paper units are
+ * shared by every element that uses a gradient and each strand stands at its own x.
+ */
+export function eegGoogleAcrossDef(id: string, x: number, width: number): string {
+  const half = width / 2;
+  return (
+    `<linearGradient id="${id}" gradientUnits="userSpaceOnUse"` +
+    ` x1="${fx(x - half)}" y1="0" x2="${fx(x + half)}" y2="0">${EEG_GOOGLE_STOPS}</linearGradient>`
+  );
+}
 
 /** CSS-usable glow color for a run: the EEG trace color, rainbow → solid blue. */
 export function resolveEegGlowColor(run: EegRun): string {
@@ -743,6 +839,32 @@ function eegEffectiveLevel(s: EegSample): string {
   return lv;
 }
 
+/**
+ * FORK 2026-11-13 — the column a BRANCH is drawn in. A sub-agent runs at its own effort. A tool call has no
+ * effort at all: it is work done by the run that called it, so it keeps that run's column (`trunkLevel`, the
+ * trunk's effective level). It used to take eegEffectiveLevel(""), the Min floor meant for an LLM call sent
+ * with thinking off, so every Read and Bash drew a swing from the trunk to Min and back. On 2026-11-13 a
+ * Carbon turn at Medium made ten tool calls, and the owner saw faint lines that belonged to no model swinging
+ * between Min and Medium for no reason. With no trunk to follow, a tool keeps the old floor.
+ */
+export function eegBranchLevel(s: EegSample, trunkLevel: string | undefined): string {
+  if (s.tool && trunkLevel) return trunkLevel;
+  return eegEffectiveLevel(s);
+}
+
+/** Free space, in px, between the trunk's edge and a branch that stands beside it. */
+export const EEG_TRUNK_GAP = 2;
+
+/**
+ * FORK 2026-11-13 — how far LEFT of the trunk's centre a branch in the trunk's own column is drawn, so it
+ * stands beside the trunk instead of under it: half the trunk, the gap, half the branch. The trunk paints
+ * last, so a branch at its exact x was hidden whenever the trunk was at least as wide (measured: an Opus
+ * sub-agent under an Opus trunk at Max, both 12.92px, showed nothing; its depth-stacked twin, 1.4px).
+ */
+export function eegTrunkClearance(trunkWidth: number, branchWidth: number): number {
+  return trunkWidth / 2 + EEG_TRUNK_GAP + branchWidth / 2;
+}
+
 // ─── Render constants ───
 // PERMANENT retention (the architect 2026-06-13): keep the WHOLE session so all activity
 // is visible by scrolling — no drop-oldest. The high guard only backstops a
@@ -794,6 +916,59 @@ const EEG_MIN_LEN = 16; // ≥ 2·ARC_HALF so the column-hop bezier always fits
 // source, and wiring it is a PRICING DECISION, not a plumbing one — a call's prompt is mostly
 // cache reads, which this blend would charge at the full input rate. Deliberately left alone:
 // inventing a number here would be the same class of error as the floor that was just removed.
+/** 56740 → "56.7k", 35590486 → "35.6M": a token count a hover line can carry. */
+function compactTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(Math.round(n));
+}
+/**
+ * The token counts of one sample for its hover line, or null when none is known. The cache counts are named
+ * apart from the fresh prompt: on a long chat they dwarf everything else, and the strand's length does not
+ * show them (see EegSample.cacheReadTokens).
+ */
+export function eegTokenTip(s: EegSample): string | null {
+  const parts: string[] = [];
+  if (s.outputTokens) parts.push(`out ${compactTokens(s.outputTokens)}`);
+  if (s.inputTokens) parts.push(`in ${compactTokens(s.inputTokens)}`);
+  if (s.cacheReadTokens) parts.push(`cache read ${compactTokens(s.cacheReadTokens)}`);
+  if (s.cacheWriteTokens) parts.push(`cache written ${compactTokens(s.cacheWriteTokens)}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+/**
+ * FORK 2026-11-13 — the token counts of one stored turn (an anatomy row), as sample fields. One function for a
+ * new sample and for a kept one that lacks them. A row with cache counts is a harness turn (Claude Code): its
+ * prompt lives in the harness, so the gateway's estimate of what it sent (`contextSent`) is not that turn's
+ * fresh input and is not used as one. Before, the reloaded paper read `outputTokens`, a field the server never
+ * sent, so every turn was drawn from that estimate alone and all turns of a chat had one length.
+ */
+export function eegTokensFromAnatomy(ev: {
+  inputTokens?: unknown;
+  outputTokens?: unknown;
+  responseTokens?: unknown;
+  tokensIn?: unknown;
+  tokensOut?: unknown;
+  cacheReadTokens?: unknown;
+  cacheCreationTokens?: unknown;
+  contextSent?: { totalTokens?: unknown } | null;
+}): Pick<EegSample, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens"> {
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+  const out = num(ev.outputTokens) ?? num(ev.responseTokens) ?? num(ev.tokensOut);
+  const cacheRead = num(ev.cacheReadTokens);
+  const cacheWrite = num(ev.cacheCreationTokens);
+  const harnessTurn = cacheRead !== undefined || cacheWrite !== undefined;
+  const input =
+    num(ev.inputTokens) ??
+    (harnessTurn ? undefined : num(ev.contextSent?.totalTokens)) ??
+    num(ev.tokensIn);
+  return {
+    ...(input !== undefined ? { inputTokens: input } : {}),
+    ...(out !== undefined ? { outputTokens: out } : {}),
+    ...(cacheRead !== undefined ? { cacheReadTokens: cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWriteTokens: cacheWrite } : {}),
+  };
+}
 function eegWeightedTokens(s: EegSample): number {
   return (s.outputTokens ?? 0) + EEG_INPUT_COST_RATIO * (s.inputTokens ?? 0);
 }
@@ -914,6 +1089,66 @@ export function eegMergeIntervals(list: EegInterval[]): EegInterval[] {
     else out.push([iv[0], iv[1]]);
   }
   return out;
+}
+
+/**
+ * FORK 2026-11-13 — the spans in which a tab could have started a sub-agent, built from the tab's OWN
+ * anatomy rows. A sub-agent row names no parent, and the tree read returns every sub-agent of the shared
+ * root inside the tab's whole span (+1 h), so another tab's fan-out drew here as if it were this tab's: on
+ * the owner's tab that day, 4 of 11 sub-agent strands had started while the tab sat idle, one of them the
+ * amygdala optimizer's. A row's timestamp is the send time when a pre-call row exists and the completion
+ * time otherwise (context-anatomy-db.ts), so each turn covers [ts − dur, ts + dur], plus `slackMs` for a
+ * fan-out whose later units start after the turn that launched it has ended.
+ */
+export function eegOwnTurnWindows(
+  turns: { ts: number; durMs: number }[],
+  slackMs: number,
+): EegInterval[] {
+  return eegMergeIntervals(
+    turns.map((t): EegInterval => [t.ts - t.durMs, t.ts + t.durMs + slackMs]),
+  );
+}
+
+/**
+ * FORK 2026-11-13 — the run ids of trunk rows a reload must NOT draw: the leftover of a turn that a gateway
+ * restart cut in two. The first run's pre-call row keeps no effort and no response, and the resumed run
+ * writes its own row, under a new run id, with the same turn number. The empty row drew a short trunk at Min
+ * (an empty effort floors there) on a turn that ran at Max: seen that night on the owner's tab, turn 28, rows
+ * 22:23 (empty) and 23:12 (max), around a restart at 23:10. Only an EMPTY row that a later row of the same turn
+ * follows is dropped, so the row of a turn still running, the newest of its turn, always stays.
+ */
+export function eegSplitTurnGhosts(
+  rows: {
+    runId?: unknown;
+    turn?: unknown;
+    effort?: unknown;
+    responseTokens?: unknown;
+    timestampMs?: unknown;
+  }[],
+): Set<string> {
+  const byTurn = new Map<number, typeof rows>();
+  for (const r of rows) {
+    if (typeof r.turn !== "number" || typeof r.runId !== "string") continue;
+    const arr = byTurn.get(r.turn);
+    if (arr) arr.push(r);
+    else byTurn.set(r.turn, [r]);
+  }
+  const out = new Set<string>();
+  for (const group of byTurn.values()) {
+    if (group.length < 2) continue;
+    const sorted = [...group].sort(
+      (a, b) => Number(a.timestampMs ?? 0) - Number(b.timestampMs ?? 0),
+    );
+    for (const r of sorted.slice(0, -1)) {
+      if (!r.effort && typeof r.responseTokens !== "number") out.add(r.runId as string);
+    }
+  }
+  return out;
+}
+
+/** Does instant `t` fall inside one of the windows (ends included)? */
+export function eegInWindows(t: number, windows: EegInterval[]): boolean {
+  return windows.some(([a, b]) => t >= a && t <= b);
 }
 
 /** Do two merged (ascending, non-overlapping) interval lists intersect? Two-pointer. */
@@ -1092,6 +1327,29 @@ export class EegTraceStore {
     return closed;
   }
 
+  /** One run's sample, by run id. */
+  get(runId: string): EegSample | undefined {
+    return this.samples.get(runId);
+  }
+
+  // FORK 2026-11-12 — the effort of the newest MAIN run of `model` recorded inside [from, to], ""
+  // when none carries one. For a reply whose rows name no run id: its turn's record is stamped
+  // between the prompt and just after the last row. The model must match, so a neighbouring
+  // turn of another model never lends its effort.
+  mainEffortBetween(from: number, to: number, model: string): string {
+    const tail = (id: string) => id.split("/").pop() ?? "";
+    let best: EegSample | undefined;
+    for (const s of this.samples.values()) {
+      if (s.subagent || s.tool || !s.chosenLevel || s.startedAt < from || s.startedAt > to) {
+        continue;
+      }
+      if (tail(s.model) === tail(model) && (!best || s.startedAt > best.startedAt)) {
+        best = s;
+      }
+    }
+    return best?.chosenLevel ?? "";
+  }
+
   // Rebuild-on-load path (§5.8h persistence): idempotent upserts, so feeding
   // the same history twice is harmless.
   backfill(samples: EegSample[], ends: EegTurnEnd[]): void {
@@ -1220,25 +1478,38 @@ export class EegTraceStore {
     // FORK 2026-06-25 (scope C): tool samples are NEVER trunk segments — they branch
     // off it (added to `subs` below), so the trunk stays the LLM-call spine.
     const mains = all.filter((s) => !s.subagent && !s.tool);
-    // parent main-line column at instant t (for branch split/join anchors)
-    const mainColAt = (t: number): number => {
+    // the trunk sample running at instant t: its column anchors a branch's split and join, and its
+    // width is what a branch beside it must clear (FORK 2026-11-13, eegBranchColumn).
+    const mainAt = (t: number): EegSample | undefined => {
       let best: EegSample | undefined;
       for (const m of mains) {
         if (m.startedAt <= t) best = m;
         else break;
       }
-      if (!best && mains.length > 0) best = mains[0];
-      return best ? colX(eegEffectiveLevel(best)) : colX("");
+      return best ?? mains[0];
+    };
+    const mainColAt = (t: number): number => {
+      const m = mainAt(t);
+      return m ? colX(eegEffectiveLevel(m)) : colX("");
     };
 
-    // ── defs: google rainbow, defined ONCE ──
-    const defs =
-      `<defs><linearGradient id="eeg-google" x1="0" y1="0" x2="0" y2="1">` +
-      `<stop offset="0%" stop-color="#4285F4"/>` +
-      `<stop offset="33%" stop-color="#EA4335"/>` +
-      `<stop offset="66%" stop-color="#FBBC05"/>` +
-      `<stop offset="100%" stop-color="#34A853"/>` +
-      `</linearGradient></defs>`;
+    // ── defs: the Google rainbow, one gradient per strand position (eegGoogleAcrossDef) ──
+    // FORK 2026-11-13 — the single `eeg-google` gradient used objectBoundingBox units, and SVG ignores such a
+    // gradient on geometry with a zero-width box: since 2026-06-20 every trunk segment is a straight vertical
+    // line, so every Gemini trunk painted NOTHING (measured on the owner's tab: both Carbon turns, 23.66px
+    // wide, invisible). Each Google strand now strokes with its own gradient, laid across its width.
+    const googleIds = new Map<string, string>(); // "x1:x2" → gradient id, so strands at one x share one
+    let googleDefs = "";
+    const googleAcross = (x: number, w: number): string => {
+      const key = `${fx(x - w / 2)}:${fx(x + w / 2)}`;
+      let id = googleIds.get(key);
+      if (!id) {
+        id = `eeg-google-${googleIds.size}`;
+        googleIds.set(key, id);
+        googleDefs += eegGoogleAcrossDef(id, x, w);
+      }
+      return `url(#${id})`;
+    };
 
     // ── column gridlines + top labels (the 8 shared stops, short form) ──
     let grid = "";
@@ -1307,7 +1578,7 @@ export class EegTraceStore {
       return (
         `<svg class="eeg-svg" width="${width}" height="${height}"` +
         ` viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">` +
-        `${defs}${grid}${euroGrid}${emptyMarkers}${hint}</svg>`
+        `${grid}${euroGrid}${emptyMarkers}${hint}</svg>`
       );
     }
 
@@ -1383,7 +1654,7 @@ export class EegTraceStore {
             s.label && s.label !== s.model ? s.label : null,
             s.model || null,
             s.chosenLevel || "auto",
-            s.outputTokens ? `${s.outputTokens} tok` : null,
+            eegTokenTip(s),
           ]
             .filter(Boolean)
             .join(" · "),
@@ -1393,7 +1664,7 @@ export class EegTraceStore {
           // (e.g. fable 33px) with a round cap bulges into a half-circle at each
           // end. `butt` squares the ends; `round` linejoin keeps the mid-path
           // effort bends smooth (joins are unaffected by the cap).
-          `<path class="eeg-main" d="${d}" fill="none" stroke="${paint.stroke}"` +
+          `<path class="eeg-main" d="${d}" fill="none" stroke="${paint.isRainbow ? googleAcross(x, w) : paint.stroke}"` +
           ` stroke-opacity="1" stroke-width="${fx(w)}" stroke-linecap="butt"` +
           ` stroke-linejoin="round" data-eeg-run="${esc(s.runId)}"${mainIdxAttr}><title>${mainTip}</title></path>`;
       }
@@ -1412,9 +1683,20 @@ export class EegTraceStore {
     // subagents — split off the trunk, run up a strand column, join back — but keyed
     // separately ("T" vs "S") so a tool strand never merges with a same-model subagent.
     const subs = all.filter((s) => s.subagent || s.tool);
+    // FORK 2026-11-13 — the trunk a branch leaves: its main parent when it names one, else the trunk that
+    // was running when it started.
+    const trunkOf = (s: EegSample): EegSample | undefined => {
+      const p = s.parentRunId ? this.samples.get(s.parentRunId) : undefined;
+      return p && !p.subagent && !p.tool ? p : mainAt(s.startedAt);
+    };
+    const levelOf = (s: EegSample): string => {
+      const t = trunkOf(s);
+      return eegBranchLevel(s, t ? eegEffectiveLevel(t) : undefined);
+    };
     const byKey = new Map<string, EegSample[]>();
     for (const s of subs) {
-      const k = eegStrandGroupKey(s);
+      // The drawn column is part of the key: tool calls of a Medium turn and of a Max turn are two groups.
+      const k = `${eegStrandGroupKey(s)}|${levelOf(s)}`;
       const arr = byKey.get(k);
       if (arr) arr.push(s);
       else byKey.set(k, [s]);
@@ -1432,7 +1714,7 @@ export class EegTraceStore {
     const laneOf = eegAssignLanes(
       [...byKey].map(([key, items]) => ({
         key,
-        level: eegEffectiveLevel(items[0]),
+        level: levelOf(items[0]),
         intervals: items.map((x): EegInterval => [x.startedAt, endOf(x)]),
       })),
     );
@@ -1474,20 +1756,32 @@ export class EegTraceStore {
         // base brand color (eegStrandShade returns no lift when n<=1), a 3-stack
         // grades its front to full depth. No more whitening of lone strands.
         const shade = eegStrandShade(paint, depthIdx, groupConcurrent);
+        // FORK 2026-11-13 — a branch never hides under the trunk. The trunk paints last, on top, so a
+        // branch drawn in the trunk's own column vanished beneath it: every tool call now (eegBranchLevel),
+        // and every sub-agent that runs at its parent's effort, which is what the Smart stop's sub-agents
+        // do by design. Such a branch stands just left of the trunk (eegTrunkClearance).
+        const trunk = trunkOf(s);
+        const level = levelOf(s);
+        const clearance =
+          trunk && level === eegEffectiveLevel(trunk)
+            ? eegTrunkClearance(
+                resolveEegPaint({
+                  model: trunk.model,
+                  provider: trunk.provider,
+                  effort: trunk.chosenLevel,
+                }).logWidth,
+                w,
+              )
+            : 0;
         // FORK 2026-06-19/25: fan LEFT into the unused Auto columns — first by LANE
         // (model separation, side by side), then by depthIdx (the within-model
         // overlap stack). Clamp so strands never cross the left gutter (the architect).
         const col = Math.max(
           EEG_PAD_LEFT,
-          colX(eegEffectiveLevel(s)) - lane * EEG_LANE_GAP - depthIdx * EEG_STRAND_DEPTH_STEP,
+          colX(level) - clearance - lane * EEG_LANE_GAP - depthIdx * EEG_STRAND_DEPTH_STEP,
         );
-        // split off the explicit parent's column when it's a main sample, else
-        // off the main trunk at this subagent's spawn time
-        const parentSample = s.parentRunId ? this.samples.get(s.parentRunId) : undefined;
-        const splitX =
-          parentSample && !parentSample.subagent
-            ? colX(eegEffectiveLevel(parentSample))
-            : mainColAt(s.startedAt);
+        // split off the trunk this branch leaves (its main parent, else the trunk at its start)
+        const splitX = trunk ? colX(eegEffectiveLevel(trunk)) : colX("");
         const splitY = timeToY(s.startedAt);
         const ended = typeof s.endedAt === "number";
         // FORK 2026-06-20: floor the arch HEIGHT for an ended branch. A fast helper
@@ -1532,7 +1826,7 @@ export class EegTraceStore {
             s.label && s.label !== s.model ? s.label : null,
             showModel ? s.model : null,
             s.tool ? null : s.chosenLevel || "auto",
-            s.outputTokens ? `${s.outputTokens} tok` : null,
+            eegTokenTip(s),
             concurrentAtSpawn >= 2 ? `${concurrentAtSpawn}× parallel here` : null,
           ]
             .filter(Boolean)
@@ -1565,7 +1859,7 @@ export class EegTraceStore {
         }
         const toolAttr = s.tool ? ` data-eeg-tool="1"` : "";
         branches +=
-          `<path class="eeg-branch" d="${d}" fill="none" stroke="${shade.stroke}"` +
+          `<path class="eeg-branch" d="${d}" fill="none" stroke="${paint.isRainbow ? googleAcross(col, w) : shade.stroke}"` +
           ` stroke-opacity="${fx(shade.opacity)}" stroke-width="${fx(w)}"` +
           // FORK 2026-08-05: an EEG trace always starts and ends abruptly, with no
           // rounded end caps. Round caps also LIE about duration: a cap adds half the
@@ -1696,7 +1990,7 @@ export class EegTraceStore {
     return (
       `<svg class="eeg-svg" width="${width}" height="${height}"` +
       ` viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">` +
-      `${defs}${grid}${euroGrid}${callTicks}${promptZones}${markers}${branches}${trace}</svg>`
+      `${googleDefs ? `<defs>${googleDefs}</defs>` : ""}${grid}${euroGrid}${callTicks}${promptZones}${markers}${branches}${trace}</svg>`
     );
   }
 }

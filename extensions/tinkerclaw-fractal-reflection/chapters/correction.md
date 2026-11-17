@@ -55,6 +55,10 @@ owner had to point that out.
 - [ ] **Exception (2026-09-21):** if he then says the change was a mistake, "do what I say", or "I
       didn't ask you to touch that", the letter wins. Do not keep serving a purpose he has just
       withdrawn.
+- [ ] **Only the named control (2026-10-19).** Asked to remove one named button, the turn removed
+      every button in the drawer. Serving a purpose he did not name is the same class as the
+      2026-09-21 exception, one layer earlier: the letter already named the control. Do not invent
+      a tidier version of a named ask.
 
 ### Last check: could the reflection have caught it?
 

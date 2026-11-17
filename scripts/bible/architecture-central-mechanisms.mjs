@@ -121,6 +121,12 @@ const MECHANISMS = [
   { path: "TINKER_UI_DESIGN_BIBLE/canonical-derivations.md" },
   { path: "src/shared/thalamus-route-call.ts", entry: ["routeCall"] },
   { path: "src/infra/jev/jev.ts", entry: ["JevClient"] },
+  // Embedder rate + latency control (2026-10-29): one governor per endpoint, and every core and
+  // fork embedding call goes through it (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
+  {
+    path: "src/fork/embedder-governor.ts",
+    entry: ["governEmbeddingProvider", "getEmbedGovernor"],
+  },
 ];
 
 const rung = (process.argv.find((a) => a.startsWith("--rung=")) ?? "").slice(7);

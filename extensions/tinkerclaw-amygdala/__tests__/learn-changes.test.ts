@@ -149,23 +149,23 @@ const activeOf = (s: { book: QuestionBook; store: AmygdalaStore }) => ({
 // ---- 1. two-sided replay --------------------------------------------------------------------------------------------
 
 describe("two-sided replay on the real corpus", () => {
-  it("a tightening that would hold three controls is rejected and nothing is applied", async () => {
+  it("a tightening that would hold a control is rejected and nothing is applied", async () => {
     const t = setup(casesRoot);
-    const before = t.book.activeVersion("dodged-work");
+    const before = t.book.activeVersion("commitment-changed");
     const o = expectKind(
       await t.engine.propose({
         kind: "cutoff",
         scope: "global",
-        questionId: "dodged-work",
-        cutoff: { kind: "choice", option: "complete", at: 0.05, negate: true },
+        questionId: "commitment-changed",
+        cutoff: { kind: "choice", option: "same", at: 0.05, negate: true },
       }),
       "rejected",
     );
     expect(o.reason).toBe("controls-held");
     expect(o.change?.status).toBe("rejected");
-    expect(o.change?.replay.controlsNewlyHeld).toBeGreaterThanOrEqual(3);
-    expect(t.book.activeVersion("dodged-work")).toBe(before);
-    expect(t.store.activeVersion("dodged-work")).toBeUndefined();
+    expect(o.change?.replay.controlsNewlyHeld).toBeGreaterThanOrEqual(1);
+    expect(t.book.activeVersion("commitment-changed")).toBe(before);
+    expect(t.store.activeVersion("commitment-changed")).toBeUndefined();
     expect(t.store.listChanges({ status: "applied" })).toHaveLength(0);
     expect(changeEvents(t.events)).toHaveLength(0);
   });

@@ -103,6 +103,10 @@ if [ "$hrc" -ne 0 ] || [ -z "$UNIT" ]; then
   say "the restart skill did not start (exit $hrc); the build stays staged for the next gateway start"
   exit 5
 fi
+if grep -q 'Restart \(already \)\?queued' <<<"$HANDOFF"; then
+  say "subagents are working: restart queued in $UNIT, the build is staged and goes live when they end"
+  exit 0
+fi
 if [ "$WAIT" -eq 0 ]; then
   say "restart handed to $UNIT; the build is staged and goes live with it"
   exit 0

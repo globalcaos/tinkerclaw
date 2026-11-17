@@ -1412,12 +1412,14 @@ describe("smart-cost chart — Claude Fable 5.1", () => {
     );
   });
 
-  it("tops the board: its max beats Opus 5's max", () => {
+  it("sits behind Opus 5.5 on AA's rebased index (it topped the board on the old scale)", () => {
+    // AA rebased the Intelligence Index (first seen 2026-10-28); the ladder moved to the new
+    // scale on 2026-11-05. Opus 5 is no longer a fair rival: its cells were not re-run.
     const f = scPointsFor(fable51()).find((p) => p.lvl === "max")!.smart;
-    const o = scPointsFor(model({ id: "claude-opus-5", relCost: 0.2232, index: 63.0532 })).find(
+    const o = scPointsFor(model({ id: "claude-opus-5-5", relCost: 0.2232, index: 59.106 })).find(
       (p) => p.lvl === "max",
     )!.smart;
-    expect(f).toBeGreaterThan(o);
+    expect(f).toBeLessThan(o);
   });
 
   it("uses its real 1M context window, not the 200k Claude default", () => {

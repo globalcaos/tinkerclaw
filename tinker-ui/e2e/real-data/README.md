@@ -45,3 +45,19 @@ ignores `NODE_PATH`; a script in `/tmp` fails with `ERR_MODULE_NOT_FOUND`), and 
 both `tinker-ui/node_modules` and the repo-root `node_modules` linked (vite fails on `dompurify`
 otherwise). Seed `tinker-tabs` in `localStorage` from `tinker-ui-state.json` as `drive.mjs` does, then
 click `[data-tab-id=…]` to open the tab.
+
+## A long job's trail on a real tab (2026-11-14)
+
+`trail-look.mjs` opens a tab whose long job runs, clicks the job's row under the thinking dots, waits for the job
+trail (`job-trail.ts`), opens its first tool row and prints the counts; `--watch 100` keeps it open and counts again,
+which shows it grow while the job works. Same proxy as above; it serves `/api/longjob/list` from the live
+tinker-prod-ui and reads trails with this checkout's `scripts/lib/longjob-trail.mjs`.
+
+```
+node trail-look.mjs --url http://127.0.0.1:18996 --key agent:main:tinker:<id> --out <dir> --chrome /usr/bin/chromium [--watch 100]
+```
+
+- On the Pi, Playwright's own browser build is not installed (`chromium_headless_shell-… doesn't exist`): pass
+  `--chrome /usr/bin/chromium`, the system browser.
+- An element screenshot of a node taller than the chat pane comes out black outside the visible part: scroll the part
+  you need into view and take a page screenshot instead.

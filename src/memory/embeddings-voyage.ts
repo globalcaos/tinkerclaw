@@ -3,7 +3,11 @@ import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { normalizeEmbeddingModelWithPrefixes } from "./embeddings-model-normalize.js";
 import { resolveRemoteEmbeddingBearerClient } from "./embeddings-remote-client.js";
 import { fetchRemoteEmbeddingVectors } from "./embeddings-remote-fetch.js";
-import type { EmbeddingProvider, EmbeddingProviderOptions } from "./embeddings.js";
+import type {
+  EmbedCallOptions,
+  EmbeddingProvider,
+  EmbeddingProviderOptions,
+} from "./embeddings.js";
 
 export type VoyageEmbeddingClient = {
   baseUrl: string;
@@ -34,7 +38,13 @@ export async function createVoyageEmbeddingProvider(
   const client = await resolveVoyageEmbeddingClient(options);
   const url = `${client.baseUrl.replace(/\/$/, "")}/embeddings`;
 
-  const embed = async (input: string[], input_type?: "query" | "document"): Promise<number[][]> => {
+  // FORK 2026-10-30: the call's signal reaches the request, so an aborted or timed-out embedding
+  // stops on the wire. A call without a signal is unchanged.
+  const embed = async (
+    input: string[],
+    input_type?: "query" | "document",
+    opts?: EmbedCallOptions,
+  ): Promise<number[][]> => {
     if (input.length === 0) {
       return [];
     }
@@ -52,6 +62,7 @@ export async function createVoyageEmbeddingProvider(
       ssrfPolicy: client.ssrfPolicy,
       body,
       errorPrefix: "voyage embeddings failed",
+      signal: opts?.signal,
     });
   };
 
@@ -60,11 +71,11 @@ export async function createVoyageEmbeddingProvider(
       id: "voyage",
       model: client.model,
       maxInputTokens: VOYAGE_MAX_INPUT_TOKENS[client.model],
-      embedQuery: async (text) => {
-        const [vec] = await embed([text], "query");
+      embedQuery: async (text, opts) => {
+        const [vec] = await embed([text], "query", opts);
         return vec ?? [];
       },
-      embedBatch: async (texts) => embed(texts, "document"),
+      embedBatch: async (texts, opts) => embed(texts, "document", opts),
     },
     client,
   };

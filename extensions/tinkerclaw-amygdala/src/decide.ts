@@ -14,6 +14,7 @@ import type { Companion } from "./companion.js";
 import type { AmygdalaConfig } from "./config.js";
 import { goalFingerprint, type TurnContexts, type TurnState } from "./context.js";
 import { buildDecisionEvents, buildInterventionEvent, withDrivers } from "./events.js";
+import { isUnattendedTurn, levelOf, pick } from "./families/common.js";
 import type { Family } from "./families/types.js";
 import { toHookAction, type HookAction } from "./hook-action.js";
 import { noveltyKey } from "./learn/keys.js";
@@ -28,6 +29,7 @@ import type {
   Cutoff,
   Decision,
   EffectClass,
+  EvidenceKind,
   Question,
   Response,
   Seam,
@@ -49,7 +51,7 @@ export interface DecideDeps {
   contexts: TurnContexts;
   families: Family[];
   config: Pick<AmygdalaConfig, "mode" | "failClosedOnLevel3"> &
-    Partial<Pick<AmygdalaConfig, "enforceFamilies">>;
+    Partial<Pick<AmygdalaConfig, "enforceFamilies" | "selfModification">>;
   /** Whether the hard-rule floor is active in this process (design doc C19). */
   floorActive: () => boolean;
   /** Jev budget per seam in ms (C5 budget minus 400 ms for the loopback). */
@@ -72,6 +74,16 @@ export interface DecideDeps {
    * mode. Asked only for notes and send-backs.
    */
   earned?: (family: string, kind: string, reasonCode: string) => boolean;
+  /**
+   * Keep the current version of every file this step may change (versions.ts). A non-null answer means the step is a
+   * plain local file change and can be taken back; null means it cannot be promised. Absent: nothing is kept.
+   */
+  saveVersions?: (s: Situation) => { path: string }[] | null;
+  /**
+   * AEGIS refused this tool call in its own hook, beside this one. Absent or false means it did not, or cannot tell, and
+   * Jev decides as usual.
+   */
+  floorDenied?: (toolUseId: string) => Promise<boolean>;
 }
 
 export interface DecideInput {
@@ -101,6 +113,56 @@ const DEFAULT_BUDGET: Record<Seam, number> = {
   stop: 1000,
 };
 
+/**
+ * Notes the reviews of 2026-10-28 to 11-01 found near-always noise. They stay on record and the reviewer still judges them;
+ * the agent is not told. Holds, proofs and send-backs never pass through here.
+ */
+const LOG_ONLY_NOTES = new Set([
+  "table-d2-low",
+  // 2026-11-12: the danger-2 proof that only asked for the owner's word is now this note (families/safety.ts).
+  "table-d2-medium",
+  "novelty",
+  "surprise",
+  "futility-warn",
+]);
+
+/**
+ * The stops that stand on a turn nobody typed (2026-11-13, the owner: only the most vital guards stay on when his
+ * eyes are not on the chat, and an automated task is not to be blocked when nothing is sent outside).
+ *
+ * What it is for: a hold or an ask waits five minutes for a click in the chat. On a turn a job, Zen Mail or an agent
+ * started, nobody is reading that chat, so the wait ends in a refusal and the work stops for nothing.
+ * How it was derived: the enforced holds and asks from 10-23 to 11-13. On such turns the scope ask fired 20 times
+ * (reviewer: 1 useful, 10 noise, 7 harmful; none answered; danger 1 or 2 every time) and the loosened-test hold
+ * 19 times (2 useful, 12 harmful). The hard rules, a planted instruction, a first message to a person, a changed
+ * outgoing message, a retry of a held goal and danger 3 are the stops that guard what leaves the machine or cannot
+ * be taken back.
+ * What would change it: the reviewer's verdicts on the `unattended-pass` rows this writes. Every step let through
+ * here is on record with the question that would have stopped it.
+ */
+const VITAL_REASONS = new Set([
+  "planted-instruction",
+  "first-contact",
+  "commitment-changed",
+  "retry-after-hold",
+  "fallback-level3",
+]);
+
+/**
+ * True when a stop must stand even though nobody reads the chat: its reason is on the list above, the table put the
+ * step at danger 3, or the judge reads the step itself at danger 3. With no danger reading the stop stands too.
+ */
+export function vitalStop(reasonCode: string, verdicts: readonly Verdict[]): boolean {
+  if (VITAL_REASONS.has(reasonCode) || reasonCode.startsWith("table-d3-")) {
+    return true;
+  }
+  const danger = pick(verdicts, "danger-level");
+  return danger === undefined || Math.round(levelOf(danger)) >= 3;
+}
+
+/** A subagent's turn: the owner does not read it, so a hold there can never get his click. */
+const SUBAGENT_SESSION = /:subagent:/;
+
 const EXTERNAL: EffectClass[] = ["send", "spend", "restart-own-system", "delete"];
 
 function argsText(s: Situation): string {
@@ -113,7 +175,7 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
   const idGen = deps.idGen ?? randomUUID;
   const { seam } = input;
   const state = deps.contexts.get(input.payload.sessionKey, input.payload.turnId);
-  if (seam === "pre-tool") deps.contexts.beginCall(state);
+  if (seam === "pre-tool" || seam === "stop") deps.contexts.beginCall(state);
   if (seam === "prompt") deps.contexts.notePrompt(input.payload.sessionKey, now);
 
   const session = deps.contexts.buildSessionContext(
@@ -122,6 +184,15 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
     input.payload.turnId,
   );
   const situation = buildSituation({ ...input.payload, seam, now }, session);
+  // FORK 2026-10-29: an open hold on this same goal names what releases it. `holdNeeds` was declared and read but never
+  // filled, so the evidence question was never asked and no proof hold could be released, not even by the owner's own
+  // request (overseer report 2026-10-29: "proofs nothing can release").
+  if (seam === "pre-tool" && situation.holdNeeds.value === null) {
+    const open = deps.store.getOpenHold(goalFingerprint(situation));
+    if (open && open.needs.length > 0) {
+      situation.holdNeeds = { value: open.needs as EvidenceKind[], origin: "derived" };
+    }
+  }
   // Novelty needs how often this exact thing was touched before (2026-10-03: never filled, so every step looked new).
   // Counted after each tool call, where novelty is asked.
   if (seam === "post-tool" && situation.contextCounts.value === null) {
@@ -244,8 +315,12 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
   }
   // Judge out (or dormant): level-3 external steps hold only when configured to fail closed; everything else proceeds.
   if ((judgeUnavailable || dormantSkip) && seam === "pre-tool") {
+    const effect = situation.effectClass.value;
+    const ownRestart = effect === "restart-own-system";
     const external =
-      situation.effectClass.value !== null && EXTERNAL.includes(situation.effectClass.value);
+      effect !== null &&
+      EXTERNAL.includes(effect) &&
+      !(ownRestart && deps.config.selfModification === "unlocked");
     if (deps.config.failClosedOnLevel3 && external) {
       cands.push({
         response: { kind: "hold", ruleOrQuestion: "fallback-level3", releasable: "user-only" },
@@ -279,15 +354,68 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
     best = { response, family: best.family, reasonCode: "note-suppressed" };
     drivers = [];
   }
-  if (response.kind === "send-back" && state.sendBackAttempts >= 2) {
+  // One send-back per reply: past it, a claim that still has nothing behind it is a note under the reply, never a loop.
+  const sendBackSpent = response.kind === "send-back" && state.sendBackAttempts >= 1;
+  if (sendBackSpent || (seam === "stop" && response.kind === "note")) {
+    const defect = best.reasonCode === "report-defect" && response.kind === "note";
     deps.emit?.("amygdala2.marker", {
       sessionKey: situation.sessionKey,
       turnId: situation.turnId,
-      kind: "unsupported-after-two",
-      items: drivers,
+      kind: defect ? "defect-reported" : "unsupported-after-two",
+      items: defect ? [String(response.slots.what)] : drivers,
     });
+  }
+  if (sendBackSpent) {
     response = { kind: "proceed" };
     best = { response, family: best.family, reasonCode: "send-back-cap" };
+  }
+
+  // A file change whose current version was just kept is easy to take back: the table's proof was guarding a change
+  // that could not be (2026-11-10: a held write of a checksum file beside a rebuild script). Danger 3, holds, asks
+  // about what was meant, and anything more than a file change still stop. The copy is made only here, where a proof
+  // would otherwise be asked.
+  if (
+    seam === "pre-tool" &&
+    response.kind === "proof" &&
+    best.family === "safety" &&
+    /^table-d[0-2]-/.test(best.reasonCode) &&
+    deps.saveVersions?.(situation)
+  ) {
+    response = { kind: "proceed" };
+    best = { response, family: best.family, reasonCode: "undo-saved" };
+    drivers = [];
+  }
+
+  // A turn nobody typed: only a vital stop waits for the owner (see VITAL_REASONS). The rest goes ahead, and the row
+  // keeps the question that would have stopped it, so what this lets through can be counted and judged.
+  const unattendedPass =
+    enforceMode &&
+    seam === "pre-tool" &&
+    (response.kind === "hold" || response.kind === "ask") &&
+    isUnattendedTurn(situation) &&
+    !vitalStop(best.reasonCode, verdicts);
+  if (unattendedPass) {
+    response = { kind: "proceed" };
+    best = { response, family: best.family, reasonCode: "unattended-pass" };
+  }
+
+  // AEGIS may have refused this very call. A card here could then release nothing, and the agent, told only to wait or
+  // to redo the step, would never see the real stop: 12 asks and a proof since enforce, four of the asks pressed by the
+  // owner while the step stayed refused (2026-11-02). Its deny and its own Allow are the one stop he gets, and Jev judges
+  // the attempt that can run.
+  const stopping = response.kind === "ask" || response.kind === "hold" || response.kind === "proof";
+  const toolUseId = input.payload.toolUseId;
+  const floorStopped =
+    enforceMode &&
+    seam === "pre-tool" &&
+    stopping &&
+    toolUseId !== undefined &&
+    ((await deps.floorDenied?.(toolUseId)) ?? false);
+  if (floorStopped) {
+    // The card goes and the memory stays: the same goal in new words still meets `same-goal-as-held`.
+    deps.contexts.recordHold(situation.sessionKey, goalFingerprint(situation), now);
+    response = { kind: "proceed" };
+    best = { response, family: best.family, reasonCode: "aegis-denied" };
   }
 
   // The refusal strip is an offer to the user, not an enforcement: when a note, proof check or send-back outranks it in
@@ -311,9 +439,15 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
       : null;
   const code = response.kind === "proceed" && fallbackCode ? fallbackCode : best.reasonCode;
   if (response.kind === "hold") state.turnHeld = true;
+  // Not Jev's pass: AEGIS stopped the step, so the audit of what Jev let through skips it, as it skips a fallback row.
   const decidedFamily =
-    response.kind === "proceed" && (judgeUnavailable || dormantSkip) ? "fallback" : family;
-  const reasonCode = withDrivers(code, response.kind === "proceed" ? [] : drivers);
+    response.kind === "proceed" && (judgeUnavailable || dormantSkip || floorStopped)
+      ? "fallback"
+      : family;
+  const reasonCode = withDrivers(
+    code,
+    response.kind === "proceed" && !floorStopped && !unattendedPass ? [] : drivers,
+  );
   const earned =
     (response.kind === "note" || response.kind === "send-back") &&
     (deps.earned?.(decidedFamily, response.kind, reasonCode) ?? false);
@@ -329,10 +463,11 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
     // rule earned it from the reviews acts too (2026-10-15, progressive activation).
     enforced:
       response.kind !== "proceed" &&
-      (enforceMode ||
-        earned ||
-        (response.kind === "note" &&
-          (deps.config.enforceFamilies ?? []).includes(family as FamilyId))),
+      (enforceMode
+        ? !(response.kind === "note" && LOG_ONLY_NOTES.has(code))
+        : earned ||
+          (response.kind === "note" &&
+            (deps.config.enforceFamilies ?? []).includes(family as FamilyId))),
     degraded,
   };
   return finish(deps, {
@@ -415,7 +550,12 @@ function finish(deps: DecideDeps, f: Finish): DecideResult {
   const { decision, situation, verdicts, state } = f;
   const kind = decision.response.kind;
   const idGen = deps.idGen ?? randomUUID;
+  // Nobody will answer in a subagent's session: the step is refused at once and the subagent reports it to its parent.
+  const closedNow =
+    f.hard !== undefined ||
+    (SUBAGENT_SESSION.test(situation.sessionKey) && (kind === "hold" || kind === "ask"));
 
+  if (f.toolUseId) situation.toolUseId = f.toolUseId;
   deps.store.saveSituation(situation, null);
   if (verdicts.length) deps.store.saveVerdicts(verdicts);
   deps.store.saveDecision(decision, { id: f.decisionId, seam: situation.seam, ts: f.now });
@@ -425,10 +565,11 @@ function finish(deps: DecideDeps, f: Finish): DecideResult {
   if (decision.reasonCode.startsWith("evidence-released")) {
     const hold = deps.store.getOpenHold(goalFingerprint(situation));
     if (hold) {
-      deps.store.updateHold(hold.id, { state: "released", releasedBy: "evidence" });
+      const by = decision.reasonCode.startsWith("evidence-released-owner") ? "owner" : "evidence";
+      deps.store.updateHold(hold.id, { state: "released", releasedBy: by });
       for (const iv of deps.store.listInterventions({ state: "open" })) {
         if (iv.decisionId === hold.decisionId) {
-          deps.store.closeIntervention(iv.id, "released", f.now, "evidence");
+          deps.store.closeIntervention(iv.id, "released", f.now, by);
           released.push(iv.id);
         }
       }
@@ -439,7 +580,7 @@ function finish(deps: DecideDeps, f: Finish): DecideResult {
   if (kind !== "proceed") {
     interventionId = idGen();
     // Only enforced decisions can be open or denied. In shadow the row is a record of what WOULD have happened.
-    const istate = interventionState(decision, kind, f.hard !== undefined);
+    const istate = interventionState(decision, kind, closedNow);
     deps.store.openIntervention({
       id: interventionId,
       decisionId: f.decisionId,
@@ -458,7 +599,12 @@ function finish(deps: DecideDeps, f: Finish): DecideResult {
         needs: decision.response.kind === "proof" ? decision.response.needs : [],
         ts: f.now,
       });
-      deps.contexts.recordHold(situation.sessionKey, goalFp, f.now);
+      // A proof that waits only for an unsettled reading is re-checked on every attempt by the second-opinion family,
+      // so it does not make the next attempts "a retry after a hold" (2026-11-13).
+      const r = decision.response;
+      const readingOnly =
+        r.kind === "proof" && r.needs.length > 0 && r.needs.every((n) => n === "reading-sources");
+      if (!readingOnly) deps.contexts.recordHold(situation.sessionKey, goalFp, f.now);
     }
     if (decision.enforced && kind === "send-back") deps.contexts.bumpSendBack(state);
   }
@@ -505,7 +651,7 @@ function finish(deps: DecideDeps, f: Finish): DecideResult {
     for (const e of buildDecisionEvents(ctx)) deps.emit("amygdala2.decision", e);
     const ie = buildInterventionEvent({
       ...ctx,
-      state: interventionState(decision, kind, f.hard !== undefined),
+      state: interventionState(decision, kind, closedNow),
     });
     if (ie) deps.emit("amygdala2.intervention", ie);
     if (refusalIv) {
@@ -519,7 +665,12 @@ function finish(deps: DecideDeps, f: Finish): DecideResult {
     }
   }
 
-  const hook = toHookAction(situation.seam, { decision, interventionId, hard: f.hard });
+  const hook = toHookAction(situation.seam, {
+    decision,
+    interventionId,
+    hard: f.hard,
+    subagent: SUBAGENT_SESSION.test(situation.sessionKey),
+  });
   return {
     id: f.decisionId,
     decision,

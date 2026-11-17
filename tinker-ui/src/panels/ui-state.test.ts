@@ -1713,7 +1713,7 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
   describe("live tab re-sync — peek, pending, adopt", () => {
     const tabsAB = () => [{ id: "tab-main" }, { id: "tab-a" }, { id: "tab-b" }];
 
-    it("peek returns the file's tabs and tombstones and leaves the store untouched", async () => {
+    it("peek returns the file's tabs, tombstones and choices and leaves the store untouched", async () => {
       const s = fakeStorage();
       writeTabList([{ id: "tab-main" }], s);
       const before = snapshot(s);
@@ -1724,9 +1724,11 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
           ),
         ),
       );
+      // FORK 2026-11-14 — the choices carry the unread glow's seen stamps another page wrote.
       await expect(peekUiStateTabs()).resolves.toEqual({
         tabs: tabsAB(),
         closedTabs: { "tab-x": 7 },
+        choices: { "exec:tab": "sessions" },
       });
       expect(snapshot(s)).toEqual(before);
     });
@@ -1754,6 +1756,7 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
       await expect(peekUiStateTabs()).resolves.toEqual({
         tabs: [{ id: "tab-main" }],
         closedTabs: {},
+        choices: { "exec:tab": "sessions" },
       });
     });
 

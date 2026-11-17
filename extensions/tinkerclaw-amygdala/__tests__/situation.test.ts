@@ -113,9 +113,7 @@ describe("buildSituation", () => {
   });
 
   it("judges the answer, not the reflection after it, and not a failed turn's placeholder (2026-10-01)", () => {
-    expect(judgedReply("**Jarvis:** *No.*\n\nWhy not.\n\n🌿 FRACTAL: the zoom")).toBe(
-      "**Jarvis:** *No.*\n\nWhy not.",
-    );
+    expect(judgedReply("**Jarvis:** *No.*\n\nWhy not.\n\n🌿 FRACTAL: the zoom")).toBe("Why not.");
     expect(judgedReply("🌿 FRACTAL ACTION: wrote a file")).toBeUndefined();
     expect(judgedReply("[assistant turn failed before producing content]")).toBeUndefined();
     expect(
@@ -123,6 +121,14 @@ describe("buildSituation", () => {
     ).toBeUndefined();
     expect(judgedReply("Done. The build is green.")).toBe("Done. The build is green.");
     expect(judgedReply(undefined)).toBeUndefined();
+  });
+
+  it("the spoken line is voice, not a report: skipped for any agent name, other bold text kept", () => {
+    expect(judgedReply("**Goku:** *All fixed, obviously.*\n\nThe export failed.")).toBe(
+      "The export failed.",
+    );
+    expect(judgedReply("**Jarvis:** *Restarted my sense of humour.*")).toBeUndefined();
+    expect(judgedReply("**Result:** it failed.")).toBe("**Result:** it failed.");
   });
 
   it("drops the blocks the chat appends after the user's words (reflection doctrine, chat-row contract)", () => {
@@ -323,6 +329,47 @@ describe("owned targets (2026-10-25)", () => {
         named: ["anna@x.test"],
       }),
     ).toEqual([]);
+  });
+
+  // 2026-11-13: a test run left a Python cache file beside a script. Removing it a minute later was asked about as
+  // "beyond what you asked": only a path a tool call wrote counted as the agent's own, and Python wrote this one.
+  it("ownedTargetsOf: a path born minutes ago is the agent's own (fresh); created wins over it, edited does not", () => {
+    const t = (p: string) => ({ path: p, kind: "file" as const, resolvedFrom: p });
+    const born = new Set(["/w/__pycache__/m.pyc", "/w/__pycache__", "/w/new.txt", "/w/cfg.json"]);
+    expect(
+      ownedTargetsOf(
+        [
+          t("/w/__pycache__/m.pyc"),
+          t("/w/__pycache__"),
+          t("/w/new.txt"),
+          t("/w/cfg.json"),
+          t("/w/old.txt"),
+        ],
+        {
+          created: ["/w/new.txt"],
+          edited: ["/w/cfg.json", "/w/old.txt"],
+          fresh: (p) => born.has(p),
+        },
+      ),
+    ).toEqual([
+      { path: "/w/__pycache__/m.pyc", why: "fresh" },
+      { path: "/w/__pycache__", why: "fresh" },
+      { path: "/w/new.txt", why: "created" },
+      { path: "/w/cfg.json", why: "fresh" },
+      { path: "/w/old.txt", why: "edited" },
+    ]);
+  });
+
+  it("buildSituation: asks the session which targets are fresh", () => {
+    const step = {
+      ...base,
+      tool: "Bash",
+      toolInput: { command: "rm /work/proj/__pycache__/m.pyc" },
+    };
+    expect(buildSituation(step, { ...ctx, freshPath: () => true }).ownedTargets.value).toEqual([
+      { path: "/work/proj/__pycache__/m.pyc", why: "fresh" },
+    ]);
+    expect(buildSituation(step, ctx).ownedTargets.value).toEqual([]);
   });
 
   it("buildSituation: named from the owner's request, never from a reflection's prompt", () => {

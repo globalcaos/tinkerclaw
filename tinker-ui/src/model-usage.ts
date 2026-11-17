@@ -31,6 +31,19 @@ export interface ModelUsageInfo {
    * Absent for providers that publish no reset (Gemini, Copilot, OpenAI spend).
    */
   resetIso?: string | null;
+  /**
+   * FORK 2026-11-14 (the architect): the OTHER Claude subscription, kept in reserve for a switch or a
+   * 5-hour limit. Drawn in the lower half of each bar; the fields above stay the account in use,
+   * so `exhausted` (the picker's cross) still answers "can this row serve now".
+   * Absent when the gateway knows of no second account.
+   */
+  reserve?: {
+    topPct: number;
+    bottomPct: number;
+    exhausted?: boolean;
+    /** The instant the hover's SECOND `reset:` row counts down to. */
+    resetIso?: string | null;
+  };
 }
 
 export interface ModelTokenTotals {
@@ -185,6 +198,28 @@ export function refreshTooltipReset(
   }
   const clock = formatResetClock(resetIso, nowMs);
   return tooltip.replace(RESET_ROW, clock ? `reset: ${reset} (${clock})` : `reset: ${reset}`);
+}
+
+/**
+ * The same re-stamp for a hover with several `reset:` rows: the n-th row counts down to the n-th
+ * instant. FORK 2026-11-14: a Claude hover carries two, the account in use first and the reserve
+ * second. An instant with no countdown leaves its row as painted.
+ */
+export function refreshTooltipResets(
+  tooltip: string,
+  resetIsos: readonly unknown[],
+  nowMs = Date.now(),
+): string {
+  let i = 0;
+  return tooltip.replace(/^reset: .*$/gm, (row) => {
+    const iso = resetIsos[i++];
+    const reset = formatResetCountdown(iso, nowMs);
+    if (!reset) {
+      return row;
+    }
+    const clock = formatResetClock(iso, nowMs);
+    return clock ? `reset: ${reset} (${clock})` : `reset: ${reset}`;
+  });
 }
 
 /**
@@ -373,6 +408,92 @@ function getChatGptUsage(chatgptValue: unknown, nowMs: number): ModelUsageInfo |
 }
 
 /**
+ * One Claude account's two bars and hover lines for a model row: the 5-hour window on top, the
+ * week below. The week is the model's own weekly cap when it has one and that cap is the fuller
+ * (Fable, 2026-11-13), Sonnet's weekly pool on a Sonnet row, else the account's week.
+ *
+ * FORK 2026-11-14 (the architect): moved out of `getModelUsage` so the same rule draws BOTH
+ * subscriptions, the one in use and the one in reserve. `notes` are the reserve's provenance from
+ * the gateway (`read 23:34`, `limit hit 20:45`), printed after the percentage they belong to.
+ */
+function claudeAccountUsage(
+  limits: JsonRecord,
+  name: string,
+  nowMs: number,
+  extra: readonly (string | null | undefined)[],
+  notes?: JsonRecord | null,
+): ModelUsageInfo {
+  const fiveHour = asRecord(limits.five_hour);
+  const sevenDay = asRecord(limits.seven_day);
+  const sevenDaySonnet = asRecord(limits.seven_day_sonnet);
+  const fiveHourPct = asNumber(fiveHour?.utilization);
+  const sonnetPct = asNumber(sevenDaySonnet?.utilization);
+  const sevenDayPct = asNumber(sevenDay?.utilization) ?? 0;
+  // 2026-11-13: a model with its own weekly cap (Fable) answers to that cap when it is the fuller one.
+  const scopedAll = asRecord(limits.scoped);
+  const scopedKey = scopedAll
+    ? Object.keys(scopedAll).find((k) => name.toLowerCase().includes(k))
+    : undefined;
+  const scoped = scopedKey ? asRecord(scopedAll?.[scopedKey]) : null;
+  const scopedPct = asNumber(scoped?.utilization);
+  const useScoped = scopedPct != null && scopedPct >= sevenDayPct;
+  const useSonnet = !useScoped && name.includes("sonnet") && sonnetPct != null;
+  const longWindow = useScoped ? scoped : useSonnet ? sevenDaySonnet : sevenDay;
+  const longPct = useScoped ? scopedPct : useSonnet ? sonnetPct : sevenDayPct;
+  const longLabel = useScoped ? `7d ${scopedKey}` : useSonnet ? "7d sonnet" : "7d";
+  const longNote = useScoped
+    ? asString(asRecord(notes?.scoped)?.[scopedKey as string])
+    : useSonnet
+      ? null
+      : asString(notes?.seven_day);
+  // FORK 2026-11-03: Anthropic can answer with no 5h window at all (`five_hour: null`; an
+  // account with no session limit open). That is ABSENT, as on the Grok row below, never a
+  // 0% that reads as fresh headroom: the row then carries its weekly pool alone.
+  if (fiveHourPct == null) {
+    const resetIso = asString(longWindow?.resets_at);
+    return {
+      topPct: longPct ?? 0,
+      bottomPct: longPct ?? 0,
+      tooltip: formatUsageTooltip(
+        [{ label: longLabel, pct: longPct ?? 0, suffix: longNote }],
+        resetIso,
+        nowMs,
+        extra,
+      ),
+      resetIso,
+      ...exhaustionOf([{ usedPercent: longPct ?? 0, resetAtMs: toResetMs(resetIso) }], nowMs),
+    };
+  }
+  // Same rule as the ChatGPT row: an exhausted 5h pool answers "when can I send
+  // again", so its reset outranks the weekly one it normally defers to.
+  const resetIso = pickResetIso([
+    { pct: fiveHourPct, iso: asString(fiveHour?.resets_at) },
+    { pct: longPct ?? 0, iso: asString(longWindow?.resets_at) },
+  ]);
+  return {
+    topPct: fiveHourPct,
+    bottomPct: longPct ?? 0,
+    tooltip: formatUsageTooltip(
+      [
+        { label: "5h", pct: fiveHourPct, suffix: asString(notes?.five_hour) },
+        { label: longLabel, pct: longPct ?? 0, suffix: longNote },
+      ],
+      resetIso,
+      nowMs,
+      extra,
+    ),
+    resetIso,
+    ...exhaustionOf(
+      [
+        { usedPercent: fiveHourPct, resetAtMs: toResetMs(asString(fiveHour?.resets_at)) },
+        { usedPercent: longPct ?? 0, resetAtMs: toResetMs(asString(longWindow?.resets_at)) },
+      ],
+      nowMs,
+    ),
+  };
+}
+
+/**
  * KNOWN COVERAGE LIMIT — read before trusting a falsy `exhausted`.
  *
  * This function understands exactly eight providers: codex, openai-codex,
@@ -431,44 +552,30 @@ export function getModelUsage(
         : null;
     }
 
-    const fiveHour = asRecord(limits.five_hour);
-    const sevenDay = asRecord(limits.seven_day);
-    const sevenDaySonnet = asRecord(limits.seven_day_sonnet);
-    const fiveHourPct = asNumber(fiveHour?.utilization) ?? 0;
-    const sonnetPct = asNumber(sevenDaySonnet?.utilization);
-    const sevenDayPct = asNumber(sevenDay?.utilization) ?? 0;
-    const useSonnet = name.includes("sonnet") && sonnetPct != null;
-    const longWindow = useSonnet ? sevenDaySonnet : sevenDay;
-    const longPct = useSonnet ? sonnetPct : sevenDayPct;
-    // Same rule as the ChatGPT row: an exhausted 5h pool answers "when can I send
-    // again", so its reset outranks the weekly one it normally defers to.
-    const resetIso = pickResetIso([
-      { pct: fiveHourPct, iso: asString(fiveHour?.resets_at) },
-      { pct: longPct ?? 0, iso: asString(longWindow?.resets_at) },
-    ]);
     // Only a NAMED profile earns the trailing context line; the shared default
     // would put the same noise on every row without disambiguating anything.
-    const tooltip = formatUsageTooltip(
-      [
-        { label: "5h", pct: fiveHourPct },
-        { label: useSonnet ? "7d sonnet" : "7d", pct: longPct ?? 0 },
-      ],
-      resetIso,
-      nowMs,
-      [matched ? profileKey : null],
-    );
+    const live = claudeAccountUsage(limits, name, nowMs, [matched ? profileKey : null]);
+    // FORK 2026-11-14 (the architect, 00:18 and 00:19): the other subscription, kept in reserve for a
+    // switch or a 5-hour limit, rides in the LOWER half of each bar, and the hover names both.
+    // The gateway sends it only when it knows the account in use; a row bound to some other named
+    // profile keeps its own bars. No reserve in the payload (one account, no seat keeper): as before.
+    const reserveRec = asRecord(budgetUsage.claudeReserve);
+    const reserveLimits = asRecord(reserveRec?.limits);
+    if (!reserveRec || !reserveLimits || (matched && !asString(claude?.account))) {
+      return live;
+    }
+    const reserve = claudeAccountUsage(reserveLimits, name, nowMs, [], asRecord(reserveRec.notes));
+    const liveName = asString(claude?.accountLabel) ?? "this account";
+    const reserveName = asString(reserveRec.label) ?? "other account";
     return {
-      topPct: fiveHourPct,
-      bottomPct: longPct ?? 0,
-      tooltip,
-      resetIso,
-      ...exhaustionOf(
-        [
-          { usedPercent: fiveHourPct, resetAtMs: toResetMs(asString(fiveHour?.resets_at)) },
-          { usedPercent: longPct ?? 0, resetAtMs: toResetMs(asString(longWindow?.resets_at)) },
-        ],
-        nowMs,
-      ),
+      ...live,
+      tooltip: `${liveName} · in use\n${live.tooltip}\n${reserveName} · reserve\n${reserve.tooltip}`,
+      reserve: {
+        topPct: reserve.topPct,
+        bottomPct: reserve.bottomPct,
+        resetIso: reserve.resetIso ?? null,
+        ...(reserve.exhausted ? { exhausted: true } : {}),
+      },
     };
   }
 

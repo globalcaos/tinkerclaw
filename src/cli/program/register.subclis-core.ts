@@ -194,6 +194,14 @@ const entrySpecs: readonly CommandGroupDescriptorSpec<SubCliRegistrar>[] = [
       loadModule: () => import("../jev-cli.js"),
       exportName: "registerJevCli",
     },
+    // FORK 2026-10-29: `openclaw embedder fit|status`, the per-machine embedder fit
+    // (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). Its placeholder also needs the "embedder" descriptor
+    // in ./subcli-descriptors.ts: resolveSubCliCommandGroups drops an entry whose name has none.
+    {
+      commandNames: ["embedder"],
+      loadModule: () => import("../embedder-cli.js"),
+      exportName: "registerEmbedderCli",
+    },
   ]),
   {
     commandNames: ["pairing"],

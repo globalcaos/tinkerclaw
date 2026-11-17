@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The TinkerClaw panel on the Flip's cover screen (JarvisCoverWidget.kt). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/cover_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/cover_reader_bg"
+    android:orientation="vertical"
+    android:padding="18dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="TinkerClaw"
+            android:textColor="#FFE0A070"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/cover_line"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:textColor="#FFB8A58C"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/cover_speed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFF6EFE2"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/cover_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="#FFF6EFE2"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/cover_text"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="5"
+        android:textColor="#FFD9CBB4"
+        android:textSize="15sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/cover_slower"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/cover_reader_btn"
+            android:contentDescription="Slower"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_reader_slower" />
+        <ImageButton
+            android:id="@+id/cover_prev"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/cover_reader_btn"
+            android:contentDescription="Previous paragraph"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_reader_prev" />
+        <ImageButton
+            android:id="@+id/cover_play"
+            android:layout_width="68dp"
+            android:layout_height="68dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/cover_reader_btn_main"
+            android:contentDescription="Read or pause"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_reader_play" />
+        <ImageButton
+            android:id="@+id/cover_next"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/cover_reader_btn"
+            android:contentDescription="Next paragraph"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_reader_next" />
+        <ImageButton
+            android:id="@+id/cover_faster"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/cover_reader_btn"
+            android:contentDescription="Faster"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_reader_faster" />
+    </LinearLayout>
+</LinearLayout>

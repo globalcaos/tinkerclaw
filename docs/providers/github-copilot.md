@@ -157,6 +157,8 @@ at priority 15 -- after local embeddings but before OpenAI and other paid
 providers. If a GitHub token is available, OpenClaw discovers available
 embedding models from the Copilot API and picks the best one automatically.
 
+Fork note (TinkerClaw): here `auto` never picks Copilot or another remote provider by itself; it uses the model `openclaw embedder fit` chose for this machine, or keyword search only. See section 4e of `FORK_SETUP.md` in the repository root.
+
 ### Explicit config
 
 ```json5

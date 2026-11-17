@@ -65,8 +65,11 @@ export interface Learning {
     sessionKey: string;
     turnId: string;
     undo?: boolean;
-    /** The owner's words of the prompt to rewind to: that exchange and every one after it go (rewind level 3). */
+    /** The words the page shows for the prompt to rewind to: that exchange and every one after it go (rewind level 3). */
     fromPrompt?: string;
+    /** The time of the page's row for that prompt, and whether the page holds it as its newest (rewind level 4). */
+    fromPromptAt?: number;
+    orLast?: boolean;
   }): RewindMethodResult;
 }
 

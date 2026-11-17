@@ -127,6 +127,17 @@ async function getRelayPort() {
   return n;
 }
 
+async function getRelayBrowserId() {
+  const stored = await chrome.storage.local.get(["relayBrowserId"]);
+  const existing = String(stored.relayBrowserId || "").trim();
+  if (existing) {
+    return existing;
+  }
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ relayBrowserId: id });
+  return id;
+}
+
 async function getRelayToken(host) {
   // Try stored token first
   const stored = await chrome.storage.local.get(["relayToken"]);
@@ -319,9 +330,13 @@ async function ensureRelayConnection() {
       );
     }
     const httpBase = `http://${host}:${port}`;
-    const wsUrl = token
-      ? `ws://${host}:${port}/extension?token=${encodeURIComponent(token)}`
-      : `ws://${host}:${port}/extension`;
+    // The relay accepts several browsers at once; browserId lets it recognise this one when
+    // the service worker reconnects, so the shared tabs keep their ids.
+    const query = new URLSearchParams({ browserId: await getRelayBrowserId() });
+    if (token) {
+      query.set("token", token);
+    }
+    const wsUrl = `ws://${host}:${port}/extension?${query.toString()}`;
 
     // Fast preflight: is the relay server up?
     try {
@@ -1189,4 +1204,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(err ? { ok: false, error: err.message, noHelper: true } : res);
   });
   return true; // answer comes asynchronously
+});
+
+// A new host, port or token saved on the options page only took effect after the extension
+// was reloaded: the open socket stayed on the old relay. Drop it so the reconnect uses the new
+// settings.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") {
+    return;
+  }
+  if (!("relayHost" in changes || "relayPort" in changes || "relayToken" in changes)) {
+    return;
+  }
+  const ws = relayWs;
+  if (ws) {
+    try {
+      ws.close(1000, "relay settings changed");
+    } catch {
+      onRelayClosed("settings_changed");
+    }
+  }
 });

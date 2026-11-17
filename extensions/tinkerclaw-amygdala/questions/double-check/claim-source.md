@@ -26,13 +26,14 @@ For the claim in the reply that something was done, where does the agent's knowl
 
 ## Settings
 
-What the code reads. `seams` says when Jev is asked, `fields` which parts of the situation it sees, `cutoff` where its answer starts to act, `mustCatch` the test cases it must get right. Rewording the question or its answers? Raise `version`, so earlier verdicts stay tied to the words they answered. Edits take effect after the next rebuild (the ↻ button).
+What the code reads. `seams` says when Jev is asked, `fields` which parts of the situation it sees, `cutoff` where its answer starts to act, `mustCatch` the test cases it must get right. `says` is the line the chat shows the agent when this question acts. Rewording the question or its answers? Raise `version`, so earlier verdicts stay tied to the words they answered. Edits take effect after the next rebuild (the ↻ button).
 
 ```yaml
 id: claim-source
 version: 1
 family: double-check
 status: active
+says: "Where does that claim come from?"
 seams:
   - stop
 type: choice
@@ -44,6 +45,5 @@ cutoff:
 purpose: Labels where each done claim comes from; never acts alone, it feeds claim-support.
 origin: paper 6.3
 retirement: Retire if claims carry their source from the extraction step in code.
-mustCatch:
-  - mc-dc-stored-note-upload
+mustCatch: []
 ```

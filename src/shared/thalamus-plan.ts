@@ -71,6 +71,7 @@ export type SuggestionMoveCause =
   | "cooling"
   | "spent"
   | "unfunded"
+  | "metered"
   | "capacity"
   | "engagement";
 
@@ -148,7 +149,16 @@ export type ThalamusPlanParams = {
   coolingUntil?: ReadonlyMap<SupplyId, number>;
   /** The architect's suggestion for the dial's stop (model, effort). Auto turns only; the caller guarantees it. */
   suggestion?: RouteSuggestion;
+  /**
+   * Models excluded before pricing (e.g. `provider-exhausted`). When the suggestion lands here,
+   * it is "moved/spent" — not "ignored/not-on-board" — so the card names the real cause.
+   */
+  excluded?: readonly { key: string; reason: string }[];
   unfunded?: ReadonlySet<SupplyId>;
+  /** Pay-per-call supplies vetoed for primary turns and fallback chains, admitted only as a last-resort critic. */
+  secondOpinionOnly?: ReadonlySet<SupplyId>;
+  /** Extra rungs from pay-per-call supplies (e.g. Google above the subscription cost ceiling) for last-resort critic checks. */
+  secondOpinionRungs?: readonly FrontierRung[];
   refusals?: RefusalLedger;
   /** How many independent units the caller intends to run. >1 ⇒ fan-out is on the table. */
   fanOutWidth?: number;
@@ -221,6 +231,7 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
     supplies: params.supplies,
     cooling: params.cooling,
     unfunded: params.unfunded,
+    secondOpinionOnly: params.secondOpinionOnly,
     contextWindowFor: params.contextWindowFor,
     estimatedTokens,
     subject,
@@ -234,6 +245,11 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
   // Rungs a cooling supply alone kept off the board, priced as if open: the counterfactual that tells the card
   // "cooling moved this turn" when the open board would have run something else.
   const cooledOnly: FrontierRung[] = [];
+  // Pay-per-call rungs (Google) that pass every feasibility rule except `secondOpinionOnly`, held back for a
+  // cross-family critic check strictly when no subscription supply outside the primary's survived.
+  const secondOpinionPool: FrontierRung[] = [];
+  const seenSecondOpinion = new Set<string>();
+  const fctxOpenMetered: FeasibilityContext = { ...fctx, secondOpinionOnly: undefined };
   for (const r of params.rungs) {
     const f = feasibility(r.key, fctx);
     const supply = params.supplies.get(supplyOfKey(r.key));
@@ -241,9 +257,22 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
       vetoes.push({ key: r.key, veto: f.veto!, detail: f.detail });
       if (f.veto === "supply-cooling")
         cooledOnly.push({ ...r, cost: effectiveCost(r.cost, supply) });
+      if (f.veto === "supply-metered") {
+        seenSecondOpinion.add(`${r.key}@${r.effort}`);
+        secondOpinionPool.push({ ...r, cost: effectiveCost(r.cost, supply) });
+      }
       continue;
     }
     priced.push({ ...r, cost: effectiveCost(r.cost, supply) });
+  }
+  for (const r of params.secondOpinionRungs ?? []) {
+    const tag = `${r.key}@${r.effort}`;
+    if (seenSecondOpinion.has(tag)) continue;
+    if (!params.secondOpinionOnly?.has(supplyOfKey(r.key))) continue;
+    if (!feasibility(r.key, fctxOpenMetered).ok) continue;
+    seenSecondOpinion.add(tag);
+    const supply = params.supplies.get(supplyOfKey(r.key));
+    secondOpinionPool.push({ ...r, cost: effectiveCost(r.cost, supply) });
   }
   if (priced.length === 0) return undefined;
 
@@ -273,7 +302,25 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
             ? { untilMs: untilOf(supplyOfKey(suggestion.key), v.veto) }
             : {}),
         }
-      : { state: "ignored", key: suggestion.key, reason: "not-on-board" };
+      : (() => {
+          // The suggestion key may have been excluded before pricing (e.g. provider-exhausted).
+          // In that case it never appears in vetoes, but it is "moved/spent", not "ignored".
+          const exc = params.excluded?.find(
+            (e) => e.key === suggestion!.key && e.reason === "provider-exhausted",
+          );
+          if (exc) {
+            const resetAtMs = params.supplies.get(supplyOfKey(suggestion!.key))?.binding?.resetAtMs;
+            return {
+              state: "moved" as const,
+              key: suggestion!.key,
+              effort: suggestion!.effort ?? "",
+              cause: "spent" as const,
+              to: { key: "", effort: "" },
+              ...(resetAtMs !== undefined ? { untilMs: resetAtMs } : {}),
+            };
+          }
+          return { state: "ignored" as const, key: suggestion!.key, reason: "not-on-board" };
+        })();
     suggestion = undefined;
   }
 
@@ -389,6 +436,25 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
       mode = "critic";
       panel = [rival.key];
       chair = primary.key;
+    } else if (
+      !bestRivalSupply(
+        priced.filter((r) => r.smart >= route.chainFloor),
+        primary,
+      ) &&
+      secondOpinionPool.length > 0
+    ) {
+      const meteredRival = bestRivalSupply(
+        secondOpinionPool.filter((r) => r.smart >= route.chainFloor),
+        primary,
+      );
+      if (
+        meteredRival &&
+        (BUILDISH.has(domain) || primary.smart - meteredRival.smart < CONTESTED_MARGIN)
+      ) {
+        mode = "critic";
+        panel = [meteredRival.key];
+        chair = primary.key;
+      }
     }
   }
 
@@ -441,6 +507,8 @@ function causeOfVeto(v: FeasibilityVeto): SuggestionMoveCause {
       return "spent";
     case "supply-unfunded":
       return "unfunded";
+    case "supply-metered":
+      return "metered";
     case "engagement":
       return "engagement";
     default:

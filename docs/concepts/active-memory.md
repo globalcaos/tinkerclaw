@@ -626,6 +626,8 @@ problems, not Active Memory bugs.
     retrieval; runtime failures after a provider is already selected do not
     fall back automatically.
 
+    Fork note (TinkerClaw): here an unset provider uses the model `openclaw embedder fit` chose for this machine, or keyword search only, so a new API key does not change it. See section 4e of `FORK_SETUP.md` in the repository root.
+
     Pin the provider (and an optional fallback) explicitly to make selection
     deterministic. See [Memory Search](/concepts/memory-search) for the full
     list of providers and pinning examples.

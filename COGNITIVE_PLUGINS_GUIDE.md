@@ -1,7 +1,7 @@
 # OpenClaw Cognitive Plugins — Installation Guide
 
 > Making AI agents smarter through architecture, not model scale.
-> Based on the PREFRONTAL paper series (Serra & Jarvis, 2026).
+> Based on the PREFRONTAL paper series (Orbis & Jarvis, 2026).
 
 ## Overview
 
@@ -35,17 +35,15 @@ Install in this order for maximum benefit at each step:
 
 #### 2. Total Recall — ENGRAM (J1)
 
-**What:** Episodic memory with hybrid FTS + vector retrieval.
+**What:** Episodic memory with full-text (word) retrieval.
 **Impact:** The agent remembers past sessions. Fractal reflections now persist and get retrieved.
-**Requires:** Ollama with `mxbai-embed-large` model.
+**Requires:** Nothing extra. Recall is word search, so no embedding model is needed, and the `embeddingProvider` and `embeddingModel` keys are ignored. In TinkerClaw, semantic memory search is chosen per machine by `openclaw embedder fit` (see `FORK_SETUP.md`, section 4e).
 
 ```json
 "tinkerclaw-total-recall": {
   "enabled": true,
   "config": {
-    "budgetTokens": 2000,
-    "embeddingProvider": "ollama",
-    "embeddingModel": "mxbai-embed-large"
+    "budgetTokens": 2000
   }
 }
 ```

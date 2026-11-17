@@ -155,10 +155,16 @@ export function runRailState(
   return model ? { kind: "model", model } : null;
 }
 
-/** The hover text: the friendly label, then the full provider/model id it stands for. */
-export function railTitle(m: RailModel, label: string): string {
+/**
+ * The hover text: the friendly label, the thinking effort when the turn's is known (FORK
+ * 2026-11-12, the same word the thinking indicator shows), then the full provider/model id.
+ */
+export function railTitle(m: RailModel, label: string, effort = ""): string {
   const full = m.provider ? `${m.provider}/${m.model}` : m.model;
-  return label && label !== m.model && label !== full ? `${label} — ${full}` : full;
+  const eff = effort ? ` · ${effort} thinking` : "";
+  return label && label !== m.model && label !== full
+    ? `${label}${eff} — ${full}`
+    : `${full}${eff}`;
 }
 
 const ATTR: Record<string, string> = {

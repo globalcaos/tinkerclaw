@@ -36,6 +36,8 @@ def main():
         os.chdir(os.path.expanduser("~"))
         os.environ["TERM"] = "xterm-256color"
         os.environ["COLORTERM"] = "truecolor"
+        # A browser opened from this shell (Claude Code /login) opens on the phone, as in pi-term.service.
+        os.environ["BROWSER"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "open-on-phone")
         # Attach to the persistent session (pi-term.service) so a door or app restart only detaches
         # the phone; Claude keeps running. A plain login shell if that session is not up.
         os.execvp("sh", ["sh", "-c", 'tmux -L jarvis attach -t jarvis 2>/dev/null || exec "$0" -l', shell])

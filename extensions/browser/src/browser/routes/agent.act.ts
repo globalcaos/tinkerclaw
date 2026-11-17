@@ -423,6 +423,10 @@ export function registerBrowserAgentActRoutes(
               ...extra,
             });
           };
+          // The tab may be named by its handle (t5); from here on use its real id.
+          if (action.targetId && action.targetId === targetId) {
+            action = { ...action, targetId: tab.targetId } as BrowserActRequest;
+          }
           if (action.targetId && action.targetId !== tab.targetId) {
             return jsonActError(
               res,

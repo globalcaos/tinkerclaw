@@ -11,11 +11,15 @@ import {
   THALAMUS_ANCHOR_KEY,
   THALAMUS_BIAS_GAP,
   SUGGESTION_PRIOR,
+  suggestionMoves,
   THALAMUS_DEFAULT_BIAS_IDX,
   thalamusRoute,
   type DomainStrength,
   type FrontierRung,
   type TaskDomain,
+  anchorRung,
+  anchoredBiasPick,
+  modelLineOf,
 } from "./thalamus-frontier.js";
 import { tokensPerTaskFor } from "./tokens-per-task.js";
 
@@ -435,7 +439,56 @@ describe("thalamusRoute — a suggestion is a prior, not a pin", () => {
       to: { key: "xai/grok" },
       gainPct: 36,
     });
-    expect(r.reason).toContain("+36% on code");
+    expect(r.reason).toContain("p95 against p70 on code strength");
+  });
+
+  // 2026-11-13 (owner: if any model is better than the smart stop at a task, route to it). The old test was a
+  // bonus of 10 % of the stop's own score, which nothing can beat once the stop sits above p0.91.
+  it("at the top stop any measured lead moves it; below it the lead must be ten points", () => {
+    expect(suggestionMoves(0.96, 0.99, true)).toBe(true);
+    expect(suggestionMoves(0.96, 0.96, true)).toBe(false);
+    expect(suggestionMoves(0.96, 0.99, false)).toBe(false);
+    expect(suggestionMoves(0.7, 0.8, false)).toBe(true);
+  });
+
+  it("the top stop leaves its suggestion for a rival three points ahead, which the 10 % prior never allowed", () => {
+    // No anchor rung on this board, so the top stop's floor is the board's best (63): the rival must be as smart.
+    const board: FrontierRung[] = [...BOARD2, rung("google/gem", "", 64, 3.5)];
+    const near = (key: string, domain: TaskDomain) =>
+      domain !== "code"
+        ? undefined
+        : key === "claude-code/opus"
+          ? { p: 0.96, n: 3, basis: [] }
+          : key === "google/gem"
+            ? { p: 0.99, n: 3, basis: [] }
+            : undefined;
+    const ask = { key: "claude-code/opus", effort: "max" };
+    const top = thalamusRoute({
+      rungs: board,
+      biasIdx: 6,
+      domain: "code",
+      strengthFor: near,
+      suggestion: ask,
+    })!;
+    expect(top.suggestion).toMatchObject({ state: "moved", to: { key: "google/gem" } });
+    // Below the top stop the same three points are not enough.
+    const mid = thalamusRoute({
+      rungs: board,
+      biasIdx: 3,
+      domain: "code",
+      strengthFor: near,
+      suggestion: ask,
+    })!;
+    expect(mid.suggestion).toMatchObject({ state: "kept" });
+    // A general task has nothing task-specific to move the stop.
+    const general = thalamusRoute({
+      rungs: board,
+      biasIdx: 6,
+      domain: "general",
+      strengthFor: near,
+      suggestion: ask,
+    })!;
+    expect(general.suggestion).toMatchObject({ state: "kept" });
   });
 
   it("keeps it when the rival leads by less than the prior", () => {
@@ -497,5 +550,75 @@ describe("thalamusRoute — a suggestion is a prior, not a pin", () => {
     })!;
     expect(r.rung).toEqual(plain.rung);
     expect(r.suggestion).toBeUndefined();
+  });
+});
+
+// 2026-11-13: the anchor named Opus 5. Opus 5.5 dominates it, so it left the frontier, no anchor was found, and
+// the top stop's floor became the top model's own score: no rival could enter the band. Nothing tested the anchor.
+describe("the anchor is a model line, not one version", () => {
+  const TODAY: FrontierRung[] = [
+    rung("claude-code/claude-haiku-5-5", "high", 30, 0.01),
+    rung("xai/grok-4.6", "medium", 44.3, 0.1),
+    rung("claude-code/claude-sonnet-5-5", "max", 54.5, 0.2),
+    rung("claude-code/claude-opus-5-5", "max", 59.1, 0.41),
+    rung(THALAMUS_ANCHOR_KEY, "max", 50.8, 0.52), // the named version: dearer and less smart than its successor
+    rung("google/gem-4", "", 60, 0.6),
+    rung("claude-code/claude-fable-5-2", "max", 64.6, 0.83),
+  ];
+  const science = (key: string, d: TaskDomain): DomainStrength | undefined =>
+    d !== "science"
+      ? undefined
+      : key === "claude-code/claude-fable-5-2"
+        ? { p: 0.78, n: 1, basis: [] }
+        : key === "google/gem-4"
+          ? { p: 1, n: 1, basis: [] }
+          : undefined;
+
+  it("reads a key's line by dropping its version", () => {
+    expect(modelLineOf("claude-code/claude-opus-5")).toBe("claude-code/claude-opus");
+    expect(modelLineOf("claude-code/claude-opus-5-5")).toBe("claude-code/claude-opus");
+    expect(modelLineOf("openai-codex/gpt-6.1-sol")).toBe("openai-codex/gpt-6.1-sol");
+    expect(modelLineOf("xai/grok-4.6")).toBe("xai/grok");
+  });
+
+  it("takes the named version when it is on the frontier, else the newest of its line, else none", () => {
+    const frontier = paretoFrontier(TODAY);
+    expect(frontier.some((r) => r.key === THALAMUS_ANCHOR_KEY)).toBe(false);
+    expect(anchorRung(frontier)?.key).toBe("claude-code/claude-opus-5-5");
+    // Before its successor (and the Sonnet that also beats it) existed, the named version was the anchor.
+    const old = paretoFrontier(TODAY.filter((r) => !/opus-5-5|sonnet-5-5/.test(r.key)));
+    expect(anchorRung(old)?.key).toBe(THALAMUS_ANCHOR_KEY);
+    expect(
+      anchorRung(paretoFrontier(TODAY.filter((r) => !r.key.includes("opus")))),
+    ).toBeUndefined();
+  });
+
+  it("the stops below smart are measured from that anchor, not from the reserved model", () => {
+    const frontier = paretoFrontier(TODAY);
+    expect(anchoredBiasPick(frontier, 3)?.key).toBe("claude-code/claude-opus-5-5");
+    expect(anchoredBiasPick(frontier, 0)?.key).toBe("xai/grok-4.6"); // cheapest within 15 points of 59.1
+    expect(anchoredBiasPick(frontier, 2)?.key).toBe("claude-code/claude-sonnet-5-5"); // within 5 points
+  });
+
+  it("at the top stop a rival as smart as the anchor can take the task it is measured better at", () => {
+    const r = thalamusRoute({
+      rungs: TODAY,
+      biasIdx: 6,
+      domain: "science",
+      strengthFor: science,
+      suggestion: { key: "claude-code/claude-fable-5-2", effort: "max" },
+    })!;
+    expect(r.target).toBe(59.1);
+    expect(r.suggestion).toMatchObject({ state: "moved", to: { key: "google/gem-4" } });
+    // A rival less smart than the anchor stays out, however strong its one benchmark.
+    const weak = TODAY.map((x) => (x.key === "google/gem-4" ? { ...x, smart: 55 } : x));
+    const kept = thalamusRoute({
+      rungs: weak,
+      biasIdx: 6,
+      domain: "science",
+      strengthFor: science,
+      suggestion: { key: "claude-code/claude-fable-5-2", effort: "max" },
+    })!;
+    expect(kept.suggestion).toMatchObject({ state: "kept" });
   });
 });

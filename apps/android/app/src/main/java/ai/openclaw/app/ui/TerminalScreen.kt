@@ -4,15 +4,23 @@ import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.jarvis.JarvisDoor
 import ai.openclaw.app.jarvis.isSameJarvisOrigin
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
+import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -156,13 +164,55 @@ private fun createTerminalWebView(
     allowFileAccess = false
     allowContentAccess = false
   }
+  // window.JarvisTerm (2026-10-30): Claude Code's /login could not open a browser from the terminal and a
+  // tap on its link did nothing. The page (scripts/phone-door/term.mjs) opens links and reads the
+  // clipboard through this. The terminal page has no frames and never leaves the door (below).
+  webView.addJavascriptInterface(TerminalBridge(context), "JarvisTerm")
   webView.webViewClient =
     object : WebViewClient() {
-      // The terminal never navigates away from the door.
+      // The terminal never navigates away from the door; a link outside it opens in the browser.
       override fun shouldOverrideUrlLoading(
         view: WebView,
         request: WebResourceRequest,
-      ): Boolean = request.isForMainFrame && !isSameJarvisOrigin(request.url.toString(), origin())
+      ): Boolean {
+        if (!request.isForMainFrame || isSameJarvisOrigin(request.url.toString(), origin())) return false
+        openInBrowser(view.context, request.url)
+        return true
+      }
     }
   return webView
+}
+
+private fun openInBrowser(
+  context: Context,
+  url: Uri,
+) {
+  if (url.scheme != "https" && url.scheme != "http") return
+  try {
+    context.startActivity(
+      Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+    )
+  } catch (_: ActivityNotFoundException) {
+    Toast.makeText(context, "No app can open this link", Toast.LENGTH_SHORT).show()
+  }
+}
+
+private class TerminalBridge(
+  private val context: Context,
+) {
+  private val main = Handler(Looper.getMainLooper())
+
+  @JavascriptInterface
+  fun open(url: String?) {
+    val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return
+    main.post { openInBrowser(context, uri) }
+  }
+
+  @JavascriptInterface
+  fun clipboard(): String {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return ""
+    val clip = cm.primaryClip ?: return ""
+    if (clip.itemCount == 0) return ""
+    return clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
+  }
 }

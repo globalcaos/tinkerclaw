@@ -3,6 +3,7 @@ import {
   refreshAnchorInstruction,
   resolveTitleKind,
   sameSubject,
+  sendTitleAction,
   titleWords,
   turnEndTitleAction,
 } from "./tab-title-policy.js";
@@ -75,6 +76,17 @@ describe("turnEndTitleAction", () => {
     expect(
       turnEndTitleAction({ kind: "auto", tabTurns: 5, wearsDefaultName: false, interval: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("sendTitleAction", () => {
+  it("names a placeholder tab on its first prompt", () => {
+    expect(sendTitleAction("fortune", 1)).toBe("first");
+  });
+  it("leaves later prompts and named tabs to the turn-end rule", () => {
+    expect(sendTitleAction("fortune", 2)).toBeNull();
+    expect(sendTitleAction("auto", 1)).toBeNull();
+    expect(sendTitleAction("manual", 1)).toBeNull();
   });
 });
 

@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import { isAgentPrompt, stripPromptEnvelope } from "openclaw/plugin-sdk/fork-prompt-envelope";
-import { classifyEffect, isShellTool, resolveTargets } from "./effect-class.js";
+import { classifyEffect, isShellTool, readOnlyByCommand, resolveTargets } from "./effect-class.js";
 import type {
   Claim,
   Commitment,
@@ -66,6 +66,14 @@ export interface SessionContext {
   /** Absolute paths the agent created earlier in this session, and existing ones it changed (session-tracker.ts). */
   createdPaths?: string[];
   editedPaths?: string[];
+  /** Was this path born in the last five minutes? Read from disk by the session tracker (isFreshPath). */
+  freshPath?: (absPath: string) => boolean;
+  /** True for a file on the durable list of the agent's own creations (src/own-files.ts), unchanged by anyone else. */
+  ownPath?: (absPath: string) => boolean;
+  /** The conversation before this turn's prompt (transcript.ts `recentExchange`). */
+  exchange?: string;
+  /** The calls made in this turn so far (transcript.ts `turnSince`). */
+  turnSteps?: string[];
 }
 
 export function missing<T>(): Field<T> {
@@ -76,16 +84,20 @@ function field<T>(v: T | undefined | null, origin: Origin): Field<T> {
   return v === undefined || v === null ? missing<T>() : { value: v, origin };
 }
 
+/** The spoken purple line (`**Jarvis:** *…*`): voice, not a report. Any agent name, whole italic lines only. */
+const SPOKEN_LINE = /^[ \t]*\*\*[\p{L}\p{N} ]{1,24}:\*\*[ \t]*\*[^\n]*\*[ \t]*$/gmu;
+
 /**
- * The reply the stop questions judge: the answer, not the reflection after it, and not a failure placeholder.
- * 2026-10-01: 2 of 5 live "refusals" were the FRACTAL block judged as the reply, 1 was a failed turn's error text.
+ * The reply the stop questions judge: the answer, not the reflection after it, not the spoken line, and not a failure
+ * placeholder. 2026-10-01: 2 of 5 live "refusals" were the FRACTAL block judged as the reply, 1 was a failed turn's error
+ * text. 2026-11-01: jokes in the spoken line were sent back as claims of work.
  */
 export function judgedReply(reply: string | undefined): string | undefined {
   if (reply === undefined) return undefined;
   if (/^\s*\[assistant turn failed before producing content\]\s*$/.test(reply)) return undefined;
   if (/^\s*⚠️ Agent failed before reply:/.test(reply)) return undefined;
   const m = /(^|\n)\s*🌿 FRACTAL( ACTION)?:/.exec(reply);
-  const answer = (m ? reply.slice(0, m.index) : reply).trim();
+  const answer = (m ? reply.slice(0, m.index) : reply).replace(SPOKEN_LINE, "").trim();
   return answer === "" ? undefined : answer;
 }
 
@@ -149,6 +161,8 @@ function namedBy(p: string, named: readonly string[]): boolean {
  * (2026-10-25: novelty 89 % noise, excess-scope 81 %, the danger-level table rows 90-94 %, mostly on files the agent had
  * made or the owner had named). A path the agent wrote counts only as itself: `mkdir -p ~/src` must not make everything
  * under it the agent's. A file that existed before the agent edited it stays `edited`, the owner's data.
+ * `fresh` (2026-11-13) is a file no tool call wrote by name: a cache a command left behind a minute ago was not
+ * `created`, so removing it was asked about as beyond the request while the hard-rule hook let it through.
  */
 export function ownedTargetsOf(
   targets: readonly ResolvedTarget[],
@@ -157,6 +171,8 @@ export function ownedTargetsOf(
     edited?: readonly string[];
     scratchDirs?: string[];
     named?: readonly string[];
+    fresh?: (absPath: string) => boolean;
+    own?: (absPath: string) => boolean;
   },
 ): OwnedTarget[] {
   const created = new Set(o.created ?? []);
@@ -164,9 +180,10 @@ export function ownedTargetsOf(
   const out: OwnedTarget[] = [];
   for (const t of targets) {
     if (t.kind !== "file" && t.kind !== "dir" && t.kind !== "unknown") continue;
-    if (created.has(t.path)) out.push({ path: t.path, why: "created" });
+    if (created.has(t.path) || o.own?.(t.path)) out.push({ path: t.path, why: "created" });
     else if (under(t.path, o.scratchDirs ?? [])) out.push({ path: t.path, why: "scratch" });
     else if (namedBy(t.path, o.named ?? [])) out.push({ path: t.path, why: "named" });
+    else if (o.fresh?.(t.path)) out.push({ path: t.path, why: "fresh" });
     else if (edited.has(t.path)) out.push({ path: t.path, why: "edited" });
   }
   return out;
@@ -210,6 +227,8 @@ export function buildSituation(i: SeamInput, c: SessionContext): Situation {
             edited: c.editedPaths,
             scratchDirs: c.scratchDirs,
             named: requestText && kind !== "reflection" ? pathsNamedIn(requestText, c.homeDir) : [],
+            fresh: c.freshPath,
+            own: c.ownPath,
           }),
           origin: "derived",
         };
@@ -247,5 +266,13 @@ export function buildSituation(i: SeamInput, c: SessionContext): Situation {
     contextCounts: field(c.contextCounts, "derived"),
     turnKind: field(kind, "derived"),
     ownedTargets: owned,
+    readOnlyTargets: field(
+      rawCommand === null
+        ? null
+        : readOnlyByCommand(rawCommand, i.cwd ?? c.workspaceRoot, c.homeDir),
+      "derived",
+    ),
+    exchange: field(c.exchange === "" ? undefined : c.exchange, "observed"),
+    turnSteps: field(c.turnSteps?.length ? c.turnSteps : undefined, "observed"),
   };
 }

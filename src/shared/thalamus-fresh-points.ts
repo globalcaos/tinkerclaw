@@ -17,6 +17,7 @@
 // PURE. No clock, no I/O.
 
 import { routeCall, type RouteCallParams } from "./thalamus-route-call.js";
+import { isSecondOpinionOnlyKey } from "./thalamus-supply.js";
 import type {
   Answered,
   CallDecision,
@@ -132,11 +133,14 @@ export function pickChecker(p: {
   if (brief.length === 0) return { builderFamily, reason: "no-brief-option" };
   const other = brief.filter((o) => vendorFamilyOf(o.rung.key) !== builderFamily);
   if (other.length === 0) return { builderFamily, reason: "no-other-family" };
+  // Subscription families always take precedence over pay-per-call supplies (2026-11-13: Google is
+  // paid per call and used for a second opinion only when no subscription family can check).
+  const subscriptionOther = other.filter((o) => !isSecondOpinionOnlyKey(o.rung.key));
+  const pool = subscriptionOther.length > 0 ? subscriptionOther : other;
   const bar = p.minQuality ?? 0;
-  const clearing = other.filter((o) => o.quality >= bar).sort(byPrice);
+  const clearing = pool.filter((o) => o.quality >= bar).sort(byPrice);
   // If none clears the bar, the strongest other-family option: a weaker check still beats none, and the record says so.
-  const option =
-    clearing[0] ?? [...other].sort((a, b) => b.quality - a.quality || byPrice(a, b))[0];
+  const option = clearing[0] ?? [...pool].sort((a, b) => b.quality - a.quality || byPrice(a, b))[0];
   return { option, builderFamily, family: vendorFamilyOf(option.rung.key), reason: "picked" };
 }
 

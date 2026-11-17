@@ -11,6 +11,8 @@ import {
   promptedSinceOnDisk,
   planLimitResume,
   readLimitResumes,
+  REROUTE_DELAY_MS,
+  rerouteMessage,
   rearmLimitResumes,
   scheduleLimitResume,
   setLimitResumeDeps,
@@ -329,5 +331,63 @@ describe("promptedSinceOnDisk: the chat's transcript, found through the session 
 
   it("no for a chat the store does not know", async () => {
     await expect(promptedSinceOnDisk("agent:main:tinker:unknown", errorAt)).resolves.toBe(false);
+  });
+});
+
+// FORK 2026-11-13 — the CLI's Fable-limit line closes one model for days and leaves Opus open on the same seat.
+describe("a limit on one model reroutes the chat at once", () => {
+  const FABLE = "You've hit your Fable limit · resets Nov 19, 5pm (Europe/Madrid)";
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "reroute-"));
+    process.env.OPENCLAW_TINKER_BRIDGE_LIMIT_RESUME = path.join(dir, "limit-resume.json");
+    process.env.OPENCLAW_THALAMUS_COOLING_FILE = path.join(dir, "cooling.json");
+    __resetLimitResumeTimersForTest();
+  });
+  afterEach(() => {
+    __resetLimitResumeTimersForTest();
+    setLimitResumeDeps(null);
+    delete process.env.OPENCLAW_TINKER_BRIDGE_LIMIT_RESUME;
+    delete process.env.OPENCLAW_THALAMUS_COOLING_FILE;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("cools Fable alone until its stated reset and wakes the chat seconds later, with the reroute text", () => {
+    const now = at("2026-11-13T19:29:15Z");
+    const plan = scheduleLimitResume({ sessionKey: CHAT, raw: FABLE, now });
+    expect(plan).toMatchObject({ reroute: "fable", errorAt: now, fireAt: now + REROUTE_DELAY_MS });
+    const cooling = JSON.parse(fs.readFileSync(path.join(dir, "cooling.json"), "utf8"));
+    expect(Object.keys(cooling)).toEqual(["model:fable"]);
+    expect(cooling["model:fable"]).toMatchObject({
+      until: at("2026-11-19T16:00:00Z"),
+      stated: true,
+      reason: "rate_limit",
+    });
+    expect(readLimitResumes()).toHaveLength(1);
+    expect(rerouteMessage("fable")).toContain("The Fable limit stopped your last turn");
+  });
+
+  it("wakes a chat once in ten minutes, and never a channel, a subagent or a fractal turn", () => {
+    const now = at("2026-11-13T19:29:15Z");
+    expect(scheduleLimitResume({ sessionKey: CHAT, raw: FABLE, now })).not.toBeNull();
+    expect(scheduleLimitResume({ sessionKey: CHAT, raw: FABLE, now: now + 60_000 })).toBeNull();
+    expect(
+      scheduleLimitResume({ sessionKey: CHAT, raw: FABLE, now: now + 11 * 60_000 }),
+    ).not.toBeNull();
+    expect(
+      scheduleLimitResume({ sessionKey: "agent:main:subagent:abc", raw: FABLE, now }),
+    ).toBeNull();
+    // ...but the cooling is written for them too: the next auto turn anywhere skips Fable.
+    expect(fs.existsSync(path.join(dir, "cooling.json"))).toBe(true);
+  });
+
+  it("a seat-wide limit still waits for its reset as before", () => {
+    const plan = scheduleLimitResume({
+      sessionKey: CHAT,
+      raw: SESSION_830PM,
+      now: at("2026-10-09T17:37:19Z"),
+    });
+    expect(plan?.reroute).toBeUndefined();
+    expect(plan?.fireAt).toBe(at("2026-10-09T18:32:00Z"));
   });
 });

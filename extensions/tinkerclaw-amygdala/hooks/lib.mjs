@@ -138,6 +138,19 @@ function safeStringify(v) {
   }
 }
 
+/** True when the text's rm commands all target only paths under /tmp: scratch, free to delete, recursive or not. */
+function rmOnlyUnderTmp(text) {
+  // A line break ends a command, as `;` does, so it ends this rm's operands too: [^\S\n] is any space but a line break.
+  const rms = [...text.matchAll(/\brm[^\S\n]+((?:[^\s;&|"'\\]+[^\S\n]*)+)/g)];
+  return (
+    rms.length > 0 &&
+    rms.every((m) => {
+      const paths = m[1].split(/\s+/).filter((w) => w && !w.startsWith("-"));
+      return paths.length > 0 && paths.every((w) => /^\/tmp\/[^\s*?]/.test(w) && !w.includes(".."));
+    })
+  );
+}
+
 /**
  * Evaluate only the `enforce: true` rules. Same candidate texts as the v3.1 hook: EXEC text is
  * the command (Bash) or the serialized input (shell-like tools); ALL text is name + input.
@@ -166,6 +179,7 @@ export function evalFloor(policy, toolName, toolInput) {
       } catch {
         continue;
       }
+      if (r.id === "FS_DESTRUCTIVE_ROOT" && rmOnlyUnderTmp(text)) continue;
       if (re.test(text)) return { rule: r.id, explanation: r.explanation };
     }
     return null;
@@ -342,9 +356,21 @@ export async function runSeam(seam) {
       if (EVENT_NAME[seam] && typeof action.text === "string")
         emitContext(EVENT_NAME[seam], action.text);
       return;
-    case "deny":
-      if (seam === "pre-tool") emitDeny(String(action.reason ?? ""));
+    case "deny": {
+      if (seam !== "pre-tool") return;
+      const reason = String(action.reason ?? "");
+      // A send that serves the owner's own task passes (2026-11-05); see sendServesTask.
+      if (reason.startsWith("Held: send ")) {
+        const cmd = String(payload.tool_input?.command ?? JSON.stringify(payload.tool_input ?? {}));
+        const { sendServesTask } = await import("./hard-rules.mjs");
+        if (await sendServesTask(payload.transcript_path, cmd)) {
+          row("send-serves-task");
+          return;
+        }
+      }
+      emitDeny(reason);
       return;
+    }
     case "block":
       if (seam === "stop") emitBlock(String(action.reason ?? ""));
       return;

@@ -123,3 +123,52 @@ describe("isSlashCommandPrompt", () => {
     expect(isSlashCommandPrompt(undefined)).toBe(false);
   });
 });
+
+describe("the blocks in front of the owner's words (2026-10-30)", () => {
+  const head =
+    "<turn_context>\nmeta\n\n[Bootstrap truncation warning]\n- a file was cut\n</turn_context>\n\n";
+  const bank =
+    "## From the Shared Memory Bank\n\n(note)\n\n[2026-10-10T05:39:30] [system_event] memo\n[Thu 2026-10-29 22:52 GMT+1] an old quoted line\n\n";
+  const stamp = "[Fri 2026-10-30 07:41 GMT+1] ";
+  const warning = "\n\n[Bootstrap truncation warning]\nSome files were cut.\n- raise the limit";
+  it("takes the bridge's block off, even with the warning inside it", () => {
+    expect(stripPromptEnvelope(`${head}${stamp}Push demo.git`)).toBe("Push demo.git");
+  });
+  it("takes the memory bank and the warning behind the words off", () => {
+    expect(stripPromptEnvelope(`${bank}${stamp}Send the report${warning}`)).toBe("Send the report");
+  });
+  it("sees an agent's or the gateway's prompt behind either block", () => {
+    expect(isAgentPrompt(`${head}${stamp}[System] Restart finished.`)).toBe(true);
+    expect(isAgentPrompt(`${head}${stamp}\u27E6AGENT:\u23F3 Longjob\u27E7 finished`)).toBe(true);
+    expect(isAgentPrompt(`${bank}${stamp}[Subagent Context] You are a subagent.`)).toBe(true);
+    expect(isAgentPrompt(`${head}${stamp}Push demo.git`)).toBe(false);
+  });
+  // 2026-11-13: total-recall's session recall in front of the bank, outside the turn block (a restart report's shape).
+  const recall =
+    "## Retrieved Memory Context\n\n## Retrieved Context\n[2026-11-08T04:03:03] [agent_message] an earlier reply\n\n";
+  it("takes the session recall off with the bank behind it, up to the stamp", () => {
+    expect(stripPromptEnvelope(`${recall}${bank}${stamp}Send the report`)).toBe("Send the report");
+    expect(stripPromptEnvelope(`${recall}${stamp}Send the report`)).toBe("Send the report");
+    expect(
+      isAgentPrompt(`${recall}${bank}${stamp}[System] The gateway restart you requested finished.`),
+    ).toBe(true);
+    expect(isAgentPrompt(`${recall}${bank}${stamp}Send the report`)).toBe(false);
+  });
+  it("keeps the owner's own words when they only mention the warning", () => {
+    const words = "why does [Bootstrap truncation warning] show up";
+    expect(stripPromptEnvelope(words)).toBe(words);
+  });
+  // 2026-11-13 (bug-log fresh-session-no-recap): the chat's last turns, which the bridge puts in front of the first
+  // prompt of a session that could not resume the chat's Claude session. A record, never this turn's request.
+  const recap =
+    '<earlier_conversation source="tinkerclaw-bridge">\nThis session does not hold the earlier conversation of this chat.\n\nPROMPT:\n(Thu 2026-10-29 22:52 GMT+1) Remove the old build folder\n\nPROMPT:\n(AGENT:\u23F3 Longjob) the build ended\n\nREPLY:\nDone.\n</earlier_conversation>\n\n';
+  it("takes the bridge's earlier-conversation block off, alone or in front of the turn block", () => {
+    expect(stripPromptEnvelope(`${recap}${stamp}Push demo.git`)).toBe("Push demo.git");
+    expect(stripPromptEnvelope(`${recap}${head}${stamp}Push demo.git`)).toBe("Push demo.git");
+    expect(ownerWords(`${recap}${head}${stamp}Push demo.git`)).toBe("Push demo.git");
+  });
+  it("judges the author by the prompt behind that block, not by an old turn inside it", () => {
+    expect(isAgentPrompt(`${recap}${head}${stamp}Push demo.git`)).toBe(false);
+    expect(isAgentPrompt(`${recap}${head}${stamp}[System] Restart finished.`)).toBe(true);
+  });
+});

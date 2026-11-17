@@ -23,6 +23,7 @@ import {
   resolveMergedAssistantText,
   shouldSuppressAssistantEventForLiveChat,
 } from "./live-chat-projector.js";
+import type { GatewayBroadcastOpts } from "./server-broadcast-types.js";
 import { loadGatewaySessionRow } from "./server-chat.load-gateway-session-row.runtime.js";
 import { persistGatewaySessionLifecycleEvent } from "./server-chat.persist-session-lifecycle.runtime.js";
 import { appendInjectedAssistantMessageToTranscript } from "./server-methods/chat-transcript-inject.js";
@@ -453,8 +454,32 @@ export function createToolEventRecipientRegistry(): ToolEventRecipientRegistry {
 export type ChatEventBroadcast = (
   event: string,
   payload: unknown,
-  opts?: { dropIfSlow?: boolean },
+  opts?: GatewayBroadcastOpts,
 ) => void;
+
+/**
+ * FORK 2026-11-04 — a chat delta holds the whole text so far, so the next delta or the final makes
+ * a dropped one whole again and a slow client may lose it early. A delta that re-bases the buffer
+ * (`replace`) is the exception: the next delta does not repeat the flag, and a page that misses it
+ * writes the text at stale offsets (tinker-ui re-anchors its bubbles on it), so it is dropped only
+ * at the close limit, as before.
+ */
+function chatDeltaBroadcastOpts(replace: boolean): GatewayBroadcastOpts {
+  return replace ? { dropIfSlow: true } : { dropIfSlow: true, supersededByNext: true };
+}
+
+/**
+ * FORK 2026-11-04 — an assistant agent event the next one makes whole again: its `text` is the
+ * whole text so far and it carries nothing a later event leaves out. A `replace` re-base and media
+ * URLs ride on one event only (buildAssistantStreamData), so an event with either must arrive.
+ */
+function isAssistantEventSupersededByNext(data: unknown): boolean {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const d = data as { replace?: unknown; mediaUrls?: unknown };
+  return d.replace !== true && !(Array.isArray(d.mediaUrls) && d.mediaUrls.length > 0);
+}
 
 export type NodeSendToSession = (sessionKey: string, event: string, payload: unknown) => void;
 
@@ -591,7 +616,7 @@ export type AgentEventHandlerOptions = {
     event: string,
     payload: unknown,
     connIds: ReadonlySet<string>,
-    opts?: { dropIfSlow?: boolean },
+    opts?: GatewayBroadcastOpts,
   ) => void;
   nodeSendToSession: NodeSendToSession;
   agentRunSeq: Map<string, number>;
@@ -922,7 +947,7 @@ export function createAgentEventHandler({
     // Suppress webchat broadcast for heartbeat runs when showOk is false
     if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
       pendingDeltaReplace.delete(clientRunId);
-      broadcast("chat", payload, { dropIfSlow: true });
+      broadcast("chat", payload, chatDeltaBroadcastOpts(replaceBuffer));
       nodeSendToSession(sessionKey, "chat", payload);
     }
   };
@@ -990,7 +1015,7 @@ export function createAgentEventHandler({
       },
     };
     pendingDeltaReplace.delete(clientRunId);
-    broadcast("chat", flushPayload, { dropIfSlow: true });
+    broadcast("chat", flushPayload, chatDeltaBroadcastOpts(replaceBuffer));
     nodeSendToSession(sessionKey, "chat", flushPayload);
     chatRunState.deltaLastBroadcastLen.set(clientRunId, text.length);
     chatRunState.deltaSentAt.set(clientRunId, now);
@@ -1259,7 +1284,17 @@ export function createAgentEventHandler({
           }
         }
       }
-      broadcast("agent", enrichedPayload);
+      // FORK 2026-11-04 — an assistant event carries the WHOLE text so far, so a client that misses
+      // one loses nothing: the next one, and the chat final, carry all of it. Droppable early, like
+      // the chat deltas. Not droppable, these filled a sleeping phone's queue past MAX_BUFFERED_BYTES
+      // during one long answer, the socket was closed as a slow consumer, and the reply's final,
+      // the one frame that had to arrive, was lost with it. An event with a re-base or media is not
+      // repeated by the next one, so it still has to arrive, as before.
+      if (evt.stream === "assistant" && isAssistantEventSupersededByNext(evt.data)) {
+        broadcast("agent", enrichedPayload, { dropIfSlow: true, supersededByNext: true });
+      } else {
+        broadcast("agent", enrichedPayload);
+      }
     }
 
     if (isControlUiVisible && sessionKey) {

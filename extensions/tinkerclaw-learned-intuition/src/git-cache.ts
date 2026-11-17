@@ -9,6 +9,7 @@
  */
 
 import { execFile as execFileCb } from "node:child_process";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
@@ -41,6 +42,11 @@ interface CacheEntry {
  */
 export class GitCache {
   private cache: Map<string, CacheEntry> = new Map();
+  // FORK 2026-10-29: the git lookup in flight for each path, and the window (hours) it counts.
+  // buildSituation reads the commits and the authors of one target in the same tick. Both reads
+  // missed the cache and each started its own lookup; now the second joins the first. The slot
+  // is emptied when the lookup settles.
+  private inFlight: Map<string, { hours: number; lookup: Promise<CacheEntry> }> = new Map();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private watchers: any[] = [];
   private staleKeys: Set<string> = new Set();
@@ -102,6 +108,8 @@ export class GitCache {
     this.watchers = [];
     this.cache.clear();
     this.staleKeys.clear();
+    // FORK 2026-10-29: no read after stop() joins a lookup that began before it.
+    this.inFlight.clear();
   }
 
   async getRecentCommits(filePath: string, hours: number = 72): Promise<number> {
@@ -117,6 +125,8 @@ export class GitCache {
   invalidate(filePath: string): void {
     this.cache.delete(filePath);
     this.staleKeys.delete(filePath);
+    // FORK 2026-10-29: the next read starts a fresh lookup, even while an older one runs.
+    this.inFlight.delete(filePath);
   }
 
   private async getOrCompute(filePath: string, hours: number): Promise<CacheEntry> {
@@ -130,30 +140,70 @@ export class GitCache {
       }
     }
 
+    // FORK 2026-10-29: join the lookup already running for this path and window, unless the path
+    // was marked stale after it started. Then this read starts a fresh one, the same rule the
+    // cached entry above follows.
+    const pending = this.inFlight.get(filePath);
+    if (pending && pending.hours === hours && !this.staleKeys.has(filePath)) {
+      return pending.lookup;
+    }
+
     this.staleKeys.delete(filePath);
-    const entry = await this.computeGitMetadata(filePath, hours);
-    this.cache.set(filePath, entry);
-    return entry;
+    const lookup: Promise<CacheEntry> = this.computeGitMetadata(filePath, hours)
+      .then((entry) => {
+        this.cache.set(filePath, entry);
+        return entry;
+      })
+      .finally(() => {
+        // A read for another window, or one after a stale mark, may hold the slot by now.
+        if (this.inFlight.get(filePath)?.lookup === lookup) {
+          this.inFlight.delete(filePath);
+        }
+      });
+    this.inFlight.set(filePath, { hours, lookup });
+    return lookup;
   }
 
   private async computeGitMetadata(filePath: string, hours: number): Promise<CacheEntry> {
     try {
       const dir = path.dirname(filePath);
+      // FORK 2026-10-29: `git -C <dir>` fails when <dir> is missing or is not a directory, and the
+      // catch below then answers 0/0. Many 'file' targets are shell command strings, since
+      // classifyTargetType takes anything with a "." for a path. An async stat gives the same
+      // answer without a spawn.
+      const dirStat = await fs.stat(dir);
+      if (!dirStat.isDirectory()) {
+        return { recent_commits: 0, recent_authors: 0, updated_at: Date.now() };
+      }
       const file = path.basename(filePath);
       const since = `--since=${hours} hours ago`;
       const opts = { encoding: "utf-8" as const, timeout: 5000 };
 
-      const [commitResult, authorResult] = await Promise.all([
-        execFileAsync("git", ["-C", dir, "log", since, "--oneline", "--", file], opts),
-        execFileAsync("git", ["-C", dir, "log", since, "--format=%an", "--", file], opts),
-      ]);
+      // FORK 2026-10-29: one `git log` where there were two (`--oneline` for the commits,
+      // `--format=%an` for the authors). Each spawn blocks the gateway's main thread: 49-53 ms at
+      // 3.3 GB RSS, measured in a proxy process on 2026-10-29. %H is never empty and has no tab, so
+      // each commit is still one non-empty line, the old --oneline count, and what follows the
+      // first tab is the old %an line: a blank name counts as a commit but not as an author, as
+      // before. A line without a tab, if git ever prints more than the format, counts whole, as it
+      // did in both old outputs.
+      const { stdout } = await execFileAsync(
+        "git",
+        ["-C", dir, "log", since, "--format=%H%x09%an", "--", file],
+        opts,
+      );
 
-      const lines = (out: string): string[] =>
-        out.split("\n").filter((line) => line.trim().length > 0);
+      const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
+      const authors = new Set<string>();
+      for (const line of lines) {
+        const author = line.slice(line.indexOf("\t") + 1);
+        if (author.trim().length > 0) {
+          authors.add(author);
+        }
+      }
 
       return {
-        recent_commits: lines(commitResult.stdout).length,
-        recent_authors: new Set(lines(authorResult.stdout)).size,
+        recent_commits: lines.length,
+        recent_authors: authors.size,
         updated_at: Date.now(),
       };
     } catch {

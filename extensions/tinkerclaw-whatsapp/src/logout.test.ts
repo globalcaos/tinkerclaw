@@ -85,6 +85,15 @@ describe("web logout", () => {
     expect(fs.existsSync(authDir)).toBe(false);
   });
 
+  // 2026-11-14 burn review b1113-c F2: the whatsmeow backend keeps the whole
+  // session in whatsmeow.db and never writes creds.json. Logout must still clear it.
+  it("clears a whatsmeow-only session", { timeout: WEB_LOGOUT_TEST_TIMEOUT_MS }, async () => {
+    const authDir = await createAuthCase({ "whatsmeow.db": "x".repeat(16_384) });
+    const result = await logoutWeb({ authDir, runtime: runtime as never });
+    expect(result).toBe(true);
+    expect(fs.existsSync(path.join(authDir, "whatsmeow.db"))).toBe(false);
+  });
+
   it("no-ops when nothing to delete", { timeout: WEB_LOGOUT_TEST_TIMEOUT_MS }, async () => {
     const authDir = await makeCaseDir();
     const result = await logoutWeb({ authDir, runtime: runtime as never });

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { missingFor, splitClaims, splitSentences, supportedBy } from "../src/claims.js";
+import {
+  evidenceLines,
+  missingFor,
+  provenByOutput,
+  showsACheck,
+  splitClaims,
+  splitSentences,
+  supportedBy,
+  uncheckedAdmissions,
+} from "../src/claims.js";
 import type { Claim, ToolRecordEntry } from "../src/types.js";
 
 const entry = (
@@ -76,6 +85,17 @@ describe("splitClaims", () => {
     ["The function returns the sum of the two lists.", null],
     ["Here is the plan for the export.", null],
     ["The gateway is not running.", null],
+    ["Nothing was restarted, and the PDF stays as it is.", null],
+    ["None of the branches were deleted.", null],
+    ["This should be fixed by the next rebuild.", null],
+    ["It could be merged tonight.", null],
+    ["It needs to be deployed first.", null],
+    ["I recommend it gets pushed after review.", null],
+    ["Proposed: the old copy gets deleted.", null],
+    ["When the job is finally finished, the card updates.", null],
+    ["Once everything on the laptop is built, restart it.", null],
+    ["I'd check whether the gateway is up.", null],
+    ["Si el fitxer està guardat, seguim.", null],
   ];
   for (const [sentence, kind] of table) {
     it(`${kind ?? "no claim"}: ${sentence}`, () => {
@@ -96,6 +116,41 @@ describe("splitClaims", () => {
   it("splits a multi-sentence reply", () => {
     const c = splitClaims("Uploaded the file. The service is running. Anything else?");
     expect(c.map((x) => x.kind)).toEqual(["done", "state"]);
+  });
+});
+
+describe("output as evidence", () => {
+  const entries = [entry("Bash", ["local-write"])];
+  it("keeps only lines that could prove something, clipped", () => {
+    expect(evidenceLines("hello\nDeleted branch x (was 1a2b3c4).\n\n")).toEqual([
+      "Deleted branch x (was 1a2b3c4).",
+    ]);
+    expect(evidenceLines(`removed ${"x".repeat(400)}`)[0]?.length).toBe(240);
+  });
+  it("a line must show the action and name the thing", () => {
+    expect(provenByOutput(done("I deleted the old branch"), ["Deleted branch x"], [])).toBe(true);
+    expect(provenByOutput(done("I deleted the old report"), ["Deleted branch x"], [])).toBe(false);
+    expect(provenByOutput(done("I deleted the old branch"), ["branch x kept"], [])).toBe(false);
+    expect(provenByOutput(done("I deleted the old branch"), [], [])).toBe(false);
+  });
+  it("a test count needs no name", () => {
+    expect(provenByOutput(done("Tested it"), ["Tests  3 passed (3)"], [])).toBe(true);
+    expect(provenByOutput(done("All tested"), ["Tests  3 passed (3)"], [])).toBe(true);
+  });
+  it("a second verb needs a line or a record entry", () => {
+    const c = done("Merged the guard and deleted the branch");
+    expect(provenByOutput(c, ["Deleted branch guard"], [])).toBe(false);
+    expect(provenByOutput(c, ["Deleted branch guard"], entries)).toBe(true);
+  });
+  it("a state claim needs a line that names the thing and shows it up", () => {
+    const c: Claim = { ...done("The gateway is running"), kind: "state" };
+    expect(provenByOutput(c, ["gateway: active (running)"], [])).toBe(true);
+    expect(provenByOutput(c, ["gateway: restart skipped"], [])).toBe(false);
+  });
+  it("showsACheck reads test counts and a healthy restart, not any success", () => {
+    expect(showsACheck(["Tests  3 passed (3)"])).toBe(true);
+    expect(showsACheck(["Gateway healthy on build abc"])).toBe(true);
+    expect(showsACheck(["finished"])).toBe(false);
   });
 });
 
@@ -137,5 +192,38 @@ describe("missingFor / supportedBy", () => {
     const state: Claim = { ...done("it is running"), kind: "state" };
     expect(supportedBy(state, [entry("Bash", ["read"])])).toBe(true);
     expect(supportedBy(state, [entry("Edit", ["local-write"])])).toBe(false);
+  });
+});
+
+describe("uncheckedAdmissions (2026-11-10)", () => {
+  it("catches the ways a reply admits it did not check", () => {
+    for (const line of [
+      "The sites may have no backups (inferred).",
+      "I haven't checked whether royalties fall under it.",
+      "We did not verify the build on the laptop.",
+      "This is from general knowledge, not the official text.",
+      "Still not confirmed: that the card shows on the page.",
+      "The second path is untested.",
+      "I'm not sure the limit applies here.",
+      "El límite sigue sin comprobar.",
+    ]) {
+      expect(uncheckedAdmissions(line), line).toEqual([line]);
+    }
+  });
+  it("leaves checked statements, code blocks and quoted lines alone", () => {
+    expect(uncheckedAdmissions("I checked the page: it answers 200.")).toEqual([]);
+    expect(uncheckedAdmissions("All 12 tests passed.")).toEqual([]);
+    expect(uncheckedAdmissions("```\n# not checked\n```\nDone.")).toEqual([]);
+    expect(uncheckedAdmissions("> I haven't checked it\nHe wrote that yesterday.")).toEqual([]);
+    expect(uncheckedAdmissions('The sample "The plan lapsed (inferred)." was sent back.')).toEqual(
+      [],
+    );
+  });
+  it("returns each admitting sentence of a longer reply", () => {
+    const reply = "The host is up. The plan lapsed (inferred). I have not tested the revert.";
+    expect(uncheckedAdmissions(reply)).toEqual([
+      "The plan lapsed (inferred).",
+      "I have not tested the revert.",
+    ]);
   });
 });

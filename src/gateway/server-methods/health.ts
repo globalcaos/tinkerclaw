@@ -17,9 +17,15 @@ export const healthHandlers: GatewayRequestHandlers = {
     const cached = getHealthCache();
     if (!wantsProbe && cached && now - cached.ts < HEALTH_REFRESH_INTERVAL_MS) {
       respond(true, cached, undefined, { cached: true });
-      void refreshHealthSnapshot({ probe: false, includeSensitive }).catch((err) =>
-        logHealth.error(`background health refresh failed: ${formatError(err)}`),
-      );
+      // FORK 2026-10-29: health-state.ts caches and broadcasts only non-sensitive snapshots,
+      // so the background refresh for an admin caller built a sensitive snapshot (a
+      // session-store read included) that nothing kept. The cache still refreshes from the
+      // 60 s timer, non-admin cache hits and the probe on every WS connect.
+      if (!includeSensitive) {
+        void refreshHealthSnapshot({ probe: false, includeSensitive }).catch((err) =>
+          logHealth.error(`background health refresh failed: ${formatError(err)}`),
+        );
+      }
       return;
     }
     try {

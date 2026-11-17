@@ -385,7 +385,9 @@ describe("createModelSelectionState THALAMUS task effort", () => {
     delete process.env.OPENCLAW_THALAMUS_TASK_EFFORT;
   });
 
-  it("a hello on the smart stop runs at low, on the model the dial chose", async () => {
+  // 2026-11-13 (owner): with the bias on smart, the stop he selected runs at the effort he selected. A hello ran
+  // at low before; 68 of 83 smart turns ran at low or medium in three days, one at max.
+  it("a hello on the smart stop runs at the stop's effort, on the model the dial chose", async () => {
     writeBias(6);
     const want = expectedRoute(6, "hello");
     expect(want?.rung.effort).toBe("max");
@@ -393,10 +395,10 @@ describe("createModelSelectionState THALAMUS task effort", () => {
     const route = (await createState({ promptText: "hello" })).thalamusRoute;
 
     expect(`${route?.provider}/${route?.model}`).toBe(want?.rung.key);
-    expect(route?.effort).toBe("low");
+    expect(route?.effort).toBe("max");
     expect(route?.ultracode).toBe(false);
-    expect(route?.effortWhy).toBe("low: greeting");
-    expect(route?.notice).toContain("@low");
+    expect(route?.effortWhy).toBe("the smart stop's effort stands");
+    expect(route?.notice).toContain("@max");
   });
 
   it("a multi-file refactor and debug on the smart stop runs at max with the fan-out", async () => {
@@ -431,5 +433,43 @@ describe("createModelSelectionState THALAMUS task effort", () => {
 
     expect(route?.effort).toBe(want?.rung.effort);
     expect(route?.effortWhy).toBe("");
+  });
+
+  it("never routes an Auto turn or its fallback chain to pay-per-call Google, while keeping a hand-picked Google turn", async () => {
+    writeBias(6);
+    const cfgWithGoogle = makeCfg({
+      ...CATALOG,
+      "google/gemini-4-carbon": { intelligenceIndex: 66 },
+      "google/gemini-3.8-flash": { intelligenceIndex: 64 },
+    });
+    quotaMocks.resolveQuotaAwareAutoModel.mockReturnValue({
+      provider: "google",
+      model: "gemini-4-carbon",
+      reason: "claude-code 5-hour spent",
+    });
+
+    const autoState = await createState({
+      cfg: cfgWithGoogle,
+      promptText: "Draft a quarterly spreadsheet budget table and office status report.",
+    });
+    expect(autoState.provider).not.toBe("google");
+    expect(autoState.quotaSubstitution).toBeUndefined();
+    expect(autoState.thalamusRoute?.provider).not.toBe("google");
+    expect(autoState.thalamusRoute?.chain.some((k) => k.startsWith("google/"))).toBe(false);
+
+    // Explicit hand pick of Carbon still runs untouched.
+    const handPicked = await createModelSelectionState({
+      cfg: cfgWithGoogle,
+      agentCfg: cfgWithGoogle.agents?.defaults,
+      defaultProvider: AUTO_PROVIDER,
+      defaultModel: AUTO_MODEL,
+      provider: "google",
+      model: "gemini-4-carbon",
+      hasModelDirective: true,
+      promptText: "Testing if Carbon works",
+    });
+    expect(handPicked.provider).toBe("google");
+    expect(handPicked.model).toBe("gemini-4-carbon");
+    expect(handPicked.thalamusRoute).toBeUndefined();
   });
 });

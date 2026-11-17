@@ -63,6 +63,7 @@ import { createFollowupRunner } from "./followup-runner.js";
 import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-routing.js";
 import { drainPendingToolTasks } from "./pending-tool-task-drain.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
+import { notePreReplyPlaced } from "./pre-reply-stage.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import {
   enqueueFollowupRun,
@@ -1235,6 +1236,10 @@ export async function runReplyAgent(params: {
     }
     throw error;
   }
+  // FORK 2026-10-29: the prompt has its reply operation. Its last pre-reply step closes here, not in
+  // clearPreReplyStage, which waits for the whole reply; `pre:placement` then runs to the first span
+  // of its run (pre-reply-stage.ts).
+  notePreReplyPlaced(opts?.runId);
   let runFollowupTurn = queuedRunFollowupTurn;
   const prePreflightCompactionCount = activeSessionEntry?.compactionCount ?? 0;
   let preflightCompactionApplied = false;

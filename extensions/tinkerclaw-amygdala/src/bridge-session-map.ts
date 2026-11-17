@@ -10,7 +10,7 @@
  * UNVERIFIED LIVE: the bridge also caches this map in memory and writes it back; whether a rewritten entry survives and
  * is picked up at the tab's next worker spawn has not been observed. Tests use temp copies only.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { SessionMap } from "./rewind.js";
@@ -22,9 +22,39 @@ export interface SeenSession {
   ts: number;
 }
 
-/** What the hooks told us about each tab: its Claude session id and transcript path (bounded, newest wins). */
+/**
+ * What the hooks told us about each tab: its Claude session id and transcript path (bounded, newest wins).
+ *
+ * FORK 2026-11-13: with `file`, kept on disk too (0600, rewritten only when a tab's session or transcript changes).
+ * Memory only, every gateway restart emptied it, and every tab answered "this runner cannot rewind" until it ran a
+ * new turn; a chat stuck on a refusal is the one that will not.
+ */
 export class SeenSessions {
   private readonly m = new Map<string, SeenSession>();
+
+  constructor(private readonly file?: string) {
+    if (!file || !existsSync(file)) return;
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf-8")) as Record<string, SeenSession>;
+      for (const [k, v] of Object.entries(raw ?? {})) {
+        if (v && typeof v.sessionId === "string" && v.sessionId) this.m.set(k, v);
+      }
+    } catch {
+      /* a broken file starts empty: the next hook fills it again */
+    }
+  }
+
+  private save(): void {
+    if (!this.file) return;
+    try {
+      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+      const tmp = `${this.file}.tmp`;
+      writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.m)), { mode: 0o600 });
+      renameSync(tmp, this.file);
+    } catch (err) {
+      console.error("[amygdala] could not save the tab-to-session map", err);
+    }
+  }
 
   note(
     tabKey: string,
@@ -33,6 +63,8 @@ export class SeenSessions {
   ): void {
     const id = typeof hook.session_id === "string" ? hook.session_id : "";
     if (!id) return;
+    const before = this.m.get(tabKey);
+    const path = typeof hook.transcript_path === "string" ? hook.transcript_path : null;
     this.m.set(tabKey, {
       sessionId: id,
       transcriptPath: typeof hook.transcript_path === "string" ? hook.transcript_path : null,
@@ -43,6 +75,7 @@ export class SeenSessions {
       const oldest = this.m.keys().next().value;
       if (oldest !== undefined) this.m.delete(oldest);
     }
+    if (!before || before.sessionId !== id || before.transcriptPath !== path) this.save();
   }
 
   get(tabKey: string): SeenSession | undefined {
@@ -51,6 +84,7 @@ export class SeenSessions {
 
   set(tabKey: string, s: SeenSession): void {
     this.m.set(tabKey, s);
+    this.save();
   }
 }
 
@@ -102,6 +136,37 @@ export class BridgeSessionMap implements SessionMap {
   /** Only tabs whose hooks we have heard from are Claude Code (bridge) tabs. */
   runnerFor(tabKey: string): string {
     return this.o.seen.get(tabKey) ? "cc-bridge" : "unknown";
+  }
+
+  /**
+   * FORK 2026-11-13: the tab's earlier Claude sessions, newest first, from the bridge map: the entries that share the
+   * OpenClaw session id of the tab's current entry. Only transcripts still on disk, the current one left out.
+   */
+  earlierTranscriptsFor(tabKey: string): string[] {
+    const seen = this.o.seen.get(tabKey);
+    if (!seen?.transcriptPath) return [];
+    try {
+      const map = JSON.parse(readFileSync(this.file(), "utf-8")) as Record<
+        string,
+        { sessionId?: string; updatedAt?: number; openclawSessionId?: string }
+      >;
+      const entries = Object.values(map).filter((e) => e && typeof e.sessionId === "string");
+      const oc = entries.find((e) => e.sessionId === seen.sessionId)?.openclawSessionId;
+      if (!oc) return [];
+      const dir = dirname(seen.transcriptPath);
+      const newest = new Map<string, number>();
+      for (const e of entries) {
+        if (e.openclawSessionId !== oc || !e.sessionId || e.sessionId === seen.sessionId) continue;
+        newest.set(e.sessionId, Math.max(newest.get(e.sessionId) ?? 0, e.updatedAt ?? 0));
+      }
+      return [...newest.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([id]) => join(dir, `${id}.jsonl`))
+        .filter((p) => existsSync(p));
+    } catch (err) {
+      console.error("[amygdala] could not read the bridge map for earlier sessions", err);
+      return [];
+    }
   }
 
   currentSessionId(tabKey: string): string | null {

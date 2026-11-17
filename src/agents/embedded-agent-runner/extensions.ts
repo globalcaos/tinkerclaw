@@ -6,13 +6,14 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 // FORK: engram/hybrid-retrieval runtime wiring. These imports back the
 // `compactionMode === "engram"` branch below and were lost in the 2026-04-15
 // stratified upstream merge.
-import { createOllamaEmbeddingProvider } from "../../memory/embeddings-ollama.js";
-import { createEmbeddingCache } from "../../memory/engram/embedding-cache.js";
-import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
+// FORK 2026-10-29: the LIMBIC semantic upgrade follows this machine's embedder fit.
+import { isEmbeddingOff, readRawMemorySearchProvider } from "../../fork/embedder-fit.js";
+import { createEmbeddingProvider, type EmbeddingProviderRequest } from "../../memory/embeddings.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
 import { createLinkIndex } from "../../memory/engram/link-index.js";
+import { resolveMemorySearchConfig } from "../memory-search.js";
 // FORK 2026-04-28 chunk-13: upstream removed embedded-extension-factory.
 // listEmbeddedExtensionFactories() has been replaced by an in-tree iterator
 // over the new plugin runtime (see chunk-13 lessons). Stubbed inline here
@@ -178,9 +179,6 @@ export function buildEmbeddedExtensionFactories(params: {
     let engramBaseDir: string | undefined;
     let sessionKey: string | undefined;
     let eventStore: ReturnType<typeof createEventStore> | undefined;
-    // U9: link builder is shared between the ENGRAM retrieval wiring (sync) and
-    // the ollama-upgraded retrieval rewire (async .then below), so hoist it.
-    let linkBuilder: ReturnType<typeof createLinkBuilder> | undefined;
 
     if (needsSharedStore) {
       engramBaseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
@@ -199,7 +197,8 @@ export function buildEmbeddedExtensionFactories(params: {
       // setup site (same baseDir/sessionKey). attempt-hooks onTurnComplete reads
       // it via getLinkBuilderRuntime to extractAndIndex mentions, and retrieval
       // reads it for 1-hop backlink expansion.
-      linkBuilder = createLinkBuilder(createLinkIndex({ baseDir: engramBaseDir, sessionKey }));
+      const linkIndex = createLinkIndex({ baseDir: engramBaseDir, sessionKey });
+      const linkBuilder = createLinkBuilder(linkIndex);
       setLinkBuilderRuntime(params.sessionManager, linkBuilder);
 
       setRetrievalRuntime(params.sessionManager, {
@@ -251,65 +250,43 @@ export function buildEmbeddedExtensionFactories(params: {
       setLimbicRuntime(params.sessionManager, limbicRuntime);
     }
 
-    // Ollama embedding upgrade: enhances both LIMBIC and ENGRAM when available.
-    // Only start if at least one consumer is inline.
-    if ((needsEngram || needsLimbic) && engramBaseDir && eventStore) {
-      createOllamaEmbeddingProvider({
-        config: params.cfg ?? ({} as import("../../config/config.js").OpenClawConfig),
-        provider: "ollama",
-        model: "mxbai-embed-large",
-        fallback: "none",
-      })
-        .then(
-          ({ provider }: { provider: import("../../memory/embeddings.js").EmbeddingProvider }) => {
-            if (needsLimbic) {
-              const semanticRuntime = createLimbicRuntime(
-                eventStore!,
-                { embeddingProvider: provider },
-                cortexRuntime,
-              );
-              setLimbicRuntime(params.sessionManager, semanticRuntime);
-            }
-
-            if (needsEngram) {
-              const embCache = createEmbeddingCache(engramBaseDir!, 1024);
-              const embedFn: import("../../memory/engram/embedding-worker.js").EmbedFn = async (
-                texts,
-              ) => {
-                const vectors = await provider.embedBatch(texts);
-                return vectors.map((v: number[]) => new Float32Array(v));
-              };
-              setRetrievalRuntime(params.sessionManager, {
-                eventStore: eventStore!,
-                searchIndex: globalFtsSearch,
-                embeddingCache: embCache,
-                embedFn,
-                linkBuilder,
-              });
-              const worker = createEmbeddingWorker({
-                embedFn,
-                cache: embCache,
-                batchSize: 16,
-                batchTimeoutMs: 10000,
-                onError: (err: Error) =>
-                  console.warn(`[engram] Embedding worker error: ${err.message}`),
-              });
-              const origAppend = eventStore!.append.bind(eventStore!);
-              eventStore!.append = (event: Parameters<typeof origAppend>[0]) => {
-                const result = origAppend(event);
-                // FORK: enqueue the materialized event (with id/timestamp), not the input draft.
-                worker.enqueue(result);
-                return result;
-              };
-            }
-            console.log(
-              "[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)",
-            );
-          },
-        )
-        .catch((err: unknown) => {
-          console.warn(`[fork] Ollama embedding unavailable, FTS-only retrieval: ${err}`);
-        });
+    // FORK 2026-10-29: vectors without a reader removed; see TINKER_UI_DESIGN_BIBLE/embedder-fit.md
+    // LIMBIC's semantic upgrade embeds with memory search's own provider and model (the fit's
+    // choice when memorySearch.provider is unset, else the pin), governed by construction. A
+    // words-only machine builds nothing, and the hashed concept vectors above stay.
+    if (needsLimbic && eventStore) {
+      const limbicEventStore = eventStore;
+      void (async () => {
+        try {
+          const cfg = params.cfg ?? ({} as OpenClawConfig);
+          const agentId = resolveDefaultAgentId(cfg);
+          const memorySearch = resolveMemorySearchConfig(cfg, agentId);
+          if (!memorySearch || isEmbeddingOff(memorySearch)) {
+            return;
+          }
+          const { provider } = await createEmbeddingProvider({
+            config: cfg,
+            provider: memorySearch.provider as EmbeddingProviderRequest,
+            model: memorySearch.model,
+            remote: memorySearch.remote,
+            local: memorySearch.local,
+            fallback: "none",
+            consumer: "limbic",
+            fitDecided: readRawMemorySearchProvider(cfg, agentId) === "auto",
+          });
+          if (!provider) {
+            return;
+          }
+          setLimbicRuntime(
+            params.sessionManager,
+            createLimbicRuntime(limbicEventStore, { embeddingProvider: provider }, cortexRuntime),
+          );
+        } catch (err) {
+          console.warn(
+            `[fork] LIMBIC semantic upgrade skipped, hashed concept vectors stay: ${String(err)}`,
+          );
+        }
+      })();
     }
 
     factories.push(compactionEngramExtension(params.cfg));

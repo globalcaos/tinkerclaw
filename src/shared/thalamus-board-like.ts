@@ -12,6 +12,8 @@ export type ThalamusBoardLike = {
   contextWindowFor: (key: string) => number | undefined;
   /** The dial, 0 (budget) to 6 (smart). */
   dialIdx: number;
+  /** Pay-per-call rungs (Google) held off the main board and admitted only for a last-resort cross-family check. */
+  secondOpinionRungs?: FrontierRung[];
   /** The architect's suggestion for the dial's stop (model, effort), key normalised like the rungs'. Absent when unset. */
   suggestion?: RouteSuggestion;
   /** Supplies cooling after a limit (the cooling store), and when each reopens. Absent when none. */

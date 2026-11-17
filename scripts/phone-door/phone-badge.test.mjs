@@ -59,3 +59,51 @@ describe("unreadTabs", () => {
     assert.ok(!keyMatches("agent:main:tinker:ab", "agent:main:tinker:abc"));
   });
 });
+
+// 2026-11-12: the buzz and the spoken line at the END of a turn, for a prompt sent from the phone.
+const { answersDue, spokenLine } = await import("./phone-badge.mjs");
+{
+  const now = 1_000_000;
+  const rows = [
+    { key: "agent:main:tinker:aaa", status: "done", endedAt: now - 2_000, startedAt: now - 90_000 },
+    {
+      key: "agent:main:tinker:bbb",
+      status: "running",
+      run: { live: true },
+      endedAt: now - 500_000,
+    },
+    { key: "agent:main:tinker:ccc", status: "done", endedAt: now - 300_000 },
+    { key: "agent:main:tinker:ddd", status: "done", endedAt: now - 1_000 },
+  ];
+  const due = answersDue(
+    [
+      { tail: "aaa", lastSeen: now - 60_000 }, // locked a minute ago, the turn ended 2 s ago
+      { tail: "bbb", lastSeen: now - 60_000 }, // still running
+      { tail: "ccc", lastSeen: now - 60_000 }, // its last end is from before the prompt
+      { tail: "ddd", lastSeen: now - 3_000 }, // ended 1 s ago and the page was alive 3 s ago
+      { tail: "zzz", lastSeen: now - 60_000 }, // no such chat
+      { tail: "aaa2", lastSeen: 0 }, // a consumed marker
+    ],
+    rows,
+    now,
+  );
+  assert.deepEqual(
+    due.map((d) => [d.tail, d.away]),
+    [
+      ["aaa", true],
+      ["ddd", false],
+    ],
+  );
+  assert.equal(due[0].key, "agent:main:tinker:aaa");
+  assert.equal(due[0].startedAt, now - 90_000);
+
+  assert.equal(
+    spokenLine("**Jarvis:** *The reader is on the phone.*\n\nBody text."),
+    "The reader is on the phone.",
+  );
+  assert.equal(spokenLine("Intro\n\n**Jarvis:** *Two jokes, one line.*\n"), "Two jokes, one line.");
+  assert.equal(spokenLine("**Jarvis:** not italic, so not spoken"), "");
+  assert.equal(spokenLine("No line here."), "");
+
+  console.log("turn-end answer: ok");
+}

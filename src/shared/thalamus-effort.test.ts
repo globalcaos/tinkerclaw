@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { snapToLadder, taskEffort } from "./thalamus-effort.js";
+import { snapToLadder, taskEffort, stopEffortStands } from "./thalamus-effort.js";
 import { isTrivialPrompt, localTaskRead } from "./thalamus-reads.js";
 import type { TaskRead } from "./thalamus-v4-types.js";
 import { APPENDED_SECTION_MARKERS, userTaskText } from "./user-task-text.js";
@@ -177,5 +177,13 @@ describe("taskEffort", () => {
       ladder: FULL,
     });
     expect(e).toMatchObject({ level: "low", ultracode: false, basis: "local" });
+  });
+});
+
+describe("the smart stop's effort stands (2026-11-13)", () => {
+  it("is true for the smart band of the dial, 4 to 6, and false below it or with no dial", () => {
+    expect([4, 5, 6].map((i) => stopEffortStands(i))).toEqual([true, true, true]);
+    expect([0, 1, 2, 3].map((i) => stopEffortStands(i))).toEqual([false, false, false, false]);
+    expect(stopEffortStands(undefined)).toBe(false);
   });
 });

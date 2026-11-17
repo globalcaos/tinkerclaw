@@ -85,7 +85,7 @@ export function newPairCodeString() {
   return crypto.randomBytes(12).toString("base64url");
 }
 
-/** "the architect's Flip 6" -> "oscar-s-flip-6"; never empty. */
+/** "the architect's flip phone" -> "the-architect-s-flip-phone"; never empty. */
 export function slugify(name) {
   const s = String(name ?? "")
     .normalize("NFKD")
@@ -1213,7 +1213,7 @@ export function createDoor(opts) {
     proxy(req, res, dev);
   }
 
-  const term = createTerminal({ audit, live });
+  const term = createTerminal({ audit, live, openDir: path.join(dir, "term-open") });
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       console.error("[phone-door] request error", err);

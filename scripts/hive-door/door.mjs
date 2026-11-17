@@ -30,6 +30,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough, Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { ADMIN_ROLE, createAcl } from "./acl.mjs";
@@ -166,9 +167,74 @@ export function sessionKeysOf(method, params) {
 export function eventSessionKey(payload) {
   if (!payload || typeof payload !== "object") return null;
   if (typeof payload.sessionKey === "string") return payload.sessionKey;
-  if (typeof payload.key === "string" && /^(agent|tinker):/.test(payload.key)) return payload.key;
+  if (typeof payload.key === "string" && /^(agent|tinker):/i.test(payload.key)) return payload.key;
   if (payload.session && typeof payload.session.key === "string") return payload.session.key;
   return null;
+}
+
+const CONTEXT_ANATOMY = "/tinker/api/context-anatomy/";
+
+/**
+ * May a regular (non-admin) person make this HTTP request? Admins are not asked.
+ * WHAT IT IS FOR: the door sends every request upstream with the gateway's own secret, so any gateway
+ * route it forwards runs with full rights and no notion of who is asking. A regular person gets only
+ * what an ordinary chat page loads; the file reader and writer (`/tinker/api/<anything>?path=`,
+ * save-file, kit-content, media), the host's voice and mute switch, and every root route (the
+ * gateway's HTTP APIs, other plugins) are refused here, before they reach the gateway.
+ * HOW IT WAS DERIVED: the HTTP routes tinker-ui/src fetches (2026-11-14) matched against the routes in
+ * extensions/tinkerclaw-tinker/index.ts; burn review b1113-s1-http-doors F3.
+ * WHAT WOULD CHANGE IT: the page needing a new gateway route for ordinary people: add it here.
+ * `url` is the parsed (dot-segment-normalised) URL the door forwards; `canSee(key)` is the chat ACL.
+ */
+export function regularMayRequest(method, url, canSee) {
+  const p = url.pathname;
+  const read = method === "GET" || method === "HEAD";
+  if (p === "/api/ui-state" || p === "/tinker/api/ui-state") return read || method === "POST";
+  if (p === "/tinker/api/seat" || p === "/tinker/api/jarvis-mute") return read;
+  if (p.startsWith(CONTEXT_ANATOMY)) {
+    // One chat's call timeline: only a chat this person may see. "before"/"recent" span every chat.
+    let sub = p.slice(CONTEXT_ANATOMY.length);
+    if (sub.endsWith("/latest")) sub = sub.slice(0, -"/latest".length);
+    if (!read || sub === "before" || sub === "recent") return false;
+    try {
+      return canSee(decodeURIComponent(sub));
+    } catch {
+      return false;
+    }
+  }
+  if (p.toLowerCase().startsWith("/tinker/api/")) return false;
+  // The page itself and its static assets.
+  return read && (p === "/tinker" || p.startsWith("/tinker/"));
+}
+
+/** Replace every `secret` in a streamed body with `placeholder`, also when it is split across chunks. */
+export function scrubStream(secret, placeholder) {
+  const needle = Buffer.from(String(secret));
+  if (!needle.length) return new PassThrough();
+  const repl = Buffer.from(placeholder);
+  const swap = (buf) => {
+    const parts = [];
+    let from = 0;
+    for (let i = buf.indexOf(needle); i !== -1; i = buf.indexOf(needle, from)) {
+      parts.push(buf.subarray(from, i), repl);
+      from = i + needle.length;
+    }
+    parts.push(buf.subarray(from));
+    return Buffer.concat(parts);
+  };
+  let carry = Buffer.alloc(0);
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      const buf = swap(Buffer.concat([carry, chunk]));
+      // Hold back a tail that may be the start of a secret the next chunk completes.
+      const cut = Math.max(0, buf.length - (needle.length - 1));
+      carry = buf.subarray(cut);
+      cb(null, buf.subarray(0, cut));
+    },
+    flush(cb) {
+      cb(null, carry);
+    },
+  });
 }
 
 function loginPage(msg = "", rawTitle = process.env.DOOR_TITLE || "Agent") {
@@ -513,10 +579,27 @@ export function createDoor(opts) {
         }
         return;
       }
+      if (!row.admin) {
+        if (!regularMayRequest(req.method, url, (k) => acl.canSee(userOf(row), k))) {
+          audit({
+            ev: "http_denied",
+            operatorId: row.operatorId,
+            method: req.method,
+            path: url.pathname,
+          });
+          json(res, 403, { error: "not allowed" });
+          return;
+        }
+        // ?tree=1 adds the subagent rows of EVERY chat in that time span, not only this person's.
+        if (url.pathname.startsWith(CONTEXT_ANATOMY)) url.searchParams.delete("tree");
+      }
       // The page saves tabs and panel state at the root path /api/ui-state; behind the gateway plugin
       // that endpoint lives at /tinker/api/ui-state. Map it so each person's state persists.
+      // Everything else goes up as the parsed path the rule above judged, never the raw request line.
       const upPath =
-        url.pathname === "/api/ui-state" ? `/tinker/api/ui-state${url.search}` : req.url;
+        url.pathname === "/api/ui-state"
+          ? `/tinker/api/ui-state${url.search}`
+          : `${url.pathname}${url.search}`;
       const up = http.request(
         {
           host: upHost,
@@ -543,8 +626,10 @@ export function createDoor(opts) {
             });
             return;
           }
+          // JSON, scripts and files can carry the secret too (a file read of openclaw.json).
+          delete headers["content-length"];
           res.writeHead(ur.statusCode ?? 502, headers);
-          ur.pipe(res);
+          ur.pipe(scrubStream(gatewayToken, PLACEHOLDER_TOKEN)).pipe(res);
         },
       );
       up.on("error", (err) => {

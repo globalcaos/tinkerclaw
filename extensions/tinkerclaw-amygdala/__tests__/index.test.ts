@@ -70,6 +70,8 @@ describe("tinkerclaw-amygdala entry", () => {
       "amygdala2.answer",
       "amygdala2.approve",
       "amygdala2.canary",
+      "amygdala2.effectRevert",
+      "amygdala2.effects",
       "amygdala2.feed",
       "amygdala2.label",
       "amygdala2.nightly",

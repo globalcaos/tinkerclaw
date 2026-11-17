@@ -36,8 +36,10 @@
  */
 import os from "node:os";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { PRIMARY_SEAT, seatForSpawn } from "./claude-seats.js";
 import { getLatestResumeSessionIdByOpenclawSessionId, getResumeSessionId } from "./session-map.js";
 import { isAdaptiveEffortModel } from "./thinking-budget.js";
+import { isOneShotSessionKey, isOneShotWorker } from "./worker-unit-args.js";
 import { ClaudeCodeWorker, type WorkerSpawnParams } from "./worker.js";
 
 const log = createSubsystemLogger("tinkerclaw-tinker-bridge");
@@ -106,6 +108,8 @@ export interface SessionWorkerPoolOptions {
   memoryFloorBytes?: number;
   /** Injectable clock for tests. */
   now?: () => number;
+  /** FORK 2026-11-03: the Claude seat a worker should run on now (claude-seats.ts); tests inject it. */
+  chooseSeat?: () => string;
 }
 
 // idleTtlMs must comfortably exceed the longest legitimate turn (observed
@@ -131,14 +135,11 @@ export const SWEEP_INTERVAL_MS = 30_000;
 export const MAX_PRESSURE_EVICTIONS_PER_SWEEP = 2;
 export const PRESSURE_MIN_IDLE_MS = 60_000;
 
-/**
- * FORK 2026-10-19: a session that runs once and is never asked for again: the
- * internal `temp:*` one-shots (the Jev explainer, the tab namer, the slug
- * generator) and a Fractal reflection (`agent:<id>:fractal:<P>`).
- */
-export function isOneShotSessionKey(key: string): boolean {
-  return key.startsWith("temp:") || key.includes(":fractal:");
-}
+// FORK 2026-10-29: isOneShotSessionKey (a session that runs once and is never asked for again:
+// `temp:*`, `*:fractal:*`) and isOneShotWorker live in worker-unit-args.ts, which imports nothing,
+// so worker.ts can apply the same rule at spawn without importing this file, which imports
+// worker.ts. Re-exported for the callers that import it from the pool.
+export { isOneShotSessionKey };
 
 /**
  * FORK 2026-10-19: the default cap scales with RAM, one worker per GiB, between 4
@@ -164,6 +165,10 @@ export class SessionWorkerPool {
   // keeps its spawn params private, so this map is the authoritative record we
   // compare a later turn's requested model against.
   private spawnedModel = new Map<string, string | undefined>();
+  // FORK 2026-11-03 (THALAMUS seat routing): the Claude seat each worker was spawned on, and the
+  // chooser asked on every turn. A worker with no entry (adopted after a restart) counts as primary.
+  private spawnedSeat = new Map<string, string>();
+  private readonly chooseSeat: () => string;
   // FORK 2026-06-11 (the lag fix): when a think-level change arrives mid-turn
   // we must NOT kill the busy worker; we record the pending change here so the
   // caller can apply it (e.g. surface a notice / force a respawn next turn)
@@ -200,12 +205,17 @@ export class SessionWorkerPool {
     this.memoryFloorBytes =
       options.memoryFloorBytes ?? Math.max(1.5 * 2 ** 30, 0.1 * os.totalmem());
     this.now = options.now ?? (() => Date.now());
+    this.chooseSeat = options.chooseSeat ?? (() => seatForSpawn(this.now()));
   }
 
   getOrCreate(params: WorkerSpawnParams): ClaudeCodeWorker {
     const now = this.now();
     this.rekeyAdopted(params);
     params = this.claimChatWorker(params);
+    const seat = this.safeChooseSeat();
+    if (seat !== PRIMARY_SEAT) {
+      params = { ...params, claudeSeat: seat };
+    }
     const existing = this.workers.get(params.sessionKey);
     if (existing && existing.isAlive()) {
       // FORK 2026-06-11 (the lag fix): a warm worker bakes its think level into
@@ -231,8 +241,16 @@ export class SessionWorkerPool {
       const modelChanged = (existingModel ?? "") !== (params.model ?? "");
       // FORK 2026-10-15: a worker claimChatWorker handed a turn while busy still runs the old
       // system prompt; respawn it once it is idle.
+      // FORK 2026-11-03: the soonest-reset seat with room changed (its 5h or 7d window ran out, or
+      // reset). Same rule as a model change: respawn once idle, with --resume; never mid-turn.
+      const seatChanged = (this.spawnedSeat.get(params.sessionKey) ?? PRIMARY_SEAT) !== seat;
+      if (seatChanged) {
+        log.info(
+          `[claude-seat] ${params.sessionKey}: ${this.spawnedSeat.get(params.sessionKey) ?? PRIMARY_SEAT} -> ${seat}${existing.isBusy() ? " (after this turn)" : ""}`,
+        );
+      }
       const respawnNeeded =
-        levelChanged || modelChanged || this.promptChanged.has(params.sessionKey);
+        levelChanged || modelChanged || seatChanged || this.promptChanged.has(params.sessionKey);
       if (respawnNeeded && !existing.isBusy()) {
         // Safe to respawn: idle worker. Evict the warm cache and FALL THROUGH
         // to the create path below, which re-derives resumeSessionId from the
@@ -303,6 +321,7 @@ export class SessionWorkerPool {
     // FORK 2026-06-19 (the lag fix, model arm): record the model this worker was
     // spawned with so a later turn can detect a model-pin change.
     this.spawnedModel.set(params.sessionKey, params.model);
+    this.spawnedSeat.set(params.sessionKey, seat);
     this.sweep(now, params.sessionKey);
     return worker as ClaudeCodeWorker;
   }
@@ -412,7 +431,8 @@ export class SessionWorkerPool {
    * names it; adopted workers carry theirs from the unit's meta.
    */
   private isOneShot(key: string, worker: PoolWorker): boolean {
-    return isOneShotSessionKey(key) || isOneShotSessionKey(worker.openclawSessionKey ?? "");
+    // FORK 2026-10-29: the same rule worker.ts applies at spawn (isOneShotWorker).
+    return isOneShotWorker({ sessionKey: key, openclawSessionKey: worker.openclawSessionKey });
   }
 
   /**
@@ -454,6 +474,15 @@ export class SessionWorkerPool {
    * 14:29:33 the sweep stopped a child still running a Workflow and another still working a turn
    * the gateway was not tracking.
    */
+  /** The chooser must never break a turn: any failure keeps the primary login. */
+  private safeChooseSeat(): string {
+    try {
+      return this.chooseSeat() || PRIMARY_SEAT;
+    } catch {
+      return PRIMARY_SEAT;
+    }
+  }
+
   private lastSeen(key: string, worker: PoolWorker, fallback: number): number {
     return Math.max(this.lastUsedAt.get(key) ?? fallback, worker.lastActivityAt?.() ?? 0);
   }
@@ -466,6 +495,7 @@ export class SessionWorkerPool {
     // pending change for an evicted key so it can't go stale.
     this.spawnedThinkLevel.delete(key);
     this.spawnedModel.delete(key);
+    this.spawnedSeat.delete(key);
     this.lastThinkLevelPending.delete(key);
     this.adoptedKeys.delete(key);
     this.promptChanged.delete(key);

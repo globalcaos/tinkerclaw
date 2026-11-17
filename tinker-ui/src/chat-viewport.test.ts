@@ -6,11 +6,19 @@ import {
   decodeViewportMemory,
   encodeViewportMemory,
   FOLLOWING,
+  HTML_FRAME_MAX_PX,
+  htmlFrameHeight,
   isProgrammaticEcho,
   lateGrowthAdjustment,
+  middleFraction,
+  PANE_SETTLE_MS,
+  paneResizeSettles,
+  paneResizeStep,
   pendingRestoreStep,
   RESTORE_MAX_AGE_MS,
   RESTORE_MAX_PAGES,
+  scrollIsResizeLayout,
+  scrollTopForMiddle,
   viewportChoiceId,
   viewportMemory,
   type ViewportAnchor,
@@ -146,6 +154,80 @@ describe("lateGrowthAdjustment — content that grows after the pin (images, fra
 // ─── app.ts wiring, locked structurally ─────────────────────────────────────────────────
 // app.ts is an un-testable browser entry, so the call-site facts this design depends on are read
 // off its source, the technique scroll-follow.test.ts uses. Walk up from the vitest cwd.
+describe("the middle anchor — a turn of the phone keeps the text at the middle (2026-11-15)", () => {
+  // Measured in landscape: a 171 px pane at y=100, a paragraph from y=150 to 230.
+  const before = { paneTop: 100, paneHeight: 171, nodeTop: 150, nodeHeight: 80 };
+
+  it("measures where the pane's middle falls on the block", () => {
+    expect(middleFraction(before)).toBeCloseTo((185.5 - 150) / 80);
+    expect(middleFraction({ ...before, nodeHeight: 0 })).toBe(0);
+  });
+
+  it("puts that point back at the middle after the block re-wraps and the pane grows", () => {
+    const fraction = middleFraction(before);
+    // Upright: the pane is 817 px tall, the rows above wrapped longer (the block now at y=900),
+    // and the block itself wraps to 160 px.
+    const top = scrollTopForMiddle({
+      scrollTop: 10_000,
+      paneTop: 100,
+      paneHeight: 817,
+      nodeTop: 900,
+      nodeHeight: 160,
+      fraction,
+    });
+    // After the write the block sits 900 - (top - 10000) px down; its point is at the middle.
+    const nodeTopAfter = 900 - (top - 10_000);
+    expect(nodeTopAfter + fraction * 160).toBeCloseTo(100 + 817 / 2);
+  });
+
+  it("is a no-op when nothing moved", () => {
+    expect(
+      scrollTopForMiddle({ ...before, scrollTop: 500, fraction: middleFraction(before) }),
+    ).toBeCloseTo(500);
+  });
+
+  it("following pins the bottom on every resize, as before", () => {
+    const step = paneResizeStep({
+      follow: true,
+      prev: { w: 453, h: 171 },
+      next: { w: 411, h: 817 },
+      settling: false,
+    });
+    expect(step).toBe("pin");
+  });
+
+  it("reading: a new width puts the middle back; the first observation does nothing", () => {
+    const next = { w: 411, h: 817 };
+    expect(paneResizeStep({ follow: false, prev: { w: 453, h: 171 }, next, settling: false })).toBe(
+      "keep-middle",
+    );
+    expect(paneResizeStep({ follow: false, prev: null, next, settling: false })).toBe("none");
+  });
+
+  it("reading: a height-only change keeps today's rule unless a turn is still settling", () => {
+    const prev = { w: 411, h: 817 };
+    const keyboard = { w: 411, h: 500 };
+    expect(paneResizeStep({ follow: false, prev, next: keyboard, settling: false })).toBe("none");
+    expect(paneResizeSettles({ prev, next: keyboard, settling: false })).toBe(false);
+    // A turn's second resize: the width came first, the height a frame later.
+    expect(paneResizeStep({ follow: false, prev, next: keyboard, settling: true })).toBe(
+      "keep-middle",
+    );
+    expect(paneResizeSettles({ prev, next: prev, settling: true })).toBe(false);
+  });
+
+  it("a scroll with no input since the settle began is the layout's, not a gesture", () => {
+    const t = { settleStartedAt: 1000, settlingUntil: 1000 + PANE_SETTLE_MS };
+    expect(scrollIsResizeLayout({ ...t, now: 1010, lastInputAt: 200 })).toBe(true);
+    // His wheel or touch after the turn began: his scroll.
+    expect(scrollIsResizeLayout({ ...t, now: 1300, lastInputAt: 1200 })).toBe(false);
+    // Once settled, every scroll is read as before.
+    expect(scrollIsResizeLayout({ ...t, now: 1000 + PANE_SETTLE_MS, lastInputAt: 200 })).toBe(
+      false,
+    );
+  });
+});
+
 describe("app.ts viewport wiring", () => {
   const findAppSource = (): string => {
     let dir = process.cwd();
@@ -218,7 +300,32 @@ describe("app.ts viewport wiring", () => {
     expect(app).not.toMatch(/container!\.scrollTop = /);
   });
 
+  it("the pane's resize observer restores the middle anchor and starts a settle", () => {
+    const b = body("function bindChatFollowListener(el: HTMLElement): void {");
+    expect(b).toContain("const settles = paneResizeSettles(");
+    expect(b).toMatch(/\} else if \(restoreMiddleAnchor\(el\)\) \{/);
+    expect(b).toContain("extendPaneSettle(el);");
+  });
+
+  it("a layout scroll during a settle is consumed before the follow latch or paging sees it", () => {
+    const b = body("function bindChatFollowListener(el: HTMLElement): void {");
+    const layout = b.indexOf("scrollIsResizeLayout({");
+    expect(layout).toBeGreaterThan(b.indexOf("isProgrammaticEcho(el.scrollTop"));
+    expect(layout).toBeLessThan(b.indexOf('type: "user-scroll"'));
+    expect(layout).toBeLessThan(b.indexOf("pageOlderRows();"));
+  });
+
   it("the turn-end Reasoning group is asked whether it opens", () => {
     expect(app).toContain("openGroupOnForm: openReasoningGroupOnForm,");
+  });
+});
+
+describe("htmlFrameHeight — a sandboxed card shows whole", () => {
+  it("keeps a 20-card grid's full height instead of cutting it at 2000 px", () => {
+    expect(htmlFrameHeight(9600)).toBe(9600);
+  });
+  it("keeps the 40 px floor and a runaway ceiling", () => {
+    expect(htmlFrameHeight(0)).toBe(40);
+    expect(htmlFrameHeight(10_000_000)).toBe(HTML_FRAME_MAX_PX);
   });
 });

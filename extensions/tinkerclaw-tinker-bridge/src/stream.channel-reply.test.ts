@@ -145,10 +145,10 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
       channel: "whatsapp",
       sessionKey: "agent:main:whatsapp:group:120363000000000001@g.us",
     });
-    // The transcript keeps exactly what the stream produced: 991 chars, narration included.
-    expect(textOf(message)).toBe(`${NARRATION.join("")}NO_REPLY`);
-    expect(textOf(message)).toHaveLength(991);
-    expect(message.channelReply).toStrictEqual({ kind: "silent", textLength: 991 });
+    // The transcript keeps what the stream produced, each block in its own paragraph.
+    expect(textOf(message)).toBe(`${NARRATION.filter(Boolean).join("\n\n")}\n\nNO_REPLY`);
+    expect(textOf(message)).toHaveLength(1011);
+    expect(message.channelReply).toStrictEqual({ kind: "silent", textLength: 1011 });
   });
 
   it("records the same offsets the live turn persisted", () => {
@@ -172,11 +172,11 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
       channel: "whatsapp",
       sessionKey: "agent:main:whatsapp:group:120363000000000001@g.us",
     });
-    expect(textOf(message)).toBe(`${narration}${answer}`);
+    expect(textOf(message)).toBe(`${narration}\n\n${answer}`);
     expect(message.channelReply).toStrictEqual({
       kind: "final",
-      from: narration.length,
-      textLength: narration.length + answer.length,
+      from: narration.length + 2,
+      textLength: narration.length + 2 + answer.length,
     });
   });
 
@@ -186,7 +186,7 @@ describe("channel reply: the 15:46 mic-drop turn", () => {
       channel: "webchat",
       sessionKey: "agent:main:tinker:channel-reply",
     });
-    expect(textOf(message)).toHaveLength(991);
+    expect(textOf(message)).toHaveLength(1011);
     expect(message).not.toHaveProperty("channelReply");
   });
 

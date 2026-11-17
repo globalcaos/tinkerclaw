@@ -17,6 +17,7 @@ Nothing here runs unless you turn it on. `scripts/setup.sh` asks about it only f
 - **Admin is a property**: granted and taken away from the page. The last admin cannot lose it.
 - **People.** Admins add people, issue a new token (the old one stops), revoke a token, copy a person's current token, or delete them (no access; everything they made is kept), from the USERS panel at the bottom of the right rail. Nothing a person made is ever removed. New tokens are shown once.
 - Every request naming a chat you may not see is refused, `sessions.list` only lists what you may see, and live events about other people's chats are dropped. Logins, refusals and admin actions go to `audit.jsonl`.
+- **What a regular user can reach over HTTP**: only what the chat page loads (the page and its assets, page state, seat name, the mute state, and the call timeline of their own chats). The gateway's file reader and writer (the chat's file viewer, local images in chat, the kit editor), the host's voice and mute switch, and the gateway's own HTTP APIs are for admins. The rule is `regularMayRequest` in `door.mjs`.
 
 ## Turn it on
 

@@ -51,8 +51,16 @@ export interface InterventionView {
   title: string;
   chips: string[];
   cmd?: string;
+  /** One plain sentence: what changes, what cannot be undone, why. Shown instead of the command when present. */
+  sentence?: string;
   options?: { id: string; label: string; hint?: string }[];
   expiresTs?: number;
+  /** A proof hold's release code (2026-10-29): the Allow button under the reply sends "allow <grant>" as the owner. */
+  grant?: string;
+  /** The owner's Allow question for the step (2026-11-03), e.g. "Allow publishing to the web?"; absent on an older gateway. */
+  ask?: string;
+  /** A hold's rule or question id, to find its words and its file. */
+  rule?: string;
 }
 
 export interface ReplaySummary {
@@ -99,9 +107,9 @@ export interface StatusView {
   rewind?: number;
 }
 
-/** `amygdala2.marker`: "sent back twice, delivered with a marker". */
+/** `amygdala2.marker`: "sent back once, delivered with a marker". */
 export interface MarkerView {
-  kind: "unsupported-after-two" | "refusal-rewound";
+  kind: "unsupported-after-two" | "refusal-rewound" | "defect-reported";
   sessionKey: string;
   turnId: string;
   items: string[];
@@ -123,6 +131,20 @@ export interface QuestionRow {
   family?: string;
   familyTitle?: string;
   familySubtitle?: string;
+  /** What the chat bubble says to the agent when this question acts (`says` in its .md, 2026-11-03). */
+  says?: string;
+}
+
+/** A hard rule as the feed names it (2026-11-03): its chat words and the rules.ts that holds it. */
+export interface RuleRow {
+  id: string;
+  explanation: string;
+  /** The amygdala's line to the agent when the rule fires. */
+  says: string;
+  /** The owner's Allow question; `{target}` takes the deleted path or the secret's name, else `noun`. */
+  ask: string;
+  noun?: string;
+  file?: string;
 }
 
 /** `amygdala2.feed`: what the UI loads on connect and after a reload. */
@@ -152,6 +174,7 @@ export interface FeedView {
   interventions: InterventionView[];
   changes: ChangeView[];
   questions: QuestionRow[];
+  rules?: RuleRow[];
   status: StatusView;
   spend: { eur: number; eur30: number; calls: number };
   counts: { checks: number; held: number; asked: number };

@@ -181,3 +181,36 @@ describe("CREDENTIAL_FILE_PRINTED (v2-only hard rule)", () => {
     expect(cred && held(cred)).toBe("CREDENTIAL_FILE_PRINTED");
   });
 });
+
+// 2026-11-07, live data: a cron cleaned its scratch in one shell call, a file and then a folder inside `bash -c`, then
+// listed the folder and checked its reports, one command per line. The /tmp exception read the next line's words as
+// more paths of the first remove, found one outside /tmp and held the whole step. Commands are built from parts so
+// this file's own source holds no real delete.
+describe("FS_DESTRUCTIVE_ROOT: a line break ends a remove's paths (2026-11-07)", () => {
+  const RM = ["r", "m"].join("");
+  const e = { enforcedOnly: true };
+  const lines = (...l: string[]) => l.join("\n");
+
+  it("a /tmp cleanup spread over several lines is not held", () => {
+    const cleanup = lines(
+      `${RM} -f /tmp/jarvis/t/a.txt`,
+      `bash -c '${RM} -rf /tmp/jarvis/t/venv'`,
+      "ls -la /tmp/jarvis/t/",
+      "test -f /w/reports/run.md && echo OK",
+    );
+    expect(evaluateRules("exec", cleanup, e).decision).toBe("allow");
+    const twoLines = lines(`${RM} -rf /tmp/jarvis/t/out`, "ls /tmp/jarvis/t");
+    expect(evaluateRules("Bash", twoLines, e).decision).toBe("allow");
+  });
+
+  it("a recursive delete outside /tmp still holds, on any line", () => {
+    const held = (cmd: string) => evaluateRules("exec", cmd, e).rule;
+    expect(held(lines(`${RM} -f /tmp/jarvis/t/a.txt`, `${RM} -rf /home/u/proj`))).toBe(
+      "FS_DESTRUCTIVE_ROOT",
+    );
+    expect(held(lines(`${RM} -rf /tmp/jarvis/t/out /home/u/proj`, "ls"))).toBe(
+      "FS_DESTRUCTIVE_ROOT",
+    );
+    expect(held(lines("ls /tmp/jarvis", `${RM} -rf /tmp/../home/u`))).toBe("FS_DESTRUCTIVE_ROOT");
+  });
+});

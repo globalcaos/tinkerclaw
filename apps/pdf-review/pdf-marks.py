@@ -12,6 +12,7 @@ Prints one line per mark, then a line saying how many edits are pending. Exit 2 
 does not answer (it is closed, or the viewer code is older than this script).
 """
 import json
+import os
 import sys
 import time
 import urllib.parse
@@ -19,11 +20,12 @@ import urllib.request
 from pathlib import Path
 
 BASE = "http://127.0.0.1:18820"
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(os.path.abspath(__file__)).parent
 
 
 def served_path(arg):
-    p = Path(arg).expanduser().resolve()
+    # papers/open/ holds links to files elsewhere: keep the link, the served path is the link's.
+    p = Path(os.path.abspath(Path(arg).expanduser()))
     try:
         rel = p.relative_to(ROOT)
     except ValueError:
@@ -43,7 +45,7 @@ def main(argv):
     if len(args) != 1:
         sys.exit(__doc__)
     where = served_path(args[0])
-    q = urllib.parse.urlencode({"path": where})
+    q = urllib.parse.quote(where, safe="")
     try:
         urllib.request.urlopen(f"{BASE}/api/marks/want?path={q}", timeout=3).read()
     except OSError as err:

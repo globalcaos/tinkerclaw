@@ -97,11 +97,10 @@ tinkerclaw as well. … Even if we had no api, I want to know there is a new mod
   it a dossier row marked "no public price yet". If a surface cannot draw a model without a
   price, that is a code gap to fix in this run, never a reason to drop it.
 - **Census in one call:** `python3 -I ~/.openclaw/workspace/skills/model-rank-refresh/scripts/coverage_census.py` (today's `/tmp/aa-*.json` + `/tmp/or-*.json`; exit 1 = models missing, each with its OpenRouter seller). The run is not done while it exits 1, twins excepted. 2026-10-13 the hand count took 8 calls and stopped at 11; the script found 13.
-- **Where an unsellable model lives (built 2026-10-13):** `tinker-ui/src/panels/aa-unrouted-models.ts`
+- **Where an unsellable model lives (built 2026-10-13, picker rule corrected 2026-11-04):** `tinker-ui/src/panels/aa-unrouted-models.ts`
   (`AA_UNROUTED_MODELS`). It feeds the dossier rows and the chart's "not plotted" note, and stays out of
-  `AA_INTELLIGENCE_INDEX` (a dot source: no cost row draws at the false default 2.58) and out of
-  `openclaw.json` (the picker would offer a model that fails). Add the entry, and drop it the day a
-  seller exists and the model is onboarded for real. A model OpenRouter lists under a different name
+  `AA_INTELLIGENCE_INDEX` (a dot source: no cost row draws at the false default 2.58). It does **not** stay out of the picker.
+  the architect 2026-10-13 and again 2026-11-03 21:13 / 21:17: every scored model belongs in the picker, even with no route; grey it, and on hover say why (not served yet, or which site to open, with a link). Hiding it so "the picker would not offer a model that fails" is the opposite of that order — it is what 2026-11-04 01:02 called doing. Code: `e26bc11ecedf` (greyed chips). Add the unrouted dossier entry as before, and drop it the day a seller exists and the model is onboarded for real. A model OpenRouter lists under a different name
   ("Step 5 Preview" for AA's "step-5") is not matched without proof. A family with no `SC_DOSSIER_RULES`
   rule gets a row reading "no dossier entry yet", and the report names it; do not invent graded cells.
 - **Every new arrival leads the FOUND line**, plotted or not: name, score, vendor, seller, price.
@@ -315,3 +314,9 @@ and, for each addition, its **cost and its billing route** — subscription or c
   rows, route never decides inclusion). The same census found 8 older gaps the cron had never
   flagged (Fable 5, step-5, Ling 3.1 Flash, Qwen3.8-Flash-Next, Gemini 3.7 Flash, GPT-5.4,
   Mistral Large 4 Preview, plus the 0803 Qwen twin).
+
+- **2026-11-15** — AA's page went back to ONE combined object per model inside `initialModels` (no row-level
+  slug; `release.slug` + `suffix` instead), so the two-array regexes in `fetch_aa_scores.py` matched 0 rows and
+  the run died at the shape check. `rows_from_initial_models()` now rebuilds the old slugs (`<release>-<effort>`,
+  `-non-reasoning`) as a fallback; the 85 rows already in the cache matched with 0.0% move. Same lesson as 09-10,
+  09-14, 09-24: when the shape check fails, read the page, never loosen the check.

@@ -22,7 +22,7 @@ describe("proofCell: the paper §6.1 table, all nine cells", () => {
     [2, "low", "note", false],
     [2, "medium", "proof", false],
     [2, "high", "hold", false],
-    [3, "low", "proof", true],
+    [3, "low", "proceed", false],
     [3, "medium", "proof", true],
     [3, "high", "hold", true],
   ];
@@ -32,8 +32,8 @@ describe("proofCell: the paper §6.1 table, all nine cells", () => {
     expect(c.authorise).toBe(auth);
   });
 
-  it("danger 3, low risk: no authorisation needed when the request named this exact action and target", () => {
-    expect(proofCell(3, "low", true)).toMatchObject({ kind: "proof", authorise: false });
+  it("danger 3, low risk: proceeds whether or not the request named the action (the effect card reports it)", () => {
+    expect(proofCell(3, "low", true)).toMatchObject({ kind: "proceed", authorise: false });
     expect(proofCell(3, "medium", true).authorise).toBe(true);
   });
 

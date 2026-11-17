@@ -9,7 +9,11 @@ import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import type { EmbeddingInput } from "./embedding-inputs.js";
 import { sanitizeAndNormalizeEmbedding } from "./embedding-vectors.js";
 import { debugEmbeddingsLog } from "./embeddings-debug.js";
-import type { EmbeddingProvider, EmbeddingProviderOptions } from "./embeddings.js";
+import type {
+  EmbedCallOptions,
+  EmbeddingProvider,
+  EmbeddingProviderOptions,
+} from "./embeddings.js";
 import { buildRemoteBaseUrlPolicy, withRemoteHttpResponse } from "./remote-http.js";
 import { resolveMemorySecretInputString } from "./secret-input.js";
 
@@ -166,6 +170,9 @@ async function fetchGeminiEmbeddingPayload(params: {
   client: GeminiEmbeddingClient;
   endpoint: string;
   body: unknown;
+  // FORK 2026-10-30: the call's signal reaches the request, so an aborted or timed-out embedding
+  // stops on the wire; key rotation does not retry an abort. A call without one is unchanged.
+  signal?: AbortSignal;
 }): Promise<{
   embedding?: { values?: number[] };
   embeddings?: Array<{ values?: number[] }>;
@@ -182,6 +189,7 @@ async function fetchGeminiEmbeddingPayload(params: {
       return await withRemoteHttpResponse({
         url: params.endpoint,
         ssrfPolicy: params.client.ssrfPolicy,
+        signal: params.signal,
         init: {
           method: "POST",
           headers,
@@ -225,7 +233,8 @@ export async function createGeminiEmbeddingProvider(
   const isV2 = isGeminiEmbedding2Model(client.model);
   const outputDimensionality = client.outputDimensionality;
 
-  const embedQuery = async (text: string): Promise<number[]> => {
+  // FORK 2026-10-30: embedQuery, embedBatchInputs and embedBatch hand the call's signal on.
+  const embedQuery = async (text: string, opts?: EmbedCallOptions): Promise<number[]> => {
     if (!text.trim()) {
       return [];
     }
@@ -237,11 +246,15 @@ export async function createGeminiEmbeddingProvider(
         taskType: options.taskType ?? "RETRIEVAL_QUERY",
         outputDimensionality: isV2 ? outputDimensionality : undefined,
       }),
+      signal: opts?.signal,
     });
     return sanitizeAndNormalizeEmbedding(payload.embedding?.values ?? []);
   };
 
-  const embedBatchInputs = async (inputs: EmbeddingInput[]): Promise<number[][]> => {
+  const embedBatchInputs = async (
+    inputs: EmbeddingInput[],
+    opts?: EmbedCallOptions,
+  ): Promise<number[][]> => {
     if (inputs.length === 0) {
       return [];
     }
@@ -258,16 +271,18 @@ export async function createGeminiEmbeddingProvider(
           }),
         ),
       },
+      signal: opts?.signal,
     });
     const embeddings = Array.isArray(payload.embeddings) ? payload.embeddings : [];
     return inputs.map((_, index) => sanitizeAndNormalizeEmbedding(embeddings[index]?.values ?? []));
   };
 
-  const embedBatch = async (texts: string[]): Promise<number[][]> => {
+  const embedBatch = async (texts: string[], opts?: EmbedCallOptions): Promise<number[][]> => {
     return await embedBatchInputs(
       texts.map((text) => ({
         text,
       })),
+      opts,
     );
   };
 

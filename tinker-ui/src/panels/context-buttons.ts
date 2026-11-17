@@ -68,6 +68,21 @@ export const CLI_COMPACT_BUSY_REASON =
   "wait for the turn to finish — the CLI compacts between turns";
 
 /**
+ * FORK 2026-11-03 (context-window-panel.md A11) — EVICT's first paragraph on a lane that owns its
+ * context: the bridge cuts the oldest turns out of the CLI's own transcript into a shorter copy and
+ * resumes the chat from it (src/gateway/session-eviction.ts → the bridge's evict-seam.ts).
+ */
+export const CLI_EVICT_DESCRIPTION =
+  "Cut the oldest turns out of the CLI's own conversation and resume it from a shorter copy that starts with a pointer to the full record. Nothing is summarised and no model is called; the full transcript stays on disk.";
+
+/**
+ * FORK 2026-11-03 (A11) — why EVICT is off on that lane while a turn runs: the chat moves to the
+ * shorter copy between turns (the bridge refuses a live one), so there is no interrupt to confirm.
+ */
+export const CLI_EVICT_BUSY_REASON =
+  "wait for the turn to finish — the CLI moves to the shorter copy between turns";
+
+/**
  * FORK 2026-09-25 (§6.1 A6) — is this prompt the compaction command: `/compact` alone, or followed
  * by its instructions? Such a prompt goes out with no per-turn suffix (app.ts buildInjectedPrompt),
  * typed or pressed, on every lane, because the suffix would become the instructions. "/compactor",
@@ -213,8 +228,10 @@ function disabledState(
  * P8 — may this button act on the viewed session, and if not, why. Pure; the first match wins,
  * most fundamental first:
  *   1. no session attached — nothing to act on;
- *   2. the lane owns its context (claude-code). EVICT is off: it would not shrink the next call,
- *      and the gateway refuses it there (session-eviction.ts). COMPACT takes the CLI route
+ *   2. the lane owns its context (claude-code). EVICT goes to the bridge, which cuts the CLI's own
+ *      transcript (A11, 2026-11-03; before it, EVICT was off here because the gateway's copy is not
+ *      what the model reads): OFF while a turn runs (CLI_EVICT_BUSY_REASON), and rules 3 to 5 still
+ *      apply to it, rule 5 being the bridge's own "one turn, nothing older" answer. COMPACT takes the CLI route
  *      (cacheActRoute; A6, the owner's decision 2026-09-25, option (i)): the CLI's own `/compact`,
  *      sent as a turn, since the gateway's compaction would compact its mirror (F2). Rules 3 and 4
  *      still apply to it; after them it is OFF while a turn runs (CLI_COMPACT_BUSY_REASON) rather
@@ -235,16 +252,15 @@ export function buttonState(inputs: CacheButtonInputs): CacheButtonState {
   if (!nonBlank(inputs.sessionKey)) {
     return disabledState(act, "no session is attached to this tab");
   }
-  const lane = contextOwningLane(inputs.provider);
-  if (lane && act === "evict") {
-    return disabledState(
-      act,
-      `the ${lane} runtime keeps its own copy of this session's context, so evicting the gateway transcript would not shrink the next call`,
-    );
-  }
-  // Rule 2's other half: on that lane COMPACT is the CLI's own `/compact`, and its tooltip says so.
+  // Rule 2: on a lane that owns its context, COMPACT is the CLI's own `/compact` and EVICT is the
+  // bridge's cut of the CLI's transcript (A11), and each tooltip says so.
+  const cliEvict = contextOwningLane(inputs.provider) !== undefined && act === "evict";
   const cliTurn = cacheActRoute(act, inputs.provider) === "cli-turn";
-  const description = cliTurn ? CLI_COMPACT_DESCRIPTION : CACHE_ACT_DESCRIPTION[act];
+  const description = cliTurn
+    ? CLI_COMPACT_DESCRIPTION
+    : cliEvict
+      ? CLI_EVICT_DESCRIPTION
+      : CACHE_ACT_DESCRIPTION[act];
   if (inputs.inFlight) {
     return disabledState(
       act,
@@ -265,11 +281,15 @@ export function buttonState(inputs: CacheButtonInputs): CacheButtonState {
       ? disabledState(act, CLI_COMPACT_BUSY_REASON, description)
       : { act, disabled: false, confirm: false, label: act, title: description };
   }
+  if (cliEvict && inputs.busy) {
+    return disabledState(act, CLI_EVICT_BUSY_REASON, description);
+  }
   const nothing = nonBlank(inputs.nothingToDo);
   if (nothing) {
     return disabledState(
       act,
       `the last ${act} found nothing to do (${nothing}); checked again after the next model call`,
+      description,
     );
   }
   if (!inputs.busy) {

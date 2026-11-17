@@ -73,8 +73,41 @@ export function createCheckService(d: CheckServiceDeps) {
       approxTokens(work) + approxTokens(claim) + 300,
       Math.ceil(d.cfg().check.maxChars / 4) + 300,
     );
-    const fp = freshPointDecision(base, "check", briefTokens);
-    if (!fp)
+    const pickFrom = (
+      candidateBase: typeof base,
+    ): { pick: CheckerPick; price?: number } | undefined => {
+      const fp = freshPointDecision(candidateBase, "check", briefTokens);
+      if (!fp) return undefined;
+      const builderQuality = fp.options.find(
+        (o) => o.rung.key === candidateBase.incumbentKey,
+      )?.quality;
+      const pick = pickChecker({
+        builderKey: candidateBase.incumbentKey,
+        options: fp.options,
+        minQuality: builderQuality,
+      });
+      return { pick, ...(pick.option ? { price: pick.option.price } : {}) };
+    };
+    let chosen = pickFrom(base);
+    // Pay-per-call supplies (Google) are admitted strictly when no subscription family outside the builder's can check.
+    if (
+      (!chosen || chosen.pick.reason !== "picked") &&
+      (base.secondOpinionOnly?.size || base.secondOpinionRungs?.length)
+    ) {
+      const seen = new Set(base.rungs.map((r) => `${r.key}@${r.effort}`));
+      const extra = (base.secondOpinionRungs ?? []).filter(
+        (r) => !seen.has(`${r.key}@${r.effort}`),
+      );
+      const fallback = pickFrom({
+        ...base,
+        rungs: extra.length > 0 ? [...base.rungs, ...extra] : base.rungs,
+        secondOpinionOnly: undefined,
+      });
+      if (fallback && (fallback.pick.reason === "picked" || !chosen)) {
+        chosen = fallback;
+      }
+    }
+    if (!chosen)
       return {
         check: true,
         why: need.check ? need.why : "changed-something",
@@ -83,19 +116,13 @@ export function createCheckService(d: CheckServiceDeps) {
         builder: base.incumbentKey,
         pick: { builderFamily: "", reason: "no-brief-option" },
       };
-    const builderQuality = fp.options.find((o) => o.rung.key === base.incumbentKey)?.quality;
-    const pick = pickChecker({
-      builderKey: base.incumbentKey,
-      options: fp.options,
-      minQuality: builderQuality,
-    });
     return {
       check: true,
       why: need.check ? need.why : "changed-something",
-      pick,
+      pick: chosen.pick,
       callIndex: base.callIndex,
       briefTokens,
-      ...(pick.option ? { price: pick.option.price } : {}),
+      ...(chosen.price !== undefined ? { price: chosen.price } : {}),
       builder: base.incumbentKey,
     };
   }

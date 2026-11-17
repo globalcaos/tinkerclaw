@@ -42,7 +42,8 @@ object JarvisVerbs {
   ): JsonObject {
     val app = context.applicationContext
     return when (verb) {
-      "buzz" -> buzz(app, buzzTimings(args["pattern"]))
+      // 2026-11-12: no pattern named = the owner's own choice (JarvisBuzz.kt, picked in the app's settings).
+      "buzz" -> buzz(app, args["pattern"].let { if (it == null || it is JsonNull) JarvisBuzz.timings(app) else buzzTimings(it) })
       "say" -> {
         val text = args.string("text")?.trim().orEmpty()
         require(text.isNotEmpty()) { "say: text is required" }

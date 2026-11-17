@@ -7,6 +7,7 @@ import {
   getModelUsage,
   pickResetIso,
   refreshTooltipReset,
+  refreshTooltipResets,
 } from "./model-usage";
 
 const NOW = Date.parse("2026-07-26T12:00:00.000Z");
@@ -296,6 +297,50 @@ describe("getModelUsage", () => {
     expect(usage?.resetIso).toBe("2026-07-26T13:40:00.000Z");
   });
 
+  it("crosses Fable when its own weekly cap is spent, and leaves Opus on the same seat alone", () => {
+    const usage = (model: string) =>
+      getModelUsage(
+        "claude-code",
+        model,
+        undefined,
+        {
+          claude: {
+            limits: {
+              seven_day: { utilization: 62, resets_at: "2026-08-01T09:00:00.000Z" },
+              scoped: { fable: { utilization: 100, resets_at: "2026-08-01T09:00:00.000Z" } },
+            },
+          },
+        },
+        null,
+        NOW,
+      );
+    expect(usage("claude-code/claude-fable-5-2")).toMatchObject({ exhausted: true });
+    expect(usage("claude-code/claude-fable-5-2")?.tooltip).toMatch(/7d fable: 100%/);
+    expect(usage("claude-code/claude-opus-5-5")?.exhausted).not.toBe(true);
+  });
+
+  it("leaves the 5h row out when Anthropic reports no 5h window, instead of showing 0%", () => {
+    const usage = getModelUsage(
+      "claude-code",
+      "claude-code/claude-opus-5",
+      undefined,
+      {
+        claude: {
+          limits: {
+            seven_day: { utilization: 67, resets_at: "2026-08-01T09:00:00.000Z" },
+          },
+        },
+      },
+      null,
+      NOW,
+    );
+
+    expect(usage).toMatchObject({ topPct: 67, bottomPct: 67 });
+    expect(usage?.tooltip).not.toMatch(/5h/);
+    expect(usage?.tooltip?.split("\n")[0]).toBe("7d: 67%");
+    expect(usage?.resetIso).toBe("2026-08-01T09:00:00.000Z");
+  });
+
   it("keeps the Anthropic reset on the weekly window while the 5h pool has room", () => {
     const usage = getModelUsage(
       "claude-code",
@@ -558,5 +603,108 @@ describe("getModelUsage", () => {
     expect(
       getModelUsage("github-copilot", "github-copilot/gpt-5.5", undefined, {}, null, NOW),
     ).toBeNull();
+  });
+});
+
+// FORK 2026-11-14 (the architect): the second Claude subscription rides in the lower half of each bar,
+// and the hover names both. Shaped on the night it was asked for: the Pi on orbisvision (week
+// 50 %, Fable's own cap 67 %), gmail in reserve (week 66 %, Fable spent until Thursday).
+describe("getModelUsage with a reserve Claude account", () => {
+  const LIVE_RESET = "2026-07-27T06:00:00.000Z";
+  const RESERVE_RESET = "2026-07-31T16:00:00.000Z";
+  const twoAccounts = {
+    claude: {
+      account: "o.orbis@example.ai",
+      accountLabel: "orbisvision",
+      limits: {
+        seven_day: { utilization: 50, resets_at: LIVE_RESET },
+        scoped: { fable: { utilization: 67, resets_at: LIVE_RESET } },
+      },
+    },
+    claudeReserve: {
+      account: "owner@example.com",
+      label: "gmail",
+      limits: {
+        seven_day: { utilization: 66, resets_at: RESERVE_RESET },
+        scoped: { fable: { utilization: 100, resets_at: RESERVE_RESET } },
+      },
+      notes: { seven_day: "read 23:34", scoped: { fable: "limit hit 20:45" } },
+    },
+  };
+  const usage = (model: string, budget: unknown = twoAccounts) =>
+    getModelUsage("claude-code", model, undefined, budget, null, NOW);
+
+  it("CONTROL: with no reserve in the payload the row is exactly what it was before", () => {
+    const one = { claude: twoAccounts.claude };
+    const row = usage("claude-code/claude-fable-5-2", one);
+    expect(row?.reserve).toBeUndefined();
+    expect(row?.tooltip).not.toMatch(/reserve|in use/);
+    expect(row).toMatchObject({ topPct: 67, bottomPct: 67 });
+  });
+
+  it("draws Fable's own cap for each account: in use 67 %, reserve spent", () => {
+    const row = usage("claude-code/claude-fable-5-2");
+    expect(row).toMatchObject({ topPct: 67, bottomPct: 67 });
+    expect(row?.reserve).toMatchObject({ topPct: 100, bottomPct: 100, exhausted: true });
+    // the picker's cross answers for the account in use only
+    expect(row?.exhausted).not.toBe(true);
+  });
+
+  it("names both subscriptions on the hover, each with its own reset row", () => {
+    const tip = usage("claude-code/claude-fable-5-2")?.tooltip ?? "";
+    const lines = tip.split("\n");
+    expect(lines[0]).toBe("orbisvision · in use");
+    expect(lines[1]).toBe("7d fable: 67%");
+    expect(lines[2]).toMatch(/^reset: /);
+    expect(lines[3]).toBe("gmail · reserve");
+    expect(lines[4]).toBe("7d fable: 100% (limit hit 20:45)");
+    expect(lines[5]).toMatch(/^reset: /);
+    expect(usage("claude-code/claude-fable-5-2")?.reserve?.resetIso).toBe(RESERVE_RESET);
+  });
+
+  it("an Opus row shows each account's week, with the reserve reading's age", () => {
+    const row = usage("claude-code/claude-opus-5-5");
+    expect(row).toMatchObject({ topPct: 50, bottomPct: 50 });
+    expect(row?.reserve).toMatchObject({ topPct: 66, bottomPct: 66 });
+    expect(row?.reserve?.exhausted).toBeUndefined();
+    expect(row?.tooltip).toMatch(/^orbisvision · in use\n7d: 50%\n/);
+    expect(row?.tooltip).toMatch(/\ngmail · reserve\n7d: 66% \(read 23:34\)\n/);
+  });
+
+  it("a reserve 5-hour window fills the top bar's lower half", () => {
+    const budget = {
+      ...twoAccounts,
+      claudeReserve: {
+        ...twoAccounts.claudeReserve,
+        limits: {
+          ...twoAccounts.claudeReserve.limits,
+          five_hour: { utilization: 40, resets_at: "2026-07-26T14:00:00.000Z" },
+        },
+      },
+    };
+    const row = usage("claude-code/claude-opus-5-5", budget);
+    expect(row?.reserve).toMatchObject({ topPct: 40, bottomPct: 66 });
+  });
+
+  it("without a known account name the top block still reads as the one in use", () => {
+    const budget = {
+      ...twoAccounts,
+      claude: { limits: twoAccounts.claude.limits },
+    };
+    expect(usage("claude-code/claude-opus-5-5", budget)?.tooltip).toMatch(
+      /^this account · in use\n/,
+    );
+  });
+
+  it("re-stamps both reset rows on the minute tick", () => {
+    const tip = "a · in use\n7d: 1%\nreset: old\nb · reserve\n7d: 2%\nreset: old";
+    const next = refreshTooltipResets(tip, [LIVE_RESET, RESERVE_RESET], NOW);
+    const rows = next.split("\n").filter((l) => l.startsWith("reset: "));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toBe("reset: old");
+    expect(rows[1]).not.toBe("reset: old");
+    expect(rows[0]).not.toBe(rows[1]);
+    // an instant with no countdown leaves its row as painted
+    expect(refreshTooltipResets(tip, [LIVE_RESET], NOW).split("\n")[5]).toBe("reset: old");
   });
 });

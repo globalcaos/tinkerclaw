@@ -1,0 +1,45 @@
+// Select tool on a vertical phone (2026-11-10): drag over words, release, the selection stays with a handle
+// at each end and a bar (comment, highlight, colour); a handle drag changes it; the bottom row is one row.
+// node test/select-drag.mjs  (server on 127.0.0.1:18820; Pi: PW_CHROMIUM=/usr/bin/chromium)
+import { createRequire } from "node:module";
+const require = createRequire(new globalThis.URL("../../../package.json", import.meta.url));
+const { chromium } = require("playwright");
+import { fixtureUrl } from "./fixture.mjs";
+const browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || undefined });
+const ctx = await browser.newContext({ viewport: { width: 411, height: 820 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+const page = await ctx.newPage();
+const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+await page.goto(fixtureUrl());
+await page.waitForSelector(".textLayer span", { state: "attached", timeout: 60000 });
+await page.waitForTimeout(2500);
+const cdp = await ctx.newCDPSession(page);
+const touch = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
+const drag = async (x0, y0, x1, y1) => { await touch("touchStart", x0, y0); for (let i = 1; i <= 8; i++) await touch("touchMove", x0 + ((x1 - x0) * i) / 8, y0 + ((y1 - y0) * i) / 8); await touch("touchEnd"); await page.waitForTimeout(400); };
+const r = {};
+r.rowTop = await page.evaluate(() => Math.round(document.getElementById("toolbarContainer").getBoundingClientRect().top));
+r.oneRow = await page.evaluate(() => { const t = document.getElementById("toolbarViewer"); return [...t.querySelectorAll(".toolbarButton:not([hidden])")].filter((b) => b.offsetParent).every((b) => Math.abs(b.getBoundingClientRect().top - t.getBoundingClientRect().top) < 44); });
+r.phoneBarHidden = await page.evaluate(() => document.getElementById("phoneBar").hidden);
+await page.tap("#selectTool");
+const spans = await page.evaluate(() => [...document.querySelectorAll(".textLayer span")].filter((s) => s.textContent.trim().length > 25).map((s) => { const b = s.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }).filter((b) => b.y > 120 && b.y < 600).slice(0, 3));
+const a = spans[0];
+await drag(a.x + 20, a.y + a.h / 2, a.x + a.w * 0.6, a.y + a.h / 2);
+r.sel1 = await page.evaluate(() => String(getSelection()));
+r.handles = await page.evaluate(() => [...document.querySelectorAll(".selHandle")].map((h) => !h.hidden));
+r.bar = await page.isVisible("#selBar");
+await page.screenshot({ path: "/tmp/jarvis/select-drag.png" });
+const end = await page.evaluate(() => { const b = document.querySelector(".selHandle.end").getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+await drag(end.x, end.y, end.x + 70, end.y);
+r.sel2 = await page.evaluate(() => String(getSelection()));
+r.grew = r.sel2.length > r.sel1.length;
+await page.tap("#selColor");
+r.color = await page.evaluate(() => localStorage.getItem("reader.hlColor"));
+await page.tap("#selHighlight");
+await page.waitForTimeout(800);
+r.highlighted = await page.evaluate(() => document.querySelectorAll(".highlightEditor").length);
+r.barGone = !(await page.isVisible("#selBar"));
+r.errors = errors;
+console.log(JSON.stringify(r));
+const ok = r.rowTop > 700 && r.oneRow && r.phoneBarHidden && r.sel1.length > 3 && r.handles.every(Boolean) && r.bar && r.grew && r.color === "1" && r.highlighted >= 1 && r.barGone && !errors.length;
+await browser.close();
+console.log(ok ? "PASS" : "FAIL");
+process.exit(ok ? 0 : 1);

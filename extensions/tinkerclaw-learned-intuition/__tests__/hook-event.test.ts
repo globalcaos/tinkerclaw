@@ -76,6 +76,22 @@ describe("hookEventFromRow", () => {
     expect(hookEventFromRow(row())!.id).toBe(ev!.id);
   });
 
+  it("carries a deny's owner grant code, so the page can draw its Allow button", async () => {
+    const { hookEventFromRow } = await load();
+    expect(hookEventFromRow(row({ grant: "AEGIS-0A1B2C" }))?.grant).toBe("AEGIS-0A1B2C");
+    expect(hookEventFromRow(row())).not.toHaveProperty("grant");
+  });
+
+  it("serves the grant in the feed too, under the live event's id", async () => {
+    const { hookEventFromRow, hookFeedRow } = await load();
+    const fed = hookFeedRow(row({ grant: "AEGIS-0A1B2C" }));
+    expect(fed.grant).toBe("AEGIS-0A1B2C");
+    expect(fed.id).toBe(hookEventFromRow(row({ grant: "AEGIS-0A1B2C" }))?.id);
+    expect(fed.decision).toBe("hard_block");
+    expect(fed.hookDecision).toBe("deny");
+    expect(hookFeedRow(row())).not.toHaveProperty("grant");
+  });
+
   it("passes every bubble decision and skips allow, observe and non-rows", async () => {
     const { hookEventFromRow } = await load();
     for (const decision of ["deny", "owner-intent", "owner-pasted-secret", "owner-allow"]) {

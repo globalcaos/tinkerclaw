@@ -48,16 +48,17 @@ function pubPrompt(folder) {
 Replicate the PROVEN J1 "Total Recall" template EXACTLY in structure + style. Create it as a DRAFT (status:"draft") — NEVER publish. Self-contained: do NOT write "J-series" or reference sibling papers by number/codename-as-citation.
 
 == STEP 1 — read the paper ==
-Open the latest \`${BASE}/${folder}/2026-06-02-*.md\` (the dated source). Extract: the TITLE (YAML frontmatter \`title:\`), the ABSTRACT (the \`## Abstract\` section), 2–3 of the STRONGEST concrete claims (prefer hard numbers), and the core idea in plain builder language.
+Open the highest-version dated source \`${BASE}/${folder}/YYYY-MM-DD-*-vX.Y.md\` (compare the vX.Y in the names; a paper can be renamed between versions, e.g. J21 novelty-on-purpose v1.0 → stochastic-resonance v1.1, 2026-10-29). Extract: the TITLE (YAML frontmatter \`title:\`), the ABSTRACT (the \`## Abstract\` section), 2–3 of the STRONGEST concrete claims (prefer hard numbers), and the core idea in plain builder language.
 
 == STEP 2 — assets ==
-PDF = the latest \`${BASE}/${folder}/2026-06-02-*.pdf\`. Render its first page to a cover:
+PDF = the PDF with the same basename as that .md. Render its first page to a cover:
   pdftoppm -png -f 1 -l 1 -singlefile -r 150 "<pdf>" /tmp/${folder}-cover    (→ /tmp/${folder}-cover.png)
 MAIN image = the most representative figure in \`${BASE}/${folder}/images/*.png\` (an architecture/flow diagram if present).
 
-== STEP 3 — host the PDF via SFTP (REST PDF upload is WAF-blocked) ==
-  scp -i ~/.ssh/sprintpaper -P 2222 -o StrictHostKeyChecking=accept-new "<pdf>" "msgqrrte@108.167.183.48:/home4/msgqrrte/public_html/website_b3f2b1a0/wp-content/uploads/2026/06/<pdf-basename>"
-Then verify: curl -sI "https://thetinkerzone.com/wp-content/uploads/2026/06/<pdf-basename>" → expect HTTP 200, application/pdf. That URL is the pdfUrl.
+== STEP 3 — host the PDF via SFTP (REST PDF upload is WAF-blocked; <YYYY>/<MM> = today's year and month) ==
+If the session's safety hook answers "Held: send … show: user-request", stop and report it (2026-10-29: two identical holds on this scp although the publish was requested; a hold has no release path yet). Never reroute the upload around it.
+  scp -i ~/.ssh/sprintpaper -P 2222 -o StrictHostKeyChecking=accept-new "<pdf>" "msgqrrte@108.167.183.48:/home4/msgqrrte/public_html/website_b3f2b1a0/wp-content/uploads/<YYYY>/<MM>/<pdf-basename>"
+Then verify: curl -sI "https://thetinkerzone.com/wp-content/uploads/<YYYY>/<MM>/<pdf-basename>" → expect HTTP 200, application/pdf. That URL is the pdfUrl.
 
 == STEP 4 — upload images via REST (PNG works) ==
   For cover and main-figure: ~/.openclaw/workspace/skills/wordpress-ultimate/scripts/wp-upload.sh <file> "<alt text>" → prints {"id","url",...}; capture "id" and "url".

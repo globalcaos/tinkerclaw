@@ -25,6 +25,10 @@ export async function withRemoteHttpResponse<T>(params: {
   init?: RequestInit;
   ssrfPolicy?: SsrFPolicy;
   auditContext?: string;
+  // FORK 2026-10-29: an embedding deadline aborts the request instead of only racing it. Both go
+  // to fetchWithSsrFGuard, which already takes them; timeoutMs also bounds the undici dispatcher.
+  signal?: AbortSignal;
+  timeoutMs?: number;
   onResponse: (response: Response) => Promise<T>;
 }): Promise<T> {
   const { response, release } = await fetchWithSsrFGuard({
@@ -32,6 +36,8 @@ export async function withRemoteHttpResponse<T>(params: {
     init: params.init,
     policy: params.ssrfPolicy,
     auditContext: params.auditContext ?? "memory-remote",
+    signal: params.signal,
+    timeoutMs: params.timeoutMs,
   });
   try {
     return await params.onResponse(response);

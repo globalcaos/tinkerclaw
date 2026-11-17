@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detailedModelLabel } from "./thinking-model-label.js";
+import { detailedModelLabel, effortLabel } from "./thinking-model-label.js";
 
 describe("detailedModelLabel", () => {
   it("keeps the three Opus versions apart", () => {
@@ -36,5 +36,19 @@ describe("detailedModelLabel", () => {
     expect(detailedModelLabel("copilot/copilot-think-deeper")).toBe("");
     expect(detailedModelLabel("opus")).toBe("");
     expect(detailedModelLabel("")).toBe("");
+  });
+});
+
+describe("effortLabel — the thinking effort beside the model", () => {
+  it("names each level as the picker does, and off as Auto", () => {
+    expect(effortLabel("medium")).toBe("Medium");
+    expect(effortLabel("xhigh")).toBe("xHigh");
+    expect(effortLabel("off")).toBe("Auto");
+  });
+
+  it("says nothing when no level was recorded", () => {
+    expect(effortLabel("")).toBe("");
+    expect(effortLabel(undefined)).toBe("");
+    expect(effortLabel(null)).toBe("");
   });
 });

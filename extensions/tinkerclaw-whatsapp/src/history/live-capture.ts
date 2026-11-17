@@ -176,14 +176,17 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
       source: "live-wm",
     };
 
-    // Upsert chat metadata
-    upsertChat(info.chat, undefined, info.isGroup);
-
     try {
+      // Inside the try: this runs in whatsmeow-node's stdout handler, so a throw here is an
+      // uncaught exception that exits the gateway and starves the adapter's listener
+      // (burn review 2026-11-14, b1113-c F7).
+      upsertChat(info.chat, undefined, info.isGroup);
       insertMessage(record);
       logger.debug({ id: info.id, chat: info.chat, type }, "Message captured (wm)");
-    } catch {
-      // INSERT OR REPLACE handles duplicates
+    } catch (err) {
+      // REPLACE never throws on a duplicate; reaching here means the archive write failed.
+      // console, not the pino child (filtered from the journal, see `visible` above).
+      console.warn(`[wa-history-wm] could not archive ${info.id}: ${String(err).slice(0, 200)}`);
     }
   });
 

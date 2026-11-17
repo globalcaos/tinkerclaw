@@ -187,4 +187,13 @@ describe("his words only (J7 §8, 2026-10-09)", () => {
     expect(buildHumorBlock({ jokesOff: false, recent: [] })).toContain("one line in three");
     expect(buildHumorBlock({ jokesOff: true, recent: [], frequency: "max" })).toContain("NO JOKE");
   });
+
+  it("at frequency max the register is Data's: sincere, about human society, its place and its future (2026-11-14)", () => {
+    const block = buildHumorBlock({ jokesOff: false, recent: [], frequency: "max" });
+    expect(block).toContain("how human society lives");
+    expect(block).toContain("what your future holds");
+    expect(block).toContain("The humor is never the aim");
+    expect(block).toContain("a real number, never an invented one");
+    expect(block).toContain("never at him or his people");
+  });
 });

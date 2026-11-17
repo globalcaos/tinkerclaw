@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none';" />
+  <title>PDF reader (offline)</title>
+  <!-- The app opens this page when no door answers (2026-11-10). The viewer runs in a frame: loaded as the
+       whole WebView page, every vh is 0 there and the viewer collapses (2026-10-22). sw.js serves it offline. -->
+  <link rel="stylesheet" href="offline-shell.css" />
+</head>
+<body>
+  <iframe id="reader" title="PDF reader"></iframe>
+  <script src="offline-shell.js" type="module"></script>
+</body>
+</html>

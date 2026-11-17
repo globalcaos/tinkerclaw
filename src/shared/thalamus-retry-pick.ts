@@ -52,6 +52,7 @@ export type RetryPickParams = {
   domain: TaskDomain;
   cooling?: ReadonlySet<SupplyId>;
   unfunded?: ReadonlySet<SupplyId>;
+  secondOpinionOnly?: ReadonlySet<SupplyId>;
   contextWindowFor?: (key: string) => number | undefined;
   estimatedTokens?: number;
   /** When set (a private source), only models of these providers may be picked. */
@@ -75,6 +76,7 @@ export function retryPick(p: RetryPickParams): RetryPick | undefined {
       supplies: p.supplies,
       cooling: p.cooling,
       unfunded: p.unfunded,
+      secondOpinionOnly: p.secondOpinionOnly,
       contextWindowFor: p.contextWindowFor,
       estimatedTokens: p.estimatedTokens,
       nowMs: p.nowMs,

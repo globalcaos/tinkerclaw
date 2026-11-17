@@ -14,10 +14,11 @@
 // model-selection.ts). Passing the function keeps that import exactly where it was.
 
 import { modelKey, normalizeModelRef } from "../agents/model-selection.js";
+import { providerQuotaExhaustion } from "../agents/quota-aware-auto-model.js";
 import { relCostLookup } from "../shared/rel-cost-table.js";
 import type { thalamusCandidates } from "../shared/thalamus-candidates.js";
 import { frontierRungsFor, type RouteSuggestion } from "../shared/thalamus-frontier.js";
-import { supplyStates } from "../shared/thalamus-supply.js";
+import { isSecondOpinionOnlyKey, supplyStates } from "../shared/thalamus-supply.js";
 import { readThalamusTierDefaults, thalamusTierForBias } from "./thalamus-tier-defaults.js";
 
 export type ThalamusCandidatesFn = typeof thalamusCandidates;
@@ -60,6 +61,8 @@ export function thalamusSuggestionFor(
 export type ThalamusBoardParts = {
   reachable: ReturnType<ThalamusCandidatesFn>;
   rungs: ReturnType<typeof frontierRungsFor>;
+  /** Pay-per-call rungs (Google) kept off `rungs` by the subscription cost ceiling, for last-resort second opinions. */
+  secondOpinionRungs: ReturnType<typeof frontierRungsFor>;
   supplies: ReturnType<typeof supplyStates>;
   contextWindowFor: (key: string) => number | undefined;
 };
@@ -95,6 +98,20 @@ export function buildThalamusBoardParts(input: {
   const rungs = reachable.considered.flatMap((c) =>
     c.relCost === undefined ? [] : frontierRungsFor(c.key, c.intelligenceIndex, c.relCost),
   );
+  // Pay-per-call models (Google) are dearer than the 1.5x subscription ceiling, so `thalamusCandidates`
+  // excludes them from `rungs`. Build their rungs separately so a cross-family second opinion can still
+  // reach them strictly when no subscription family outside the builder's survives.
+  const allowFilter =
+    input.allowedModelKeys && input.allowedModelKeys.size > 0 ? input.allowedModelKeys : undefined;
+  const secondOpinionRungs = Object.entries(input.catalog).flatMap(([key, entry]) => {
+    if (!isSecondOpinionOnlyKey(key)) return [];
+    if (allowFilter && !allowFilter.has(key)) return [];
+    const slash = key.indexOf("/");
+    const provider = slash > 0 ? key.slice(0, slash) : key;
+    if (providerQuotaExhaustion(input.snapshot, provider, input.nowMs) !== null) return [];
+    const rc = relCostLookup(key);
+    return rc === undefined ? [] : frontierRungsFor(key, entry.intelligenceIndex, rc);
+  });
   const supplies = supplyStates(input.snapshot?.windows, input.nowMs);
   const ctxByKey = new Map<string, number>();
   for (const row of input.windowRows) {
@@ -102,5 +119,11 @@ export function buildThalamusBoardParts(input: {
       ctxByKey.set(modelKey(row.provider, row.id), row.contextWindow);
     }
   }
-  return { reachable, rungs, supplies, contextWindowFor: (key) => ctxByKey.get(key) };
+  return {
+    reachable,
+    rungs,
+    secondOpinionRungs,
+    supplies,
+    contextWindowFor: (key) => ctxByKey.get(key),
+  };
 }

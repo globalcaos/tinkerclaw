@@ -212,8 +212,25 @@ export function anchorRung(
   opts?: AnchoredPickOptions,
 ): FrontierRung | undefined {
   const key = opts?.anchorKey ?? THALAMUS_ANCHOR_KEY;
-  const own = admissibleRungs(frontier, opts).filter((r) => r.key === key);
+  const admissible = admissibleRungs(frontier, opts);
+  let own = admissible.filter((r) => r.key === key);
+  if (own.length === 0) {
+    // THE ANCHOR IS A MODEL LINE, NOT ONE VERSION (2026-11-13). The key names Opus 5. Opus 5.5 is smarter and
+    // cheaper, so Opus 5 left the Pareto frontier and this function found no anchor. The dial then measured every
+    // stop from the board's best rung: at the top stop the band's floor was the top model's own score, so no rival
+    // could enter the band and "a better model takes the task" could never fire, and the stops below it were
+    // measured from the reserved model, not from Opus. The newest version of the anchor's line that is on the
+    // frontier now stands in, so a new Opus moves the anchor without an edit here.
+    const line = modelLineOf(key);
+    own = admissible.filter((r) => modelLineOf(r.key) === line);
+  }
   return own.length > 0 ? own[own.length - 1] : undefined;
+}
+
+/** The model line a key belongs to: the key without its trailing version (`claude-code/claude-opus-5-5` and
+ *  `claude-code/claude-opus-5` are both `claude-code/claude-opus`). */
+export function modelLineOf(key: string): string {
+  return key.replace(/[-.]\d+(?:[-.]\d+)*$/, "");
 }
 
 /** The frontier minus the reserved set, unless the caller opened it. Never returns empty when
@@ -556,14 +573,30 @@ export const DOMAIN_SWITCH_MAX_COST_MULT = 5;
 /**
  * A SUGGESTION IS A PRIOR, NOT A PIN (2026-10-02: the owner's picks are suggestions). The suggested rung runs
  * unless it cannot (the plan removes it: a limit, a cooling supply, a context too small, the allowlist) or
- * another rung still beats it for THIS TASK after a bonus of this fraction of the suggestion's own score. "For this
+ * another rung still beats it for THIS TASK (see `suggestionMoves`; this fraction was the old test). "For this
  * task" means the measured domain strength `p` of the task's domain, the only task-specific evidence the router
  * has. A general task, or a suggestion with no measured row for the domain, has nothing to move it, so it keeps
  * the turn: comparing on the AA index instead would let every smarter rung in the band beat a suggestion set at
  * a low effort, and the stop would never run what he picked. A relative bonus survives a vendor rescaling its
  * measure; a fixed number of points would not. 10 % is the architect's default to tune.
+ *
+ * SUPERSEDED AS THE TEST 2026-11-13. A bonus of 10 % of the stop's own score cannot be beaten once the stop
+ * sits above p0.91, and the smart stop (Fable 5.2) sits at p0.95 to p0.99 in seven of its eight measured
+ * domains: the rule read as "a better model takes the task" and could fire in one domain only. The test is
+ * now `suggestionMoves`, in percentile points. The constant stays for the readers that print it.
  */
 export const SUGGESTION_PRIOR = 0.1;
+
+/**
+ * Does a rival's measured strength move the turn off the stop? (owner, 2026-11-13: if any model is better
+ * than the smart stop at a task, route to it.) At the top stop any measured lead moves it, the rule the
+ * no-suggestion path has had since 2026-10-01. Below the top stop the dial is also about money, so the lead
+ * must be DOMAIN_SWITCH_MIN_GAIN points, the same bar as that path. Both are in percentile points of one table.
+ */
+export function suggestionMoves(stopP: number, rivalP: number, topStop: boolean): boolean {
+  const gain = rivalP - stopP;
+  return topStop ? gain > 0 : gain >= DOMAIN_SWITCH_MIN_GAIN;
+}
 
 export type RouteSuggestion = { key: string; effort?: string };
 
@@ -725,6 +758,7 @@ export function thalamusRoute(params: ThalamusRouteParams): ThalamusRoute | unde
       band,
       domain,
       strengthFor,
+      topStop,
     });
   }
   if (domain === "general") return base;
@@ -777,6 +811,7 @@ function routeFromSuggestion(i: {
   band: readonly FrontierRung[];
   domain: TaskDomain;
   strengthFor: (key: string, domain: TaskDomain) => DomainStrength | undefined;
+  topStop: boolean;
 }): ThalamusRoute {
   const { base, sRung, band, domain } = i;
   const sStrength = domain === "general" ? undefined : i.strengthFor(sRung.key, domain);
@@ -812,9 +847,11 @@ function routeFromSuggestion(i: {
       winnerStrength = st;
     }
   }
-  if (!winner || !winnerStrength || winnerStrength.p <= sStrength.p * (1 + SUGGESTION_PRIOR)) {
+  if (!winner || !winnerStrength || !suggestionMoves(sStrength.p, winnerStrength.p, i.topStop)) {
     return kept(
-      `${SUGGESTION_PRIOR * 100}% prior on ${domain} strength p${(sStrength.p * 100).toFixed(0)}`,
+      winner && winnerStrength
+        ? `best rival ${fmtRung(winner)} p${(winnerStrength.p * 100).toFixed(0)} does not lead ${domain} p${(sStrength.p * 100).toFixed(0)}${i.topStop ? "" : ` by ${DOMAIN_SWITCH_MIN_GAIN * 100} points`}`
+        : `no rival measured on ${domain}`,
     );
   }
   const gainPct = Math.round((winnerStrength.p / sStrength.p - 1) * 100);
@@ -830,7 +867,7 @@ function routeFromSuggestion(i: {
       gainPct,
       ...asked,
     },
-    reason: `${base.reason} · suggestion ${fmtRung(sRung)} moved to ${fmtRung(winner)}: +${gainPct}% on ${domain} strength after the ${SUGGESTION_PRIOR * 100}% prior`,
+    reason: `${base.reason} · suggestion ${fmtRung(sRung)} moved to ${fmtRung(winner)}: p${(winnerStrength.p * 100).toFixed(0)} against p${(sStrength.p * 100).toFixed(0)} on ${domain} strength`,
   };
 }
 

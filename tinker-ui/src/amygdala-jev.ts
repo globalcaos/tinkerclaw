@@ -7,6 +7,8 @@ import {
   fmtClockS,
   fmtDuration,
   GLYPH,
+  ruleLine,
+  type RuleRef,
 } from "./amygdala-html.js";
 /**
  * Jev in the chat: after each reply, at most two windows in TypeSafe's look (design block 5b, §9.2), deliberately foreign
@@ -461,8 +463,13 @@ export interface JevActionsOptions {
   extra?: (a: JevAction) => string;
   /** The explainer's words for an action's decision (2026-10-05), when any arrived. */
   explain?: (a: JevAction) => JevExplanation | undefined;
-  /** Actions whose raw step and answers the owner opened under "details". */
+  /** Actions the owner opened with the line's caret. */
   openDetails?: ReadonlySet<string>;
+  /**
+   * The bubble's line and the rules behind an action (FORK 2026-11-03), looked up from the feed's question and rule
+   * rows: `line` is what the amygdala says to the agent, `rules` what the opened bubble names and links.
+   */
+  words?: (a: JevAction) => { line?: string; rules: RuleRef[] };
 }
 
 /** The decision an action's vote and explanation belong to, if it has one. */
@@ -475,56 +482,59 @@ export function actionDecisionId(a: JevAction): string | undefined {
  * suggestion, Grok first). FORK 2026-10-28: the owner no longer votes on each action; the judge does, and the chip says
  * what it decided. Pending reads "judging…"; a failed or missing judgement shows nothing.
  */
+/** The judge by its family name ("xai/grok-4.7" → "Grok"), the way a person names it. */
+export function judgeName(model: string | undefined): string {
+  const last = model?.split("/").pop() ?? "";
+  const m = /grok|sonnet|haiku|opus|fable|gemini|kimi|qwen|deepseek|gpt/i.exec(last);
+  if (!m) return last || "Judge";
+  const w = m[0].toLowerCase();
+  return w === "gpt" ? "GPT" : w[0]!.toUpperCase() + w.slice(1);
+}
+
+/**
+ * The judge's verdict as a small note at the end of the line (FORK 2026-10-28: the judge, not the owner, says whether it
+ * was the right call). Pending reads "judging…"; a failed or missing judgement shows nothing.
+ */
 function verdictChip(x: JevExplanation | undefined): string {
   const words = x?.status === "done" ? x.explanation : undefined;
   if (words) {
-    const model = x?.model ? x.model.split("/").pop()! : "judge";
     const ok = words.suggest === 1;
-    return `<span class="amy-jverdict ${ok ? "amy-jv-ok" : "amy-jv-bad"}">${esc(model)}: ${ok ? "right call" : "wrong call"}</span>`;
+    return `<span class="amy-jverdict ${ok ? "amy-jv-ok" : "amy-jv-bad"}">${esc(judgeName(x?.model))}: ${ok ? "right call" : "wrong call"}</span>`;
   }
   return x?.status === "pending" ? `<span class="amy-jverdict amy-jv-wait">judging…</span>` : "";
 }
 
 /**
- * One action as a small card (FORK 2026-10-28): one line by default (what Jev did, the judge's verdict, the time, a
- * caret), the whole line toggles the rest open: what the agent was doing, what worried Jev, why the judge decided as it
- * did, then the step and Jev's answers. Cards that wait for the owner (`extra`: a hold, a question, Rewind) stay outside
- * the fold, always in view.
+ * One action as one line (FORK 2026-11-03): what the amygdala says to the agent, in its own voice, the judge's note and
+ * a caret. Opened: the worry in this case, why the judge called it as it did, and the rules behind it, each opening its
+ * file. What the agent was doing is the tool row above it, so the bubble does not repeat it. Cards that wait for the
+ * owner (`extra`: a hold, a question, Rewind) stay outside the fold, always in view.
  */
 export function renderAction(a: JevAction, o: JevActionsOptions): string {
   const x = o.explain?.(a);
   const words = x?.status === "done" ? x.explanation : undefined;
   const shown = o.openDetails?.has(a.key) ?? false;
-  const why = a.reasons.length
-    ? `<span class="amy-mt">because Jev answered</span> ` +
-      a.reasons.map((d) => `<b>${esc(d.questionName)}</b> → ${esc(fmtAnswer(d))}`).join(" · ")
-    : a.chips.length
-      ? `<span class="amy-mt">because of the rules</span> ${a.chips.map((c) => esc(c)).join(" · ")}`
-      : "";
-  const raw =
-    (a.step
-      ? `<div class="amy-jc-step"><span class="amy-mt">step</span> ${esc(a.step)}</div>`
-      : "") + (why ? `<div class="amy-jc-why">${why}</div>` : "");
+  const w = o.words?.(a);
+  const line = w?.line ?? CHANGE_WORDS[a.did][o.shadow === false ? 1 : 0];
   const head =
     `<div class="amy-jc-head amy-jc-toggle" data-amy-act="jev-act-detail" data-action="${esc(a.key)}">` +
-    `<span class="amy-jg">${GLYPH[a.did]}</span>` +
-    `<span class="amy-jo ${PILL_CLASS[a.did]}">${esc(DID_WORD[a.did])}</span>` +
-    `<b>${esc(CHANGE_WORDS[a.did][o.shadow === false ? 1 : 0])}</b>` +
+    `<span class="amy-jline">${esc(line)}</span>` +
     verdictChip(x) +
-    `<span class="amy-ja-time">${esc(fmtClock(a.ts))}</span>` +
     `<span class="amy-jx-more">${shown ? "▾" : "▸"}</span></div>`;
   let body = "";
-  if (shown && words) {
-    const model = x?.model ? x.model.split("/").pop()! : "judge";
-    const reason = words.replies.find((r) => r.vote === words.suggest)?.text ?? "";
+  if (shown) {
+    const worry = words?.jev ?? a.iv?.sentence;
+    const reason = words?.replies.find((r) => r.vote === words.suggest)?.text ?? "";
+    const rules = w
+      ? w.rules
+      : a.reasons.map((d) => ({ name: d.questionName })).filter((r) => r.name);
     body =
-      `<div class="amy-jx-doing">${esc(words.doing)}</div>` +
-      `<div class="amy-jx-jev"><span class="amy-mt">Jev</span>${esc(words.jev)}</div>` +
+      (worry ? `<div class="amy-jx-jev">${esc(worry)}</div>` : "") +
       (reason
-        ? `<div class="amy-jx-verdict"><span class="amy-mt">${esc(model)}</span>${esc(reason)}</div>`
+        ? `<div class="amy-jx-verdict"><span class="amy-mt">${esc(judgeName(x?.model))}</span>${esc(reason)}</div>`
         : "") +
-      raw;
-  } else if (shown) body = raw;
+      rules.map(ruleLine).join("");
+  }
   const extra = o.extra?.(a) ?? "";
   const tail = extra ? `<div class="amy-ja-extra">${extra}</div>` : "";
   return (

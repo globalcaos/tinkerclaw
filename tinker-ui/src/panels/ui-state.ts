@@ -86,6 +86,9 @@
 //      forever. A wrong panel fold is cheap; an un-resettable control is not.
 //      EXCEPTION (2026-09-21): closed-tab tombstones (`closedTabs`) are UNIONED at every
 //      layer, the server included, so no stale writer can resurrect a closed tab.
+//      EXCEPTION (2026-11-14): the unread glow's seen stamps (choice `tab:seen`) are MERGED
+//      per chat by tinker-prod-ui (the later stamp; they only rise) and pushed to every
+//      open page, so a chat read on the phone stops glowing on the laptop (tab-attention.ts).
 //   5. NO DOM, STILL. `fetch` and `AbortController` are feature-detected, never assumed:
 //      without them hydrate resolves `false` and the mirror is a silent no-op, so the
 //      module stays unit-testable in a bare Node/vitest process, which is an existing
@@ -1038,8 +1041,11 @@ export function uiStateHydrateOutcome(): HydrateOutcome {
 // drifted apart until one of them reloaded. These three pieces let app.ts re-read it safely; the
 // adopt-or-not rule itself is pure and lives in tab-resync.ts.
 
-/** The server's tab list and tombstones, as one GET saw them. */
-export type ServerTabs = { tabs: TabRecord[]; closedTabs: ClosedTabs };
+/**
+ * The server's tab list and tombstones, as one GET saw them. FORK 2026-11-14 — and its choices: the
+ * live re-sync also adopts the unread glow's seen stamps another page wrote (app.ts, `tab:seen`).
+ */
+export type ServerTabs = { tabs: TabRecord[]; closedTabs: ClosedTabs; choices: StringMap };
 
 /**
  * One GET of the durable file, NOT applied: same endpoint, seat header, timeout and defensive
@@ -1054,7 +1060,7 @@ export async function peekUiStateTabs(
     if (snap === null || snap.tabs === undefined) {
       return null;
     }
-    return { tabs: snap.tabs, closedTabs: snap.closedTabs ?? {} };
+    return { tabs: snap.tabs, closedTabs: snap.closedTabs ?? {}, choices: snap.choices ?? {} };
   } catch {
     return null;
   }

@@ -221,6 +221,21 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
   { commandPath: ["hooks"], policy: { networkProxy: "bypass" } },
   { commandPath: ["logs"], policy: { networkProxy: "bypass" } },
   { commandPath: ["mcp"], policy: { networkProxy: "bypass" } },
+  // FORK 2026-10-29: the stdio bridge every Claude worker spawns (src/mcp/jarvis-tools-serve.ts)
+  // only proxies to the gateway, which validated the config it runs and keeps policy, the deny
+  // list and hooks. So: no config guard, no plugins, no banner on its MCP stdout, no PATH
+  // bootstrap, and no egress proxy, whose "default" policy makes run-main read the full config.
+  {
+    commandPath: ["mcp", "tools"],
+    exact: true,
+    policy: {
+      bypassConfigGuard: true,
+      loadPlugins: "never",
+      hideBanner: true,
+      ensureCliPath: false,
+      networkProxy: "bypass",
+    },
+  },
   {
     commandPath: ["node"],
     policy: { networkProxy: "bypass" },

@@ -4,6 +4,7 @@ import type { IncomingMessage } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
+import { findUndefinedNames } from "./scripts/undefined-names.mjs";
 
 // Read gateway token from openclaw config for dev mode auth injection
 function readGatewayToken(): string {
@@ -566,6 +567,28 @@ function uiStatePlugin(): Plugin {
 //     degrades, the build never fails because of it.
 // Consumers: tinker-ui/src/app.ts stamps `#messages[data-ui-build]` (so the mirrored html names
 // its bundle) and sends `build` in the debug.dumpUiSnapshot payload (so the sidecar json does).
+// FORK 2026-11-03 — vite build transpiles without type-checking, so a call to a name that was never
+// imported or declared built cleanly and threw at runtime: send() stopped between the bubble push and
+// chat.send. Refuse to build while the type checker finds any such name (scripts/undefined-names.mjs).
+function undefinedNamesGate(): Plugin {
+  return {
+    name: "tinker-undefined-names",
+    apply: "build",
+    buildStart() {
+      const { checked, errors, reason } = findUndefinedNames(__dirname);
+      if (!checked) {
+        this.warn(`undefined-names check skipped: ${reason}`);
+        return;
+      }
+      if (errors.length > 0) {
+        this.error(
+          `${errors.length} undefined name(s); each throws a ReferenceError when its line runs:\n${errors.join("\n")}`,
+        );
+      }
+    },
+  };
+}
+
 function uiBuildStamp(): string {
   let sha = "unknown";
   try {
@@ -593,7 +616,13 @@ export default defineConfig({
     // would splice a bare identifier into app.ts and fail at parse time.
     __UI_BUILD__: JSON.stringify(uiBuildStamp()),
   },
-  plugins: [tinkerDevConfig(), openFilePlugin(), kitContentPlugin(), uiStatePlugin()],
+  plugins: [
+    tinkerDevConfig(),
+    openFilePlugin(),
+    kitContentPlugin(),
+    uiStatePlugin(),
+    undefinedNamesGate(),
+  ],
   server: {
     port: 18790,
     // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: allow

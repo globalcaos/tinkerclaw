@@ -1997,6 +1997,9 @@ async function runRecipeInner(opts: RecipeRunOptions): Promise<RecipeRunResult> 
     // Mark all steps in this group as in_progress (best-effort; plan-store
     // enforces at-most-one invariant by demoting previous, so we accept that)
     for (const dispatch of groupDispatches) {
+      // Resume: a step already settled `done` is not re-run below, so never
+      // downgrade its row (later steps read only `done` rows for outputs).
+      if (resuming && isStepDone(existing!, dispatch.stepIndex)) continue;
       try {
         await store.step({
           sessionKey: opts.sessionKey,

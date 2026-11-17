@@ -15,9 +15,10 @@
  * upstream path is patched.
  *
  * Handlers:
- *   fork.memory.search(query, temporalMode?, asOfTime?, maxResults?, minScore?, sessionKey?)
+ *   fork.memory.search(query, temporalMode?, asOfTime?, maxResults?, minScore?, sessionKey?, caller?)
  *     — recall against the chosen temporal slice; returns the manager's results plus the
  *       resolved temporalMode echoed back so the UI can label the slice it rendered.
+ *       FORK 2026-10-29: caller 'probe' is a self-test (words only, no sync, never demand).
  *   fork.engram.consolidate.run(baseDir?, sessionFilter?)
  *     — invoke the ENGRAM nightly sleep-consolidation job (Upgrade 4) on demand. The fork's
  *       crons are PROMPT-driven (no coded scheduler registry exists — see self-evolution-cron.ts),
@@ -101,6 +102,10 @@ export const forkMemoryHandlers: GatewayRequestHandlers = {
     const maxResults = readNum(p, "maxResults");
     const minScore = readNum(p, "minScore");
     const sessionKey = readStr(p, "sessionKey") ?? readStr(p, "parentSessionKey");
+    // FORK 2026-10-29: who is asking (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). 'probe' (the bible's
+    // self-test) searches words only, starts no sync and is never counted as demand; every other
+    // call is a real RPC search, the demand that can arm a dormant embedder.
+    const caller = readStr(p, "caller") === "probe" ? "probe" : "rpc";
 
     let resolution: ManagerResolution;
     try {
@@ -131,7 +136,7 @@ export const forkMemoryHandlers: GatewayRequestHandlers = {
     }
 
     try {
-      // The concrete MemoryIndexManager honours temporalMode/asOfTime (manager.ts);
+      // The concrete MemoryIndexManager honours temporalMode/asOfTime and caller (manager.ts);
       // the public MemorySearchManager interface omits them, so widen the opts type
       // for the call (same shape MemoryIndexManager.search accepts).
       const results = await resolution.manager.search(query, {
@@ -140,9 +145,10 @@ export const forkMemoryHandlers: GatewayRequestHandlers = {
         ...(sessionKey ? { sessionKey } : {}),
         temporalMode,
         ...(asOfTime !== undefined ? { asOfTime } : {}),
+        caller,
       } as Parameters<MemorySearchManager["search"]>[1]);
       log.info(
-        `fork.memory.search query="${query}" mode=${temporalMode}${asOfTime !== undefined ? ` asOf=${asOfTime}` : ""} returned=${results.length}`,
+        `fork.memory.search query="${query}" mode=${temporalMode}${asOfTime !== undefined ? ` asOf=${asOfTime}` : ""} caller=${caller} returned=${results.length}`,
       );
       respond(
         true,

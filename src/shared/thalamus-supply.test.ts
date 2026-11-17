@@ -104,12 +104,15 @@ describe("supplyStateFrom — a supply is priced by its tightest constraint", ()
     expect(metered.ballistic).toBe(false);
   });
 
-  it("never charges a FREE TIER a scarcity premium — its balance is not an obligation", () => {
-    // 20h left on a daily window against 90% spent: 73 points ahead of pace, and still not dear.
-    const free = supplyStateFrom("google", [win("daily", 90, 20 * HOUR)], NOW);
-    expect(supplyKind("google")).toBe("free-tier");
-    expect(free.shadow).toBe(0);
-    expect(free.shadow).not.toBeGreaterThan(0);
+  it("treats Google as METERED — paid per call out of pocket, never discounted for pace", () => {
+    // Behind pace on a daily window (10% used with 1h left) still gets no burn discount, and
+    // ahead of pace (90% used with 20h left) keeps scarcity upward.
+    const behind = supplyStateFrom("google", [win("daily", 10, 1 * HOUR)], NOW);
+    const ahead = supplyStateFrom("google", [win("daily", 90, 20 * HOUR)], NOW);
+    expect(supplyKind("google")).toBe("metered");
+    expect(behind.shadow).toBe(0);
+    expect(behind.ballistic).toBe(false);
+    expect(ahead.shadow).toBeGreaterThan(0);
   });
 
   it("reports a ballistic subscription at the floor price, and the soonest reset", () => {
@@ -234,6 +237,7 @@ describe("fanOutSupply — the leaves land on the friendliest clock", () => {
     const only = new Map<SupplyId, SupplyState>([
       ["openai", supplyStateFrom("openai", [win("5-hour", 100)], NOW)],
       ["openrouter", supplyStateFrom("openrouter", [win("7-day", 0, 3.5 * DAY)], NOW)],
+      ["google", supplyStateFrom("google", [win("daily", 0, 12 * HOUR)], NOW)],
     ]);
     expect(fanOutSupply(only)).toBeUndefined();
   });
@@ -264,6 +268,11 @@ describe("supplyOfKey — several providers, one billing pool", () => {
     expect(supplyOfKey("who/knows")).toBe("unknown");
     expect(supplyOfKey("bare-model-id")).toBe("unknown");
     expect(supplyKind("unknown")).toBe("metered");
+  });
+
+  it("maps google-gemini-cli to the metered second-opinion-only Google supply", () => {
+    expect(supplyOfKey("google-gemini-cli/gemini-3-pro-preview")).toBe("google");
+    expect(supplyKind(supplyOfKey("google-gemini-cli/gemini-3-pro-preview"))).toBe("metered");
   });
 });
 

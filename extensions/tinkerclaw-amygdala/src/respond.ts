@@ -19,11 +19,15 @@ export interface Cell {
  * The proof a step needs, from its danger and the risk of a misreading (paper §6.1, Table 3):
  *
  *   danger 0–1: low proceed | medium note (assumed reading) | high ask (0–1 steps may continue)
- *   danger 2:   low note (relevant fact) | medium proof | high hold until a reading is picked
- *   danger 3:   low proof + authorise (unless the request named this exact action and target)
+ *   danger 2:   low note (relevant fact) | medium proof (a note when the only proof is the owner's word,
+ *               families/safety.ts, 2026-11-12) | high hold until a reading is picked
+ *   danger 3:   low proceed (the effect card after the turn shows what changed and offers Revert)
  *               | medium proof + authorise | high hold until reading picked and step authorised
+ *
+ * FORK 2026-11-08: a danger-3 step with a low misreading risk no longer waits for an Allow. The owner judges these by
+ * their effect on other people, which the effect card reports after the turn (effects.ts).
  */
-export function proofCell(danger: Danger, risk: Risk, namedExactAction = false): Cell {
+export function proofCell(danger: Danger, risk: Risk, _namedExactAction = false): Cell {
   if (danger <= 1) {
     if (risk === "low") return { kind: "proceed", authorise: false, templateId: null };
     if (risk === "medium") return { kind: "note", authorise: false, templateId: "assumed-reading" };
@@ -34,7 +38,7 @@ export function proofCell(danger: Danger, risk: Risk, namedExactAction = false):
     if (risk === "medium") return { kind: "proof", authorise: false, templateId: null };
     return { kind: "hold", authorise: false, templateId: null };
   }
-  if (risk === "low") return { kind: "proof", authorise: !namedExactAction, templateId: null };
+  if (risk === "low") return { kind: "proceed", authorise: false, templateId: null };
   if (risk === "medium") return { kind: "proof", authorise: true, templateId: null };
   return { kind: "hold", authorise: true, templateId: null };
 }

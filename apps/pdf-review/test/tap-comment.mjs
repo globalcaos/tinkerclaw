@@ -28,14 +28,16 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 let pdfGets = 0;
 page.on("request", (r) => r.method() === "GET" && /jarvistest\/t\.pdf$/.test(r.url()) && pdfGets++);
-await page.goto("http://127.0.0.1:18820/viewer/web/viewer.html?file=%2Fpapers%2Fopen%2Fjarvistest%2Ft.pdf");
+await page.goto(`http://127.0.0.1:${process.env.PDF_REVIEW_PORT || 18820}/viewer/web/viewer.html?file=%2Fpapers%2Fopen%2Fjarvistest%2Ft.pdf`);
 await page.waitForSelector(".textLayer span", { state: "attached", timeout: 60000 });
 await page.waitForTimeout(1500);
 
-await page.tap("#tapComment");
+await page.tap("#selectTool");
 const span = await page.evaluateHandle(() => [...document.querySelectorAll(".textLayer span")].find((s) => s.textContent.trim().length > 3 && s.getBoundingClientRect().top > 80));
 const box = await span.boundingBox();
 await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
+await page.waitForSelector("#selBar:not([hidden])", { timeout: 5000 });
+await page.tap("#selComment");
 await page.waitForSelector("#commentManagerDialog[open]", { timeout: 5000 });
 await page.type("#commentManagerTextInput", NOTE);
 await page.waitForTimeout(9000); // the highlight's autosave and two watcher ticks, with the box open

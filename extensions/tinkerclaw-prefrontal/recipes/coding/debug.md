@@ -114,6 +114,12 @@ observed output. Name the conditions: inputs, environment, timing, who or what
 was concurrent. If it will not reproduce, that is the finding — say so and go
 to step 2 to learn why, rather than fixing a bug you cannot see fail.
 
+When the bug shows only on the owner's own device ("does not load on my laptop"), read THAT
+device's state before testing anything clean: a fresh browser, profile or checkout has no history
+and cannot fail for a history reason. Browser tab: `chrome-tab-status.py` (TOOLS.md one-calls)
+gives the HTTP status and opener origin of every saved load. Then drive a throwaway copy INTO that
+state to reproduce. "Works for me" from a clean environment is not step 1 done.
+
 Confirm the test fails for the EXPECTED reason (read the failure message, not
 just the red), then COMMIT the failing test on its own before any fix is
 written. That commit is the proof the bug existed and the guard that it stays
@@ -231,6 +237,8 @@ still unknown. This pass counts as one attempt; it does not repeat.
 
 ## Failures Overcome
 
+- **2026-11-03 (UI placement fix reported before it was seen).** A Tinker bubble-placement fix was built, unit-tested and reported live, then asked to be checked by a reload; on the real chat it broke the purple voice line and glued two replies. Cause: step 6 was satisfied by a green test on invented rows, while the real rows differed (history rows carry save times; tool rows share the run). Rule: for any Tinker UI fix, run `node ~/.openclaw/workspace/scripts/tinker-turn-probe.mjs <sessionKey> "<text of the user message>"` on the turn the owner named, before and after, and report the bubble order it prints; add a console guard log when the cause is not proven, and read it there before the second patch.
+
 - **Symptom fix loop:** the visible error is patched without tracing to the
   cause. Fixed by requiring step 4 to name a `file:line` before step 5 begins.
 - **Over-engineering the fix:** error handling, validation and comments get
@@ -249,4 +257,9 @@ still unknown. This pass counts as one attempt; it does not repeat.
 - **Theorising before the ladder (2026-08-26):** three commands — what is on
   disk, what is served, what is rendered — settle in seconds what code-reading
   argues about for an hour. Run them first; the first contradiction is the bug.
+- **Clean environment answered the wrong question (2026-11-17):** a panel reported as not loading
+  on the laptop was tested with curl and a fresh headless Chrome, all green, and the reply asked
+  the owner what he saw. His tab had been on 401 for a day: it was opened once from a null-origin
+  card, and Chrome then withheld the SameSite=Strict cookie on every reload and restore. The tab's
+  saved status was on disk the whole time. Read the owner's device state first (step 1).
 - **v2.1.0 (2026-09-03):** folded in the AI-native SDLC playbook (claude.com/blog/the-ai-native-sdlc-playbook — the source the "INTENT.md" video walks through): the failing test is committed on its own before the fix, and the fix commit may not touch a test file.

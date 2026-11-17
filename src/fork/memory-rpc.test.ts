@@ -25,6 +25,7 @@ type SearchOpts = {
   sessionKey?: string;
   temporalMode?: "current" | "valid-at" | "all";
   asOfTime?: number;
+  caller?: string;
 };
 
 function stubManager(opts: {
@@ -119,6 +120,19 @@ describe("fork.memory.search (Upgrade 3 bi-temporal read-path)", () => {
     }));
     await call("fork.memory.search", { query: "x", temporalMode: "bogus" });
     expect(seen?.temporalMode).toBe("current");
+  });
+
+  // FORK 2026-10-29: the caller decides whether a search is demand (TINKER_UI_DESIGN_BIBLE/embedder-fit.md).
+  it("passes caller 'probe' through and counts every other caller as 'rpc'", async () => {
+    const seen: Array<string | undefined> = [];
+    __setMemoryManagerResolverForTest(async () => ({
+      manager: stubManager({ onSearch: (_q, o) => seen.push(o?.caller) }),
+    }));
+    await call("fork.memory.search", { query: "x", caller: "probe" });
+    await call("fork.memory.search", { query: "x" });
+    await call("fork.memory.search", { query: "x", caller: "agent" });
+    await call("fork.memory.search", { query: "x", caller: 7 });
+    expect(seen).toEqual(["probe", "rpc", "rpc", "rpc"]);
   });
 
   it("returns the manager's results", async () => {

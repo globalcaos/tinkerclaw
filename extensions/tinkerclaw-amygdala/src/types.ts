@@ -6,6 +6,13 @@
 export type Seam = "prompt" | "pre-tool" | "post-tool" | "stop";
 /** Who started the turn (2026-10-25): the owner, an agent or a job (`⟦AGENT:…⟧`), or the background Fractal reflection. */
 export type TurnKind = "owner" | "agent" | "reflection";
+
+/** What the reviewers read about a turn a job or an agent woke: its own words and the owner's last typed orders. */
+export interface TurnWake {
+  words?: string;
+  /** Oldest first. */
+  orders: string[];
+}
 export type Origin = "observed" | "derived" | "inferred" | "missing";
 export type EffectClass =
   | "read"
@@ -158,16 +165,19 @@ export interface TargetHistory {
 /**
  * A target of this step that is the agent's own, familiar to it, or the owner's choice (2026-10-25): the agent created
  * it earlier in the session (`created`), it sits in a scratch folder (`scratch`), the owner's request names it
- * (`named`), or it existed and the agent changed it earlier in the session (`edited`: still the owner's data).
+ * (`named`), it was born in the last five minutes, like a cache a command left behind (`fresh`, 2026-11-13), or it
+ * existed and the agent changed it earlier in the session (`edited`: still the owner's data).
  */
 export interface OwnedTarget {
   path: string;
-  why: "created" | "scratch" | "named" | "edited";
+  why: "created" | "scratch" | "named" | "fresh" | "edited";
 }
 
 /** The record of §7.1 / Appendix B. Every field carries its origin. */
 export interface Situation {
   id: string;
+  /** The tool call this was judged on; the feed rebuild needs it to place the check beside its tool row. */
+  toolUseId?: string;
   ts: number;
   sessionKey: string;
   turnId: string;
@@ -206,6 +216,18 @@ export interface Situation {
   turnKind: Field<TurnKind>;
   /** The targets of this step the agent created, keeps in scratch, edited before, or the owner named; [] when none. */
   ownedTargets: Field<OwnedTarget[]>;
+  /**
+   * The targets a shell step only lists or reads (`ls`, `cat`, `stat`) and names nowhere else in the command
+   * (2026-11-13, effect-class.ts `readOnlyByCommand`). A deletion does not reach them. Absent on older records.
+   */
+  readOnlyTargets?: Field<string[]>;
+  /**
+   * The conversation before this prompt: the last few prompts and the reply that closed each (transcript.ts
+   * `recentExchange`, 2026-11-13). The ambiguity screen reads a request next to it. Absent on older records.
+   */
+  exchange?: Field<string>;
+  /** The calls the agent made in this turn so far, as `Tool arg` lines (`turnSince`). Absent on older records. */
+  turnSteps?: Field<string[]>;
 }
 
 /** Names of the fields a question may read. */
@@ -240,6 +262,8 @@ export const SITUATION_FIELD_NAMES: readonly SituationFieldName[] = [
   "contextCounts",
   "turnKind",
   "ownedTargets",
+  "exchange",
+  "turnSteps",
 ];
 
 /**
@@ -276,6 +300,8 @@ export interface Question {
   parent?: number;
   /** Human name shown in the UI (never the instructions). */
   name: string;
+  /** What the chat bubble says to the agent when this question acts, in the amygdala's own voice. Never sent to the judge. */
+  says?: string;
 }
 
 export interface Verdict {
@@ -297,7 +323,17 @@ export interface Verdict {
   ts: number;
 }
 
-export type EvidenceKind = "listing" | "references" | "backup" | "user-request" | "prior-failure";
+/**
+ * `reading-sources` (2026-11-13): two independent sources point to the reading the agent acts on. Code settles it
+ * (second-opinion family), never the evidence judge.
+ */
+export type EvidenceKind =
+  | "listing"
+  | "references"
+  | "backup"
+  | "user-request"
+  | "prior-failure"
+  | "reading-sources";
 
 export type Response =
   | { kind: "proceed" }

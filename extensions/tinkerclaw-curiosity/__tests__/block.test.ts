@@ -43,7 +43,7 @@ describe("the turn block", () => {
   it("carries the contract, the ✨ DEEPER marker, the map and the file to update", () => {
     const b = buildCuriosityBlock("- fractals", "/w/passions.md");
     expect(b).toContain(DEEPER_MARKER);
-    expect(b).toContain("Do what he asked first");
+    expect(b).toContain("Do what they asked first");
     expect(b).toContain("- fractals");
     expect(b).toContain("/w/passions.md");
     expect(b).toMatch(/One question, not a list/);
@@ -67,5 +67,41 @@ describe("buildCuriosityBlock: no Fractal section in the reply", () => {
     const b = buildCuriosityBlock("- fractals", "/w/passions.md");
     expect(b).not.toMatch(/FRACTAL/);
     expect(b).toMatch(/before the closing summary card/);
+  });
+});
+
+describe("buildCuriosityBlock: the bridge to the principal's objectives", () => {
+  it("a fresh clone without an objectives file gets no bridge and a neutral principal", () => {
+    const b = buildCuriosityBlock("- fractals", "/w/passions.md");
+    expect(b).not.toMatch(/The bridge/);
+    expect(b).not.toMatch(/Keep the thread/);
+    expect(b).toContain("You learn what your principal is passionate about");
+    expect(b).toMatch(/^4\. When they answer/m);
+  });
+  it("objectives switch on the bridge and the thread rule, numbered in order", () => {
+    const b = buildCuriosityBlock("- fractals", "/w/passions.md", {
+      principal: "Ada",
+      objectives: "- earn enough to work on her own projects",
+      objectivesPath: "/w/OBJECTIVES.md",
+    });
+    expect(b).toContain("You learn what Ada is passionate about");
+    expect(b).toMatch(/^4\. The bridge\./m);
+    expect(b).toMatch(/^5\. Keep the thread\./m);
+    expect(b).toMatch(/^6\. When they answer/m);
+    expect(b).toMatch(/^7\. Tinker chat only/m);
+    expect(b).toMatch(/Keep their original wish fixed/);
+    expect(b).toMatch(/last judge/);
+    expect(b).toContain("### What Ada is working towards (`/w/OBJECTIVES.md`)");
+    expect(b).toContain("- earn enough to work on her own projects");
+  });
+  it("curiosityContextFor passes the options through", () => {
+    const o = {
+      sessionPrefix: "agent:main:tinker:",
+      profile: "- x",
+      profilePath: "/w/p.md",
+      objectives: "- y",
+      objectivesPath: "/w/o.md",
+    };
+    expect(curiosityContextFor("agent:main:tinker:abc", o)).toMatch(/The bridge/);
   });
 });

@@ -367,6 +367,14 @@ export async function noteMemorySearchHealth(
 
   // If a specific provider is configured (not "auto"), check only that one.
   if (resolved.provider !== "auto") {
+    // FORK 2026-10-29: "none" is the word index only, set by hand or given by the embedder fit
+    // to an unset or "auto" provider (src/fork/embedder-fit.ts). It has no key or model to check,
+    // and the checks below would report a missing API key for it. The fit's own doctor note
+    // (noteEmbedderFit, run after this check by src/flows/doctor-health-contributions.ts)
+    // explains the choice.
+    if (resolved.provider === "none") {
+      return;
+    }
     if (resolved.provider === "local") {
       const suggestedRemoteProvider = resolveSuggestedRemoteMemoryProvider();
       if (hasLocalEmbeddings(resolved.local, true)) {

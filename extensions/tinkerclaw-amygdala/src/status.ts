@@ -1,11 +1,21 @@
 /**
  * The one-sentence status of the amygdala (design doc §7.2 `amygdala2.status`). `buildStatus` is pure; `readSpool`
  * is the only I/O here: the hooks append one JSON line per call to `<dataDir>/hook-spool.jsonl`, and the gateway reads
- * the tail for per-seam liveness and for `floor-missing` (the hook found no usable policy.json).
+ * the tail for per-seam liveness and for `floor-missing` (the hook found no usable policy.json). `aegisDenied` reads the
+ * tail of the AEGIS hook's own file the same way.
  */
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Seam } from "./types.js";
+
+/** The page's feed reaches this far back (tinker-ui FEED_WINDOW_MS), so an older card has no button left to click. */
+export const OWNER_WAIT_WINDOW_MS = 36 * 3_600_000;
+const WAITS_ON_OWNER = new Set(["hold", "proof", "ask"]);
+
+/** The open interventions only the owner can close. A send-back or a refusal asks nothing of him (2026-10-31: 602 shown). */
+export function waitingOnOwner(open: readonly { kind: string }[]): number {
+  return open.filter((i) => WAITS_ON_OWNER.has(i.kind)).length;
+}
 
 export const JUDGE_SILENT_MS = 5 * 60_000;
 const SPOOL_TAIL_BYTES = 128 * 1024;
@@ -53,8 +63,12 @@ export interface StatusEvent {
   rewind: number;
 }
 
-/** 3 (2026-10-22): `amygdala2.rewind` takes `fromPrompt` and cuts from that exchange to the end, not only the last one. */
-export const REWIND_LEVEL = 3;
+/**
+ * 3 (2026-10-22): `amygdala2.rewind` takes `fromPrompt` and cuts from that exchange to the end, not only the last one.
+ * 4 (2026-11-13): it also takes `fromPromptAt` (two prompts with the same words are told apart by time) and `orLast`,
+ * rewinds a first exchange (the whole conversation: the tab is released from its session) and answers `cutAt`.
+ */
+export const REWIND_LEVEL = 4;
 
 export function buildStatus(i: StatusInputs): StatusEvent {
   const seenTimes = Object.values(i.seams).filter((n): n is number => typeof n === "number");
@@ -203,4 +217,57 @@ export function readSpool(dataDir: string, maxLines = 200): SpoolSummary {
     if (isFloorMissing(r)) out.floorMissingTs = Math.max(out.floorMissingTs ?? 0, ts);
   }
   return out;
+}
+
+/**
+ * Where the AEGIS hook writes: `amygdala` beside Jev's own folder, unless told otherwise (hooks/hard-rules.mjs, whose hook
+ * command leaves the variable unset). A test's data folder has no such file, so it never reads the real one.
+ */
+export function aegisSpoolPath(dataDir: string): string {
+  const dir = process.env.AMYGDALA_DATA_DIR || join(dirname(dataDir), "amygdala");
+  return join(dir, "hook-decisions.jsonl");
+}
+
+function denyInTail(file: string, toolUseId: string): boolean {
+  try {
+    const fd = openSync(file, "r");
+    try {
+      const st = fstatSync(fd);
+      const len = Math.min(st.size, SPOOL_TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      if (len > 0) readSync(fd, buf, 0, len, st.size - len);
+      return buf
+        .toString("utf8")
+        .split("\n")
+        .some((line) => {
+          if (!line.includes(toolUseId)) return false;
+          try {
+            const r = JSON.parse(line) as Record<string, unknown>;
+            return r.toolUseId === toolUseId && r.decision === "deny" && r.enforced === true;
+          } catch {
+            return false;
+          }
+        });
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+const AEGIS_POLL_MS = 50;
+
+/**
+ * Has AEGIS refused this tool call? Its hook starts beside Jev's and writes this row right after its deny: of 13 stops on
+ * such calls, 12 rows were there before Jev had its answers and the last came 34 ms after (2026-11-02). A missing file
+ * answers no at once.
+ */
+export async function aegisDenied(file: string, toolUseId: string, waitMs = 400): Promise<boolean> {
+  if (!existsSync(file)) return false;
+  for (let waited = 0; ; waited += AEGIS_POLL_MS) {
+    if (denyInTail(file, toolUseId)) return true;
+    if (waited >= waitMs) return false;
+    await new Promise((r) => setTimeout(r, AEGIS_POLL_MS));
+  }
 }

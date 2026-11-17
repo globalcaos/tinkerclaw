@@ -22,6 +22,7 @@ import {
   saveRows,
   upstreamHeaders,
 } from "./door.mjs";
+import { createTerminal, openableUrl } from "./term.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GW = "FAKE-GATEWAY-TOKEN-0123456789";
@@ -131,7 +132,7 @@ before(async () => {
     revokeSweepMs: 100,
   }));
   doorPort = await listen(door);
-  phone = addDevice(dir, "the architect Flip6");
+  phone = addDevice(dir, "the architect flip phone");
 });
 
 after(() => {
@@ -683,6 +684,46 @@ describe("phone door", () => {
   it("upstreamHeaders leaves an unrelated request alone apart from Host", () => {
     const h = upstreamHeaders({ host: "a:1", accept: "*/*" }, "127.0.0.1:18793");
     assert.deepEqual(h, { accept: "*/*", host: "127.0.0.1:18793" });
+  });
+});
+
+describe("terminal: links open on the phone", () => {
+  it("openableUrl takes http(s) only, with no spaces or control characters", () => {
+    assert.equal(openableUrl(" https://claude.ai/oauth?a=1\n"), "https://claude.ai/oauth?a=1");
+    assert.equal(openableUrl("file:///etc/passwd"), null);
+    assert.equal(openableUrl("https://a b"), null);
+    assert.equal(openableUrl("https://x\u0007y"), null);
+  });
+
+  it("open-on-phone drops the URL, the door takes it once and refuses junk", async () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "term-open-"));
+    const events = [];
+    const run = (...args) =>
+      new Promise((resolve) =>
+        execFile(
+          path.join(HERE, "open-on-phone"),
+          args,
+          { env: { ...process.env, PHONE_DOOR_DIR: d } },
+          (err) => resolve(err ? err.code : 0),
+        ),
+      );
+    assert.equal(await run("https://claude.ai/oauth/authorize?x=1"), 0);
+    assert.equal(await run("not-a-url"), 1);
+    fs.writeFileSync(path.join(d, "term-open", "bad.url"), "javascript:alert(1)");
+    const term = createTerminal({
+      audit: (e) => events.push(e),
+      openDir: path.join(d, "term-open"),
+    });
+    try {
+      assert.deepEqual(fs.readdirSync(path.join(d, "term-open")), []);
+      assert.deepEqual(events, [{ ev: "term_link", sent: 0 }]);
+      assert.equal(await run("https://example.com/second"), 0);
+      for (let i = 0; i < 50 && events.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(events.length, 2);
+    } finally {
+      term.close();
+      fs.rmSync(d, { recursive: true, force: true });
+    }
   });
 });
 

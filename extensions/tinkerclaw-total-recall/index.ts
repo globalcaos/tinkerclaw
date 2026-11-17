@@ -133,7 +133,28 @@ function writeSharedState(): void {
 const pipelineCache = new Map<string, IngestionPipeline>();
 const storeCache = new Map<string, EventStore>();
 
+// tinkerclaw-forget moves this epoch after it rewrites files. An event store reads its file once
+// and never again, and packs and the bank seed are built from those stores, so everything memoised
+// here may still hold the forgotten fact: drop it all and read the redacted files again.
+const FORGET_EPOCH_KEY = Symbol.for("openclaw.memory.forget-epoch");
+let seenForgetEpoch = 0;
+
+function dropCachesAfterForget(): void {
+  const epoch = (globalThis as Record<symbol, number | undefined>)[FORGET_EPOCH_KEY] ?? 0;
+  if (epoch === seenForgetEpoch) {
+    return;
+  }
+  seenForgetEpoch = epoch;
+  storeCache.clear();
+  pipelineCache.clear();
+  packCache.clear();
+  sharedBankSeed = undefined;
+  sharedBankSeedLoaded = false;
+  ccStoreStamp = "";
+}
+
 function getOrCreatePipeline(sessionKey: string): IngestionPipeline {
+  dropCachesAfterForget();
   let pipeline = pipelineCache.get(sessionKey);
   if (!pipeline) {
     pipeline = createIngestionPipeline({
@@ -147,6 +168,7 @@ function getOrCreatePipeline(sessionKey: string): IngestionPipeline {
 }
 
 function getOrCreateStore(sessionKey: string): EventStore {
+  dropCachesAfterForget();
   let store = storeCache.get(sessionKey);
   if (!store) {
     store = createEventStore({ baseDir: ENGRAM_BASE_DIR, sessionKey });

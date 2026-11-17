@@ -64,13 +64,18 @@ const VERB_SRC = `${B}(?:${Object.keys(VERBS).join("|")})${E}`;
 const VERB_RE = new RegExp(VERB_SRC, "iu");
 const VERB_G = new RegExp(VERB_SRC, "giu");
 
-// A negation, future or condition marker within three words before the verb turns the sentence into a non-claim.
+// A negation, future, condition or proposal within four words before the verb turns the sentence into a non-claim.
 // Proximity, not whole-sentence: "I uploaded it with no errors" is still a claim.
-const GATE = String.raw`(?:\bnot\b|n['’]t\b|\bnever\b|\bnunca\b|\bmai\b|\bno\b|\bwithout\b|\bfailed to\b|\bunable to\b|\bwill\b|['’]ll\b|\bshall\b|\bgoing to\b|\babout to\b|\bwould\b|\blet me\b|\bvoy a\b|\bvamos a\b|\bif\b|\bonce\b|\bunless\b|\buntil\b)`;
-const BLOCKED_RE = new RegExp(`${GATE}(?:\\s+[\\p{L}'’]+){0,3}?\\s+${VERB_SRC}`, "iu");
+const GATE = String.raw`(?:\bnot\b|n['’]t\b|\bnever\b|\bnunca\b|\bmai\b|\bno\b|\bnothing\b|\bnone\b|\bneither\b|\bnada\b|\bres\b|\bwithout\b|\bsin\b|\bsense\b|\bfailed to\b|\bunable to\b|\bwill\b|['’]ll\b|\bshall\b|\bgoing to\b|\babout to\b|\bwould\b|\bshould\b|\bcould\b|\bmight\b|\bmay\b|\bmust\b|\bcan be\b|\bto be\b|\bneeds? to\b|\bhas to\b|\bhave to\b|\bwants? to\b|\bplans? to\b|\bprefer to\b|\bpropos(?:e|es|ed|al|ing)\b|\bsuggest(?:s|ed|ing|ion)?\b|\brecommend(?:s|ed|ing)?\b|\blet me\b|\bvoy a\b|\bvamos a\b|\bpodría\b|\bdebería\b|\bhauria\b|\bpodria\b|\bif\b|\bsi\b|\bwhether\b|\bonce\b|\bwhen\b|\bcuando\b|\bquan\b|\bunless\b|\buntil\b)`;
+const GATE_GAP = String.raw`(?:\s+[\p{L}'’]+){0,4}?\s+`;
+const BLOCKED_RE = new RegExp(`${GATE}${GATE_GAP}${VERB_SRC}`, "iu");
+/** A sentence that opens as a condition or a proposal claims nothing, however far the verb sits from the opening word. */
+const NOT_A_REPORT_RE =
+  /^\W*(?:if|once|when|unless|until|whether|should|would|could|next|plan|proposal|proposed|suggestion|option|todo|si|quan|cuando)\b/iu;
 
-const STATE_RE =
-  /\b(?:is running|are running|is up|are up|is down|is enabled|is disabled|now uses|is live|has restarted)\b/gi;
+const STATE_SRC = String.raw`(?:is running|are running|is up|are up|is down|is enabled|is disabled|now uses|is live|has restarted)`;
+const STATE_RE = new RegExp(String.raw`\b${STATE_SRC}\b`, "gi");
+const STATE_BLOCKED_RE = new RegExp(`${GATE}${GATE_GAP}${STATE_SRC}`, "iu");
 
 const ABBREV = new Set(["e.g", "i.e", "etc", "vs", "mr", "mrs", "dr", "approx", "fig", "no", "st"]);
 
@@ -113,19 +118,14 @@ function stripStates(sentence: string): { rest: string; state: boolean } {
 export function splitClaims(reply: string): Claim[] {
   const claims: Claim[] = [];
   for (const sentence of splitSentences(reply)) {
-    if (sentence.endsWith("?")) continue;
+    if (sentence.endsWith("?") || NOT_A_REPORT_RE.test(sentence)) continue;
     const { rest, state } = stripStates(sentence);
     const done = VERB_RE.test(rest) && !BLOCKED_RE.test(rest);
     if (done) claims.push({ text: sentence, kind: "done", source: null, support: null });
-    else if (state && !BLOCKED_RE.test(sentence))
+    else if (state && !BLOCKED_RE.test(sentence) && !STATE_BLOCKED_RE.test(sentence))
       claims.push({ text: sentence, kind: "state", source: null, support: null });
   }
   return claims;
-}
-
-/** Does any sentence carry a completion verb, negated or not? The family's whole-reply fallback. */
-export function hasCompletionVerb(reply: string): boolean {
-  return splitSentences(reply).some((x) => !x.endsWith("?") && VERB_RE.test(x));
 }
 
 function verbsOf(text: string): VerbInfo[] {
@@ -164,6 +164,131 @@ export function supportedBy(claim: Claim, toolRecord: ToolRecordEntry[]): boolea
   const verbs = verbsOf(claim.text);
   if (verbs.length === 0) return false;
   return verbs.every((v) => verbSupported(v, toolRecord));
+}
+
+/** What a command's output or a job report says when the action behind a verb happened; other verbs say their own word. */
+const OUTPUT_PROOF: Record<string, RegExp> = {
+  deleted: /\b(?:deleted|removed|trashed)\b/i,
+  removed: /\b(?:deleted|removed|trashed)\b/i,
+  restarted: /\brestart(?:ed)?\b|\bhealthy on build\b|\bactive \(running\)/i,
+  merged: /\bmerged?\b|\bfast-forward\b/i,
+  committed: /^\[\S+ [0-9a-f]{7,}\]|\bcommitted\b/i,
+  pushed: /\bpushed\b|\S\s+->\s+\S/,
+  tested: /\b\d+ (?:tests? )?passed\b/i,
+  verified: /\b\d+ (?:tests? )?passed\b|\bverified\b/i,
+  built: /\bbuilt\b|\bbuild (?:ok|succeeded|complete)/i,
+  done: /\b(?:done|finished|completed|succeeded)\b/i,
+  finished: /\b(?:done|finished|completed|succeeded)\b/i,
+  completed: /\b(?:done|finished|completed|succeeded)\b/i,
+};
+const proofOf = (v: VerbInfo): RegExp =>
+  OUTPUT_PROOF[v.past] ?? new RegExp(String.raw`\b${v.past}\b`, "i");
+const STATE_PROOF = /\b(?:active|running|healthy|enabled|listening|restarted|live)\b|\bup\b/i;
+const ANY_PROOF = new RegExp(
+  [...new Set(Object.values(VERBS).map((v) => proofOf(v).source)), STATE_PROOF.source].join("|"),
+  "i",
+);
+/** "All", "both", "every": one line of output cannot speak for the whole set, so the judge keeps these. */
+const WHOLE_SET = /\b(?:all|both|every|each|tots|todos|ambdós)\b/i;
+const FILLER = new Set(
+  "that this with from into have been were they them then also just here there your what which about after before over only some each still".split(
+    " ",
+  ),
+);
+const EVIDENCE_LINE_MAX = 240;
+
+/** The lines of a command's output or a job report that could prove a claim. Stays on the machine: code reads it, Jev does not. */
+export function evidenceLines(text: string): string[] {
+  const out: string[] = [];
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    const t = line.trim();
+    if (t && ANY_PROOF.test(t)) out.push(t.slice(0, EVIDENCE_LINE_MAX));
+  }
+  return out;
+}
+
+/** Words of a claim specific enough to tie it to a line of output: the thing named, not its verb. */
+function claimWords(text: string): string[] {
+  const words = text.toLowerCase().match(/[\p{L}\p{N}_][\p{L}\p{N}_.-]{3,}/gu) ?? [];
+  return words
+    .map((w) => w.replace(/[.-]+$/, ""))
+    .filter((w) => w.length >= 4 && !FILLER.has(w) && !(w in VERBS));
+}
+
+/**
+ * Does the output of this task show the claim true? Each verb needs a line that shows the action and names a thing the
+ * claim names (a test count needs no name); at least one verb must be shown by a line, and any other verb must have a
+ * matching action in the record. 2026-10-28 to 11-01: 348 of 483 claim flags were noise or harmful, largely because the
+ * record held only the shape of a call, so `Deleted branch x` in the output counted for nothing.
+ */
+export function provenByOutput(
+  claim: Claim,
+  lines: readonly string[],
+  toolRecord: ToolRecordEntry[],
+): boolean {
+  if (lines.length === 0) return false;
+  const words = claimWords(claim.text);
+  const named = (line: string): boolean => {
+    const low = line.toLowerCase();
+    return words.some((w) => low.includes(w));
+  };
+  if (claim.kind === "state") return lines.some((l) => STATE_PROOF.test(l) && named(l));
+  const verbs = verbsOf(claim.text);
+  if (verbs.length === 0) return false;
+  const tested = (v: VerbInfo): boolean => v.past === "tested" || v.past === "verified";
+  if (WHOLE_SET.test(claim.text) && !verbs.every(tested)) return false;
+  const shown = verbs.filter((v) =>
+    lines.some((l) => proofOf(v).test(l) && (named(l) || tested(v))),
+  );
+  return shown.length > 0 && verbs.every((v) => shown.includes(v) || verbSupported(v, toolRecord));
+}
+
+/** A line of output that shows the work was checked, whatever the reply says about it. */
+export function showsACheck(lines: readonly string[]): boolean {
+  return lines.some((l) => /\b\d+ (?:tests? )?passed\b|\bhealthy on build\b/i.test(l));
+}
+
+const DEFECT_LINE = /^\s*report-defect:\s*(\S.*)$/gim;
+
+/** The agent's formal "this test is wrong": `report-defect: <file>: <why>`, each on its own line of the reply. */
+export function reportedDefects(reply: string): string[] {
+  return [...String(reply ?? "").matchAll(DEFECT_LINE)].map((m) => (m[1] as string).trim());
+}
+
+/**
+ * Words by which a reply admits it states something it did not check (2026-11-10). Each is an admission by the writer,
+ * never a description of someone else's code, as far as a pattern can tell.
+ */
+const UNCHECKED_RE = new RegExp(
+  [
+    String.raw`\((?:inferred|assumed|unverified|untested|not (?:checked|verified|confirmed|tested))\b[^)]*\)`,
+    String.raw`\b(?:I|we)\s+(?:have\s+not|haven[’']t|did\s+not|didn[’']t)\s+(?:yet\s+)?(?:check|verif|confirm|test|measur|look)\w*`,
+    String.raw`\bnot\s+(?:yet\s+)?(?:checked|verified|confirmed|tested|measured)\b`,
+    String.raw`\b(?:unverified|untested)\b`,
+    String.raw`\bfrom\s+(?:memory|general\s+knowledge)\b`,
+    String.raw`\bI(?:[’']m|\s+am)\s+not\s+sure\b`,
+    String.raw`\b(?:sin|sense)\s+compro[bv]ar\b`,
+    String.raw`\bno\s+(?:lo\s+he\s+comprobado|ho\s+he\s+comprovat)\b`,
+  ].join("|"),
+  "iu",
+);
+
+/** Fenced blocks (code, html cards), quoted lines and text inside double quotes are not the writer's own claims. */
+export function ownProse(reply: string): string {
+  return String(reply ?? "")
+    .replace(/```[\s\S]*?(?:```|$)/g, "\n")
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*>/.test(l))
+    .join("\n")
+    .replace(/"[^"\n]{0,400}"|“[^”\n]{0,400}”/g, " ");
+}
+
+/**
+ * The sentences of a reply that say something was not checked (an inferred tag, a not-checked phrase, a from-memory phrase).
+ * The stop seam sends the reply back once so the agent checks them (double-check family). Deterministic, no judge.
+ */
+export function uncheckedAdmissions(reply: string): string[] {
+  return splitSentences(ownProse(reply)).filter((s) => UNCHECKED_RE.test(s));
 }
 
 /** A short phrase for the send-back template slot: what the tool record lacks. Deterministic, at most 90 chars. */

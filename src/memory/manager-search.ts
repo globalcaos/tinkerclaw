@@ -256,6 +256,15 @@ function trackAccess(db: DatabaseSync, ids: string[]): void {
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
 
+/**
+ * FORK 2026-10-29: the model key of a chunk written without a vector: no embedding provider, the
+ * embedder governor did not admit background embedding, or the embedder could not answer
+ * (TINKER_UI_DESIGN_BIBLE/embedder-fit.md). The chunk row and its FTS row carry it, so word search
+ * finds the file while its vectors are pending, and the drain in manager-sync-ops.ts finds the
+ * files still to vectorise.
+ */
+export const FTS_ONLY_MODEL = "fts-only";
+
 export type SearchSource = string;
 
 export type SearchRowResult = {
@@ -442,9 +451,11 @@ export async function searchKeyword(params: {
     return [];
   }
 
-  // When providerModel is undefined (FTS-only mode), search all models
-  const modelClause = params.providerModel ? ` AND f.model = ?` : "";
-  const modelParams = params.providerModel ? [params.providerModel] : [];
+  // When providerModel is undefined (FTS-only mode), search all models. FORK 2026-10-29: with a
+  // provider, its model's rows and the word-only rows both answer, so a file whose vectors are
+  // still pending stays findable by its words.
+  const modelClause = params.providerModel ? ` AND f.model IN (?, ?)` : "";
+  const modelParams = params.providerModel ? [params.providerModel, FTS_ONLY_MODEL] : [];
 
   // The FTS virtual table carries no validity/verification columns, so JOIN chunks `c`
   // to apply the temporal filter (Upgrade 3) and surface trust metadata (Upgrade 6).

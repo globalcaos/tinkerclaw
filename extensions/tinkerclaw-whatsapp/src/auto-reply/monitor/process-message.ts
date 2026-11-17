@@ -33,6 +33,7 @@ import { whatsappInboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
+import { FORWARDED_CONTENT_NOTE } from "./decide-trigger.js";
 import {
   resolveVisibleWhatsAppGroupHistory,
   resolveVisibleWhatsAppReplyContext,
@@ -242,8 +243,13 @@ export async function processMessage(params: {
   //   null      → caller attempted but got nothing; skip internal STT to avoid retry
   //   undefined → caller did not attempt; run internal STT
   let audioTranscript: string | undefined = params.preflightAudioTranscript ?? undefined;
+  // A forwarded voice note reaches here as decideTrigger left it: the forwarded
+  // note, then the placeholder (burn review 2026-11-14, b1113-s8 F1).
+  const forwarded = params.msg.forwarded === true;
   const hasAudioBody =
-    params.msg.mediaType?.startsWith("audio/") === true && params.msg.body === "<media:audio>";
+    params.msg.mediaType?.startsWith("audio/") === true &&
+    (params.msg.body === "<media:audio>" ||
+      (forwarded && params.msg.body === `${FORWARDED_CONTENT_NOTE}\n<media:audio>`));
   if (params.preflightAudioTranscript === undefined && hasAudioBody && params.msg.mediaPath) {
     try {
       const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");
@@ -267,8 +273,14 @@ export async function processMessage(params: {
   // (used by features such as messages.tts.auto: "inbound") still sees this as an
   // audio message. The transcript and transcribed media index are also stored on
   // context so downstream media understanding does not transcribe it again.
+  // A forwarded voice note keeps the forwarded note in front of its transcript.
   const msgForAgent =
-    audioTranscript !== undefined ? { ...params.msg, body: audioTranscript } : params.msg;
+    audioTranscript !== undefined
+      ? {
+          ...params.msg,
+          body: forwarded ? `${FORWARDED_CONTENT_NOTE}\n${audioTranscript}` : audioTranscript,
+        }
+      : params.msg;
 
   let combinedBody = buildInboundLine({
     cfg: params.cfg,

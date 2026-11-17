@@ -367,6 +367,29 @@ describe("fractal turn — the model (charter M2)", () => {
     expect(fractalModelFor({ run: { model: "bare" } })).toBe("bare");
   });
 
+  it("never carries a pay-per-call model into the reflection (2026-11-13: a Carbon pin billed its reflection)", () => {
+    // Google, OpenRouter and an unknown provider bill per call: send no model, Thalamus routes it.
+    expect(fractalModelFor({ pin: "google/gemini-4-carbon" })).toBeUndefined();
+    expect(
+      fractalModelFor({
+        pin: "google/gemini-4-carbon",
+        run: { model: "claude-opus-5-5", provider: "claude-code" },
+      }),
+    ).toBeUndefined();
+    expect(
+      fractalModelFor({ run: { model: "gemini-4-carbon", provider: "google" } }),
+    ).toBeUndefined();
+    expect(fractalModelFor({ pin: "openrouter/anthropic/claude-opus-5-5" })).toBeUndefined();
+    expect(
+      fractalModelFor({ run: { model: "moonshotai/Kimi-K3", provider: "deepinfra" } }),
+    ).toBeUndefined();
+    // Subscriptions keep the pin, so the reflection still reads the chat's cache.
+    expect(fractalModelFor({ pin: "claude-code/claude-opus-5-5" })).toBe(
+      "claude-code/claude-opus-5-5",
+    );
+    expect(fractalModelFor({ pin: "openai-codex/gpt-5" })).toBe("openai-codex/gpt-5");
+  });
+
   it("follows a fallback model on the same run, and drops the old provider with it", () => {
     const store = new CallTimelineStore();
     store.turnStart("p1", 1, "claude-opus-5-5", "claude-code");

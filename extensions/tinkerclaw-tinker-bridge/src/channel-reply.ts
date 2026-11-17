@@ -63,7 +63,10 @@ export function decideChannelReply(params: {
       finalChars: text.length,
     };
   }
-  const from = Math.max(...offsets);
+  const lastTool = Math.max(...offsets);
+  // Blocks are joined by a blank line, so the text after the last tool opens with it.
+  const tail = text.slice(lastTool);
+  const from = lastTool + tail.length - tail.trimStart().length;
   const narration = text.slice(0, from);
   const finalSegment = text.slice(from);
   const sizes = { narrationChars: narration.length, finalChars: finalSegment.length };

@@ -1,0 +1,23 @@
+{
+  "name": "@openclaw/tinkerclaw-token-burner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Choose what a subscription's spare weekly tokens are spent on: one objective, a strategy and the governing prompt, read by the token-burner skill and edited in the Tinker Token burner tab.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "build": {
+      "openclawVersion": "2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": false
+    }
+  }
+}

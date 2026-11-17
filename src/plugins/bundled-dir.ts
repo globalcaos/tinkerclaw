@@ -108,11 +108,58 @@ function resolveBundledDirFromPackageRoot(
   return undefined;
 }
 
+// FORK 2026-10-29: every plugin cache-key build calls resolveBundledPluginsDir (roots.ts
+// resolvePluginCacheInputs, plugin-registry-snapshot.ts, the plugin-sdk facades), and each call
+// walked up to three package roots: ancestor walks, package.json reads, realpath. An idle gateway
+// spent 22-323 ms of every 30 s in it (four 30 s CPU profiles, 2026-10-29). Now memoized per
+// process, keyed on the env and process inputs the walk reads. The filesystem is read once per
+// key and that first answer holds for the life of the process, as the pinned runtime config does.
+// Rejected: re-checking the memoized path on every hit. During an in-place rebuild of dist/ that
+// would switch to the source tree and stay there.
+const bundledPluginsDirMemo = new Map<string, string | undefined>();
+
+function readCwdForBundledPluginsDirMemo(): string {
+  try {
+    return process.cwd();
+  } catch {
+    // A deleted cwd throws here; the walk below already tolerates that.
+    return "";
+  }
+}
+
+function buildBundledPluginsDirMemoKey(env: NodeJS.ProcessEnv): string {
+  return JSON.stringify([
+    env.OPENCLAW_BUNDLED_PLUGINS_DIR ?? "",
+    env.VITEST ?? "",
+    env.OPENCLAW_HOME ?? "",
+    env.HOME ?? "",
+    env.USERPROFILE ?? "",
+    process.argv[1] ?? "",
+    readCwdForBundledPluginsDirMemo(),
+    process.execArgv,
+  ]);
+}
+
+/** Forget every memoized answer, so the next call walks the package roots again. For tests. */
+export function resetBundledPluginsDirCacheForTest(): void {
+  bundledPluginsDirMemo.clear();
+}
+
 export function resolveBundledPluginsDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (areBundledPluginsDisabled(env)) {
     return resolveDisabledBundledPluginsDir();
   }
+  // FORK 2026-10-29: memoized, see bundledPluginsDirMemo above.
+  const memoKey = buildBundledPluginsDirMemoKey(env);
+  if (bundledPluginsDirMemo.has(memoKey)) {
+    return bundledPluginsDirMemo.get(memoKey);
+  }
+  const resolved = resolveBundledPluginsDirUncached(env);
+  bundledPluginsDirMemo.set(memoKey, resolved);
+  return resolved;
+}
 
+function resolveBundledPluginsDirUncached(env: NodeJS.ProcessEnv): string | undefined {
   const override = env.OPENCLAW_BUNDLED_PLUGINS_DIR?.trim();
   if (override) {
     const resolvedOverride = resolveUserPath(override, env);

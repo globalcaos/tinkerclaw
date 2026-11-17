@@ -21,6 +21,7 @@ import type { AmygdalaConfig } from "./config.js";
 import { TurnContexts } from "./context.js";
 import { decide, type DecideDeps, type DecideResult } from "./decide.js";
 import { createEarned, type Earned } from "./earned.js";
+import { createEffects, type EffectsBook } from "./effects.js";
 import type { DecisionEvent, InterventionEvent } from "./events.js";
 import {
   buildExplainInput,
@@ -30,13 +31,17 @@ import {
   type ExplanationRow,
   type RunOnce,
 } from "./explain.js";
+import { chatSendViaCli, createFactCheck, type FactCheck } from "./fact-check.js";
+import { isOwnerChat } from "./families/common.js";
 import { enabledFamilies, type Family } from "./families/index.js";
 import {
   changeView,
   questionRows,
   rebuildEvents,
+  ruleRows,
   type ChangeViewOut,
   type QuestionRowOut,
+  type RuleRowOut,
 } from "./feed.js";
 import type { HookAction } from "./hook-action.js";
 import {
@@ -51,6 +56,7 @@ import {
   type JevTransport,
 } from "./jev.js";
 import { createLearning, type Learning } from "./learning.js";
+import { OWN_FILES_NAME } from "./own-files.js";
 import {
   buildHookSettings,
   compilePolicy,
@@ -69,18 +75,37 @@ import {
   createReviewer,
   PASS_REVIEW_MAX,
   type Reviewer,
+  stepsForJudge,
 } from "./review.js";
 import type { SessionMap } from "./rewind.js";
 import { evaluateRules } from "./rules.js";
 import { SessionTracker, type HookPayload } from "./session-tracker.js";
-import { buildSituation, type SeamInput } from "./situation.js";
-import { dayBounds, spendBetween, spendToday } from "./spend.js";
-import { buildStatus, readSpool, type StatusEvent } from "./status.js";
+import { buildSituation, turnKindOf, type SeamInput } from "./situation.js";
+import { dayBounds, spendLast30Days, spendToday } from "./spend.js";
+import {
+  buildStatus,
+  OWNER_WAIT_WINDOW_MS,
+  aegisDenied,
+  aegisSpoolPath,
+  readSpool,
+  type StatusEvent,
+  waitingOnOwner,
+} from "./status.js";
 import { AmygdalaStore } from "./store.js";
-import { narrationBefore, stepsAfter, stepsBefore } from "./transcript.js";
-import type { Intervention, Question, Seam, Situation, Verdict } from "./types.js";
+import {
+  agentSteps,
+  narrationBefore,
+  recentExchange,
+  type RunRecord,
+  stepsAfter,
+  stepsBefore,
+  turnSince,
+} from "./transcript.js";
+import type { Intervention, Question, Seam, Situation, TurnWake, Verdict } from "./types.js";
 import type { V31ProbeInput } from "./v31-probe.js";
+import { saveVersions } from "./versions.js";
 import { WaitRegistry, type WaitAnswer } from "./wait-registry.js";
+import { processWaitingList } from "./waiting-list.js";
 
 export interface RuntimeLogger {
   info(message: string): void;
@@ -121,6 +146,8 @@ export interface RuntimeOptions {
   explainRun?: RunOnce;
   /** Wait before reading the transcript for an explanation (the step's narration must be on disk). Default 4 s. */
   explainDelayMs?: number;
+  /** How a fact-check wake reaches the chat (tests). Default: chat.send through the gateway's own CLI. */
+  deliverChat?: (sessionKey: string, message: string) => void;
 }
 
 export interface FeedQuery {
@@ -137,11 +164,15 @@ export interface Runtime {
   floorActive(): boolean;
   /** The bearer token written to endpoint.json at the last start (empty before start). */
   token(): string;
-  /** `tabKey` is the chat tab's key the hook forwarded (`TC_SESSION_KEY`); everything is keyed by it when present. */
+  /**
+   * `tabKey` is the chat tab's key the hook forwarded (`TC_SESSION_KEY`); everything is keyed by it when present. `run` is
+   * a native run's own record, for the judges only: it reaches no gate, so no prompt can release a step through it.
+   */
   decide(
     seam: Seam,
     hook: HookPayload,
     tabKey?: string,
+    run?: RunRecord,
   ): Promise<{ decisionId: string; hook: HookAction }>;
   waitFor(interventionId: string, timeoutMs: number): Promise<WaitAnswer>;
   /**
@@ -166,6 +197,8 @@ export interface Runtime {
     /** The WOULD HAVE explainer's output for these decisions; a row pending for over 15 min reads as failed. */
     explanations: ExplanationRow[];
     questions: QuestionRowOut[];
+    /** The hard rules with their chat words and the rules.ts to open (2026-11-03). */
+    rules: RuleRowOut[];
     precedents: number;
     counts: { checks: number; held: number; asked: number };
     status: StatusEvent;
@@ -199,6 +232,8 @@ export interface Runtime {
   explanationVote(decisionId: string, vote: number): void;
   /** Learning (design §7.3): the operations behind the label / approve / undo / propose / nightly / rewind methods. */
   learning(): Learning;
+  /** Effect cards (effects.ts): changes other people can see, and their Revert. Null before start or without a runner. */
+  effects(): EffectsBook | null;
 }
 
 const V31_DEFAULT_SETTINGS = join(
@@ -209,6 +244,8 @@ const V31_DEFAULT_SETTINGS = join(
   "cc-hook-settings.json",
 );
 const ANSWER_RE = /^(allow-once|keep-held|option:.+)$/;
+/** The relay: each fan-out unit started with no parent reports its end here, and no order he types ever lands here. */
+const RELAY_SESSION = /^agent:[^:]+:orchestrator$/;
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
@@ -268,7 +305,11 @@ function processTracker(dataDir: string, now: () => number): SessionTracker {
   const trackers = (g[TRACKERS] ??= new Map<string, SessionTracker>());
   let t = trackers.get(dataDir);
   if (!t) {
-    t = new SessionTracker({ now, epoch: Date.now().toString(36) });
+    t = new SessionTracker({
+      now,
+      epoch: Date.now().toString(36),
+      ownFilesPath: join(dataDir, OWN_FILES_NAME),
+    });
     trackers.set(dataDir, t);
   }
   return t;
@@ -286,7 +327,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
 
   // The epoch keeps a tab's turn ids apart across gateway restarts (2026-10-02: three turns merged into "#1").
   const tracker = processTracker(dataDir, now);
-  const seen = new SeenSessions();
+  // Kept on disk so a restart does not make every tab un-rewindable until its next turn (2026-11-13).
+  const seen = new SeenSessions(join(dataDir, "seen-sessions.json"));
   const sessionMap: SessionMap | undefined =
     o.sessionMap ??
     (o.bridgeMapFile !== undefined
@@ -297,6 +339,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         })
       : undefined);
   const registry = new WaitRegistry({ now });
+  // The questions waiting for the owner, on disk for the screens that are not this chat (waiting-list.ts).
+  const waiting = processWaitingList(dataDir, now);
   const lastSeam: Partial<Record<Seam, number>> = {};
   const interventionEvents = new Map<string, InterventionEvent>();
   const judge: { lastMs: number | null; errors: number; silentSince?: number } = {
@@ -309,6 +353,10 @@ export function createRuntime(o: RuntimeOptions): Runtime {
   let deps: DecideDeps | null = null;
   let explainer: Explainer | null = null;
   let reviewer: Reviewer | null = null;
+  let effects: EffectsBook | null = null;
+  let factCheck: FactCheck | null = null;
+  /** Turns already sent to the effect judge: a stop seam can fire more than once per turn. */
+  const effectTurns = new Set<string>();
   let earned: Earned | null = null;
   let started = false;
   let startError: string | null = null;
@@ -403,12 +451,15 @@ export function createRuntime(o: RuntimeOptions): Runtime {
   }
 
   function todayCounts(): { checks: number; held: number; asked: number } {
-    const rows = need().decisionsSince(dayBounds(now()).start);
-    return {
-      checks: rows.length,
-      held: rows.filter((r) => r.response.kind === "hold").length,
-      asked: rows.filter((r) => r.response.kind === "ask").length,
-    };
+    // FORK 2026-10-29: counted in SQL. Loading and parsing every one of today's decisions took 28-80 ms at 3-6k rows,
+    // on every 60 s heartbeat and twice per feed; a count by kind over the same rows took 1.3-2.8 ms (both measured
+    // on the live store, 2026-10-29).
+    const byKind = need().decisionKindCountsSince(dayBounds(now()).start);
+    let checks = 0;
+    for (const n of byKind.values()) {
+      checks += n;
+    }
+    return { checks, held: byKind.get("hold") ?? 0, asked: byKind.get("ask") ?? 0 };
   }
 
   function status(): StatusEvent {
@@ -449,7 +500,9 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       spendEurToday: spendToday(s, t, config.cost.eurPerUsd).eur,
       counts: todayCounts(),
       waitingForYou:
-        s.listInterventions({ state: "open" }).length + s.listChanges({ status: "pending" }).length,
+        waitingOnOwner(
+          s.listInterventions({ state: "open", sinceTs: now() - OWNER_WAIT_WINDOW_MS }),
+        ) + s.listChanges({ status: "pending" }).length,
       floorMissing: spool.floorMissingTs !== null && spool.floorMissingTs > policyWrittenAt,
       hooksRefused: spool.refused,
       notesDropped,
@@ -503,6 +556,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           /* not ours to chmod */
         }
         store = new AmygdalaStore(join(dataDir, "amygdala.sqlite"));
+        waiting.restore();
         const book = new QuestionBook({
           seedDir: join(o.extensionRoot, "questions"),
           overlayDir: join(dataDir, "questions.d"),
@@ -581,6 +635,32 @@ export function createRuntime(o: RuntimeOptions): Runtime {
                 logger,
               })
             : null;
+        effects = o.explainRun
+          ? createEffects({
+              dataDir,
+              run: o.explainRun,
+              ladder: config.review.ladder,
+              timeoutMs: config.explain.timeoutMs,
+              homeDir: homedir(),
+              emit,
+              now,
+              logger,
+            })
+          : null;
+        factCheck = o.explainRun
+          ? createFactCheck({
+              mode: config.factCheck.mode,
+              ladder: config.factCheck.ladder,
+              timeoutMs: config.factCheck.timeoutMs,
+              dailyCap: config.factCheck.dailyCap,
+              runOnce: o.explainRun,
+              deliver: o.deliverChat ?? chatSendViaCli((line) => logger.info(line)),
+              log: (line) => logger.info(line),
+              homeDir: homedir(),
+              recordPath: join(dataDir, "fact-checks.jsonl"),
+              now,
+            })
+          : null;
         earned = createEarned(store, config.earned, now);
         const earnedNow = earned;
         deps = {
@@ -588,7 +668,9 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           book,
           store,
           contexts,
-          families: o.families ?? enabledFamilies(config, { book }),
+          families:
+            o.families ??
+            enabledFamilies(config, { book, selfModification: config.selfModification }),
           config: {
             mode: config.mode,
             failClosedOnLevel3: config.failClosedOnLevel3,
@@ -602,6 +684,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           precedents: learn.precedents,
           companion: routingCompanion,
           earned: (family, kind, reasonCode) => earnedNow.has(family, kind, reasonCode),
+          floorDenied: (id) => aegisDenied(aegisSpoolPath(dataDir), id),
+          saveVersions: (s) => saveVersions(s),
         };
 
         if (sharedSource) {
@@ -651,6 +735,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       learn = null;
       explainer = null;
       reviewer = null;
+      effects = null;
+      factCheck = null;
       earned = null;
       deps = null;
       started = false;
@@ -680,15 +766,28 @@ export function createRuntime(o: RuntimeOptions): Runtime {
 
     token: () => endpointToken,
 
-    async decide(seam, hook, tabKey) {
+    async decide(seam, hook, tabKey, run) {
       if (!deps) throw new Error("amygdala runtime not started");
       const t = now();
       lastSeam[seam] = t;
       const sessionKey = tabKey ?? str(hook.session_id) ?? "unknown";
       if (tabKey) seen.note(tabKey, hook, t);
-      if (seam === "prompt") tracker.notePrompt(sessionKey, str(hook.prompt));
-      else if (seam === "pre-tool") tracker.notePreTool(sessionKey, hook);
-      else if (seam === "post-tool") tracker.recordToolResult(sessionKey, hook);
+      if (seam === "prompt") {
+        tracker.notePrompt(sessionKey, str(hook.prompt));
+        // His `allow <code>` in this chat answers the question wherever else it is shown. An agent's prompt cannot:
+        // a job that woke the chat must not clear a question it did not answer.
+        const allow =
+          isOwnerChat(sessionKey) && turnKindOf(sessionKey, str(hook.prompt)) === "owner"
+            ? /\ballow\s+(JEV-[0-9A-Z]{6})\b/i.exec(str(hook.prompt) ?? "")
+            : null;
+        if (allow) {
+          waiting.removeGrant(sessionKey, allow[1]);
+        }
+      } else if (seam === "pre-tool") {
+        tracker.notePreTool(sessionKey, hook);
+      } else if (seam === "post-tool") {
+        tracker.recordToolResult(sessionKey, hook);
+      }
       // stop_hook_active is read for logging only.
       if (seam === "stop" && hook.stop_hook_active === true) {
         logger.info(`[amygdala] stop seam re-entered for ${sessionKey} (stop_hook_active)`);
@@ -719,12 +818,31 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         reply: str(hook.last_assistant_message),
         cwd,
       };
+      // FORK 2026-11-13 (ambiguity redesign): the screen reads the request next to the conversation before it, and
+      // while a flagged reading is open each step carries what the agent wrote and ran in this turn (its readings,
+      // pick and sources). Only the bounded tail of the transcript is read, and only then.
+      const context: { exchange?: string; restatement?: string; turnSteps?: string[] } = {};
+      if (transcriptPath && !sessionKey.startsWith("temp:")) {
+        if (seam === "prompt") {
+          context.exchange = recentExchange(transcriptPath, { skipLastAsk: str(hook.prompt) });
+        } else if (
+          (seam === "pre-tool" || seam === "post-tool") &&
+          deps.contexts.get(sessionKey, turnId).ambiguity === "open"
+        ) {
+          const since = store?.turnStartTs(turnId) ?? t - 3_600_000;
+          const turn = turnSince(transcriptPath, since - 1000);
+          context.exchange = recentExchange(transcriptPath);
+          if (turn.said) context.restatement = turn.said;
+          if (turn.ran.length) context.turnSteps = turn.ran;
+        }
+      }
       const result: DecideResult = await decide(deps, {
         seam,
         payload,
         session: {
           ...tracker.sessionContext(sessionKey, cwd),
           ...(expectation ? { expectation } : {}),
+          ...context,
         },
       });
       if (seam === "prompt") tracker.setRequest(sessionKey, result.situation.request.value);
@@ -762,7 +880,16 @@ export function createRuntime(o: RuntimeOptions): Runtime {
             }),
         });
       }
-      for (const id of result.released ?? []) learn?.onAnswer(id, "evidence");
+      for (const id of result.released ?? []) {
+        learn?.onAnswer(id, "evidence");
+        // The store already closed it; tell the chat too, or its Allow card stays up for a step that already ran.
+        const ev = interventionEvents.get(id);
+        emit(
+          "amygdala2.intervention",
+          ev ? { ...ev, state: "released" } : { id, state: "released", ts: now() },
+        );
+        waiting.remove(id);
+      }
       if (result.hook.kind === "wait") {
         const r = result.decision.response;
         registry.register({
@@ -771,12 +898,89 @@ export function createRuntime(o: RuntimeOptions): Runtime {
             r.kind === "ask" ? r.options.map((x) => ({ id: x.id, label: x.label })) : undefined,
           ttlMs: result.hook.timeoutMs,
         });
+        const waits = interventionEvents.get(result.hook.interventionId);
+        if (waits) {
+          waiting.add(waits, t + result.hook.timeoutMs);
+        }
+      }
+      // FORK 2026-11-08: when a turn ends, what it changed for other people is judged once, in the background, and each
+      // such change becomes an effect card with a Revert button (effects.ts).
+      if (
+        effects &&
+        seam === "stop" &&
+        !sessionKey.startsWith("temp:") &&
+        !effectTurns.has(result.situation.turnId)
+      ) {
+        const turnId = result.situation.turnId;
+        effectTurns.add(turnId);
+        if (effectTurns.size > 2000)
+          effectTurns.delete(effectTurns.values().next().value as string);
+        const startTs = store?.turnStartTs(turnId) ?? t - 3_600_000;
+        const steps = transcriptPath
+          ? stepsAfter(transcriptPath, startTs - 1000, { max: Infinity })
+          : (run?.steps ?? []).filter((x) => x.at >= startTs);
+        void effects
+          .observe({
+            sessionKey,
+            turnId,
+            ts: t,
+            steps,
+            reply: str(hook.last_assistant_message) ?? "",
+          })
+          .catch((err) => console.error("[amygdala] effects observe failed", err));
       }
       // When a turn ends, each flag it raised is judged once, in the background, by what the agent did after it.
-      if (reviewer && store && seam === "stop" && !sessionKey.startsWith("temp:")) {
+      // A Claude Code stop whose reply Jev sends back does not end the turn: the agent answers, and the stop after that
+      // answer queues the reviews, so the judges read the answer as `endedWith` and the calls that found it (2026-11-13:
+      // from 11-10 all 30 reviewed unchecked send-backs were judged against the reply they sent back, 19 before the
+      // answer existed). A native run's stop (agent_end, no transcript) is its end, and its block reaches no agent.
+      const sentBack = result.hook.kind === "block" && transcriptPath !== undefined;
+      // FORK 2026-11-14: what the reply gives as fact is checked once, in the background, against the turn's own
+      // evidence (fact-check.ts). Only the stop that ends the turn, and only in a chat the owner reads.
+      if (factCheck && seam === "stop" && transcriptPath && !sentBack && isOwnerChat(sessionKey)) {
+        factCheck.observe({
+          sessionKey,
+          turnId: result.situation.turnId,
+          reply: str(hook.last_assistant_message) ?? "",
+          transcriptPath,
+          stillCurrent: () => tracker.turnId(sessionKey) === result.situation.turnId,
+        });
+      }
+      // FORK 2026-11-16: the gateway runs register() more than once, so the Claude Code hooks reach one runtime and
+      // `agent_end` another (processTracker), and each queued its own review of the same flags and passes. The
+      // `agent_end` copy has no transcript: it reads no call after a flag and takes the run's first line for its end. When
+      // it finished last, its save replaced the informed verdict (11-14 to 11-16: 69 flag verdicts, 22 of them changed,
+      // 8 to "harmful"). Once a Stop hook with the transcript has queued a turn's reviews, `agent_end` queues none.
+      const hookReviewed = !transcriptPath && tracker.hookReviewed(sessionKey);
+      if (
+        reviewer &&
+        store &&
+        seam === "stop" &&
+        !sentBack &&
+        !hookReviewed &&
+        !sessionKey.startsWith("temp:")
+      ) {
+        if (transcriptPath) tracker.noteHookReviews(sessionKey);
         const st = store;
         const book = deps.book;
         const finalReply = str(hook.last_assistant_message);
+        const runSteps = stepsForJudge(run, config.review.ladder[0]);
+        // On a turn a job woke, `request` is only his last line. The store read takes under 7 ms, on such turns alone.
+        // FORK 2026-11-17: the relay never holds an order he typed, so its judges read a unit's completion event as his
+        // whole ask (`8e1f9c10`: the merge of admin work he had ordered in a Tinker chat, judged "missed"). There they
+        // read his last orders in his own chats, and the event as the run's orders also when he typed none in a day.
+        const woken = result.situation.turnKind.value === "agent";
+        const relay = woken && RELAY_SESSION.test(sessionKey);
+        const orders = relay
+          ? st.ownerChatOrders(result.situation.ts, isOwnerChat)
+          : woken
+            ? st.ownerOrders(sessionKey, result.situation.ts)
+            : [];
+        const words = tracker.wakeWords(sessionKey);
+        const wake: TurnWake | undefined =
+          orders.length > 0 || (relay && words)
+            ? { ...(words ? { words } : {}), orders }
+            : undefined;
         for (const d of st.flaggedDecisionsForTurn(result.situation.turnId)) {
           if (st.hasReview(d.id)) continue;
           const sit = st.situationRecord(d.situationId);
@@ -795,8 +999,17 @@ export function createRuntime(o: RuntimeOptions): Runtime {
                 steps: [],
                 saidBefore: null,
                 homeDir: homedir(),
-                after: transcriptPath ? stepsAfter(transcriptPath, sit.ts) : [],
+                after: transcriptPath
+                  ? stepsAfter(transcriptPath, sit.ts, { max: Infinity })
+                  : runSteps.filter((s) => s.at > sit.ts),
                 finalReply,
+                runOrders: run?.prompt,
+                wake,
+                // 2026-11-16: a background agent of the chat made this call; it is judged by that agent's task.
+                agentStep:
+                  transcriptPath && sit.toolUseId
+                    ? agentSteps(transcriptPath, [sit.toolUseId], sit.ts).get(sit.toolUseId)
+                    : undefined,
               }),
           });
         }
@@ -810,6 +1023,11 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         });
         if (passes.length > 0) {
           const startTs = st.turnStartTs(turnId) ?? passes[0].situation.ts;
+          // On his own turn, what he typed before it (2026-11-06): his newest line often carries an earlier order on.
+          const earlierOrders =
+            result.situation.turnKind.value === "owner"
+              ? st.ownerOrders(sessionKey, startTs)
+              : undefined;
           reviewer.observePass({
             turnId,
             sessionKey: result.situation.sessionKey,
@@ -824,8 +1042,20 @@ export function createRuntime(o: RuntimeOptions): Runtime {
                 book,
                 did: transcriptPath
                   ? stepsAfter(transcriptPath, startTs, { max: PASS_REVIEW_MAX })
-                  : [],
+                  : runSteps,
                 finalReply,
+                runOrders: run?.prompt,
+                wake,
+                earlierOrders,
+                // 2026-11-16: the passed calls a background agent made are judged by that agent's task, not this
+                // turn's wake (agentSteps, transcript.ts).
+                byAgent: transcriptPath
+                  ? agentSteps(
+                      transcriptPath,
+                      passes.flatMap((p) => (p.situation.toolUseId ? [p.situation.toolUseId] : [])),
+                      startTs,
+                    )
+                  : undefined,
                 homeDir: homedir(),
               }),
           });
@@ -890,6 +1120,12 @@ export function createRuntime(o: RuntimeOptions): Runtime {
 
     async waitFor(interventionId, timeoutMs) {
       const r = await registry.wait(interventionId, timeoutMs);
+      // Unanswered, the question stays for the other screens as an expired one; answered, it is gone from them.
+      if (r.answer === "timeout") {
+        waiting.expire(interventionId);
+      } else {
+        waiting.remove(interventionId);
+      }
       if (r.answer === "timeout" && store) {
         const open = store
           .listInterventions({ state: "open" })
@@ -906,7 +1142,12 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         // No live long-poll (e.g. after a gateway restart): an open intervention can still be closed by the user.
         ok = store.listInterventions({ state: "open" }).some((i) => i.id === interventionId);
       }
-      if (!ok) return false;
+      if (!ok) {
+        // A question whose wait ran out: "keep it held" takes it off the other screens. Nothing can be released
+        // here any more (no hook waits); his `allow <grant>` in the chat is what releases the step.
+        return answer === "keep-held" && waiting.remove(interventionId);
+      }
+      waiting.remove(interventionId);
       closeIntervention(interventionId, answer === "keep-held" ? "denied" : "released");
       learn?.onAnswer(interventionId, answer);
       return true;
@@ -916,13 +1157,22 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       const s = need();
       const since = q.sinceTs ?? dayBounds(now()).start;
       const limit = q.limit ?? 200;
-      let decisions = q.sessionKey
+      // FORK 2026-10-29: the decisions since `since` are read once, here, and handed to rebuildEvents and questionRows.
+      // Before, rebuildEvents read them again, and questionRows and todayCounts (twice, once through status) read
+      // today's: five full reads with JSON parsing in one feed, on the gateway's one event loop.
+      const rows = q.sessionKey
         ? s.decisionsSinceForSession(since, q.sessionKey)
         : s.decisionsSince(since);
-      decisions = decisions.slice(-limit).reverse();
+      const decisions = rows.slice(-limit).toReversed();
       const book = deps?.book;
       const rebuilt = book
-        ? rebuildEvents(s, book, { since, limit, sessionKey: q.sessionKey })
+        ? rebuildEvents(s, book, {
+            since,
+            limit,
+            sessionKey: q.sessionKey,
+            // An empty tab key reads every tab here and none in rebuildEvents, which keeps its own read for it.
+            rows: q.sessionKey === "" ? undefined : rows,
+          })
         : { decisionEvents: [], interventions: [] };
       const known = new Set(rebuilt.interventions.map((i) => i.id));
       const minimal: InterventionEvent[] = s
@@ -941,6 +1191,11 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         }));
       const t = now();
       const rate = config.cost.eurPerUsd;
+      const dayStart = dayBounds(t).start;
+      // Every tab's decisions since today's start are a suffix of the rows read above when this feed is every tab's
+      // and reaches back to midnight (the page asks for the last 36 h); otherwise questionRows reads them itself.
+      const todayRows =
+        !q.sessionKey && since <= dayStart ? rows.filter((r) => r.ts >= dayStart) : undefined;
       return {
         decisions,
         interventions: [...rebuilt.interventions, ...minimal],
@@ -950,13 +1205,15 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           sessionKey: q.sessionKey,
           staleBefore: now() - 15 * 60_000,
         }),
-        questions: book ? questionRows(s, book, dayBounds(t).start) : [],
+        questions: book ? questionRows(s, book, dayStart, todayRows) : [],
+        rules: ruleRows(o.extensionRoot),
         precedents: s.allPrecedents().length,
         counts: todayCounts(),
         status: status(),
         spend: {
           ...spendToday(s, t, rate),
-          eur30: spendBetween(s, t - 30 * 86_400_000, t, rate).eur,
+          // FORK 2026-10-29: the same [t - 30 days, t) as one SUM, from cached whole days (spend.ts).
+          eur30: spendLast30Days(s, t, rate).eur,
         },
       };
     },
@@ -984,5 +1241,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       if (!learn) throw new Error("amygdala runtime not started");
       return learn;
     },
+
+    effects: () => effects,
   };
 }

@@ -4,7 +4,7 @@
  * questions are shown, never their wording (U9).
  */
 import { existsSync } from "node:fs";
-import { sep } from "node:path";
+import { join, sep } from "node:path";
 import {
   buildDecisionEvents,
   buildInterventionEvent,
@@ -14,6 +14,7 @@ import {
 } from "./events.js";
 import type { Proposal } from "./learn/types.js";
 import type { QuestionBook } from "./question-book.js";
+import { ALL_RULES, RULE_WORDS } from "./rules.js";
 import type { AmygdalaStore } from "./store.js";
 import { FAMILY_PAPER, type Change, type Cutoff, type FamilyId, type Situation } from "./types.js";
 
@@ -98,6 +99,33 @@ export interface QuestionRowOut {
   family: FamilyId;
   familyTitle: string;
   familySubtitle: string;
+  /** The line the chat bubble shows when this question acts (`says` in its .md). */
+  says?: string;
+}
+
+/** One hard rule as the chat names it: its words (rules.ts `RULE_WORDS`) and the file to open to change it. */
+export interface RuleRowOut {
+  id: string;
+  explanation: string;
+  says: string;
+  ask: string;
+  noun?: string;
+  file?: string;
+}
+
+/** Every hard rule that has words, once per id; `file` is the source rules.ts when it exists on this machine. */
+export function ruleRows(extensionRoot: string): RuleRowOut[] {
+  const src = editablePath(join(extensionRoot, "src", "rules.ts"));
+  const file = src && existsSync(src) ? src : undefined;
+  const seen = new Set<string>();
+  const out: RuleRowOut[] = [];
+  for (const r of ALL_RULES) {
+    const w = RULE_WORDS[r.rule];
+    if (!w || seen.has(r.rule)) continue;
+    seen.add(r.rule);
+    out.push({ id: r.rule, explanation: r.explanation, ...w, ...(file ? { file } : {}) });
+  }
+  return out;
 }
 
 const DIST_SEGMENT = `${sep}dist${sep}extensions${sep}`;
@@ -119,8 +147,10 @@ export function questionRows(
   store: AmygdalaStore,
   book: QuestionBook,
   dayStart: number,
+  // FORK 2026-10-29: `store.decisionsSince(dayStart)`, when the caller (the feed) has already read it.
+  rows?: ReturnType<AmygdalaStore["decisionsSince"]>,
 ): QuestionRowOut[] {
-  const decisions = store.decisionsSince(dayStart);
+  const decisions = rows ?? store.decisionsSince(dayStart);
   const agree = new Map<string, { yes: number; total: number }>();
   for (const d of decisions) {
     const labels = store.labelsFor(d.id).filter((l) => l.kind === "judge");
@@ -159,6 +189,7 @@ export function questionRows(
         family: q.family,
         familyTitle: fam?.title ?? q.family,
         familySubtitle: fam?.subtitle ?? "",
+        ...(typeof q.says === "string" && q.says.trim() ? { says: q.says.trim() } : {}),
       };
     });
 }
@@ -170,13 +201,23 @@ export function questionRows(
 export function rebuildEvents(
   store: AmygdalaStore,
   book: QuestionBook,
-  o: { since: number; limit: number; sessionKey?: string },
+  o: {
+    since: number;
+    limit: number;
+    sessionKey?: string;
+    /**
+     * FORK 2026-10-29: what the read below returns (the tab's decisions since `since` when `sessionKey` is set, else
+     * every tab's, oldest first), when the caller, the feed, has already read it.
+     */
+    rows?: ReturnType<AmygdalaStore["decisionsSince"]>;
+  },
 ): { decisionEvents: DecisionEvent[]; interventions: InterventionEvent[] } {
   // Filter by tab BEFORE the limit (2026-09-30: the CTO tab's rows fell outside the last 400 of the whole gateway).
   const rows = (
-    o.sessionKey !== undefined
+    o.rows ??
+    (o.sessionKey !== undefined
       ? store.decisionsSinceForSession(o.since, o.sessionKey)
-      : store.decisionsSince(o.since)
+      : store.decisionsSince(o.since))
   ).slice(-o.limit);
   // A decision can carry two interventions: its own and a refusal strip the merge outranked (decide.ts `refusalAlso`).
   const byDecision = new Map<string, ReturnType<AmygdalaStore["listInterventions"]>>();
@@ -199,6 +240,7 @@ export function rebuildEvents(
       decisionId: d.id,
       book,
       interventionId: iv?.id,
+      ...(s.toolUseId ? { toolUseId: s.toolUseId } : {}),
     };
     decisionEvents.push(...buildDecisionEvents(ctx));
     for (const one of ivs) {

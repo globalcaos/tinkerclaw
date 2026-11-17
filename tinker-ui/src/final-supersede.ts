@@ -31,6 +31,7 @@
 // ever deleted — "carta a terra va a la guerra", the same law stream-reslice.ts enforces.
 // ═════════════════════════════════════════════════════════════════════════════════════════
 
+import { endsInsideCard } from "./cut-card.js";
 import { resliceSegments } from "./stream-reslice.js";
 
 /** The subset of a chat message this module needs. `_runId` is stamped by app.ts on every bubble a
@@ -126,6 +127,42 @@ export function finalTextBubbles<T extends RunBubble>(
 }
 
 /**
+ * The tail split sits at a character offset and knows nothing of markdown, so it can land inside an
+ * open ```html-render fence: neither half then parses, and the card shows as source with its end in
+ * the next bubble. The same cut can already sit BETWEEN two bubbles, when the stream closed a
+ * segment mid-card (a stop check, a thought). So for every bubble that ends inside such a fence, the
+ * next non-blank piece (a later bubble, or the tail) up to its closing fence joins that bubble
+ * (cut-card.ts). Text only moves up and nothing is lost; a bubble is never emptied by it.
+ */
+export function mendCutCard(
+  texts: string[],
+  appendTail: string,
+): { texts: string[]; appendTail: string } {
+  const pieces = [...texts, appendTail];
+  for (let i = 0; i < texts.length; i++) {
+    if (!endsInsideCard(pieces[i] ?? "")) {
+      continue;
+    }
+    let j = i + 1;
+    while (j < pieces.length && !pieces[j]?.trim()) {
+      j++;
+    }
+    const next = pieces[j] ?? "";
+    const close = next.indexOf("```");
+    if (close < 0) {
+      continue;
+    }
+    const rest = next.slice(close + 3).trimStart();
+    if (!rest && j < texts.length) {
+      continue;
+    }
+    pieces[i] += next.slice(0, close + 3);
+    pieces[j] = rest;
+  }
+  return { texts: pieces.slice(0, texts.length), appendTail: pieces[texts.length] ?? "" };
+}
+
+/**
  * What a final writes onto the bubbles `finalTextBubbles` chose: each one's text and the part of
  * the body none of them shows (`appendTail`, "" for none), to push as ONE new bubble.
  *
@@ -143,13 +180,13 @@ export function planFinalWrite(
 ): { texts: string[]; appendTail: string } {
   if (supersedes) {
     const texts = bubbles.map(bubbleText);
-    return { texts, appendTail: supersedingAppendTail(texts, finalText) };
+    return mendCutCard(texts, supersedingAppendTail(texts, finalText));
   }
   const resliced = resliceSegments(
     bubbles.map((m) => ({ text: bubbleText(m), segStart: bubbleSegStart(m) })),
     finalText,
   );
-  return { texts: resliced.texts, appendTail: resliced.appendTail ?? "" };
+  return mendCutCard(resliced.texts, resliced.appendTail ?? "");
 }
 
 // ════════════════ WHY A SUPERSEDING FINAL NEEDS ITS OWN TAIL RULE ════════════════

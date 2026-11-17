@@ -637,6 +637,14 @@ export function mountContextTimeline(
     //
     // Historic rows persisted before the producer-side fix still carry poisoned values, so this
     // guard stays even though `context-anatomy.ts` now rejects implausible figures at source.
+    //
+    // 2026-11-14 (burn review F1): `usedTokens` is the run's SUM over its calls, so a value under
+    // the window is still not this prompt's size (3 calls of 40k read as 120k). The row's own
+    // itemised total wins; `usedTokens` is only a last resort for rows that itemise nothing.
+    const sent = ev.contextSent?.totalTokens;
+    if (typeof sent === "number" && Number.isFinite(sent) && sent > 0) {
+      return sent;
+    }
     const used = ev.contextWindow?.usedTokens;
     const max = ev.contextWindow?.maxTokens;
     const usedIsPlausible =
@@ -644,10 +652,7 @@ export function mountContextTimeline(
       Number.isFinite(used) &&
       used > 0 &&
       (typeof max !== "number" || max <= 0 || used <= max);
-    if (usedIsPlausible) {
-      return used as number;
-    }
-    return ev.contextSent?.totalTokens ?? 0;
+    return usedIsPlausible ? (used as number) : 0;
   }
 
   function maxTokensFor(ev: AnatomyEvent): number {

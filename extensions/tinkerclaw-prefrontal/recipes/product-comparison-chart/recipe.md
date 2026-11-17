@@ -95,6 +95,8 @@ Some products have no honest per-unit price: laptops, appliances, anything bough
 
 When the ask names a reference item ("comparable to this one", "like the one I have"), the gates are "near the reference" on each line it cares about, and the chart sorts by price inside them. A pick that matches or beats the reference on every line answers a different, dearer question; if one line falls short (less graphics memory, a smaller disk), name it in the row instead of buying past it.
 
+When the ask is whether anything will run slower on a candidate than on the machine the requester uses now, measure the reference instead of looking it up. Read its real limits on the machine itself (graphics power limit, memory clock, what it runs every day), time its own workload once with the same tool and model tag the reviews used, and take the candidate's figures from charts that also list the reference's part, in the same benchmark version. Specs predict; measurements decide: in one such check the memory bandwidth on paper predicted a loss on small local models, and the measurement was a tie. When the processor family changes (Intel or AMD to ARM), sort the reference's software by what translation can carry: x86/x64 user-mode code runs translated, a kernel driver never does. `win-arm-census.py` in this folder does that census of a Windows install in one read-only call (over ssh: `ssh <host> 'python3 - <windows-root>' < win-arm-census.py`); for container images, read each image's platforms from its registry manifest. Whether a vendor ships an ARM build comes from its current release notes, not from a forum thread.
+
 ### 2. Sweep several phrasings, not one keyword
 
 **Tools:** the source's own skill
@@ -185,8 +187,15 @@ and state anything the chart could not verify.
 - A shopping list linked its licence row to a different edition of the same product than the one it priced (2026-10-09): the link opened a €109.99 OEM key from a marketplace seller, the price beside it was the €259 retail licence the shop sells itself. One product name can cover several editions, each at its own URL and price, so the link is part of the quote: fetch the linked URL and check that its title, price and seller match the row.
 - A laptop whose title promised "32 GB" nearly passed a "can reach 64 GB later" gate; its memory was LPDDR5X, soldered (2026-10-09). When a gate is about upgrading later, read the memory type, not the size: LPDDR is soldered.
 - Asked for a laptop "comparable with this present one" for a new hire, a turn gated on matching or beating the reference on every line and picked a €3,892 machine, close to the price of the reference machine (2026-10-09). The need was similar specs at a much lower price. Sorted by price inside "near the reference" gates, a €2,581 machine won, with one line (graphics memory) named as short. Hence the reference-item paragraph in Step 1.
+- 2026-10-10: reading PcComponentes product pages cost 4 calls per laptop (an empty render, a price split across lines, Playwright stuck on the bot check). One call now: `~/.openclaw/workspace/scripts/pcc-product.sh <url>` (headless Chrome dump-dom with one retry).
 - 2026-10-12: a Slack reply weighed four ways to spend $10k on a local model and gave each in its own
   unit (hardware dollars, rental days, billions of tokens, months of subscription). The numbers had to
   be directly comparable to each other. Redone as dollars per year for one heavy
   user, with the volume-dependent option given at stated volumes plus its break-even. Pick the common
   unit in Step 1, even when the deliverable is prose and not a chart.
+- 2026-11-13: asked whether anything would run slower on an ARM laptop than on the Intel one in use, an answer
+  left several of the reference's Windows programs marked "not checked", and called a VPN client's ARM build
+  beta on the strength of a forum note a year old; the vendor's current release notes listed the ARM installer
+  without that label. A first census that read only the program folders then filed two VPN clients as
+  translatable, because their drivers live in `Windows/System32/drivers`. Hence the machine-swap paragraph in
+  Step 1 and `win-arm-census.py`, which matches those drivers to their programs.

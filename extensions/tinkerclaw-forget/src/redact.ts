@@ -15,6 +15,7 @@
 import { constants as fsConstants } from "node:fs";
 import { chmod, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { FactMatcher } from "./matcher.js";
 
 const CHUNK_BYTES = 1 << 20;
@@ -64,6 +65,8 @@ export async function scanFile(
     let carry = "";
     let pos = 0;
     let kind: FileKind = "text";
+    // Keeps a multi-byte character whole when a chunk edge cuts it.
+    const decoder = new StringDecoder("utf8");
     for (;;) {
       const { bytesRead } = await fh.read(buf, 0, CHUNK_BYTES, pos);
       if (bytesRead <= 0) {
@@ -75,7 +78,7 @@ export async function scanFile(
           return { kind, holds: null };
         }
       }
-      const text = carry + buf.toString("latin1", 0, bytesRead);
+      const text = carry + decoder.write(buf.subarray(0, bytesRead));
       if (matcher.scan.test(text)) {
         return { kind, holds: true };
       }
@@ -128,15 +131,15 @@ function cleanLine(line: string, matcher: FactMatcher, token: string): string | 
   const trimmed = line.trimStart();
   const jsonish = trimmed.startsWith("{") || trimmed.startsWith("[");
   if (!jsonish || parses(replaced) || !parses(line)) {
-    return matcher.scan.test(Buffer.from(replaced, "utf8").toString("latin1")) ? null : replaced;
+    return matcher.scan.test(replaced) ? null : replaced;
   }
   // The fact was a bare JSON value ({"phone":600111222}): the token goes in as a string.
   const quoted = line.replace(matcher.replace, JSON.stringify(token));
-  if (parses(quoted) && !matcher.scan.test(Buffer.from(quoted, "utf8").toString("latin1"))) {
+  if (parses(quoted) && !matcher.scan.test(quoted)) {
     return quoted;
   }
   const walked = JSON.stringify(deepReplace(JSON.parse(line), matcher.replace, token));
-  return matcher.scan.test(Buffer.from(walked, "utf8").toString("latin1")) ? null : walked;
+  return matcher.scan.test(walked) ? null : walked;
 }
 
 type Pass = { outcome: RedactOutcome; tmp: string | null };
@@ -167,10 +170,9 @@ async function onePass(
     let pending: Buffer = Buffer.alloc(0);
     let pos = 0;
     const handle = (line: Buffer, eol: boolean) => {
-      const latin = line.toString("latin1");
       let out: Buffer = line;
-      if (matcher.scan.test(latin)) {
-        const text = line.toString("utf8");
+      const text = line.toString("utf8");
+      if (matcher.scan.test(text)) {
         const copies = countMatches(text, matcher.replace);
         outcome.lines += 1;
         outcome.copies += Math.max(copies, 1);

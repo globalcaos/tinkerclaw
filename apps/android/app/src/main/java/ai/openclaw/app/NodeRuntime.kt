@@ -75,6 +75,13 @@ import java.util.concurrent.atomic.AtomicLong
 /** Off screen and idle this long, the app drops its node link (battery #3, see scheduleIdleDrop). */
 private const val IDLE_DROP_MS = 3 * 60 * 1000L
 
+/**
+ * The same, after a push wake with the app off screen (2026-11-11). The Pi wakes the phone about 100
+ * times a day for one command each (a GPS fix, "when is the next backup"); staying linked 3 minutes
+ * after each kept the link up a fifth of the day. A command still running is never cut (invokesInFlight).
+ */
+private const val PUSH_IDLE_DROP_MS = 45 * 1000L
+
 class NodeRuntime(
   context: Context,
   val prefs: SecurePrefs = SecurePrefs(context.applicationContext),
@@ -375,7 +382,13 @@ class NodeRuntime(
       onEvent = { _, _ -> },
       onInvoke = { req ->
         noteNodeActivity()
-        invokeDispatcher.handleInvoke(req.command, req.paramsJson)
+        invokesInFlight.incrementAndGet()
+        try {
+          invokeDispatcher.handleInvoke(req.command, req.paramsJson)
+        } finally {
+          invokesInFlight.decrementAndGet()
+          noteNodeActivity() // the idle time counts from the end of a command, not from its start
+        }
       },
       onTlsFingerprint = { stableId, fingerprint ->
         prefs.saveGatewayTlsFingerprint(stableId, fingerprint)
@@ -728,6 +741,7 @@ class NodeRuntime(
   fun setForeground(value: Boolean) {
     _isForeground.value = value
     if (value) {
+      wokenByPush = false
       idleDropJob?.cancel()
       // After an idle drop the service is gone; on screen Android lets us start it again.
       runCatching { NodeForegroundService.start(appContext) }
@@ -1017,6 +1031,10 @@ class NodeRuntime(
   @Volatile private var lastNodeActivityMs = 0L
   private var idleDropJob: Job? = null
 
+  /** A push woke the app while it was off screen: the short idle time applies until it is opened. */
+  @Volatile private var wokenByPush = false
+  private val invokesInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
   private fun noteNodeActivity() {
     lastNodeActivityMs = System.currentTimeMillis()
     if (!_isForeground.value) scheduleIdleDrop()
@@ -1027,10 +1045,11 @@ class NodeRuntime(
     idleDropJob =
       scope.launch {
         while (true) {
-          delay(IDLE_DROP_MS)
+          val idle = if (wokenByPush) PUSH_IDLE_DROP_MS else IDLE_DROP_MS
+          delay(idle)
           if (_isForeground.value || !pushTokenSent) return@launch
-          if (ai.openclaw.app.jarvis.PhotoBackup.isRunning()) continue
-          if (System.currentTimeMillis() - lastNodeActivityMs < IDLE_DROP_MS) continue
+          if (ai.openclaw.app.jarvis.PhotoBackup.isRunning() || invokesInFlight.get() > 0) continue
+          if (System.currentTimeMillis() - lastNodeActivityMs < idle) continue
           Log.i("JarvisPush", "idle off screen: dropping the node link until the next wake")
           disconnect()
           runCatching { NodeForegroundService.stop(appContext) }
@@ -1041,6 +1060,7 @@ class NodeRuntime(
 
   /** FORK 2026-10-22: a push wake. The old socket may look alive and be dead, so always reconnect. */
   fun wakeFromPush() {
+    if (!_isForeground.value) wokenByPush = true
     if (connectedEndpoint != null) {
       refreshGatewayConnection()
     } else {

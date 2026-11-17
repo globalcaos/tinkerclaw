@@ -71,6 +71,31 @@ describe("redactFile", () => {
   });
 });
 
+describe("redactFile with non-ASCII neighbours", () => {
+  it("finds and redacts a text fact inside curly quotes, before an em dash and with different accent case", async () => {
+    const p = join(dir, "note.md");
+    writeFileSync(
+      p,
+      "He signed “Òscar Orbis” on the form\nòscar orbis’s desk\nÒSCAR ORBIS—again\n",
+    );
+    const m = buildMatcher("Òscar Orbis");
+    expect(await fileHolds(p, m)).toBe(true);
+    const out = await redactFile(p, m, TOKEN, { dryRun: false });
+    expect(out).toMatchObject({ lines: 3, copies: 3, unredacted: 0, wrote: true });
+    expect(readFileSync(p, "utf8")).toBe(
+      `He signed “${TOKEN}” on the form\n${TOKEN}’s desk\n${TOKEN}—again\n`,
+    );
+  });
+
+  it("finds a non-ASCII fact whose accented letter is cut by the chunk edge", async () => {
+    const p = join(dir, "big.md");
+    // "Ò" is two bytes; the first chunk ends between them.
+    const pad = "x".repeat((1 << 20) - 2);
+    writeFileSync(p, `${pad} Òscar Orbis tail`);
+    expect(await fileHolds(p, buildMatcher("Òscar Orbis"))).toBe(true);
+  });
+});
+
 describe("fileHolds / sniffKind", () => {
   it("finds a fact that straddles two read chunks", async () => {
     const p = join(dir, "big.txt");

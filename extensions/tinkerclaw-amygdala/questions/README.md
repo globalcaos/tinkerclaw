@@ -4,6 +4,8 @@ For: whoever edits a file in this folder. Derived from the 2026-10-24 `false-blo
 `false-blocker-nudge`), whose turn paid four extra rounds for the steps below. Update it when a step
 stops being true.
 
+0. **`says` is only what the chat bubble shows** the agent when the question acts. The judge never
+   reads it, so changing it needs no new `version`, no case and no replay: edit it and rebuild.
 1. **Raise `version`** in the YAML when the wording, an answer or a cutoff changes. Tests that pin a
    version number break; compare against the version read before the change instead
    (`__tests__/learn-changes.test.ts`, "a tightening that would hold three controls").

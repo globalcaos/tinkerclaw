@@ -9,58 +9,130 @@
 import { esc, fmtClock } from "./amygdala-html.js";
 import type { ChangeView, InterventionView, MarkerView } from "./amygdala-types.js";
 
-function chipsHtml(chips: string[], bad = false): string {
-  if (!chips.length) return "";
-  const cls = bad ? "amy-chip amy-bad" : "amy-chip";
-  return `<div class="amy-chips">${chips.map((c) => `<span class="${cls}">${esc(c)}</span>`).join("")}</div>`;
+/** What a closed card says happened to its question. */
+const SETTLED_WORD: Record<string, string> = {
+  released: "allowed",
+  denied: "kept held",
+  expired: "no answer",
+  settled: "settled",
+};
+
+/** The question an Allow answers: the gateway's, or the plainest one an older gateway leaves room for. */
+export function askOf(iv: InterventionView): string {
+  return iv.ask ?? "Allow this step?";
 }
 
 function isOpen(iv: InterventionView): boolean {
   return iv.state === "open";
 }
 
-/** Block 2 left. Open: the full card. Closed: a one-line settled note. */
-export function renderHoldCard(iv: InterventionView, o?: { showWhy?: boolean }): string {
-  if (!isOpen(iv)) {
-    return `<div class="amy-settled amy-settled-hold" data-iv="${esc(iv.id)}">✋ held · ${esc(iv.state)}</div>`;
-  }
-  const cmd = iv.cmd ? `<div class="amy-cmd">${esc(iv.cmd)}</div>` : "";
-  const why = o?.showWhy
-    ? `<div class="amy-why"><div class="amy-why-t">Why held</div><ul>${iv.chips.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>`
-    : "";
+/**
+ * Block 2 (FORK 2026-11-03): one question and its two answers, the hand as the mark. The plain sentence rides on hover;
+ * the rule and why it fired sit folded in the bubble above. Closed: the question and what became of it.
+ */
+export function renderHoldCard(iv: InterventionView): string {
   const id = esc(iv.id);
+  const q = esc(askOf(iv));
+  if (!isOpen(iv)) {
+    return `<div class="amy-settled amy-settled-hold" data-iv="${id}">✋ ${q} · ${esc(SETTLED_WORD[iv.state] ?? iv.state)}</div>`;
+  }
+  const tip = iv.sentence ? ` title="${esc(iv.sentence)}"` : "";
   return (
-    `<div class="amy-card amy-hold" data-iv="${id}">` +
-    `<h3>✋ Held before it ran</h3>` +
-    cmd +
-    chipsHtml(iv.chips, true) +
-    why +
-    `<div class="amy-btns">` +
-    `<button class="amy-btn amy-small amy-danger" data-amy-act="answer" data-iv="${id}" data-answer="allow-once">Allow once</button>` +
-    `<button class="amy-btn amy-small amy-primary" data-amy-act="answer" data-iv="${id}" data-answer="keep-held">Keep held</button>` +
-    `<button class="amy-btn amy-small" data-amy-act="why" data-iv="${id}">Why?</button>` +
-    `</div>` +
-    `<div class="amy-foot">The agent has been told why and is waiting.</div>` +
+    `<div class="amy-card amy-hold amy-q" data-iv="${id}"${tip}>` +
+    `<span class="amy-q-icon">✋</span><span class="amy-q-text">${q}</span>` +
+    `<button class="amy-btn amy-small amy-primary" data-amy-act="answer" data-iv="${id}" data-answer="allow-once">Allow</button>` +
+    `<button class="amy-btn amy-small" data-amy-act="answer" data-iv="${id}" data-answer="keep-held">No</button>` +
     `</div>`
   );
 }
 
-/** Block 2 right. Closed: one "released" line (or the settled state). */
-export function renderProofCard(iv: InterventionView): string {
-  const id = esc(iv.id);
-  if (!isOpen(iv)) {
-    const line = iv.state === "released" ? "✓ released" : `🔎 proof · ${esc(iv.state)}`;
-    return `<div class="amy-settled amy-settled-proof" data-iv="${id}">${line}</div>`;
-  }
-  const cmd = iv.cmd ? `<div class="amy-cmd">${esc(iv.cmd)}</div>` : "";
-  return (
-    `<div class="amy-card amy-proof" data-iv="${id}">` +
-    `<h3>🔎 Proof asked before it runs</h3>` +
-    cmd +
-    chipsHtml(iv.chips) +
-    `<div class="amy-foot">The agent was asked to show evidence; this usually settles itself.</div>` +
-    `</div>`
-  );
+/** A change other people can see, from the gateway's effect judge (amygdala2.effect, FORK 2026-11-08). */
+export interface EffectView {
+  id: string;
+  sessionKey: string;
+  turnId: string;
+  ts: number;
+  what: string;
+  where: string;
+  week: number;
+  lifetime: number;
+  revert: string | null;
+  state: "live" | "reverting" | "reverted" | "revert-failed";
+  output?: string;
+}
+
+const people = (n: number): string => `${n.toLocaleString("en")} ${n === 1 ? "person" : "people"}`;
+
+/**
+ * FORK 2026-11-08: one yellow card per change that reaches someone other than the owner: what changed and where, how
+ * many people see it in the next week and over its lifetime, and Revert. The undo command rides on the button's hover.
+ */
+export function renderEffectCards(effects: readonly EffectView[]): string {
+  if (!effects.length) return "";
+  return effects
+    .map((e) => {
+      const id = esc(e.id);
+      let btn: string;
+      if (e.state === "reverted") btn = `<span class="amy-effect-done">Reverted ✓</span>`;
+      else if (e.state === "reverting")
+        btn = `<button class="amy-btn amy-small" disabled>Reverting…</button>`;
+      else if (!e.revert)
+        btn = `<span class="amy-effect-done" title="This change cannot be undone">Can't undo</span>`;
+      else
+        btn =
+          `<button class="amy-btn amy-small amy-effect-revert" data-amy-act="effect-revert" data-effect="${id}" ` +
+          `title="${esc(e.revert)}">${e.state === "revert-failed" ? "Retry revert" : "Revert"}</button>`;
+      const failed =
+        e.state === "revert-failed"
+          ? `<div class="amy-effect-fail" title="${esc(e.output ?? "")}">The revert failed. Hover for its output.</div>`
+          : "";
+      return (
+        `<div class="amy-effect${e.state === "reverted" ? " amy-effect-reverted" : ""}" data-effect-card="${id}">` +
+        `<div class="amy-effect-main"><span class="amy-effect-icon">👥</span>` +
+        `<span class="amy-effect-what">${esc(e.what)}</span>` +
+        (e.where ? `<span class="amy-effect-where">${esc(e.where)}</span>` : "") +
+        `</div><div class="amy-effect-reach">` +
+        `<span title="People likely to see it in the next 7 days">${esc(people(e.week))} this week</span>` +
+        `<span class="amy-effect-sep">·</span>` +
+        `<span title="People likely to see it over its whole lifetime if it stays">${esc(people(e.lifetime))} lifetime</span>` +
+        `${btn}</div>${failed}</div>`
+      );
+    })
+    .join("");
+}
+
+/** One step waiting for the owner's OK, as the Allow bar under a reply lists it. */
+export interface AllowItem {
+  /** What "allow <code>" releases: an AEGIS grant or a proof hold's code. */
+  code: string;
+  /** The question the button answers, e.g. "Allow publishing to the web?". */
+  ask: string;
+  /** The held step in plain words, shown on hover: the tool row's sentence or the gateway's, never a command. */
+  what: string;
+}
+
+const ALLOW_WHAT_MAX = 200;
+
+/**
+ * FORK 2026-10-29: confirming a held step by copying a code into the chat was slow; a button at the end of the
+ * response replaces it, and sends "allow <code>" as his own prompt. FORK 2026-11-03: each step is one line, the hand, a
+ * specific question and the button; the explanation lines went. "" when nothing waits.
+ */
+export function renderAllowBar(items: readonly AllowItem[], sent: ReadonlySet<string>): string {
+  if (!items.length) return "";
+  const rows = items
+    .map((it) => {
+      const done = sent.has(it.code);
+      const what =
+        it.what.length > ALLOW_WHAT_MAX ? `${it.what.slice(0, ALLOW_WHAT_MAX - 1)}…` : it.what;
+      return (
+        `<div class="amy-allow-row" title="${esc(what)}"><span class="amy-allow-icon">✋</span>` +
+        `<span class="amy-allow-what">${esc(it.ask)}</span>` +
+        `<button class="amy-btn amy-small ${done ? "" : "amy-primary"}" data-amy-act="allow-grant" data-code="${esc(it.code)}"${done ? " disabled" : ""}>${done ? "Allowed ✓" : "Allow"}</button></div>`
+      );
+    })
+    .join("");
+  return `<div class="amy-allow">${rows}</div>`;
 }
 
 /** Block 3. `selected` null means the first option (the likeliest reading). */
@@ -70,7 +142,8 @@ export function renderAskCard(iv: InterventionView, selected: string | null): st
     return `<div class="amy-settled amy-settled-ask" data-iv="${id}">❓ ${esc(iv.title)} · ${esc(iv.state)}</div>`;
   }
   const options = iv.options ?? [];
-  const title = `<h3>❓ ${esc(iv.title)}</h3>`;
+  const plain = iv.sentence ? `<div class="amy-plain">${esc(iv.sentence)}</div>` : "";
+  const title = `<h3>❓ ${esc(iv.title)}</h3>${plain}`;
   if (!options.length) {
     return `<div class="amy-card amy-ask" data-iv="${id}">${title}</div>`;
   }
@@ -119,14 +192,21 @@ export function renderRefusalStrip(
   exchangeKey?: string | null,
   /** Exchanges a Rewind takes from this one on (2026-10-22); above 1 the button says so and no retry is offered. */
   rewindCount = 1,
-  /** A partial refusal (the reply dodged part of the work, 2026-10-22): same offer, its own words. */
-  partial = false,
+  /**
+   * FORK 2026-11-13: when that exchange's prompt row was sent (ms). The key is a hash of the words, so two prompts
+   * with the same words share it; the time says which of them this strip sits under.
+   */
+  exchangeAt?: number,
 ): string {
   // "settled" is the same offer in shadow mode: the strip is the user's choice, not an enforcement (2026-09-30,
   // shadow mode never showed Rewind).
   if (!iv || (!isOpen(iv) && iv.state !== "settled")) return "";
   const t = esc(turnId);
-  const ex = exchangeKey ? ` data-exchange="${esc(exchangeKey)}"` : "";
+  const ex =
+    (exchangeKey ? ` data-exchange="${esc(exchangeKey)}"` : "") +
+    (exchangeKey && exchangeAt !== undefined && Number.isFinite(exchangeAt)
+      ? ` data-exchange-at="${String(Math.round(exchangeAt))}"`
+      : "");
   const many = rewindCount > 1;
   const rewind = canRewind
     ? `<button class="amy-btn amy-small" data-amy-act="rewind" data-turn="${t}"${ex}` +
@@ -138,15 +218,15 @@ export function renderRefusalStrip(
       : "";
   const retryBtn =
     canRewind && retry && !many
-      ? `<button class="amy-btn amy-small amy-retry" data-amy-act="rewind-retry" data-turn="${t}"${retry.reason ? ` title="${esc(retry.reason)}"` : ""}>` +
+      ? `<button class="amy-btn amy-small amy-retry" data-amy-act="rewind-retry" data-turn="${t}"${ex}${retry.reason ? ` title="${esc(retry.reason)}"` : ""}>` +
         `⟲ Rewind and retry with ${retry.chipHtml}<span class="amy-retry-name">${esc(retry.label)}</span></button>`
       : "";
   return (
-    `<div class="amy-refstrip" data-turn="${t}"><span>🧠</span><span class="amy-t">${partial ? "This looks like a partial refusal" : "This looks like a refusal"}</span>` +
+    // FORK 2026-11-03: the strip rides in its bubble, whose line already says what Jev saw: buttons only.
+    `<div class="amy-refstrip" data-turn="${t}">` +
     rewind +
     retryBtn +
-    `<button class="amy-btn amy-small" data-amy-act="refusal-keep" data-turn="${t}">Keep</button>` +
-    `<span class="amy-m">logged for the router</span></div>`
+    `<button class="amy-btn amy-small" data-amy-act="refusal-keep" data-turn="${t}">Keep</button></div>`
   );
 }
 
@@ -231,7 +311,9 @@ export function renderMarker(m: MarkerView): string {
   const items = m.items.map((i) => esc(i)).join(", ");
   const text =
     m.kind === "unsupported-after-two"
-      ? `still unsupported after two attempts: ${items}`
-      : `refusal rewound${items ? `: ${items}` : ""}`;
+      ? `still unsupported after one send-back: ${items}`
+      : m.kind === "defect-reported"
+        ? `the agent says a check is wrong: ${items}`
+        : `refusal rewound${items ? `: ${items}` : ""}`;
   return `<div class="amy-marker" data-turn="${esc(m.turnId)}">${text}</div>`;
 }

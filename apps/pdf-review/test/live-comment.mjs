@@ -18,7 +18,7 @@ mkdirSync(dirname(COPY), { recursive: true });
 execFileSync("python3", [`${ROOT}md2pdf.py`, `${ROOT}README.md`, COPY], { stdio: "ignore" });
 mkdirSync(`${ROOT}papers/open/jarvistest`, { recursive: true });
 if (!existsSync(LINK) && !(() => { try { return lstatSync(LINK); } catch { return null; } })()) symlinkSync(COPY, LINK);
-const URL_ = "http://127.0.0.1:18820/viewer/web/viewer.html?file=%2Fpapers%2Fopen%2Fjarvistest%2Ft.pdf";
+const URL_ = `http://127.0.0.1:${process.env.PDF_REVIEW_PORT || 18820}/viewer/web/viewer.html?file=%2Fpapers%2Fopen%2Fjarvistest%2Ft.pdf`;
 const comments = () => execFileSync(`${ROOT}.venv/bin/python`, ["-I", `${ROOT}pdf-comments.py`, COPY], { encoding: "utf8" });
 
 const browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || undefined });
@@ -35,10 +35,12 @@ const open = async () => {
 const r = {};
 let page = await open();
 await page.evaluate(() => localStorage.clear());
-await page.tap("#tapComment");
+await page.tap("#selectTool");
 const span = await page.evaluateHandle(() => [...document.querySelectorAll(".textLayer span")].find((s) => s.textContent.trim().length > 3 && s.getBoundingClientRect().top > 80));
 const box = await span.boundingBox();
 await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
+await page.waitForSelector("#selBar:not([hidden])", { timeout: 5000 });
+await page.tap("#selComment");
 await page.waitForSelector("#commentManagerDialog[open]", { timeout: 5000 });
 r.buttonLabel = (await page.textContent("#commentManagerSaveButton")).trim();
 r.buttonEnabled = !(await page.isDisabled("#commentManagerSaveButton"));

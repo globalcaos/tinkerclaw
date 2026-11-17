@@ -11,6 +11,13 @@
  *   GET /door/term/vendor/<f>  xterm.js, xterm.css, addon-fit.js (vendored, MIT)
  *   WS  /door/term/ws          the shell: browser → {"t":"i","d":…}/{"t":"r","c","r"}; shell → text
  *
+ * OPENING LINKS ON THE PHONE (2026-10-30: `/login` in Claude Code could not open a browser, and a tap on
+ * the printed link did nothing). pi-term.service sets BROWSER=open-on-phone, which drops each URL as a
+ * file in <door dir>/term-open/. The door watches that folder and writes the URL to the attached phone
+ * as a private escape code (OSC 7771), live only and never into the replay buffer, so a reconnect does
+ * not open it twice. With no phone attached it waits up to 10 min for the next attach. The page opens
+ * it through the app's window.JarvisTerm (the system browser), or window.open in a plain browser.
+ *
  * ONE SHELL PER DEVICE, kept 30 min after the phone disconnects (a lock screen or a tunnel must not
  * kill a running `claude`); a reconnect gets the last 200 kB of output replayed, then goes live.
  * The shell is term-pty.py (a real pty) attached to the tmux session of pi-term.service, which runs
@@ -27,16 +34,79 @@ const VENDOR = path.join(HERE, "xterm");
 const HELPER = path.join(HERE, "term-pty.py");
 const KEEP_MS = 30 * 60 * 1000;
 const REPLAY_BYTES = 200 * 1024;
+const OPEN_KEEP_MS = 10 * 60 * 1000;
 const VENDOR_FILES = {
   "xterm.js": "text/javascript; charset=utf-8",
   "xterm.css": "text/css; charset=utf-8",
   "addon-fit.js": "text/javascript; charset=utf-8",
 };
 
-export function createTerminal({ audit = () => {}, live } = {}) {
+/** A URL safe to hand to the phone's browser: http(s), no spaces or control characters. */
+export function openableUrl(text) {
+  const u = String(text ?? "").trim();
+  if (!/^https?:\/\/[^\s\x00-\x1f\x7f]+$/.test(u)) return null;
+  try {
+    new URL(u);
+  } catch {
+    return null;
+  }
+  return u;
+}
+
+export function createTerminal({ audit = () => {}, live, openDir } = {}) {
   const wss = new WebSocketServer({ noServer: true });
   /** deviceId -> { child, buf: string, ws, timer } */
   const sessions = new Map();
+  /** URLs that arrived with no phone attached: { url, at } */
+  let pendingOpens = [];
+
+  const openSeq = (url) => `\x1b]7771;open;${url}\x07`;
+
+  function deliverOpen(url) {
+    let sent = 0;
+    for (const s of sessions.values()) {
+      if (s.ws?.readyState === 1) {
+        s.ws.send(openSeq(url));
+        sent++;
+      }
+    }
+    if (!sent) pendingOpens.push({ url, at: Date.now() });
+    audit({ ev: "term_link", sent });
+  }
+
+  function takeOpens() {
+    let names;
+    try {
+      names = fs.readdirSync(openDir);
+    } catch {
+      return;
+    }
+    for (const name of names.filter((n) => n.endsWith(".url")).sort()) {
+      const file = path.join(openDir, name);
+      let text, mtime;
+      try {
+        mtime = fs.statSync(file).mtimeMs;
+        text = fs.readFileSync(file, "utf8");
+        fs.unlinkSync(file);
+      } catch {
+        continue;
+      }
+      const url = openableUrl(text);
+      if (url && Date.now() - mtime < OPEN_KEEP_MS) deliverOpen(url);
+    }
+  }
+
+  let watcher = null;
+  if (openDir) {
+    fs.mkdirSync(openDir, { recursive: true, mode: 0o700 });
+    takeOpens();
+    try {
+      watcher = fs.watch(openDir, () => takeOpens());
+      watcher.unref();
+    } catch (err) {
+      console.error("[phone-door] cannot watch", openDir, err);
+    }
+  }
 
   function startShell(deviceId) {
     const child = spawn("python3", ["-I", HELPER], {
@@ -72,6 +142,9 @@ export function createTerminal({ audit = () => {}, live } = {}) {
     if (!s) s = startShell(dev.id);
     else if (s.buf) ws.send(s.buf);
     s.ws = ws;
+    const fresh = pendingOpens.filter((o) => Date.now() - o.at < OPEN_KEEP_MS);
+    pendingOpens = [];
+    for (const o of fresh) ws.send(openSeq(o.url));
     const conn = { id: dev.id, hash: dev.hash, kind: "term", close: () => ws.close() };
     live?.add(conn);
     ws.on("message", (raw) => {
@@ -132,7 +205,12 @@ export function createTerminal({ audit = () => {}, live } = {}) {
     return true;
   }
 
-  return { handleHttp, handleUpgrade, sessionCount: () => sessions.size };
+  return {
+    handleHttp,
+    handleUpgrade,
+    sessionCount: () => sessions.size,
+    close: () => watcher?.close(),
+  };
 }
 
 const PAGE = `<!doctype html>
@@ -156,6 +234,7 @@ const PAGE = `<!doctype html>
   <button data-s="\\u001b[A">↑</button><button data-s="\\u001b[B">↓</button>
   <button data-s="\\u001b[D">←</button><button data-s="\\u001b[C">→</button>
   <button data-s="/">/</button><button data-s="|">|</button><button data-s="~">~</button>
+  <button data-k="paste">Paste</button>
 </div></div><div id="st">connecting…</div>
 <script src="/door/term/vendor/xterm.js"></script>
 <script src="/door/term/vendor/addon-fit.js"></script>
@@ -163,8 +242,46 @@ const PAGE = `<!doctype html>
 (function(){
   var T = window.Terminal && (window.Terminal.Terminal || window.Terminal);
   var F = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
-  var term = new T({cursorBlink:true,fontSize:13,scrollback:5000,theme:{background:'#1b1510',foreground:'#f3e6cf'}});
+  // Links open in the phone's browser: through the app's JarvisTerm bridge, or a new tab in a plain browser.
+  function openUrl(u){
+    if (u.indexOf('https://') !== 0 && u.indexOf('http://') !== 0) return;
+    if (window.JarvisTerm && JarvisTerm.open) JarvisTerm.open(u); else window.open(u, '_blank', 'noopener');
+  }
+  var term = new T({cursorBlink:true,fontSize:13,scrollback:5000,theme:{background:'#1b1510',foreground:'#f3e6cf'},
+    linkHandler:{activate:function(e, uri){ openUrl(uri); }}});
   var fit = new F(); term.loadAddon(fit); term.open(document.getElementById('term'));
+  // OSC 7771 "open;<url>": the door relays Claude Code's BROWSER call (open-on-phone) to this screen.
+  term.parser.registerOscHandler(7771, function(d){ if (d.indexOf('open;') === 0) openUrl(d.slice(5)); return true; });
+  // Tap a printed URL. tmux and Claude Code cut a long URL into screen rows with no wrap flag, so a
+  // URL that reaches the right edge carries on at the start of the next row (and may start above).
+  function uch(c){ var k = c ? c.charCodeAt(0) : 0; return k > 32 && k < 127 && '<>"{}|^\\x60\\x5c'.indexOf(c) < 0; }
+  function rowText(r){ var l = term.buffer.active.getLine(r); return l ? l.translateToString(true) : null; }
+  function lead(t){ var k = 0; while (k < t.length && uch(t.charAt(k))) k++; return k; }
+  function tail(r){ var t = rowText(r), k; if (t === null || t.length < term.cols) return null; k = t.length; while (k > 0 && uch(t.charAt(k - 1))) k--; return t.slice(k); }
+  function after(r, n){ var out = ''; while (n === term.cols) { var t = rowText(++r); if (!t) break; n = lead(t); out += t.slice(0, n); } return out; }
+  function trim(u){ return u.replace(/[.,;:!?)]+$/, ''); }
+  term.registerLinkProvider({provideLinks:function(y, cb){
+    var r = y - 1, t = rowText(r), links = [], i, j, k, u, head, h, w;
+    if (!t) return cb(undefined);
+    function add(a, b, url){ links.push({range:{start:{x:a + 1, y:y}, end:{x:b, y:y}}, text:url, activate:function(){ openUrl(url); }}); }
+    k = lead(t);
+    if (k > 0 && t.indexOf('http') !== 0) {
+      head = ''; h = r;
+      while (h > 0 && (w = tail(h - 1)) !== null && w.length) {
+        i = w.lastIndexOf('http');
+        if (i >= 0) { head = w.slice(i) + head; break; }
+        if (w.length < term.cols) { head = ''; break; }
+        head = w + head; h--;
+      }
+      if (head.indexOf('http') === 0) add(0, k, trim(head + t.slice(0, k) + after(r, k)));
+    }
+    for (i = t.indexOf('http'); i >= 0; i = t.indexOf('http', j)) {
+      j = i; while (j < t.length && uch(t.charAt(j))) j++;
+      u = t.slice(i, j);
+      if (u.indexOf('https://') === 0 || u.indexOf('http://') === 0) add(i, j, trim(u + after(r, j)));
+    }
+    cb(links.length ? links : undefined);
+  }});
   var st = document.getElementById('st'), ws = null, ctrl = false, retry = 0;
   function send(o){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
   function size(){ try { fit.fit(); } catch(e){} send({t:'r',c:term.cols,r:term.rows}); }
@@ -173,12 +290,19 @@ const PAGE = `<!doctype html>
     send({t:'i',d:d});
   }
   term.onData(input);
+  // Paste: the login code copied in the browser. The app reads the clipboard natively (a WebView has no
+  // clipboard permission prompt); a plain browser asks through navigator.clipboard.
+  function paste(){
+    if (window.JarvisTerm && JarvisTerm.clipboard) { var c = JarvisTerm.clipboard(); if (c) term.paste(c); return; }
+    if (navigator.clipboard && navigator.clipboard.readText) navigator.clipboard.readText().then(function(c){ if (c) term.paste(c); }, function(){});
+  }
   var ctrlBtn = document.querySelector('[data-k=ctrl]');
   document.getElementById('keys').addEventListener('click', function(e){
     var b = e.target.closest('button'); if (!b) return;
     if (b.dataset.k === 'esc') send({t:'i',d:'\\u001b'});
     else if (b.dataset.k === 'tab') send({t:'i',d:'\\t'});
     else if (b.dataset.k === 'ctrl') { ctrl = !ctrl; b.classList.toggle('on', ctrl); }
+    else if (b.dataset.k === 'paste') paste();
     else if (b.dataset.s) send({t:'i',d:JSON.parse('"' + b.dataset.s + '"')});
     term.focus();
   });

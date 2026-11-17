@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
  * or Android API. The script sees only the APK's prelude (assets/jarvis-script/prelude.js), whose
  * `jarvis` object queues layer-1 verbs; after the handler returns, this side keeps the calls whose
  * verb is in JarvisVerbs.names and runs them. So logic can change with a pack while the native reach
- * stays what this APK allows. No QuickJS fallback is bundled: the Flip6's WebView has the sandbox
+ * stays what this APK allows. No QuickJS fallback is bundled: the flip phone's WebView has the sandbox
  * (jarvis.pack.status reports "engine"); on a phone without it, packs still bring data (voice-fx.json)
  * and their scripts report "no JS engine".
  */

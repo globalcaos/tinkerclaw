@@ -1,8 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildStatus, readSpool, type StatusInputs } from "../src/status.js";
+import {
+  aegisDenied,
+  aegisSpoolPath,
+  buildStatus,
+  readSpool,
+  type StatusInputs,
+  waitingOnOwner,
+} from "../src/status.js";
 
 const NOW = 1_700_000_000_000;
 const MIN = 60_000;
@@ -28,6 +35,62 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+describe("aegisDenied", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aegis-spool-"));
+  const row = (o: Record<string, unknown>): string =>
+    `${JSON.stringify({ ts: "2026-11-02T18:26:36.000Z", tool: "Bash", src: "cc-hook", ...o })}\n`;
+  const file = (name: string, text: string): string => {
+    const p = join(dir, name);
+    writeFileSync(p, text);
+    return p;
+  };
+
+  it("finds an enforced deny of this call", async () => {
+    const p = file(
+      "deny.jsonl",
+      row({ decision: "deny", enforced: true, rule: "DELETE_UNREQUESTED", toolUseId: "toolu_a" }),
+    );
+    expect(await aegisDenied(p, "toolu_a", 0)).toBe(true);
+  });
+
+  it("another call's deny, an owner grant and an observed match are all a no", async () => {
+    const p = file(
+      "other.jsonl",
+      row({ decision: "deny", enforced: true, toolUseId: "toolu_other" }) +
+        row({ decision: "owner-allow", enforced: true, toolUseId: "toolu_a" }) +
+        row({ decision: "observe", enforced: false, toolUseId: "toolu_a" }) +
+        row({ decision: "deny", enforced: false, toolUseId: "toolu_a" }),
+    );
+    expect(await aegisDenied(p, "toolu_a", 0)).toBe(false);
+  });
+
+  it("a row that lands during the wait counts", async () => {
+    const p = file("late.jsonl", "");
+    setTimeout(() => {
+      appendFileSync(p, row({ decision: "deny", enforced: true, toolUseId: "toolu_a" }));
+    }, 40);
+    expect(await aegisDenied(p, "toolu_a", 400)).toBe(true);
+  });
+
+  it("a torn line and a missing file are a no", async () => {
+    const p = file("torn.jsonl", '{"toolUseId":"toolu_a","decision":"de');
+    expect(await aegisDenied(p, "toolu_a", 0)).toBe(false);
+    expect(await aegisDenied(join(dir, "none.jsonl"), "toolu_a", 400)).toBe(false);
+  });
+
+  it("the file sits in the hook's folder, beside Jev's own", () => {
+    const old = process.env.AMYGDALA_DATA_DIR;
+    delete process.env.AMYGDALA_DATA_DIR;
+    expect(aegisSpoolPath("/h/.openclaw/data/amygdala-jev")).toBe(
+      "/h/.openclaw/data/amygdala/hook-decisions.jsonl",
+    );
+    process.env.AMYGDALA_DATA_DIR = "/x";
+    expect(aegisSpoolPath("/h/.openclaw/data/amygdala-jev")).toBe("/x/hook-decisions.jsonl");
+    if (old === undefined) delete process.env.AMYGDALA_DATA_DIR;
+    else process.env.AMYGDALA_DATA_DIR = old;
+  });
+});
+
 describe("buildStatus", () => {
   it("working: enforce, healthy", () => {
     const s = buildStatus(inputs());
@@ -42,9 +105,9 @@ describe("buildStatus", () => {
   });
 
   it("says what its Rewind does, in every state, so the page can tell an older gateway from this one (2026-10-22)", () => {
-    expect(buildStatus(inputs()).rewind).toBe(3);
-    expect(buildStatus(inputs({ mode: "shadow", floorActive: false })).rewind).toBe(3);
-    expect(buildStatus(inputs({ startError: "boom" })).rewind).toBe(3);
+    expect(buildStatus(inputs()).rewind).toBe(4);
+    expect(buildStatus(inputs({ mode: "shadow", floorActive: false })).rewind).toBe(4);
+    expect(buildStatus(inputs({ startError: "boom" })).rewind).toBe(4);
   });
 
   it("a failed start says Not running, never watching", () => {
@@ -75,6 +138,11 @@ describe("buildStatus", () => {
 
   it("mentions what is waiting for the user", () => {
     expect(buildStatus(inputs({ waitingForYou: 2 })).line).toContain("2 waiting for you");
+  });
+
+  it("counts only what the owner can close: a send-back or a refusal waits on nobody", () => {
+    const kinds = ["send-back", "refusal", "proof", "hold", "ask", "send-back"];
+    expect(waitingOnOwner(kinds.map((kind) => ({ kind })))).toBe(3);
   });
 
   it("red when the judge has been silent over 5 minutes while checks arrive", () => {

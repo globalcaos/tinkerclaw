@@ -138,4 +138,27 @@ describe("PlanStore", () => {
     expect(await store.get("agent:main:main")).toBeNull();
     expect(fs.existsSync(result.archivedTo)).toBe(true);
   });
+
+  it("round-trips an intent with quotes, backslashes and a newline across many writes", async () => {
+    const intent = 'Fix the "login" bug in C:\\src\\auth\nthen retest';
+    await store.set({
+      sessionKey: "agent:main:main",
+      intent,
+      runId: "r-esc",
+      steps: [{ title: "A" }, { title: "B" }],
+    });
+    for (let i = 0; i < 6; i++) {
+      await store.step({ sessionKey: "agent:main:main", stepIndex: i % 2, status: "in_progress" });
+    }
+    const plan = await store.get("agent:main:main");
+    expect(plan!.intent).toBe(intent);
+  });
+
+  it("still reads a legacy bare or single-quoted intent line", async () => {
+    const { parsePlanMd } = await import("./plan-store.js");
+    const head = (v: string) =>
+      `---\nschema: prefrontal-plan/1.0\nsessionKey: s\nrunId: r\nintent: ${v}\nstarted: x\nupdated: x\nstatus: in_progress\ncurrentStep: 0\n---\n\n## Plan\n\n- [ ] **0. A**\n`;
+    expect(parsePlanMd(head("plain words")).intent).toBe("plain words");
+    expect(parsePlanMd(head("'single quoted'")).intent).toBe("single quoted");
+  });
 });

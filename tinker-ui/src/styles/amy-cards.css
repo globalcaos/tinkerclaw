@@ -11,6 +11,7 @@
 .amy-card.amy-ask{border-left:4px solid var(--blue)}
 .amy-card.amy-appr{border-left:4px solid var(--purple)}
 .amy-card h3{margin:0 0 6px;font-size:13.5px}
+.amy-plain{font-size:13.5px;line-height:1.45;margin:4px 0 8px}
 .amy-cmd{font:12.5px/1.4 ui-monospace,Menlo,monospace;background:#120e0a;border:1px solid #3a3124;border-radius:6px;padding:5px 8px;margin:4px 0 8px;color:#f0c9a8;overflow-wrap:anywhere}
 .amy-chips{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 9px}
 .amy-chip{font-size:11.5px;border-radius:999px;padding:1px 8px;background:var(--surface2);border:1px solid var(--border);color:#d8cdb9}
@@ -33,8 +34,6 @@
 .amy-status{text-transform:capitalize}
 
 .amy-refstrip{margin-top:8px;padding:7px 9px;border-radius:8px;background:#35290f;border:1px solid #6b5220;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px}
-.amy-refstrip .amy-t{color:#f1d79a;font-weight:600}
-.amy-refstrip .amy-m{color:var(--muted);font-size:11.5px;margin-left:auto}
 .amy-retry{display:inline-flex;align-items:center;gap:5px}
 .amy-retry .model-provider-icon svg{width:14px;height:14px}
 .amy-retry-name{font-weight:600}
@@ -43,3 +42,33 @@
 
 .amy-marker{font-size:12px;color:var(--muted);margin-top:6px;border-left:2px solid #5e4d25;padding-left:9px}
 .amy-card + .amy-card { margin-top: 8px; }
+
+/* FORK 2026-10-29: the Allow bar that closes a reply whose steps wait for the owner's OK (renderAllowBar). */
+.amy-allow{border-radius:10px;padding:8px 11px;margin:6px 0 2px;background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--amber, #d9a441);width:520px;max-width:100%}
+.amy-allow-row{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:3px 0}
+.amy-allow-row + .amy-allow-row{border-top:1px solid var(--border)}
+.amy-allow-what{flex:1 1 auto;font-size:13px;line-height:1.35;color:var(--text);overflow-wrap:anywhere;min-width:0}
+.amy-allow-icon,.amy-q-icon{flex:none;font-size:15px;line-height:1}
+.amy-allow-row .amy-btn{flex:none}
+.amy-allow-row .amy-btn[disabled]{opacity:.7;cursor:default}
+/* FORK 2026-11-03: a hold is one question with its two answers, the hand as the mark. */
+.amy-card.amy-q{display:flex;align-items:center;gap:8px;padding:7px 11px;width:auto;max-width:560px}
+.amy-q-text{flex:1 1 auto;font-size:13px;line-height:1.35;min-width:0;overflow-wrap:anywhere}
+.amy-card.amy-q .amy-btn{flex:none}
+
+
+/* FORK 2026-11-08: a change other people can see (renderEffectCards): yellow, what and where, reach, Revert. */
+.amy-effect{border-radius:10px;padding:8px 11px;margin:6px 0 2px;background:#f6e7a8;border:1px solid #d9b94a;border-left:4px solid #c99a12;color:#3b2f10;width:520px;max-width:100%}
+.amy-effect + .amy-effect{margin-top:6px}
+.amy-effect-main{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;font-size:13px;line-height:1.35}
+.amy-effect-icon{flex:none}
+.amy-effect-what{font-weight:600;overflow-wrap:anywhere}
+.amy-effect-where{font:12px/1.35 ui-monospace,Menlo,monospace;color:#6b5414;overflow-wrap:anywhere}
+.amy-effect-reach{display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px;color:#5a4610}
+.amy-effect-sep{opacity:.6}
+.amy-effect-reach .amy-btn,.amy-effect-reach .amy-effect-done{margin-left:auto;flex:none}
+.amy-effect-revert{background:#fff8dc;border-color:#c99a12;color:#3b2f10}
+.amy-effect-done{font-size:12px;color:#6b5414}
+.amy-effect-reverted{opacity:.65}
+.amy-effect-reverted .amy-effect-what{text-decoration:line-through}
+.amy-effect-fail{margin-top:4px;font-size:12px;color:#8a2a12}

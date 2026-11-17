@@ -12,6 +12,11 @@ import {
 import { hasExplicitPluginConfig } from "./config-policy.js";
 import { resolveRuntimePluginRegistry } from "./loader.js";
 import { loadPluginManifestRegistryForPluginRegistry } from "./plugin-registry.js";
+// FORK 2026-10-29: inside the gateway this cache follows the plugin snapshot generation.
+import {
+  capturePluginSnapshotGeneration,
+  isPluginSnapshotFresh,
+} from "./plugin-snapshot-generation.js";
 import type { PluginRegistry } from "./registry-types.js";
 
 type CapabilityProviderRegistryKey =
@@ -39,6 +44,8 @@ type CapabilityProviderForKey<K extends CapabilityProviderRegistryKey> =
 
 type CapabilityProviderPluginIdCacheEntry = {
   expiresAt: number;
+  // FORK 2026-10-29: the generation the ids were read against (set only inside the gateway).
+  generation?: string;
   pluginIds: string[];
 };
 
@@ -81,7 +88,9 @@ function getCachedCapabilityProviderPluginIds(params: {
   }
   const envCache = capabilityProviderPluginIdCache.get(params.cfg)?.get(params.env);
   const cached = envCache?.get(buildCapabilityProviderPluginIdCacheKey(params));
-  if (!cached || cached.expiresAt <= Date.now()) {
+  // FORK 2026-10-29: was `cached.expiresAt <= Date.now()`. Inside the gateway the generation
+  // decides instead of the 1 s TTL (plugin-snapshot-generation.ts).
+  if (!cached || !isPluginSnapshotFresh(cached, params.env)) {
     return undefined;
   }
   return [...cached.pluginIds];
@@ -93,6 +102,7 @@ function memoizeCapabilityProviderPluginIds(params: {
   env: NodeJS.ProcessEnv;
   providerId?: string;
   pluginIds: string[];
+  generation?: string; // FORK 2026-10-29
 }): void {
   if (!params.cfg || !shouldUsePluginSnapshotCache(params.env)) {
     return;
@@ -112,6 +122,7 @@ function memoizeCapabilityProviderPluginIds(params: {
   }
   envCache.set(buildCapabilityProviderPluginIdCacheKey(params), {
     expiresAt: Date.now() + resolvePluginSnapshotCacheTtlMs(params.env),
+    generation: params.generation, // FORK 2026-10-29
     pluginIds: [...params.pluginIds],
   });
 }
@@ -129,6 +140,8 @@ function resolveBundledCapabilityCompatPluginIds(params: {
   if (cached) {
     return cached;
   }
+  // FORK 2026-10-29: stamp the generation before reading the manifests the ids come from.
+  const generation = capturePluginSnapshotGeneration(env);
   const contractKey = CAPABILITY_CONTRACT_KEY[params.key];
   const pluginIds = loadPluginManifestRegistryForPluginRegistry({
     config: params.cfg,
@@ -147,6 +160,7 @@ function resolveBundledCapabilityCompatPluginIds(params: {
     ...params,
     env,
     pluginIds,
+    generation, // FORK 2026-10-29
   });
   return pluginIds;
 }

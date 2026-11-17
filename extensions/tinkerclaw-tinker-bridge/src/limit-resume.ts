@@ -32,7 +32,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isLongUsageWindow, parseRateLimitReset } from "openclaw/plugin-sdk/fork-rate-limit-reset";
+import {
+  isLongUsageWindow,
+  modelLimitFamily,
+  parseRateLimitReset,
+  recordModelLimit,
+} from "openclaw/plugin-sdk/fork-rate-limit-reset";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 
 const log = createSubsystemLogger("tinkerclaw-tinker-bridge");
@@ -45,6 +50,19 @@ export const LIMIT_RESUME_MAX_HORIZON_MS = 8 * 24 * 60 * 60_000;
 export const LIMIT_RESUME_STALE_MS = 6 * 60 * 60_000;
 /** An overdue wake found at boot fires this long after the boot, not in the same millisecond. */
 export const LIMIT_RESUME_BOOT_SETTLE_MS = 30_000;
+
+/**
+ * FORK 2026-11-13 — A LIMIT ON ONE MODEL IS A REROUTE, NOT A WAIT. The CLI's Fable-limit line (reset on Nov 19)
+ * closes Fable for days and leaves Opus open on the same seat. Waiting for the reset left every tab dead for six
+ * days; the turn is recorded in Thalamus's cooling store (the next auto turn skips that model) and the chat is
+ * woken after REROUTE_DELAY_MS to carry on. At most one such wake per chat in REROUTE_GAP_MS: a tab pinned to the
+ * spent model by hand would otherwise wake itself into the same wall every few seconds.
+ */
+export const REROUTE_DELAY_MS = 8_000;
+export const REROUTE_GAP_MS = 10 * 60_000;
+export const rerouteMessage = (family: string): string =>
+  `⟦AGENT:🔀 Rerouted⟧ The ${family[0].toUpperCase()}${family.slice(1)} limit stopped your last turn. Thalamus now skips that model until its reset; continue where you stopped on the best model still open.`;
+const lastReroute = new Map<string, number>();
 
 export const LIMIT_RESUME_MESSAGE =
   "⟦AGENT:⏰ Limit reset⟧ The usage limit that stopped your last turn has reset; continue where you stopped.";
@@ -59,6 +77,8 @@ export type LimitResumeRecord = {
   fireAt: number;
   /** The provider's own text, kept for the log. */
   raw: string;
+  /** Set for a limit on one model: the family, and the wake carries on at once on another model. */
+  reroute?: string;
 };
 
 export type LimitResumeDeps = {
@@ -283,7 +303,11 @@ async function fire(sessionKey: string): Promise<void> {
   const idempotencyKey = `limit-resume-${sessionKey}-${record.errorAt}`;
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
     try {
-      await deps.send({ sessionKey, message: LIMIT_RESUME_MESSAGE, idempotencyKey });
+      await deps.send({
+        sessionKey,
+        message: record.reroute ? rerouteMessage(record.reroute) : LIMIT_RESUME_MESSAGE,
+        idempotencyKey,
+      });
       log.info(
         `[limit-resume] ${sessionKey}: woke after the reset of ${new Date(record.resetAt).toISOString()} (attempt ${attempt})`,
       );
@@ -310,10 +334,15 @@ export function scheduleLimitResume(params: {
   now?: number;
 }): LimitResumeRecord | null {
   try {
+    const now = params.now ?? Date.now();
+    const family = modelLimitFamily(params.raw);
+    if (family) {
+      return scheduleReroute(params.sessionKey, params.raw, family, now);
+    }
     const plan = planLimitResume({
       sessionKey: params.sessionKey,
       raw: params.raw,
-      now: params.now ?? Date.now(),
+      now,
     });
     if (!plan) {
       return null;
@@ -329,6 +358,43 @@ export function scheduleLimitResume(params: {
     log.warn(`[limit-resume] could not arm a wake for ${params.sessionKey}: ${String(err)}`);
     return null;
   }
+}
+
+function scheduleReroute(
+  sessionKey: string | undefined,
+  raw: string,
+  family: string,
+  now: number,
+): LimitResumeRecord | null {
+  const resetAt = parseRateLimitReset(raw, now);
+  const cooled = recordModelLimit({ raw, untilMs: resetAt, nowMs: now });
+  log.info(
+    `[limit-resume] ${family} limit: ${cooled ? `cooled ${cooled.key} until ${new Date(cooled.entry.until).toISOString()}` : "NOT cooled (no cooling store)"} (provider: ${raw})`,
+  );
+  if (!cooled || !sessionKey || !isTinkerChatSessionKey(sessionKey)) {
+    return null;
+  }
+  const last = lastReroute.get(sessionKey);
+  if (last !== undefined && now - last < REROUTE_GAP_MS) {
+    log.info(
+      `[limit-resume] ${sessionKey}: rerouted ${Math.round((now - last) / 1000)} s ago; no second wake`,
+    );
+    return null;
+  }
+  lastReroute.set(sessionKey, now);
+  const plan: LimitResumeRecord = {
+    sessionKey,
+    errorAt: now,
+    resetAt: cooled.entry.until,
+    fireAt: now + REROUTE_DELAY_MS,
+    raw,
+    reroute: family,
+  };
+  const others = readLimitResumes().filter((w) => w.sessionKey !== sessionKey);
+  writeLimitResumes([...others, plan]);
+  arm(sessionKey, plan.fireAt);
+  log.info(`[limit-resume] ${sessionKey}: reroute wake armed in ${REROUTE_DELAY_MS / 1000} s`);
+  return plan;
 }
 
 /**
@@ -362,6 +428,7 @@ export function rearmLimitResumes(now: number = Date.now()): number {
 
 /** Test hook: clear the in-memory timers, as a gateway restart does. The store is left alone. */
 export function __resetLimitResumeTimersForTest(): void {
+  lastReroute.clear();
   for (const timer of timers.values()) {
     clearTimeout(timer);
   }

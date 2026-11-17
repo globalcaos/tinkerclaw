@@ -3,6 +3,7 @@ import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
+import type { GatewayBroadcastOpts } from "./server-broadcast-types.js";
 import type {
   ChatRunState,
   SessionEventSubscriberRegistry,
@@ -11,12 +12,12 @@ import type {
 } from "./server-chat-state.js";
 
 export function startGatewayEventSubscriptions(params: {
-  broadcast: (event: string, payload: unknown, opts?: { dropIfSlow?: boolean }) => void;
+  broadcast: (event: string, payload: unknown, opts?: GatewayBroadcastOpts) => void;
   broadcastToConnIds: (
     event: string,
     payload: unknown,
     connIds: ReadonlySet<string>,
-    opts?: { dropIfSlow?: boolean },
+    opts?: GatewayBroadcastOpts,
   ) => void;
   nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
   agentRunSeq: Map<string, number>;

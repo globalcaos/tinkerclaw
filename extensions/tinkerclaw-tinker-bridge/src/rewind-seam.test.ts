@@ -123,6 +123,29 @@ describe("Rewind seam", () => {
     expect(onDisk().a.sessionId).toBe(OLD);
   });
 
+  it("reads the marker of a whole-conversation rewind the way the amygdala writes it", async () => {
+    const { REWOUND_ALL_PREFIX, isRewoundAllSessionId } = await import("./session-map.js");
+    const amygdala = readFileSync(
+      join(__dirname, "../../tinkerclaw-amygdala/src/rewind.ts"),
+      "utf-8",
+    );
+    expect(amygdala).toContain(`REWOUND_ALL_PREFIX = "${REWOUND_ALL_PREFIX}"`);
+    expect(isRewoundAllSessionId(`${REWOUND_ALL_PREFIX}${FORK}`)).toBe(true);
+    expect(isRewoundAllSessionId(FORK)).toBe(false);
+    expect(isRewoundAllSessionId(undefined)).toBe(false);
+  });
+
+  it("a tab pointed at the marker keeps its binding, so Undo can point it back", async () => {
+    const { REWOUND_ALL_PREFIX, getResumeSessionId, rebindResumeSessionId, setResumeSessionId } =
+      await import("./session-map.js");
+    const marker = `${REWOUND_ALL_PREFIX}${FORK}`;
+    setResumeSessionId("tinker-sp-a", OLD, OC);
+    expect(rebindResumeSessionId(OLD, marker)).toBe(1);
+    expect(getResumeSessionId("tinker-sp-a")).toBe(marker);
+    expect(rebindResumeSessionId(marker, OLD)).toBe(1);
+    expect(getResumeSessionId("tinker-sp-a")).toBe(OLD);
+  });
+
   it("publishes under the key the amygdala reads", async () => {
     const { BRIDGE_REWIND_SLOT } = await import("./rewind-seam.js");
     const amygdala = readFileSync(

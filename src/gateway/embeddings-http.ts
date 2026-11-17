@@ -107,9 +107,11 @@ function shouldContinueAutoSelection(
 }
 
 // FORK 2026-05-31: exported so the internal fork.prefrontal.embed RPC can reuse
-// the EXACT same in-process provider resolution (ollama/mxbai via memorySearch),
+// the EXACT same in-process provider resolution (memorySearch's provider and model),
 // instead of round-tripping through the gated /v1/embeddings HTTP route. No
 // behavior change for the HTTP path; this only widens visibility.
+// FORK 2026-10-29: that provider and model are what this machine's embedder fit chose when
+// memorySearch.provider is unset or "auto", else the config's pin (resolveMemorySearchConfig).
 export async function createConfiguredEmbeddingProvider(params: {
   cfg: OpenClawConfig;
   agentDir: string;

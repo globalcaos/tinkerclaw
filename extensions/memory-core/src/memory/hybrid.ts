@@ -41,7 +41,9 @@ export function buildFtsQuery(raw: string): string | null {
     return null;
   }
   const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`);
-  return quoted.join(" AND ");
+  // FORK 2026-10-29: OR, was AND. An AND of every token found no row for 40 of 40
+  // natural-language eval queries; BM25 still ranks rows that match more tokens first.
+  return quoted.join(" OR ");
 }
 
 export function bm25RankToScore(rank: number): number {

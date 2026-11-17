@@ -226,6 +226,16 @@ class InvokeDispatcher(
           onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
         )
       }
+      // The Pi puts a file in Downloads, screen on or off (JarvisFiles.fetchJson).
+      "jarvis.files.fetch" -> {
+        val args = runCatching { org.json.JSONObject(paramsJson ?: "{}") }.getOrDefault(org.json.JSONObject())
+        runCatching {
+          ai.openclaw.app.jarvis.JarvisFiles.fetchJson(ai.openclaw.app.jarvis.JarvisLook.appContext(), args.optString("path"), args.optString("name"))
+        }.fold(
+          onSuccess = { GatewaySession.InvokeResult.ok(it) },
+          onFailure = { GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = "UNAVAILABLE: ${it.message}") },
+        )
+      }
       "jarvis.files.get" -> {
         val name = runCatching { org.json.JSONObject(paramsJson ?: "{}").optString("name") }.getOrDefault("")
         runCatching { ai.openclaw.app.jarvis.JarvisFiles.getJson(ai.openclaw.app.jarvis.JarvisLook.appContext(), name) }.fold(
