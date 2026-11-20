@@ -10973,11 +10973,18 @@ code.fs-link.routing-why-policy:hover {
   outline: 1px solid var(--accent, #c19a6b);
   outline-offset: 1px;
 }
+/* 2026-11-18: a nickname of two words wraps onto a second line (Qwen / Max, Kimi / Pro) instead of
+   ending in an ellipsis that made two chips read the same ("Qwen …" twice). Two lines at most. */
 .model-btn .model-btn-text {
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 /* FORK 2026-08-28 #2: the trace thickness chip in the model selector must not be
    cut off in height. WIDTH stretches to the column, HEIGHT never does.
@@ -13217,21 +13224,40 @@ td.sd-sorted {
   font-size: 11px;
 }
 
-/* 2026-11-03: scored models nothing routes to — greyed, unpickable, hover card with the setup link. */
+/* 2026-11-03: scored models nothing routes to — unpickable, hover card with the setup link.
+   2026-11-18 (the owner): no more grey. They keep their colour and wear the red cross a spent token
+   window wears (.model-btn-exhausted on the chip; on a MODELS row, over its cost stroke). */
 .model-btn-unroutable {
-  opacity: 0.42;
   cursor: help;
-  border-style: dashed;
-}
-.model-btn-unroutable:hover {
-  opacity: 0.7;
 }
 .model-row-unroutable {
-  opacity: 0.45;
   cursor: help;
 }
-.model-row-unroutable:hover {
-  opacity: 0.75;
+.model-row-unroutable .usage-cost-col {
+  position: relative;
+}
+.model-row-unroutable .usage-cost-col::before,
+.model-row-unroutable .usage-cost-col::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top right,
+    transparent calc(50% - 0.5px),
+    #ef4444 calc(50% - 0.5px),
+    #ef4444 calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
+}
+.model-row-unroutable .usage-cost-col::after {
+  background: linear-gradient(
+    to top left,
+    transparent calc(50% - 0.5px),
+    #ef4444 calc(50% - 0.5px),
+    #ef4444 calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 .model-unroutable-tag {
   margin-left: 4px;

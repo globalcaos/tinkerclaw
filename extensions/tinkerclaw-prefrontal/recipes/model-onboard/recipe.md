@@ -111,8 +111,9 @@ Check the SUBSCRIPTION routes first, because they are the ones that look absent:
   "not served yet" as **expired on read** — vendors ship ids between our runs, and
   a stale negative is what kept Fable 5.1 on the wrong route.
 
-Next, a **direct API key we already hold** (Google via `GEMINI_API_KEY`, xAI, DeepInfra):
-list that provider's own models endpoint and look for the id there before going metered.
+Next, a **direct API key we already hold** (Google via `GEMINI_API_KEY`, xAI; DeepInfra for
+open-weight models only): list that provider's own models endpoint and look for the id there
+before going metered.
 For Google each step is one call in the model-rank-refresh skill: `google_models.py <filter>`
 lists the ids Google serves, and `google_models.py --probe <id>` probes the id and its `-9-9`
 control. Both load the key themselves; never read the key inline.
@@ -121,16 +122,26 @@ The route sets the BILLING LABEL only, never whether the model is onboarded (the
 2026-10-13: "no model should be left out"). A model no catalog sells yet still gets its
 score and a dossier row marked "no public price yet"; see `model-catalog-refresh` Step 1.
 
-Only if no subscription or direct route serves it, use the metered one (OpenRouter et al),
-with id, price AND context window taken from the live catalog:
+Only if no subscription or direct route serves it, AND the model's weights are open, use the
+metered one (OpenRouter), with id, price AND context window taken from the live catalog:
 
 ```bash
 curl -s https://openrouter.ai/api/v1/models     # authoritative — never a price page
 ```
 
-**If BOTH routes serve it, add both.** They are the same model on different bills
-and the chart is built to show exactly that; give the metered one a name that says
-so (`… (OpenRouter, metered)`) so it cannot be picked by accident in the picker.
+**Resellers carry open-weight models only; GPT goes only through OpenAI (the architect, 2026-11-18).**
+Open = the catalog's `hugging_face_id` is set, or `python3 -I open_weights.py <Org/Model>` (the
+model-rank-refresh skill) prints OPEN. A bare Hugging Face 401 is not proof of closed: MiMo-V2.6-Pro
+lives as …-RL and Nemotron 3.5 Super VL as …-120B-A12B-BF16; Qwen3.8 Max has no repo at all. GPT
+takes the ChatGPT seat or the OpenAI API, never OpenRouter or
+DeepInfra. A closed model with no first-party route of ours is NOT onboarded: it stays a greyed
+picker chip with a "closed" note, plus its chart and dossier rows. And onboard only the newest
+version of a name: an older one is hidden from every list anyway (`latestOfFamily`).
+
+**If BOTH routes serve an open-weight model, add both.** They are the same model on different
+bills and the chart is built to show exactly that; give the metered one a name that says
+so (`… (OpenRouter, metered)`). The picker shows one of them, the better route (native, then
+DeepInfra, then OpenRouter).
 
 ### 2. Config entry
 

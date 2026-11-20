@@ -460,6 +460,7 @@ import {
 } from "./panels/cron-taxonomy.js";
 import { fetchHiveMe, initHiveUsersPanel, renderHiveUsersTab } from "./panels/hive-admin.ts";
 import { groupByOwner, type HiveMe } from "./panels/hive-owner-groups.ts";
+import { fetchTokenReport, tokenUsageGroup } from "./panels/token-users.ts";
 import { syncPinDock, wirePinDock } from "./pin-dock.js";
 import { providerSafeguardOutcome, renderProviderSafeguard } from "./provider-safeguard.js";
 import {
@@ -520,6 +521,10 @@ import {
   eegOwnTurnWindows,
   eegInWindows,
   eegSplitTurnGhosts,
+  eegGoogleStopsShaded,
+  eegShadeKeyOf,
+  eegShadeStep,
+  setEegModelShades,
 } from "./panels/eeg-trace.js";
 import {
   mountPrefrontalTree,
@@ -4418,9 +4423,12 @@ import {
 } from "./longjob-rows.js";
 import { AA_DOSSIER_ONLY_IDS, AA_UNROUTED_MODELS } from "./panels/aa-unrouted-models.js";
 import {
+  isResellerRoute,
   modelCatalogIdsForPickerAndPanel,
   latestOfFamily,
   panelIdsDownToCopilot,
+  pickerChipLabels,
+  softHyphenate,
   withoutRouteTwins,
 } from "./panels/model-surface-catalog.js";
 import {
@@ -23993,8 +24001,10 @@ function renderCostCol(modelId: string): string {
     defs =
       `<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse"` +
       ` x1="3" y1="0" x2="${COST_STROKE_W - 3}" y2="0">` +
-      `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
-      `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>` +
+      (paint.rainbowShade === undefined
+        ? `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
+          `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>`
+        : eegGoogleStopsShaded(paint.rainbowShade)) +
       `</linearGradient></defs>`;
     stroke = `url(#${gid})`;
   }
@@ -26597,6 +26607,13 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   // FORK 2026-10-27: GPT-6.1 Terra shipped 2026-10-26 (AA 48.1062, $1/$5). Seat probe OK, control 400s.
   "openai-codex/gpt-6.1-terra": 51.3265,
   "openai/gpt-6.1-terra": 51.3265,
+  // FORK 2026-11-18: GPT-6.2 Astra (AA max 62.1388, $8/$40) and GPT-6.2 Sol (AA max 57.2576,
+  // $2/$10). The 08:44 run listed both as unroutable while the ChatGPT sign-in was dead; the seat
+  // serves both since 15:31 (probe OK, -9-9 controls 400).
+  "openai-codex/gpt-6.2-astra": 62.1388,
+  "openai/gpt-6.2-astra": 62.1388,
+  "openai-codex/gpt-6.2-sol": 57.2576,
+  "openai/gpt-6.2-sol": 57.2576,
   // FORK 2026-10-02: Gemini 4 Argon, announced
   // 2026-09-30, AA 52.5606 (high) — level with GPT-6 Astra, 5 below Opus 5.5. NOT callable:
   // Google gives it only to its Fairwind cyber-defence testers; no public model id yet.
@@ -26609,6 +26626,9 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   // 2026-11-13: Gemini 4 Hydrogen, AA 53.9192 (untagged headline; tagged low 26.89, medium 41.23, high 50.79).
   // Google serves it directly on our key, like Carbon and Argon.
   "google/gemini-4-hydrogen": 53.9192,
+  // 2026-11-19: Gemini 4 Neon, AA 61.3982 (xhigh, its best tag; AA gives it no untagged row; high 59.6189, medium 54.8623,
+  // low 44.0832). Google serves it directly on our key, like Carbon, Argon and Hydrogen. Price in rel-cost-table.ts.
+  "google/gemini-4-neon": 61.3982,
   "openai-codex/gpt-6-sol": 47.6305,
   "openai/gpt-6-sol": 47.6305,
   "openai-codex/gpt-6-luna": 27.8552,
@@ -26988,7 +27008,38 @@ function updateBudgetPanel() {
     // modelPassesPanelMin (which the chart and dossier share).
     // The picker consumes this exact helper too. Smart/More decide only WHERE an id
     // appears; they no longer decide WHETHER the picker can select it.
-    const candidateIds = modelCatalogIdsForPickerAndPanel([...chain, ...Object.keys(models || {})]);
+    ensureModelShades(); // every row draws its model's own shade (2026-11-18)
+    const candidatePool = modelCatalogIdsForPickerAndPanel([
+      ...chain,
+      ...Object.keys(models || {}),
+    ]);
+    // Gated on providers we can actually reach (configured models + auth order) so the
+    // tail never advertises a model behind a provider that was never set up. (Moved up
+    // 2026-11-18: the version pool below must not count a baked id that never shows.)
+    const knownProviders = new Set<string>([
+      ...Object.keys(models || {}).map((id) => providerOf(id)),
+      ...Object.keys(authOrder || {}),
+    ]);
+    // 2026-11-18 (the architect): one version per model name, newest only, in SMART and MORE as well as
+    // the picker. The configured ids, the baked AA ids MORE MODELS shows and the greyed chips
+    // compete in ONE pool (latestOfFamily), so a newer greyed GPT-6.2 Sol hides a configured
+    // 6.1 Sol and an older baked id never returns under MORE. Unconfigured OpenRouter/DeepInfra
+    // ids from the baked map stay off: those two routes carry only the open-weight models we
+    // configured; a market model we have not set up shows as a greyed chip with its reason.
+    // The primary and the fallback chain are in use, so they always show.
+    const bakedIds = modelCatalogIdsForPickerAndPanel(
+      withoutRouteTwins(Object.keys(AA_INTELLIGENCE_INDEX), candidatePool),
+    ).filter(
+      (id) =>
+        candidatePool.includes(id) || (!isResellerRoute(id) && knownProviders.has(providerOf(id))),
+    );
+    const latestIds = new Set(
+      latestOfFamily([...candidatePool, ...bakedIds, ...unroutableModels().map((m) => m.id)]),
+    );
+    const isLatest = (id: string): boolean =>
+      id === primary || chain.includes(id) || latestIds.has(id);
+    const candidateIds = candidatePool.filter(isLatest);
+    const greyed = unroutableModels().filter((m) => latestIds.has(m.id));
     // FORK 2026-09-25: the PANEL no longer reads the top-23 floor. Once all 47 models were
     // back in config, the top 23 filled SMART MODELS.
     // SMART MODELS is now the picker's own set (panelIdsDownToCopilot); the top-23 floor
@@ -27033,21 +27084,17 @@ function updateBudgetPanel() {
     // The 19 models culled from openclaw.json this morning survive ONLY in the baked
     // AA map, so that map — not config — is the catalog here; config alone would make
     // this section render empty, which is the whole reason it exists.
-    //
-    // Gated on providers we can actually reach (configured models + auth order) so the
-    // tail never advertises a model behind a provider that was never set up.
-    const knownProviders = new Set<string>([
-      ...Object.keys(models || {}).map((id) => providerOf(id)),
-      ...Object.keys(authOrder || {}),
-    ]);
+    // (knownProviders, the reachable-provider gate, is defined with the version pool above.)
     const shown = new Set(allIds);
     // The MORE MODELS tail pulls from AA_INTELLIGENCE_INDEX as well as candidateIds, so
     // filtering candidateIds alone would let Copilot ids back in through the baked map.
     // FORK 2026-09-26: the baked map also holds a metered openai/ twin of each configured
     // openai-codex/ model; withoutRouteTwins keeps those on the chart and off this list.
+    // 2026-11-18: bakedIds is already twin-free, gated and reseller-free; only the newest version
+    // of each name joins (isLatest).
     const moreIds = modelCatalogIdsForPickerAndPanel([
       ...candidateIds,
-      ...withoutRouteTwins(Object.keys(AA_INTELLIGENCE_INDEX), candidateIds),
+      ...bakedIds.filter(isLatest),
     ])
       .filter((id) => !shown.has(id) && !passesPanelMin(id) && knownProviders.has(providerOf(id)))
       .sort(byPanelOrder);
@@ -27066,7 +27113,7 @@ function updateBudgetPanel() {
       html += '<div class="model-group-label">SMART MODELS</div>';
       html += '<div class="model-group-body">';
       // 2026-11-03: every scored model sits at its rank; the ones nothing routes to are greyed.
-      for (const item of interleaveByScore(allIds, panelScore, unroutableModels(), smartFloor)) {
+      for (const item of interleaveByScore(allIds, panelScore, greyed, smartFloor)) {
         if ("entry" in item)
           html += renderUnroutableRow(item.entry, renderCostCol(unroutableTraceId(item.entry)));
         else renderAuthKeyRows(item.id, chainBadge.get(item.id) ?? "");
@@ -27079,7 +27126,7 @@ function updateBudgetPanel() {
     // binding below picks it up with no extra wiring. Default-collapsed (stated in
     // MODEL_SECTION_DEFAULT_COLLAPSED) — the point is that the long tail stays
     // reachable, not that it comes back into view.
-    const moreUnroutable = unroutableModels().filter((m) => m.score < smartFloor);
+    const moreUnroutable = greyed.filter((m) => m.score < smartFloor);
     if (moreIds.length || moreUnroutable.length) {
       const open = !isCollapsed(
         "model:more-models",
@@ -28872,11 +28919,14 @@ function renderModelChip(id: string | null, idx: number, H: number): string {
     // objectBoundingBox gradient degenerates and the rainbow vanishes (the
     // seismograph's google gradient only works because those lines are vertical).
     const gid = `eeg-mchip-${idx}`;
+    // 2026-11-18: each Gemini model draws its own shade of the rainbow (eegGoogleStopsShaded).
     defs =
       `<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse"` +
       ` x1="3" y1="0" x2="${W - 3}" y2="0">` +
-      `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
-      `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>` +
+      (paint.rainbowShade === undefined
+        ? `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
+          `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>`
+        : eegGoogleStopsShaded(paint.rainbowShade)) +
       `</linearGradient></defs>`;
     stroke = `url(#${gid})`;
   }
@@ -29079,6 +29129,48 @@ function renderThinkingSlider(): string {
 // configured rank and modelPerfRank are fallbacks for unscored models.
 // so the row stays a discrete slider. Rebuilt per render/read from
 // modelConfigData; shared by the markup and the delegated listeners.
+/**
+ * 2026-11-18 (the architect): one version per model name, newest only. The configured ids and the greyed
+ * chips compete in one pool, so a newer greyed GPT-6.2 Sol hides a configured 6.1 Sol. The picker
+ * stops and the picker's greyed chips both read this set, so the two can never disagree.
+ */
+function latestPickerIds(configured: string[]): Set<string> {
+  return new Set(latestOfFamily([...configured, ...unroutableModels().map((m) => m.id)]));
+}
+
+/**
+ * 2026-11-18 (the owner): every model its own shade of its family colour, no two on the same tone.
+ * The pool is every model this page can show (configured, the baked AA table, the greyed list, keyed
+ * by the id each one is painted with); each family is ranked by score, strongest first, and
+ * eeg-trace turns the rank into a shade. Rebuilt when the config object changes.
+ */
+let modelShadesBuiltFor: unknown = null;
+function ensureModelShades(): void {
+  const cfgModels = (modelConfigData as { models?: Record<string, ModelIntelligenceMeta> } | null)
+    ?.models;
+  if (!cfgModels || modelShadesBuiltFor === cfgModels) return;
+  modelShadesBuiltFor = cfgModels;
+  const best = new Map<string, number>();
+  const add = (id: string, score: number | undefined): void => {
+    const key = eegShadeKeyOf(providerOf(id), id);
+    if (key) best.set(key, Math.max(best.get(key) ?? -1, score ?? -1));
+  };
+  for (const id of Object.keys(cfgModels)) add(id, configuredIntelligenceIndex(cfgModels, id));
+  for (const [id, score] of Object.entries(AA_INTELLIGENCE_INDEX)) add(id, score);
+  for (const m of unroutableModels()) add(unroutableTraceId(m), m.score);
+  const byFamily = new Map<string, [string, number][]>();
+  for (const [key, score] of best) {
+    const family = key.slice(0, key.indexOf("|"));
+    byFamily.set(family, [...(byFamily.get(family) ?? []), [key, score]]);
+  }
+  const shades = new Map<string, number>();
+  for (const list of byFamily.values()) {
+    list.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    list.forEach(([key], rank) => shades.set(key, eegShadeStep(rank)));
+  }
+  setEegModelShades(shades);
+}
+
 function modelForceStops(): { id: string | null; label: string }[] {
   const stops: { id: string | null; label: string }[] = [{ id: null, label: "Auto" }];
   const cfg = modelConfigData as {
@@ -29087,6 +29179,7 @@ function modelForceStops(): { id: string | null; label: string }[] {
   if (!cfg) {
     return stops;
   }
+  ensureModelShades();
   const baseKey = (id: string): string =>
     id
       .replace(/^[^/]+\//, "")
@@ -29124,7 +29217,11 @@ function modelForceStops(): { id: string | null; label: string }[] {
   // 2026-11-05: the Copilot cut is back. The 11-04 "every configured model" picker held 72
   // chips plus a 397-model drawer; the picker shows only the smart models, Copilot and up.
   // 2026-11-13: one Fable, Opus, Astra and Sol, the newest of each (latestOfFamily).
-  const keep = latestOfFamily(panelIdsDownToCopilot([...eligible].sort(byRank)));
+  // 2026-11-18: one version of EVERY model name, decided over the configured ids AND the greyed
+  // chips BEFORE the Copilot cut (latestPickerIds). A name whose newest version scores under
+  // Copilot leaves the picker and lives in MORE MODELS.
+  const latest = latestPickerIds(eligible);
+  const keep = panelIdsDownToCopilot(eligible.filter((id) => latest.has(id)).sort(byRank));
   // FORK 2026-08-04. The axis
   // MUST be able to represent the state it is reporting. Every gate above can
   // legitimately drop a model the user has already pinned — CAP=14, the AA>=50
@@ -29270,6 +29367,7 @@ function renderModelForceSlider(): string {
     ...stops.filter((s) => s.id !== null).map((s) => chipScore(s.id) ?? Number.POSITIVE_INFINITY),
     Number.POSITIVE_INFINITY,
   );
+  const chipLatest = latestPickerIds(modelCatalogIdsForPickerAndPanel(Object.keys(chipCfg || {})));
   // The chips run weakest to strongest after Auto, so merge strongest-first and flip back.
   const chipItems = [
     ...stops.flatMap((s, i) => (s.id === null ? [{ id: String(i) }] : [])),
@@ -29280,10 +29378,22 @@ function renderModelForceSlider(): string {
         .reverse()
         .map(({ i }) => String(i)),
       (i) => chipScore(stops[Number(i)].id),
-      unroutableModels(),
+      // 2026-11-18: only the greyed chips that are the newest version of their name.
+      unroutableModels().filter((m) => chipLatest.has(m.id)),
       chipFloor,
     ).reverse(),
   ];
+  // 2026-11-18 (the owner): each chip shows the model's nickname (Terra, Sol, Astra, Fable, Opus,
+  // Sonnet…), no version; the hover card keeps the exact version. Unique over the chips on screen:
+  // two that would read the same take more of their name, then the old short label.
+  const chipLabels = pickerChipLabels(
+    chipItems.flatMap((it) => {
+      if ("entry" in it) return [it.entry.id];
+      const id = stops[Number(it.id)].id;
+      return id === null ? [] : [id];
+    }),
+    (id) => (id.startsWith("aa:") ? id.slice(3) : shortModelLabel(id)),
+  );
   // Two rows up to 15 per row, then the grid wraps into more rows.
   const cols = Math.max(1, Math.min(15, Math.ceil(chipItems.length / 2)));
   // ONE height for every chip in this row, derived from the widest stroke the row
@@ -29302,13 +29412,14 @@ function renderModelForceSlider(): string {
       out += renderUnroutableChip(
         item.entry,
         renderModelChip(unroutableTraceId(item.entry), 1000 + greyedChips++, chipH),
+        chipLabels.get(item.entry.id),
       );
       continue;
     }
     const i = Number(item.id);
     const s = stops[i];
     const on = i === idx;
-    const label = s.id === null ? "Auto" : shortModelLabel(s.id);
+    const label = s.id === null ? "Auto" : (chipLabels.get(s.id) ?? shortModelLabel(s.id));
     // FORK 2026-08-29 ( A WARNING, not a lock: the class only draws the X (base.css
     // ::before/::after, pointer-events:none), the click handler and radio semantics
     // stay untouched, and aria-disabled DESCRIBES the state without blocking input.
@@ -29339,16 +29450,24 @@ function renderModelForceSlider(): string {
         (resetAt ? ` data-reset-at="${esc(resetAt)}"` : "");
       hoverNote = `Out of tokens. ${usage.tooltip} Click to try anyway.`;
     }
+    // 2026-11-18 (the owner: a red cross on every model we cannot route): a route whose sign-in
+    // died reports `disconnected`, the other half of "this row cannot serve" (ModelUsageInfo).
+    // Before this, Terra stayed pickable for eight days after its ChatGPT sign-in expired.
+    const dead = !exhausted && usage?.disconnected === true;
+    if (dead && usage && s.id) {
+      exhaustedAttrs = ` aria-disabled="true" data-model-id="${esc(s.id)}"`;
+      hoverNote = `Cannot route now. ${usage.tooltip} Click to try anyway.`;
+    }
     // 2026-11-05: an OpenRouter-only model with no credit wears the same red cross as a spent
     // token window, and keeps the black hover card with the add-credit link.
     const blocked = s.id !== null && openRouterBlocked(s.id);
-    const btnClass = `model-btn${on ? " active" : ""}${exhausted || blocked ? " model-btn-exhausted" : ""}`;
+    const btnClass = `model-btn${on ? " active" : ""}${exhausted || blocked || dead ? " model-btn-exhausted" : ""}`;
     out +=
       `<button type="button" class="${btnClass}" role="radio"` +
       ` aria-checked="${on ? "true" : "false"}" data-model-idx="${i}"${blocked ? openRouterBlockedAttrs(hoverName) : exhaustedAttrs + hoverNameAttrs(hoverName, hoverNote)}` +
       ">" +
       renderModelChip(s.id, i, chipH) +
-      `<span class="model-btn-text">${esc(label)}</span>` +
+      `<span class="model-btn-text">${esc(softHyphenate(label))}</span>` +
       (tiers.length ? `<span class="model-btn-tier">${roleLetters(tiers)}</span>` : "") +
       "</button>";
   }
@@ -34036,6 +34155,22 @@ function init() {
   const MAX_KPI_ATTEMPTS = 6;
   let execKpiRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // FORK 2026-11-18 — Tokens per person: one more Pulse graph, a coloured line per person
+  // (panels/token-users.ts). Behind the hive door only an admin gets it, from the door's report; a
+  // page with no door (one person's own agent) asks its own server, which may not have the route.
+  // It never holds up the other graphs: a failed fetch is logged and the chart is left out.
+  async function execTokenGroup(): Promise<GGroup | null> {
+    const me = hiveMe ?? (await getHiveMe());
+    if (me && !me.admin) return null;
+    try {
+      const report = await fetchTokenReport(me ? "door" : "local");
+      return report ? tokenUsageGroup(report) : null;
+    } catch (err) {
+      console.error("[tokens-per-person] load failed", err);
+      return null;
+    }
+  }
+
   async function loadExecKpis(opts: { force?: boolean; attempt?: number } = {}): Promise<void> {
     const panel = ensureExecPanel();
     const kpisBody = panel.querySelector("#exec-kpis-body") as HTMLElement | null;
@@ -34068,6 +34203,7 @@ function init() {
       return;
     }
     if (attempt === 1) execKpiLastLoad = now;
+    const tokenGroup = execTokenGroup(); // the door, not the gateway: runs beside the RPCs below
     await execAwaitGateway(); // after the loading paint, before the first RPC
     try {
       const metricsRes = (await req("control-panel.list", {})) as { metrics: KpiMetric[] };
@@ -34461,7 +34597,10 @@ function init() {
         });
       }
       kpisBody.innerHTML = kpiHtml || `<div class="exec-kpi-empty">No KPIs configured yet.</div>`;
-      graphsBody.innerHTML = renderPresenceGraphsHtml([...presenceGroups.values()]);
+      const tokens = await tokenGroup;
+      graphsBody.innerHTML = renderPresenceGraphsHtml(
+        tokens ? [tokens, ...presenceGroups.values()] : [...presenceGroups.values()],
+      );
       kpisBody.dataset.populated = "1";
       graphsBody.dataset.populated = "1";
       // FORK 2026-06-04 — grouped charts get zoom/pan/hover here. The old

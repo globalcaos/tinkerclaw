@@ -86,13 +86,24 @@ tinkerclaw as well. … Even if we had no api, I want to know there is a new mod
 
 - **Scope:** every one of the **top 50 base rows** on today's AA table (`effort == null`), ranked
   by index. Ordinal on purpose, so an AA rescale cannot shrink it. Each must be on the public
-  page AND in TinkerClaw (config, picker data, chart, dossier). A dated snapshot of a model we
+  page AND in TinkerClaw (config when an allowed route serves it, otherwise a greyed picker chip;
+  chart; dossier). A dated snapshot of a model we
   already carry (`qwen3-8-max-0803` next to Qwen3.8 Max) is a twin: name it in the report, no row.
 - **The route never decides inclusion.** "We do not route through that provider", "the key has
   no credit", "OpenRouter is not active" are ROUTING facts. They decide the billing label, never
   whether the model appears. The OpenRouter key exists; activating a model is one card payment.
-- **Route order:** subscription seat → a direct API key we hold (Google via `GEMINI_API_KEY`,
-  xAI, DeepInfra; list the provider's own model endpoint, do not assume) → OpenRouter (metered).
+- **Route order (rewritten 2026-11-18, the architect):** subscription seat → a direct API key we hold
+  (Google via `GEMINI_API_KEY`, xAI; list the provider's own model endpoint, do not assume) → for
+  OPEN-WEIGHT models only, DeepInfra, then OpenRouter (metered). GPT goes only through OpenAI (the
+  ChatGPT seat or the OpenAI API), never a reseller. A closed model with no first-party route of
+  ours is never added on a reseller: it stays a greyed chip with a "closed" note. Open = OpenRouter's
+  `hugging_face_id` is set, or `open_weights.py` (model-rank-refresh skill) finds DeepInfra's repo:
+  the exact one, or a same-org repo with a size, precision or `-RL` suffix. A bare Hugging Face 401 is
+  not proof of closed (MiMo-V2.6-Pro lives as …-RL); Qwen3.8 Max has no repo at all.
+- **One version per model name (the architect 2026-11-13, 2026-11-18):** the picker, SMART and MORE MODELS
+  show only the newest version of each name (`latestOfFamily`, greyed chips included). Never add an
+  older version of a name we carry or list; `catalog_gap.py` tags it `OLDER`, a closed reseller
+  listing `CLOSED`. Older versions already in config stay there (jobs that name one keep running).
 - **No seller anywhere** (AA scores it, no catalog sells it yet): add the score anyway and give
   it a dossier row marked "no public price yet". If a surface cannot draw a model without a
   price, that is a code gap to fix in this run, never a reason to drop it.
@@ -281,6 +292,13 @@ and, for each addition, its **cost and its billing route** — subscription or c
 
 ## Failures Overcome
 
+- **2026-11-18** — The one-version-per-name rule was merged and deployed before it was run over the
+  live pool. AA's slug `claude-35-sonnet` read as version 35 and hid Sonnet 5.5; Grok 4.20 (minor 20)
+  hid Grok 4.7; MORE MODELS kept Claude 3.5 Sonnet (June '24) and GLM 4.5V. Three extra
+  merge-and-rebuild rounds followed. → After `unroutable_models.py`, run `picker_names_check.mts`
+  (SKILL.md "Names check"); a SUSPECT line is fixed in the same run. Same day, a 401-only open-weights
+  test called MiMo-V2.6-Pro and Nemotron 3.5 Super VL closed; `open_weights.py` searches the org's
+  repos first.
 - **2026-09-02** — Fable 5.1 landed on the metered route because its id was transcribed from
   AA's display name, then drew gray, mispriced 112×, with no API triangle. → Step 4 delegates
   route resolution to `model-onboard` Step 1 instead of restating it.

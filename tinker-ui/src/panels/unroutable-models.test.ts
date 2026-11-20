@@ -67,7 +67,15 @@ describe("hover names and labels", () => {
   it("a Gemini codename is the label, a variant word is not", () => {
     expect(unroutableChipLabel("Gemini 4 Hydrogen")).toBe("Hydrogen");
     expect(unroutableChipLabel("Gemini 3.5 Flash")).toBe("Gemini 3.5 Flash");
-    expect(renderUnroutableChip(entry("Gemini 4 Hydrogen", 54))).toContain(">Hydrogen<");
+    // 2026-11-18: the chip text carries a soft hyphen (Hydro-gen) so it never splits "Hydrog / en".
+    expect(renderUnroutableChip(entry("Gemini 4 Hydrogen", 54))).toContain(">Hydro­gen<");
+  });
+  // 2026-11-18 (the owner): no grey mode; the red cross on top, the chip row's nickname as its label.
+  it("wears the red cross and takes the nickname the chip row gives it", () => {
+    const chip = renderUnroutableChip(entry("GPT-6.2 Sol", 57), "", "Sol");
+    expect(chip).toContain("model-btn-exhausted");
+    expect(chip).toContain(">Sol<");
+    expect(chip).toContain('data-hover-name="GPT-6.2 Sol"');
   });
   it("draws the trace it is given and paints by the supplier path", () => {
     expect(renderUnroutableChip(entry("x", 50), "<svg></svg>")).toContain("<svg></svg>");

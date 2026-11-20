@@ -189,6 +189,17 @@ vi.mock("../agents/openclaw-tools.js", () => {
       },
     },
     {
+      name: "web_fetch",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string" } },
+        additionalProperties: false,
+      },
+      execute: async () => {
+        throw new Error("Too many redirects (limit: 3)");
+      },
+    },
+    {
       name: "diffs_compat_test",
       parameters: {
         type: "object",
@@ -851,6 +862,23 @@ describe("POST /tools/invoke", () => {
     });
     expect(crash.status).toBe(500);
     expect((await crash.json()).error?.message).toBe("tool execution failed");
+  });
+
+  // FORK 2026-11-20 — web_fetch on a page that redirects four times reached the agent as "tool
+  // execution failed" while the gateway log held "Too many redirects (limit: 3)". The reason is
+  // about the URL the caller named; with it the caller goes to another reader at once.
+  it("returns a web_fetch failure with its reason, not an opaque 500", async () => {
+    setMainAllowedTools({ allow: ["web_fetch"] });
+    const res = await invokeToolAuthed({
+      tool: "web_fetch",
+      args: { url: "https://example.com/loops" },
+      sessionKey: "main",
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error?.type).toBe("tool_error");
+    expect(body.error?.message).toContain("Too many redirects (limit: 3)");
   });
 
   it("passes deprecated format alias through invoke payloads even when schema omits it", async () => {

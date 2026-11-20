@@ -17,6 +17,18 @@ export interface AaUnroutedModel {
 
 export const AA_UNROUTED_MODELS: AaUnroutedModel[] = [
   {
+    id: "openrouter/openai/gpt-6.2-astra",
+    name: "GPT-6.2 Astra",
+    index: 62.1388,
+    why: "OpenRouter $8/$40 and OpenAI's own API serve it; our ChatGPT sign-in is revoked, OpenRouter is at -$0.04 and the OpenAI key has no credit",
+  },
+  {
+    id: "openrouter/openai/gpt-6.2-sol",
+    name: "GPT-6.2 Sol",
+    index: 57.2577,
+    why: "OpenRouter $2/$10 and OpenAI's own API serve it; our ChatGPT sign-in is revoked, OpenRouter is at -$0.04 and the OpenAI key has no credit",
+  },
+  {
     id: "openrouter/meta/muse-wonder-full",
     name: "Muse Wonder Full",
     index: 50.0772,

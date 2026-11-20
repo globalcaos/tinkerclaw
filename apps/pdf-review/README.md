@@ -51,6 +51,7 @@ Tinker's `/pdf` proxy as that device sees it in `~/.config/pdf-review/door`, e.g
 4. Wording you can fix yourself: **✏️ Write**, tap a paragraph and type in it, on the page. The PDF catches up
    by itself.
 5. Read a blue paragraph, then press **✓ Approve** at its end: it prints black from then on.
+   In **🕘 Recent** a file whose blue text still waits for approval shows its name in that blue.
 
 Runtime data stays beside the code and out of git: `papers/` (links to the PDFs being served) and
 `state/` (bookmarks, which chat owns which PDF, history).
@@ -223,10 +224,25 @@ names the ones that changed meanwhile (`missed`) and an undo token; `{undo: toke
 their versions are still the ones the Approve all wrote (else 409). Offline there are no buttons: an approval is made on the Pi.
 The viewer code is `viewer/web/approve.js`, loaded so that its absence leaves the page as it was.
 
+**Blue names in 🕘 Recent (2026-11-18).** The Recent list (laptop and phone, and the phone's offline start, which
+opens the same list) shows a file's name in the new-text blue `#1e90ff` while its PDF has paragraphs waiting for
+✓ Approve, with the count in the row's tooltip ("3 blue paragraphs to approve"); other names stay as they are. The
+count is the length of the list the page's own buttons come from (`server.py` `approve_scan`, shared with `GET
+/api/approve`), cached per PDF on its mtime and size, the `.md`'s mtime and the approved text's mtime, so the list
+and the open page agree. `GET /api/history` adds `blue: n` only where that cache already knows it and never scans;
+the list draws first, then asks `GET /api/blue?path=…&path=…` for the rest (about 0.1 s per chapter not scanned yet)
+and paints them (`autoreload.js` `blueNames`). An approval or a rebuild changes what the cache is keyed on, so the
+last approval turns the name back and a rebuild that adds blue turns it blue at the next list open. With no answer
+(offline, a failed scan) the names keep the last counts this device saw (`localStorage` `pdfreview.blue`), or stay as
+they are; the list never waits for the scan. `/api/folder` shows no names (it feeds the offline keep), so it carries
+no count.
+
 Tests: `.venv/bin/python test/approve-server.py` (both ways, the rebuilt PDF's colours, a list item alone, his own
 edit, the 409, the journal, Approve all on both kinds), `node test/approve-all.mjs` and `PHONE=1 node
 test/approve-all.mjs` (its place above page 1's first line, the count, one request, all black at once, the Undo note,
-Undo bringing the blue and the buttons back, then all black after the rebuild), `node test/approve.mjs` and `PHONE=1 node test/approve.mjs` (placement, the quiet look,
+Undo bringing the blue and the buttons back, then all black after the rebuild), `MODE=desktop node test/blue-names.mjs` and `MODE=phone node test/blue-names.mjs`
+(the blue name in Recent, its count, Approve all turning it back, a rebuild turning one blue, a failed scan, offline),
+`node test/approve.mjs` and `PHONE=1 node test/approve.mjs` (placement, the quiet look,
 a press turning the paragraph black at once and through a zoom, one swap for two presses, Write), and on a real
 document `node test/approve-align.mjs <its .pdf> [--phone]` (copies it to /tmp; checks every button's place and that
 it covers no word, Approve all included, then previews every paragraph approved: no blue may be left in their lines, and the darkest
@@ -263,6 +279,17 @@ from `~/Documents`, `~/Downloads`, `~/Desktop`, `~/Pictures`, `~/src`, `~/.openc
 the top of the history. **🕘 Recent** lists every PDF opened with the viewer that still exists, newest
 first (`state/history.json`; only links under `papers/` to a PDF inside the folders the viewer may open
 count, so the tests' fixtures and a test's file in `/tmp` stay out; `test/history-roots.py`).
+
+**Book tabs (2026-11-19).** Beside Recent the dialog has a tab per kind of book file, **Chapters**, **Notes**,
+**Marked**, **Earlier** and **Backups**, each sorted by name with numbers by value (ch2 before ch10, a file before
+its own copies), and it opens on the tab used last. `GET /api/books` lists every PDF under the book folders, opened
+or not: one folder per line in `~/.config/pdf-review/books` (`~` allowed, a line starting with `#` is a comment; read
+at each request, so a new folder needs no restart). A file under a `backup*` folder is a backup, `-marques-oscar-N`
+a marked copy, `-before-edit` the build kept before an edit, a file in a `chapters` folder a chapter, the rest
+notes. Listing links nothing, so Recent does not change; a file never opened is linked through `POST /api/open` when
+tapped. Chapters and notes paint blue like Recent. No book folder: no tabs, the dialog is Recent alone. The phone
+keeps the last list offline (`sw.js`). A test server (its own `PDF_REVIEW_OPEN_ROOTS`) sees no books unless it sets
+`PDF_REVIEW_BOOKS`. Tested with `test/book-tabs.mjs` (MODE=desktop and MODE=phone).
 On a narrow screen (`viewer/web/phone.js`) the viewer's own controls move to a bar along the bottom, the
 outline starts closed, and − / + and the zoom menu go (pinch zooms). The ↕ / ⇆ button picks how to read,
 and the choice is kept: **↕ Scroll**, one column of pages at the screen's width with 10 px between them,
@@ -443,8 +470,9 @@ Read this before grepping; a viewer change took 12 probe calls to map on 2026-10
   in node), `server.py` `Builder`, `md_visible` and `_paragraph_post`. The ✏️ button and the swap itself:
   `viewer/web/autoreload.js`.
 - ✓ Approve: `viewer/web/approve.js` (the buttons, where they go, the press), `server.py` `blue_paragraphs`,
-  `nw_approve`, `store_add`, `_approve_get` and `_approve_post`; the swap waits for `approver.ready()` in
-  `autoreload.js`. The book chapters' approved text: `book1/bible/assemble.py` `approved_text`.
+  `nw_approve`, `store_add`, `approve_scan`, `_approve_get` and `_approve_post`; the swap waits for `approver.ready()` in
+  `autoreload.js`. Blue names in 🕘 Recent: `server.py` `blue_count`, `_blue`; `autoreload.js` `blueNames`. The book chapters' approved text: `book1/bible/assemble.py` `approved_text`.
+- Book tabs in 🕘 Recent: `server.py` `book_roots`, `book_kind`, `by_name`, `book_list`; `autoreload.js` `TABS`, `drawBook`, `openBookFile`; `reader.css` `.recentTab`.
 - Offline: `sw.js` (service worker), `viewer/web/offline.js` (copies, sync queue), `viewer/web/offline-ui.js` (the Online/Offline note and its list), `viewer/web/offline.html` (the app's offline page).
 - Marks on the device until the Pi has them: `viewer/web/journal.js` (storage), `autoreload.js` § "the journal" (snapshot, send, show); refused uploads: `server.py` `keep_refused`, `pdf-refused.py`.
 - Phone app bridge verbs: `apps/android/app/src/main/java/ai/openclaw/app/jarvis/JarvisBridge.kt` (speak, synth, voices, share, vibrate, notify, verb…). No speech-to-text verb yet. The WebView grants the mic (`RESOURCE_AUDIO_CAPTURE` in `apps/android/.../ui/TinkerScreen.kt`), so `getUserMedia` works inside the app.

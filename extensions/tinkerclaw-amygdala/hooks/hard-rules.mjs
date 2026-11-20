@@ -489,21 +489,34 @@ function usesKeyOnlyForReadOnlyApi(command) {
 }
 
 /**
+ * The shell joins a line that ends in a backslash with the next one, and so must a check that
+ * splits a command into lines (2026-11-19). Unjoined, the backslash was read as a delete target
+ * outside /tmp, own scratch was held, and the targets on the continued line were never checked.
+ */
+function joinContinuations(command) {
+  return String(command).replace(/\\\r?\n/g, " ");
+}
+
+/**
  * True when every deletion in the command is a plain rm/shred/unlink of agent scratch under
  * /tmp/<name> (no "..", not /tmp itself or /tmp/*). Any other kind of deletion (cache purge,
  * prune, worktree removal) or any other target → false.
  */
 function deletesOnlyTmpScratch(command, ruleRe) {
   let sawDelete = false;
-  for (const seg of String(command).split(/&&|\|\||[;&|\n]/)) {
+  for (const seg of joinContinuations(command).split(/&&|\|\||[;&|\n]/)) {
     if (!ruleRe.test(` ${seg} `)) continue; // this segment deletes nothing
-    const toks = seg.trim().split(/\s+/).filter(Boolean);
+    // Quotes come off every word, the command word too. Inside `ssh host 'rm -r… /tmp/x'` or
+    // `bash -c "rm …"` that word was 'rm, so own scratch on another machine was held as a recursive
+    // delete of an absolute path (2026-11-17; the owner asked for own scratch to pass).
+    const toks = seg
+      .trim()
+      .split(/\s+/)
+      .map((t) => t.replace(/^["']+|["']+$/g, ""))
+      .filter(Boolean);
     const i = toks.findIndex((t) => /^(?:rm|rmdir|shred|unlink)$/.test(t));
     if (i < 0) return false; // cache purge, prune, worktree removal, find -delete …
-    const targets = toks
-      .slice(i + 1)
-      .filter((t) => !t.startsWith("-"))
-      .map((t) => t.replace(/^["']|["']$/g, ""));
+    const targets = toks.slice(i + 1).filter((t) => !t.startsWith("-"));
     if (!targets.length) return false;
     for (const t of targets) {
       if (!/^\/tmp\/[^/\s*?]+/.test(t) || t.includes("..")) return false;
@@ -601,11 +614,12 @@ function deletesOnlyFreshFiles(command, ruleRe) {
   let sawDelete = false;
   let usedOwn = false;
   const named = new Set(); // every absolute path the command spells, for the folder check of isOwnFile
-  for (const w of shellWords(String(command).replace(/&&|\|\||[;&|\n]/g, " ")) ?? []) {
+  const text = joinContinuations(command);
+  for (const w of shellWords(text.replace(/&&|\|\||[;&|\n]/g, " ")) ?? []) {
     if (w.startsWith("/")) named.add(w.replace(/\/+$/, ""));
     else if (w.startsWith("~/")) named.add(join(homedir(), w.slice(2)).replace(/\/+$/, ""));
   }
-  for (const seg of String(command).split(/&&|\|\||[;&|\n]/)) {
+  for (const seg of text.split(/&&|\|\||[;&|\n]/)) {
     if (!ruleRe.test(` ${seg} `)) continue;
     if (/[$`*?[\]{}]/.test(seg)) return false; // expansions and wildcards hide what is deleted
     const toks = shellWords(seg.trim());

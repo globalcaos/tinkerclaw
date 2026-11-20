@@ -89,6 +89,14 @@ describe("shared/rel-cost-table", () => {
     });
   });
 
+  describe("gemini 4 neon (2026-11-19)", () => {
+    it("prices Gemini 4 Neon from its own row at $15 output, not the Carbon, Hydrogen or pro rate", () => {
+      expect(allRowsMatching("google/gemini-4-neon").map((r) => r4(r.relCost))).toEqual([15.0]);
+      expect(relCostFor("google/gemini-4-neon")).toBe(15.0);
+      expect(relCostFor("openrouter/google/gemini-4-neon")).toBe(15.0);
+    });
+  });
+
   describe("muse ember and motif 3 (2026-11-11)", () => {
     it("prices each from its own row, never the Muse Spark or default rate", () => {
       expect(allRowsMatching("openrouter/meta/muse-ember").map((r) => r4(r.relCost))).toEqual([

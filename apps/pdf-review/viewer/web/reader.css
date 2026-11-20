@@ -98,7 +98,17 @@ body.tapComment .textLayer { cursor: text; }
 .rowMenu button.danger { color: #9b3a1a; border-color: #d9a48a; }
 .rowMenu .rowMenuNote { font-size: 12px; color: #9b3a1a; }
 .recentRow .recentName { display: block; font-weight: 700; word-break: break-word; color: #3b2a14; }
+/* 2026-11-18: a PDF with paragraphs waiting for ✓ Approve, its name in the new-text blue (autoreload.js blueNames) */
+.recentRow .recentName.toApprove { color: #1e90ff; }
 .recentMeta { display: block; font-size: 12px; color: #8a7060; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 2026-11-19: the books' tabs beside Recent (autoreload.js TABS); the list takes the height the tabs leave. */
+#recentDialog[open] { display: flex; flex-direction: column; }
+#recentDialog .recentList { flex: 1 1 auto; min-height: 0; max-height: none; }
+.recentTabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #e2d3b5; }
+.recentTabs[hidden] { display: none; }
+.recentTab { font: 13px Georgia, serif; padding: 5px 11px; border: 1px solid #c9b48a; border-radius: 14px; background: #fbf6ec; color: #7A3921; cursor: pointer; }
+.recentTab.on { background: #7A3921; border-color: #7A3921; color: #f6efe2; }
+.recentTab .n { margin-inline-start: 5px; font-size: 11px; opacity: .75; }
 /* Phone layout (2026-10-21): this viewer's controls in a bottom bar on a narrow screen (phone.js). */
 #phoneBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 6px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow-x: auto; background: var(--toolbar-bg-color, #f9f9fa); border-top: 1px solid var(--toolbar-border-color, #b8b8b8); scrollbar-width: none; }
 #phoneBar[hidden] { display: none; }

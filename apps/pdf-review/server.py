@@ -27,7 +27,13 @@
   POST /api/redo?path=<url path>     wake that chat: read the comments and redo the document
   POST /api/open {path}              link a PDF on disk under papers/open/ and answer its url path
   POST /api/opened?path=<url path>   the viewer opened this file: put it at the top of the history
-  GET  /api/history                  every PDF opened with the viewer that still exists, newest first
+  GET  /api/history                  every PDF opened with the viewer that still exists, newest first; `blue` = how
+                                      many paragraphs wait for ✓ Approve, where already known (never scanned here)
+  GET  /api/blue?path=<url path>&path=…  {blue: {path: n}}: paragraphs waiting for ✓ Approve in each file, scanned
+                                      when not known yet (the 🕘 Recent list paints those names blue)
+  GET  /api/books                    every PDF in the book folders (~/.config/pdf-review/books), opened or not, sorted
+                                      by name, each with its kind (chapters, notes, marked, earlier, backups) and its
+                                      url path once linked: the book tabs beside 🕘 Recent
   POST /api/hide?path=<url path>     take that file off the history list (opening it again brings it back)
   POST /api/trash?path=<url path>    move the PDF behind that link to the trash (~/.local/share/Trash, restorable)
   GET  /api/source?path=<url path>&text=1   the .md a PDF is built from, and each block's words as they show (vis)
@@ -88,6 +94,10 @@ REFUSED_DAYS = 30  # older ones are removed when a new one is kept
 BUILT_FROM = TEXT_STATE / "built-from.json"  # real pdf path -> {md, pdf}: the .md version (mtime_ns) each PDF was built from
 HISTORY = ROOT / "state" / "history.json"  # url path -> {file, at}: what the viewer opened, for the phone's list
 HIDDEN = ROOT / "state" / "hidden.json"  # real file -> ms it was taken off the list; a later open shows it again
+# The book folders (2026-11-19, need: every PDF of the books at hand, opened or not, by kind and by name): one folder
+# per line (~ allowed, a line starting with # is a comment), read at each request. PDF_REVIEW_BOOKS (":"-separated):
+# the tests' own folders instead; a test server without it has none. None set up: the 🕘 Recent dialog has no book tabs.
+BOOKS_CONF = Path.home() / ".config" / "pdf-review" / "books"
 # The freedesktop trash, so a file manager can put a deleted PDF back (2026-10-27). PDF_REVIEW_TRASH: the tests' own.
 TRASH = Path(os.environ.get("PDF_REVIEW_TRASH") or Path.home() / ".local/share/Trash")
 # /api/open serves a PDF from these folders only (the same roots Tinker's file links may open).
@@ -210,12 +220,16 @@ def load_history():
         return {}
 
 
+def open_link(pdf):
+    """Where a PDF's link goes: papers/open/<hash of its folder>/<name> (the same place open-pdf uses)."""
+    import hashlib
+    return ROOT / "papers" / "open" / hashlib.sha1(str(pdf.parent).encode()).hexdigest()[:10] / pdf.name
+
+
 def link_pdf(pdf):
     """Link a PDF under papers/open/<hash of its folder>/ (the same place open-pdf uses); its url path."""
-    import hashlib
-    folder = ROOT / "papers" / "open" / hashlib.sha1(str(pdf.parent).encode()).hexdigest()[:10]
-    folder.mkdir(parents=True, exist_ok=True)
-    link = folder / pdf.name
+    link = open_link(pdf)
+    link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
         if link.resolve() != pdf:
             link.unlink()
@@ -277,6 +291,78 @@ def history_list():
             seen[target] = {"path": where, "name": target.name, "dir": str(target.parent), "at": at}
     hidden = load_hidden()  # taken off the list by a long press, unless opened again since
     return sorted((e for t, e in seen.items() if hidden.get(str(t), 0) < e["at"]), key=lambda e: -e["at"])
+
+
+def book_roots():
+    """The book folders that exist: PDF_REVIEW_BOOKS, else none on a test server (its own PDF_REVIEW_OPEN_ROOTS),
+    else BOOKS_CONF."""
+    if os.environ.get("PDF_REVIEW_BOOKS") is not None:
+        lines = os.environ["PDF_REVIEW_BOOKS"].split(":")
+    elif os.environ.get("PDF_REVIEW_OPEN_ROOTS"):
+        return []
+    else:
+        try:
+            lines = BOOKS_CONF.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+    roots = []
+    for line in (raw.strip() for raw in lines):
+        if not line or line.startswith("#"):
+            continue
+        folder = Path(line).expanduser().resolve()
+        if folder.is_dir() and folder not in roots:
+            roots.append(folder)
+    return roots
+
+
+def book_kind(rel):
+    """The book tab a PDF goes in, from its path inside the book folder: a copy under a backup* folder, a marked copy
+    kept before an Apply round (-marques-oscar-N), the build before a text edit (-before-edit), a chapter (in a folder
+    named chapters), or one of the book's other documents."""
+    if any(part.lower().startswith("backup") for part in rel.parts[:-1]):
+        return "backups"
+    if re.search(r"-marques-oscar-\d+$", rel.stem):
+        return "marked"
+    if rel.stem.endswith("-before-edit"):
+        return "earlier"
+    if rel.parent.name.lower() == "chapters":
+        return "chapters"
+    return "notes"
+
+
+def by_name(name):
+    """Sort key for a file name: letters without case, numbers by value (ch2 before ch10, -oscar-9 before -oscar-10),
+    a file before its own copies (ch01.pdf, then ch01-before-edit.pdf)."""
+    stem, _, ext = name.casefold().rpartition(".")
+    parts = re.split(r"(\d+)", stem or ext)
+    return [int(p) if i % 2 else p for i, p in enumerate(parts)], ext
+
+
+def book_list():
+    """Every PDF under the book folders, opened or not, sorted by name; one name in several folders (the backups):
+    the newest backup first. path: its url path when the link /api/open would make exists already, else None (the
+    dialog links it when he taps it). Nothing is linked here, so the 🕘 Recent list does not change."""
+    out = []
+    for root in book_roots():
+        for folder, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]  # .approved/ and the like
+            for name in names:
+                if name.startswith(".") or not name.lower().endswith(".pdf"):
+                    continue
+                pdf = Path(folder) / name
+                try:
+                    at = int(pdf.stat().st_mtime * 1000)
+                except OSError:  # a link to a file that is gone
+                    continue
+                rel = pdf.relative_to(root)
+                link = open_link(pdf)
+                linked = link.is_symlink() and link.resolve() == pdf.resolve()
+                out.append({"kind": book_kind(rel), "name": name, "file": str(pdf),
+                            "dir": (Path(root.name) / rel.parent).as_posix(),
+                            "path": "/" + link.relative_to(ROOT).as_posix() if linked else None, "at": at})
+    out.sort(key=lambda f: f["dir"], reverse=True)  # backup folders start with their date: the newest first
+    out.sort(key=lambda f: by_name(f["name"]))
+    return out
 
 
 def signature(path, date_time_string):
@@ -758,6 +844,64 @@ def blue_paragraphs(pdf, vis):
     return out
 
 
+def source_of(pdf):
+    """The .md a PDF (its real path) is built from and may be rebuilt from here, or None: what ✏️ and ✓ Approve need."""
+    md = Path(pdf).with_suffix(".md")
+    return md if md.is_file() and rebuilds_here(pdf) else None
+
+
+def _approve_key(pdf, md):
+    """A file's version for the ✓ Approve scan: the PDF, its .md, and the approved text it paints by. OSError if gone."""
+    store = approved_store(md)
+    ps = pdf.stat()
+    return (ps.st_mtime_ns, ps.st_size, md.stat().st_mtime_ns, store.stat().st_mtime_ns if store.is_file() else 0)
+
+
+def approve_scan(pdf, md, cached_only=False):
+    """(items, head) for the ✓ Approve buttons of this PDF, built from that .md: one item per paragraph that prints blue
+    and can be approved. Kept per file until the PDF, the .md or its approved text changes. The page's buttons and the
+    file lists' blue names both read it here, so they never disagree (2026-11-18). None when cached_only and not known
+    yet; raises when the PDF cannot be read (one being written as this reads it)."""
+    try:
+        key = _approve_key(pdf, md)
+    except OSError:
+        return [], None
+    hit = _approve_cache.get(str(pdf))
+    if hit and hit[0] == key:
+        return hit[1], hit[2]
+    if cached_only:
+        return None
+    text = md.read_text(encoding="utf-8")
+    blocks = MD_SPLIT.split(text)[0::2]
+    t0 = time.time()
+    found = blue_paragraphs(pdf, blocks_visible(md, text, blocks))
+    head = first_line(pdf) if found else None
+    has_store = approved_store(md).is_file()
+    items = []
+    for it in found:
+        i = it["index"]
+        if has_store or nw_strip(blocks[i]) is not None or nw_wrapper(blocks, i):
+            items.append({**it, "old": blocks[i]})
+    _approve_cache[str(pdf)] = (key, items, head)
+    print(f"[approve] {pdf.name}: {len(items)} blue paragraphs ({time.time() - t0:.2f} s)", flush=True)
+    return items, head
+
+
+def blue_count(where, cached_only=False):
+    """How many paragraphs of the PDF behind a served path wait for ✓ Approve: 0 for a file with no .md to approve in,
+    None when not known (cached_only and not scanned yet, or the PDF could not be read this time)."""
+    pdf = (ROOT / where.lstrip("/")).resolve()
+    md = source_of(pdf)
+    if not md:
+        return 0
+    try:
+        got = approve_scan(pdf, md, cached_only)
+    except Exception as err:  # a PDF being written as this reads it: unknown this time, the next list asks again
+        print(f"[approve] reading {pdf.name} failed: {err}", flush=True)
+        return None
+    return None if got is None else len(got[0])
+
+
 def keep_refused(target, body, meta):
     """Keep a refused upload (or paragraph edit) under state/refused/: <file>.<UTC>.bin (or .paragraph.json) and
     <file>.<UTC>.json. Never raises: a failure here must not change the answer the device gets."""
@@ -872,7 +1016,26 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/editdraft":
             return self._editdraft_get()
         if route == "/api/history":
-            return self._json({"files": history_list()})
+            # The blue count rides along only where the scan already knows it, so the list never waits for one
+            # (2026-11-18); the 🕘 Recent list asks /api/blue for the rest after it draws.
+            files = history_list()
+            for f in files:
+                n = blue_count(f["path"], cached_only=True)
+                if n is not None:
+                    f["blue"] = n
+            return self._json({"files": files})
+        if route == "/api/books":
+            # The book tabs (2026-11-19): every PDF of the books, opened or not. Blue counts as in /api/history, only
+            # where the scan already knows them; a copy (marked, earlier, backup) has no .md to approve in.
+            files = book_list()
+            for f in files:
+                if f["path"] and f["kind"] in ("chapters", "notes"):
+                    n = blue_count(f["path"], cached_only=True)
+                    if n is not None:
+                        f["blue"] = n
+            return self._json({"files": files})
+        if route == "/api/blue":
+            return self._blue()
         if route == "/api/folder":
             return self._folder()
         if route == "/api/offline-manifest":
@@ -1137,10 +1300,8 @@ class Handler(SimpleHTTPRequestHandler):
         where = self._served_path()
         if not where:
             return None
-        pdf = (ROOT / where.lstrip("/")).resolve()
-        md = pdf.with_suffix(".md")
         # /api/paragraph hands this .md to md2pdf.py, which runs the folder's own build*.sh: no Edit text outside.
-        return md if md.is_file() and rebuilds_here(pdf) else None
+        return source_of((ROOT / where.lstrip("/")).resolve())
 
     def _source_get(self):
         # The viewer shows ✏️ Edit text only when the PDF has a sibling .md it is built from.
@@ -1345,33 +1506,28 @@ class Handler(SimpleHTTPRequestHandler):
         if not md:
             return self._json({"has": False, "items": []})
         pdf = (ROOT / self._served_path().lstrip("/")).resolve()
-        store = approved_store(md)
         try:
-            ps = pdf.stat()
-            key = (ps.st_mtime_ns, ps.st_size, md.stat().st_mtime_ns, store.stat().st_mtime_ns if store.is_file() else 0)
-        except OSError:
-            return self._json({"has": True, "items": []})
-        hit = _approve_cache.get(str(pdf))
-        if hit and hit[0] == key:
-            return self._json({"has": True, "items": hit[1], "head": hit[2]})
-        text = md.read_text(encoding="utf-8")
-        blocks = self._md_blocks(text)
-        t0 = time.time()
-        try:
-            found = blue_paragraphs(pdf, blocks_visible(md, text, blocks))
-            head = first_line(pdf) if found else None
+            items, head = approve_scan(pdf, md)
         except Exception as err:  # a PDF being written as this reads it: no buttons this time, the next load asks again
             print(f"[approve] reading {pdf.name} failed: {err}", flush=True)
             return self._json({"has": True, "items": [], "error": "the PDF could not be read"})
-        has_store = store.is_file()
-        items = []
-        for it in found:
-            i = it["index"]
-            if has_store or nw_strip(blocks[i]) is not None or nw_wrapper(blocks, i):
-                items.append({**it, "old": blocks[i]})
-        _approve_cache[str(pdf)] = (key, items, head)
-        print(f"[approve] {pdf.name}: {len(items)} blue paragraphs ({time.time() - t0:.2f} s)", flush=True)
         self._json({"has": True, "items": items, "head": head})
+
+    def _blue(self):
+        """{blue: {path: n}} for each served path asked: n paragraphs wait for ✓ Approve in it (0: none, or no .md to
+        approve in). A path that is not a served paper, or a PDF that could not be read this time, is left out."""
+        out = {}
+        papers = (ROOT / "papers").resolve()
+        for where in parse_qs(urlparse(self.path).query).get("path", [])[:200]:
+            rel = unquote(where).lstrip("/")
+            link = ROOT / rel
+            if not rel.startswith("papers/") or ".." in Path(rel).parts or not link.is_file() \
+                    or not link.absolute().is_relative_to(papers):
+                continue
+            n = blue_count("/" + rel)
+            if n is not None:
+                out["/" + rel] = n
+        self._json({"blue": out})
 
     def _approve_post(self):
         """✓ Approve: block {index, old} has been read. Into the approved text, or its nw marker off; then rebuilt."""

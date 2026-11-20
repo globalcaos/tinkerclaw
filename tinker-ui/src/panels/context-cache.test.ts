@@ -12,6 +12,7 @@ import {
   type CachePanelState,
 } from "./context-cache";
 import { RESPONSE_COLOR, SEGMENT_COLORS, SEGMENT_LABELS } from "./context-timeline";
+import { eegFamilyColor } from "./eeg-trace";
 
 /** Frozen clock. The panel must never read one, so this only ever travels as state. */
 const NOW = 1_700_000_000_000;
@@ -292,9 +293,11 @@ describe("model window outline", () => {
     expect(html).toContain('title="claude-opus-5 window — 200.0k of the 1.0M scale"');
   });
 
-  it("falls back to the unknown-provider grey rather than emitting an empty colour", () => {
+  // 2026-11-18 (the owner): every model a colour, none gray — an unknown model gets its vendor's own hue.
+  it("gives an unknown model its own hue rather than emitting an empty colour", () => {
     const html = renderCachePanelHtml(sample({ provider: "not-a-provider", model: "nope" }));
-    expect(html).toContain("border-color:#8A8F98");
+    expect(html).toContain(`border-color:${eegFamilyColor("nope")}`);
+    expect(html).not.toContain("border-color:;");
   });
 
   it("is absent when the window is unknown", () => {

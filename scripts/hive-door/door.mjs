@@ -20,7 +20,9 @@
  *     is refused; a regular user's `sessions.delete` only hides the chat for them (nothing is deleted);
  *   gateway -> client: the hello names the person's own Main chat; `sessions.list` keeps only visible
  *     chats and tags each with its owner; events about chats the person may not see are dropped.
- * Admin API (admins only): /tinker/door/api/{me,users,users/<id>/{rotate,revoke,delete,admin}}.
+ * Admin API (admins only): /tinker/door/api/{me,users,users/<id>/{rotate,revoke,delete,admin},usage}.
+ *   `usage` = model tokens per person from the gateway's LLM ledger, the asking admin left out; see
+ *   usage.mjs.
  *
  * Run: node door.mjs   (env: DOOR_PORT=18795 DOOR_BIND=127.0.0.1 DOOR_UPSTREAM=127.0.0.1:18789
  *       DOOR_STATE_DIR=... DOOR_TITLE=Agent DOOR_LEGACY_USERS=id1,id2 DOOR_SESSIONS_STORE=... )
@@ -43,6 +45,7 @@ import {
   sha256Hex,
   newToken,
 } from "./table.mjs";
+import { defaultLedgerFile, readLedgerGroups, usageReport } from "./usage.mjs";
 
 export { sha256Hex };
 export const PLACEHOLDER_TOKEN = "door-session";
@@ -280,6 +283,7 @@ function publicPerson(r, counts) {
  * @param {string[]} [opts.legacyUsers]   people who keep seeing the chats that predate multi-user mode
  * @param {string} [opts.seatsFile]        operators.json the page reads for display names
  * @param {string} [opts.defaultAgent]
+ * @param {string} [opts.ledgerFile]       the gateway's LLM ledger, read by the usage report
  */
 export function createDoor(opts) {
   const stateDir = opts.stateDir;
@@ -372,6 +376,16 @@ export function createDoor(opts) {
       .writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" })
       .end(JSON.stringify(body));
 
+  async function usageFor(me, timeZone) {
+    return usageReport({
+      groups: await readLedgerGroups(opts.ledgerFile),
+      people: rows(),
+      ownerOf: (key) => acl.peek(key),
+      viewer: me.operatorId,
+      timeZone,
+    });
+  }
+
   /** Admin API. Returns true when it handled the request. */
   async function handleApi(req, res, url, me) {
     const sub = url.pathname.slice(API.length).replace(/\/+$/, "");
@@ -387,6 +401,13 @@ export function createDoor(opts) {
     }
     if (!me.admin) {
       json(res, 403, { error: "admins only" });
+      return true;
+    }
+    // FORK 2026-11-18 (requested: compare the model tokens the other people spent). Admins only: it
+    // names every person's spend. The asking admin is left out of their own report.
+    if (sub === "usage" && req.method === "GET") {
+      // ?tz= is the viewer's zone: the week restarts on Monday 07:00 on THEIR clock, not the server's.
+      json(res, 200, await usageFor(me, url.searchParams.get("tz") ?? undefined));
       return true;
     }
     if (
@@ -872,6 +893,7 @@ if (isMain) {
       .map((s) => s.trim())
       .filter(Boolean),
     seatsFile: path.join(home, ".openclaw", "data", "seats", "operators.json"),
+    ledgerFile: defaultLedgerFile(),
   });
   server.listen(port, bind, () =>
     console.log(`[door] ${bind}:${port} -> ${upstream}, state ${stateDir}`),

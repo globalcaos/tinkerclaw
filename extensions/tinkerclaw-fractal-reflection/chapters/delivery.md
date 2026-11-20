@@ -32,7 +32,10 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       misread a `cd`, a bootstrap truncation warning; the reflection followed up none.) A caveat
       that hands the owner a repair before he can use the deliverable ("check how it renders", "the
       logo is missing", "fill X yourself") is the gap itself: fix the artifact. (2026-10-09: two
-      supplier rounds drafted with a typed sign-off, which was not the real signature.)
+      supplier rounds drafted with a typed sign-off, which was not the real signature.) A graph
+      with one row far above the rest is the same gap: separate that row or ask before it ships.
+      (2026-11-18: one bar was 580 times the next, and the reply told him to compare the others
+      by their numbers; he had the big row taken out.)
       A reading the reply states for an ambiguous input ("I took 20×13 cm as 20 wide") is a hedge
       too: check the input's source (the sender's message, a drawing), and when it cannot settle it,
       deliver both readings. (2026-10-09: six landscape options for a print that
@@ -56,6 +59,13 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       local cache, another channel) with the command that lists it, and try them. (2026-10-05: a reply was reported
       unreadable because a mail token had expired, while another read path that would have found it
       in one ask was never listed.)
+- [ ] **Unreachable-host hedges.** "Could not reach it" about a host or a service ("no response",
+      "silent from the LAN", "port closed") is covered only by a probe in THIS turn's tool calls: a
+      ping and a connect to the service port. Grep the turn's own commands for the address; if none
+      touched it, the hedge came from a note, and a stored negative is expired on read. Run the
+      probe before the reply goes out. (2026-10-15: a colleague was told a lab machine did not
+      answer, from the previous day's note, with no command to it in the turn; ping and login
+      worked at the first try.)
 - [ ] **Messages for another person.** A message meant to let someone DO something (log in, pay,
       show up) is read as the recipient: does it carry every input they need (address, name,
       token, date) and nothing the ask did not request (a diagnosis, tips, questions)? (2026-10-05:
@@ -66,7 +76,27 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       held against a census of that class from every source that names a member, retired, pending
       and commented-out entries included; name each one left out and why. (2026-10-05: the machines
       panel copied only the active rows of a hosts file and left out two machines listed in its
-      comments.)
+      comments.) A view built from DATA rows (usage, logins, activity) lists only who has data:
+      build its rows from the roster and join the data on, so a member with no data shows as a
+      zero. Read each name as he will: a lowercase or id-shaped name among written-out ones is a
+      data defect. (2026-11-18: a tokens-per-person graph built from ledger rows left out an active
+      colleague with no calls and showed another colleague's name in lowercase; its reflection had
+      the people table in context, checked neither, and the owner named both.)
+- [ ] **A design serves the needs that were stated.** A design or plan handed over (a network
+      layout, an architecture, a list of phases) is held against what was asked. Every component
+      and phase names the stated need it serves; one that serves a need nobody stated (office
+      access, internet, a backup path) is drawn OPTIONAL, and the assumption behind it is asked in
+      one line instead of built in. (2026-10-19: asked to keep robot traffic apart from office
+      traffic, a target diagram drew a new cable from the main router to the robot switches and
+      made its phase mandatory, for a need nobody had stated; the colleague asked why the switches
+      needed that link at all.)
+- [ ] **A rebuilt or copied artifact re-inherits every old correction.** When a turn rewrites
+      content into a new artifact (a new layout, a merged version, a copy for another audience),
+      list the dated corrections in the note or recipe that governs that content and grep the new
+      artifact for each one before "clean". Checking only the new ask lets an error that was
+      already corrected ride along into the copy. (2026-10-28: a field guide rebuilt into linear
+      steps still told the reader to press a power button his robot model does not have; the
+      governing note had already ruled that step out.)
 - [ ] **A feature built here is a feature shipped.** TinkerClaw is a public fork: anything merged
       into `develop` reaches clones without our keys, seats or services. Hold a new capability
       against a fresh clone: bundled on, dormant or off; which key or paid service it needs; what it
@@ -112,15 +142,36 @@ diagrams and asked whether the Fractal turn had caught the gap. It had not.
       none is the change appearing where he looks. Climb only as far as the claim needs, never
       claim above where you climbed:
 
-  | claim about…                                | valid green                                                                                                                                                             |
-  | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | text / wiring / a value being present       | find the string in the SERVED output                                                                                                                                    |
-  | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at: screenshot or drive the browser                                                                                                          |
-  | a motion / blink / pulse / animation        | the same LOOK: a screenshot or a driven UI. Sound is not green                                                                                                          |
-  | a control that appears only after an action | DRIVE the interaction first, then look in THAT state                                                                                                                    |
-  | code you edited but did not deploy          | say **written, not running**: source ≠ built ≠ restarted                                                                                                                |
-  | a file / document he should open            | a clickable path or a media attachment; naming it is not a link. A path that was hard to click (2026-10-18 11:29, the Ink & Switch PDF) is the same miss as 2026-09-16. |
+  | claim about…                                | valid green                                                                                                                                                                                       |
+  | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | text / wiring / a value being present       | find the string in the SERVED output of the URL he named, loaded as him                                                                                                                           |
+  | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at: screenshot or drive the browser                                                                                                                                    |
+  | a motion / blink / pulse / animation        | the same LOOK: a screenshot or a driven UI. Sound is not green                                                                                                                                    |
+  | a control that appears only after an action | DRIVE the interaction first, then look in THAT state                                                                                                                                              |
+  | code you edited but did not deploy          | say **written, not running**: source ≠ built ≠ restarted                                                                                                                                          |
+  | a file / document he should open            | a clickable path or a media attachment that opens on HIS machine; naming it is not a link. A path that was hard to click (2026-10-18 11:29, the Ink & Switch PDF) is the same miss as 2026-09-16. |
+  | a file he RUNS (macros, a script, a tool)   | the delivered file, unpatched, run in HIS program                                                                                                                                                 |
 
+- [ ] **The page he named, not the page behind it (2026-10-07).** Asked to add an item to a named
+      wiki page, a turn decided that page was an alias, edited a neighbouring page, and called it
+      done because that file grew. The named page renders a static one-pager and never shows that
+      file; the colleague saw no change. File size on a neighbour is not green: load the exact URL
+      from the ask, with his login, and find the new string there.
+- [ ] **A link that opens on his machine, not on ours (2026-10-08).** Asked for an HTML index to
+      open, a turn sent it as a media attachment plus a path. The gateway sends host-local files as
+      media only when they are images, audio, video, PDF or Office files
+      (`HOST_READ_ALLOWED_DOCUMENT_MIMES` in `src/media/web-media.ts`), and a path opens on the
+      gateway host, while the colleague's browser reached the chat through a tunnel: he saw "media
+      failed". Before calling a file delivered, check its type against that list and ask where the
+      reader's browser runs. Anything else goes out as an http URL he can reach, fetched once with
+      curl: 200, the right content type, the same md5 as the source.
+- [ ] **The delivered file, in the program he runs it with (2026-11-03).** A macro workbook was
+      "verified" by a harness that swapped its Excel-only calls for stand-ins and called inner
+      functions instead of the buttons. The user opened the delivered file and every button raised
+      a runtime error; that day's reflection had the patched lines in front of it and wrote
+      nothing. A harness that edits the artifact under test proves another program: run the
+      delivered file in the user's program (the download log's user agent says which), press the
+      real entry points, stub only modal dialogs, and assert nothing else changed.
 - [ ] A precondition in his report IS the test setup. If you cannot render it, the appearance is
       UNVERIFIED; never upgrade a string match into a claim about what he will see.
 - [ ] **A write to shared data is not finished until you LOOKED at what reads it.** Count what the

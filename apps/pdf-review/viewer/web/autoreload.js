@@ -60,7 +60,7 @@ document.getElementById("toolbarViewerRight").prepend(folderBtn);
 // chance (every 10 s while some wait, when the Pi answers again, on the next open of the file). The Pi carries
 // them onto a file that moved on meanwhile (server.py X-Made-Length), so a rebuild never refuses them again.
 const D = {
-  doc: null, docId: "", path: "", baseSig: null, own: null, B: null, stored: false,
+  doc: null, docId: "", path: "", baseSig: null, own: null, B: null,
   since: new Uint8Array(0), seq: 0, chain: Promise.resolve(), mem: null, edits0: 0, kept: false,
 };
 let adopting = null; // a journal record this page is reopened on, to show its marks while the Pi cannot take them
@@ -79,9 +79,9 @@ function newDoc() {
   if (a && a.path === path) {
     // A page of its own (another tab may still be writing the record it shows): the record is dropped once this
     // page's first snapshot, which holds its marks, is written.
-    Object.assign(D, { doc, path, docId: newId(), baseSig: a.baseSig, own: a.own, B: a.B, stored: false, since: a.since || new Uint8Array(0), seq: a.seq, mem: null, supersedes: a.id });
+    Object.assign(D, { doc, path, docId: newId(), baseSig: a.baseSig, own: a.own, B: a.B, since: a.since || new Uint8Array(0), seq: a.seq, mem: null, supersedes: a.id });
     st.sig = a.own || a.baseSig;
-  } else Object.assign(D, { doc, path, docId: newId(), baseSig: null, own: null, B: null, stored: false, since: new Uint8Array(0), seq: 0, mem: null, supersedes: null });
+  } else Object.assign(D, { doc, path, docId: newId(), baseSig: null, own: null, B: null, since: new Uint8Array(0), seq: 0, mem: null, supersedes: null });
 }
 
 /** Write what the page holds now to the journal: {bytes, rec}, or null (no document). */
@@ -101,8 +101,10 @@ async function snapshot() {
   D.mem = rec;
   if (J) {
     try {
-      await J.put(rec, pre && !D.stored ? D.B : null);
-      if (pre) D.stored = true;
+      // The base goes with every record; put() writes it only when the journal does not hold it. A flag that said
+      // "stored" outlived the base the page's first confirmed send removed: every later record of the page was
+      // written without it, and the one a page died with could never be sent (ch09, 2026-11-18).
+      await J.put(rec, pre ? D.B : null);
       if (D.supersedes) { await J.remove(D.supersedes); D.supersedes = null; } // its marks are in this record now
     } catch (err) {
       console.error("[journal] writing the marks to this device failed", err);
@@ -180,11 +182,43 @@ async function send(rec, bytes) {
   return { ok: true, carried: !!answer.carried, sig: answer.sig || null };
 }
 
+// A record whose base the journal lost (written by a viewer before 2026-11-18, see snapshot): the base is rebuilt
+// from the file this page has open. pdf.js appends its marks to the file it loaded, so every later version of the
+// same file starts with that one, unless the file was rebuilt since. Checked, not assumed: that start must end the
+// way a PDF ends, and the marks' cross-reference section must point back (/Prev) at the one it ends with.
+const latin1 = (bytes) => new TextDecoder("latin1").decode(bytes);
+async function baseFromOpen(rec) {
+  const have = await app.pdfDocument?.getData().catch(() => null);
+  if (!have || have.length < rec.len0) return null;
+  const B = have.subarray(0, rec.len0);
+  const end = /startxref\s+(\d+)\s*%%EOF\s*$/.exec(latin1(B.subarray(Math.max(0, B.length - 64))));
+  const prev = [...latin1(rec.tail).matchAll(/\/Prev\s+(\d+)/g)].pop();
+  const ok = !!end && !!prev && end[1] === prev[1];
+  window.__clientLog?.("journal-base-rebuilt", { seq: rec.seq, len0: rec.len0, ok });
+  return ok ? B.slice() : null;
+}
+
+// A record with no base that the open file cannot give back either (rebuilt since) can never be sent whole. Its
+// marks go to the Pi as they are: the crc is never a number, so the Pi can only refuse the part, and it keeps every
+// part it refuses under state/refused/ (pdf-refused.py). Answers whether the Pi kept them.
+async function keepOnPi(rec) {
+  const base = rec.own || rec.baseSig || "";
+  const url = BASE + `/api/save?path=${encodeURIComponent(rec.path)}&base=${encodeURIComponent(base)}&keep=${rec.len0}&len=${rec.len0 + rec.tail.length}&crc=none`;
+  try {
+    const r = await fetch(url, { method: "PUT", body: rec.tail });
+    const answer = await r.json().catch(() => ({}));
+    window.__clientLog?.("journal-kept-on-pi", { seq: rec.seq, len0: rec.len0, bytes: rec.tail.length, status: r.status, kept: !!answer.kept });
+    return !r.ok && answer.kept === true;
+  } catch {
+    return false; // no connection: tried again on the next pump
+  }
+}
+
 /** Send every record of the open file, oldest first. Answers {sent, kept, carried, offline}. */
 async function pump() {
   if (pumping) return pumping;
   pumping = (async () => {
-    const out = { sent: 0, kept: 0, carried: false, offline: false, others: 0, why: "" };
+    const out = { sent: 0, kept: 0, carried: false, offline: false, others: 0, lost: 0, why: "" };
     const path = st.url ? decodeURIComponent(served(st.url)) : "";
     if (!path) return out;
     const left = [];
@@ -193,7 +227,15 @@ async function pump() {
     for (const rec of [...all.filter((r) => r.path === path), ...all.filter((r) => r.path !== path)]) {
       const mine = rec.docId === D.docId && D.doc === app.pdfDocument;
       const here = rec.path === path;
-      const B = !rec.len0 ? new Uint8Array(0) : mine && D.B ? D.B : J ? await J.base(rec).catch(() => null) : null;
+      let B = !rec.len0 ? new Uint8Array(0) : mine && D.B ? D.B : J ? await J.base(rec).catch(() => null) : null;
+      if (!B && here && D.doc && D.doc === app.pdfDocument) {
+        B = await baseFromOpen(rec);
+        if (!B && (await keepOnPi(rec))) { // on the Pi as it is, so it leaves the device and holds no Apply
+          if (J) await J.remove(rec.id, rec.seq).catch(() => {});
+          out.lost++;
+          continue;
+        }
+      }
       if (!B) { if (here) { left.push(rec); out.kept++; out.why = "the version these marks were made on is missing"; } continue; }
       const bytes = new Uint8Array(B.length + rec.tail.length);
       bytes.set(B, 0);
@@ -230,7 +272,8 @@ async function pump() {
     }
     // Marks this page cannot send now and does not show (it died, or reopened on another version): shown here,
     // on the version they were made on, until the Pi takes them. Only when nothing was marked on this page yet.
-    const shown = left.filter((r) => !(r.docId === D.docId && D.doc === app.pdfDocument) && r.id !== D.supersedes); // not the one shown already
+    // A record still without its base (no connection to hand it over yet) has nothing to show: it waits.
+    const shown = left.filter((r) => r.B && !(r.docId === D.docId && D.doc === app.pdfDocument) && r.id !== D.supersedes); // not the one shown already
     if (shown.length && st.edits === D.edits0 && !st.busy && D.doc === app.pdfDocument && !document.getElementById("commentManagerDialog")?.open) {
       const rec = shown[shown.length - 1];
       const bytes = new Uint8Array(rec.B.length + rec.tail.length);
@@ -241,6 +284,7 @@ async function pump() {
       app.open({ url: st.url, data: bytes }).catch((err) => console.error("[journal] showing the kept marks failed", err));
     }
     if (out.carried || out.others) { chase = true; setTimeout(tick, 0); } // the Pi's file holds more now: show it
+    if (out.lost) offlineNote("⚠ Marks made on an older version of this file could not be put on it: they are kept on the Pi (state/refused)");
     D.kept = out.kept > 0;
     return out;
   })().finally(() => { pumping = null; journalState(); });
@@ -1142,7 +1186,7 @@ const recentBtn = document.createElement("button");
 recentBtn.id = "recentFiles";
 recentBtn.className = "toolbarButton readerBtn";
 recentBtn.textContent = "🕘 Recent";
-recentBtn.title = "The PDFs opened with this viewer, most recent first";
+recentBtn.title = "The PDFs opened with this viewer, most recent first, and the books' PDFs by kind";
 document.getElementById("toolbarViewerRight").prepend(recentBtn);
 
 const ago = (ms) => {
@@ -1155,33 +1199,157 @@ const ago = (ms) => {
 };
 const escHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+// 2026-11-19, need: every PDF of the books at hand, opened or not, one tab per kind of file, the book files by name.
+// Beside Recent, one tab per kind of book file, from /api/books (every PDF under the book folders, sorted by name on
+// the Pi: numbers by value, ch2 before ch10). The dialog opens on the tab used last. With no book folder set up
+// (~/.config/pdf-review/books) it has no tabs: Recent alone.
+const TABS = [
+  ["recent", "Recent", "The PDFs opened with this viewer, most recent first"],
+  ["chapters", "Chapters", "Every chapter of the books, by name"],
+  ["notes", "Notes", "The books' other documents (plot, rules, plans), by name"],
+  ["marked", "Marked", "Your marked copies, kept before each Apply round, by name"],
+  ["earlier", "Earlier", "The build kept before each text edit, by name"],
+  ["backups", "Backups", "The copies in the books' backup folders, by name, the newest backup first"],
+];
+const TAB_KEY = "pdfreview.recentTab";
+
 async function showRecent() {
   document.getElementById("recentDialog")?.remove();
   const dlg = document.createElement("dialog");
   dlg.id = "recentDialog";
   dlg.innerHTML = `<div class="recentHead"><b>Recent PDFs</b><button type="button" class="recentClose" aria-label="Close">✕</button></div>` +
-    `<div class="recentList">Loading…</div>`;
+    `<div class="recentTabs" role="tablist" hidden></div><div class="recentList">Loading…</div>`;
   document.body.append(dlg);
   dlg.querySelector(".recentClose").onclick = () => dlg.close();
   dlg.addEventListener("close", () => dlg.remove());
   dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
   dlg.showModal();
-  const list = dlg.querySelector(".recentList");
-  try {
-    const r = await fetch(BASE + "/api/history", { cache: "no-store" });
+  const list = dlg.querySelector(".recentList"), tabs = dlg.querySelector(".recentTabs");
+  const open = st.url ? decodeURIComponent(served(st.url)) : "";
+  let tab = "recent";
+  try { tab = localStorage.getItem(TAB_KEY) || "recent"; } catch {}
+  const got = { recent: null, books: null }; // each answer as it comes: its files, or the Error
+  const drawTabs = () => {
+    const books = Array.isArray(got.books) ? got.books : [];
+    const shown = TABS.filter(([id]) => id === "recent" || books.some((f) => f.kind === id));
+    tabs.hidden = shown.length < 2;
+    dlg.querySelector(".recentHead b").textContent = shown.length < 2 ? "Recent PDFs" : "PDFs";
+    tabs.innerHTML = shown.map(([id, label, tip]) => {
+      const n = id === "recent" ? (Array.isArray(got.recent) ? got.recent.length : "") : books.filter((f) => f.kind === id).length;
+      return `<button type="button" role="tab" class="recentTab${id === tab ? " on" : ""}" data-tab="${id}" aria-selected="${id === tab}" ` +
+        `title="${escHtml(tip)}">${label}<span class="n">${n}</span></button>`;
+    }).join("");
+  };
+  const drawList = () => {
+    const files = tab === "recent" ? got.recent : got.books;
+    if (files === null) list.textContent = "Loading…";
+    else if (files instanceof Error) list.textContent = `The list could not be loaded: ${files.message}`;
+    else if (tab === "recent") drawRecent(list, files, open, dlg);
+    else drawBook(list, files.filter((f) => f.kind === tab), open, tab);
+  };
+  tabs.addEventListener("click", (e) => {
+    const b = e.target.closest(".recentTab");
+    if (!b || b.dataset.tab === tab) return;
+    tab = b.dataset.tab;
+    try { localStorage.setItem(TAB_KEY, tab); } catch {}
+    list.scrollTop = 0;
+    drawTabs();
+    drawList();
+  });
+  drawTabs();
+  const get = async (p) => {
+    const r = await fetch(BASE + p, { cache: "no-store" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const { files } = await r.json();
-    const open = st.url ? decodeURIComponent(served(st.url)) : "";
-    list.innerHTML = files.length
-      ? files.map((f) => `<a class="recentRow${f.path === open ? " current" : ""}" href="${escHtml(viewerUrl(f.path))}">` +
-          `<span class="recentName">${escHtml(f.name)}</span>` +
-          `<span class="recentMeta">${escHtml(ago(f.at))} · ${escHtml(f.dir)}</span></a>`).join("")
-      : "No PDF opened yet.";
-    list.querySelectorAll(".recentRow").forEach((row, i) => holdForMenu(row, files[i], dlg));
-    if (OFFLINE) list.querySelectorAll(".recentRow").forEach((row, i) => row.classList.toggle("kept", isKept(files[i].path)));
+    return (await r.json()).files || [];
+  };
+  get("/api/history").catch((err) => { console.error("[recent] the list failed", err); return err; }).then((files) => {
+    got.recent = files;
+    drawTabs();
+    if (tab === "recent") drawList();
+  });
+  // No book list (offline with no copy kept, a server older than /api/books): Recent alone, never an error.
+  get("/api/books").catch((err) => { console.warn("[recent] the book list failed; Recent only", err); return []; }).then((files) => {
+    got.books = files;
+    const was = tab;
+    if (tab !== "recent" && !files.some((f) => f.kind === tab)) tab = "recent";
+    drawTabs();
+    if (was !== "recent") drawList();
+  });
+}
+
+function drawRecent(list, files, open, dlg) {
+  list.innerHTML = files.length
+    ? files.map((f) => `<a class="recentRow${f.path === open ? " current" : ""}" href="${escHtml(viewerUrl(f.path))}">` +
+        `<span class="recentName">${escHtml(f.name)}</span>` +
+        `<span class="recentMeta">${escHtml(ago(f.at))} · ${escHtml(f.dir)}</span></a>`).join("")
+    : "No PDF opened yet.";
+  list.querySelectorAll(".recentRow").forEach((row, i) => holdForMenu(row, files[i], dlg));
+  if (OFFLINE) list.querySelectorAll(".recentRow").forEach((row, i) => row.classList.toggle("kept", isKept(files[i].path)));
+  blueNames(list, files);
+}
+
+// A book tab: its files in the Pi's order. A file never opened has no link yet (path null): a tap links it (/api/open,
+// as a file link tapped in Tinker does) and opens it. Only chapters and notes have a .md, so new text to approve.
+function drawBook(list, files, open, kind) {
+  list.innerHTML = files.map((f) => `<a class="recentRow${f.path && f.path === open ? " current" : ""}" ` +
+    `href="${f.path ? escHtml(viewerUrl(f.path)) : "#"}"><span class="recentName">${escHtml(f.name)}</span>` +
+    `<span class="recentMeta">${escHtml(f.dir)} · changed ${escHtml(ago(f.at))}</span></a>`).join("");
+  list.querySelectorAll(".recentRow").forEach((row, i) => {
+    const f = files[i];
+    if (!f.path) row.addEventListener("click", (e) => { e.preventDefault(); openBookFile(f, row); });
+    else if (OFFLINE) row.classList.toggle("kept", isKept(f.path));
+  });
+  list.querySelector(".recentRow.current")?.scrollIntoView({ block: "center" });
+  if (kind === "chapters" || kind === "notes") blueNames(list, files);
+}
+
+async function openBookFile(f, row) {
+  const meta = row.querySelector(".recentMeta");
+  meta.textContent = "Opening…";
+  try {
+    const r = await fetch(`${BASE}/api/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: f.file }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || !body.path) throw new Error(body.error || `HTTP ${r.status}`);
+    location.href = viewerUrl(body.path);
   } catch (err) {
-    console.error("[recent] the list failed", err);
-    list.textContent = `The list could not be loaded: ${err.message}`;
+    console.error(`[recent] opening ${f.file} failed`, err);
+    meta.textContent = `Could not open it: ${err.message}`;
+  }
+}
+
+// 2026-11-18, need: see at a glance which files still hold unapproved new text. A name is blue while its
+// PDF has paragraphs waiting for ✓ Approve, the count in its tooltip. The count is the Pi's ✓ Approve scan
+// (server.py approve_scan, the one the page's buttons come from), so the list and the open page agree. The list
+// draws first with the counts the Pi already knew (/api/history `blue`); /api/blue then scans the rest. With no
+// answer (offline, a failed scan) the names keep the last counts this device saw, or stay as they are.
+const BLUE_SEEN = "pdfreview.blue"; // url path -> paragraphs waiting, the last the Pi said
+async function blueNames(list, files) {
+  const rows = [...list.querySelectorAll(".recentRow")];
+  const paint = (counts) => rows.forEach((row, i) => {
+    const n = counts[files[i].path];
+    if (n === undefined) return;
+    const name = row.querySelector(".recentName");
+    name.classList.toggle("toApprove", n > 0);
+    if (n > 0) row.title = `${n} blue paragraph${n === 1 ? "" : "s"} to approve`;
+    else row.removeAttribute("title");
+    row.dataset.blue = String(n);
+  });
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem(BLUE_SEEN) || "{}") || {}; } catch {}
+  const known = Object.fromEntries(files.filter((f) => typeof f.blue === "number").map((f) => [f.path, f.blue]));
+  paint(known);
+  const asked = files.filter((f) => f.path); // a book file never opened has no link to ask about
+  if (!asked.length) return;
+  try {
+    const q = asked.map((f) => `path=${encodeURIComponent(f.path)}`).join("&");
+    const r = await fetch(`${BASE}/api/blue?${q}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const { blue } = await r.json();
+    paint(blue);
+    try { localStorage.setItem(BLUE_SEEN, JSON.stringify({ ...seen, ...known, ...blue })); } catch {}
+  } catch (err) {
+    console.warn("[recent] the blue names could not be checked; the last ones known stay", err);
+    paint(Object.fromEntries(files.filter((f) => !(f.path in known) && typeof seen[f.path] === "number").map((f) => [f.path, seen[f.path]])));
   }
 }
 

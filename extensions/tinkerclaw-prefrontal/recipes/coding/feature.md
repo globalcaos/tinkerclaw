@@ -214,6 +214,13 @@ dumps — the code is in the commits.
   or log it as a Ruling with its cost and name it as open in step 8. Never file
   it in the bible or a README as a "known limit"; that wording is only for
   limits he will not meet.
+- A view that lists the members of a class (people, machines, chats) builds
+  its rows from the roster and joins the data onto them: a member with no data
+  is a row at zero, never a missing row. Before step 5 is done, count the
+  rendered rows against the roster and read every name as the owner will (a
+  lowercase or id-shaped name among written-out ones is a data defect to fix
+  or name). A comparison where one row dwarfs the others (a hundred times the
+  next) compares nothing: separate that row or log a Ruling before it ships.
 
 ## Safety Notes
 
@@ -229,6 +236,14 @@ dumps — the code is in the commits.
 
 ## Failures Overcome
 
+- **Members missing from a per-person view** (2026-11-18): a tokens-per-person
+  graph was built from the LLM ledger's rows, so a colleague with access and no
+  calls had no row, another colleague's name showed in lowercase straight from
+  the people table, and the owner's own row was 580 times the next bar while
+  the report said to compare the rest by their numbers. The owner named all
+  three; the second version builds rows from the roster, at zero when there is
+  no data. Constraint added: rows from the roster, names read, no squashed
+  comparison.
 - **A daily-use gap filed as a known limit** (2026-11-14): the unread mark on
   Tinker tabs (built 2026-10-27) reached the other device only at page load,
   and its design note filed that as a known limit, although the live tab

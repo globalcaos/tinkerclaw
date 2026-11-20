@@ -365,6 +365,16 @@ export async function handleToolsInvokeHttpRequest(
       return true;
     }
     logWarn(`tools-invoke: tool execution failed: ${String(err)}`);
+    // FORK 2026-11-20 — a web_fetch failure is about the URL the caller named (too many redirects,
+    // a refused host, a timeout), so its reason goes back. Masked, "Too many redirects (limit: 3)"
+    // reached the agent as "tool execution failed" and cost a blind detour. 422, as for the browser.
+    if (toolName === "web_fetch") {
+      sendJson(res, 422, {
+        ok: false,
+        error: { type: "tool_error", message: getErrorMessage(err) || "tool execution failed" },
+      });
+      return true;
+    }
     sendJson(res, 500, {
       ok: false,
       error: { type: "tool_error", message: "tool execution failed" },

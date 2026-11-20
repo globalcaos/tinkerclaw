@@ -6,14 +6,14 @@
 //   - A PDF under papers/: the copy kept on this device, at once (offline.js checks the server's
 //     signature afterwards and fetches only a changed file). Marks saved while offline are a second
 //     copy (pending/…) and win over the kept one until they reach the server.
-//   - A few GET /api/… answers (source text, origin, history, bookmark, voices): network first, the
-//     last answer when offline.
+//   - A few GET /api/… answers (source text, origin, history, the book list, bookmark, voices): network
+//     first, the last answer when offline.
 // The page writes the PDF copies (offline.js); this worker only reads them, so there is one writer.
 const SCOPE = new URL(self.registration.scope).pathname.replace(/\/$/, ""); // "" or "/pdf"
 const SHELL = "pdfreview-shell-v1";
 const DOCS = "pdfreview-docs-v1";
 const API = "pdfreview-api-v1";
-const API_KEPT = ["/api/source", "/api/origin", "/api/history", "/api/bookmark", "/api/voices", "/api/editdraft", "/api/folder"];
+const API_KEPT = ["/api/source", "/api/origin", "/api/history", "/api/books", "/api/bookmark", "/api/voices", "/api/editdraft", "/api/folder"];
 const NET_WAIT_MS = 4000;
 
 self.addEventListener("install", (e) => {

@@ -1,7 +1,9 @@
 // Scored models we cannot route to, shown in the picker and the MODELS panel at their rank,
-// greyed out and unpickable. Hovering one opens a card saying why (nobody serves it yet, or
-// which site to set it up on) with a link that stays clickable while the pointer moves onto it.
+// in full colour under the red cross (2026-11-18; greyed before that) and unpickable. Hovering one
+// opens a card saying why (nobody serves it yet, or which site to set it up on) with a link that
+// stays clickable while the pointer moves onto it.
 // The list itself is generated nightly: unroutable-models.generated.ts.
+import { softHyphenate } from "./model-surface-catalog.js";
 import {
   OPENROUTER_BALANCE_USD,
   OPENROUTER_CREDITS_URL,
@@ -111,13 +113,6 @@ function entryAttrs(m: UnroutableModel): string {
     : cardAttrs(m.note, m.url, LINK_LABEL[m.reason], m.name);
 }
 
-/** OpenRouter is the only supplier and the balance is spent: red cross, as for a spent window. */
-function openRouterSpent(m: UnroutableModel): boolean {
-  return (
-    m.reason === "openrouter" && OPENROUTER_BALANCE_USD !== null && OPENROUTER_BALANCE_USD <= 0
-  );
-}
-
 /** A MODELS-panel row: same columns as a routed row, greyed, with the hover card. */
 export function renderUnroutableRow(m: UnroutableModel, trace = ""): string {
   return (
@@ -130,12 +125,17 @@ export function renderUnroutableRow(m: UnroutableModel, trace = ""): string {
   );
 }
 
-/** A picker chip: no data-model-idx, so the click handler can never pin it. */
-export function renderUnroutableChip(m: UnroutableModel, trace = ""): string {
+/**
+ * A picker chip: no data-model-idx, so the click handler can never pin it.
+ * 2026-11-18 (the owner): in full colour with the red cross on top, the same mark as a spent token
+ * window, never greyed; the hover card gives the exact version and how to make it usable.
+ * `label` is the chip row's nickname for it (pickerChipLabels).
+ */
+export function renderUnroutableChip(m: UnroutableModel, trace = "", label?: string): string {
   return (
-    `<button type="button" class="model-btn model-btn-unroutable${openRouterSpent(m) ? " model-btn-exhausted" : ""}"${entryAttrs(m)}>` +
+    `<button type="button" class="model-btn model-btn-unroutable model-btn-exhausted"${entryAttrs(m)}>` +
     trace +
-    `<span class="model-btn-text">${esc(unroutableChipLabel(m.name))}</span></button>`
+    `<span class="model-btn-text">${esc(softHyphenate(label ?? unroutableChipLabel(m.name)))}</span></button>`
   );
 }
 

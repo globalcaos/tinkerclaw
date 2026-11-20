@@ -104,7 +104,10 @@ report is a claim, never evidence.
 Fresh means after the change, not before it. Source is not built and built
 is not restarted: rebuild and restart before observing anything that comes
 from an artifact. Reach the surface the way a user does — the served URL for
-wiring, a real browser render for UI, the actual CLI for a tool. Exercise the
+wiring, a real browser render for UI, the actual CLI for a tool. A file the
+user opens is tested in the program they open it with (find out from
+evidence, e.g. the download log's user agent), running the artifact as
+delivered: a harness that edits the code under test proves another program. Exercise the
 changed behaviour AND the two nearest neighbouring flows, since a change that
 works in isolation and breaks its neighbour is the common miss. Never alter
 the surface to make it observable: no CSS overrides, no stubbed fixture, no
@@ -207,6 +210,12 @@ report, never code.
   `maxHeight: none; overflow: visible` to photograph a palette, which disabled
   the scrollbar defect it was photographing, and the run was called verified.
   Never modify the surface you are verifying.
+- **2026-11-03 — the harness patched the code it tested:** a macro workbook was
+  checked by a script that swapped its Excel-only calls for stand-ins and
+  called inner functions instead of the buttons. It passed; the user opened
+  the delivered file and every button raised a runtime error. Press the real
+  entry points with the delivered code; stub only what cannot run unattended
+  (modal dialogs) and assert nothing else changed.
 - v1.0 resurrected 2026-06-13 from commit a239df31a4^.
 - v2.0 2026-09-02: added the evidence ladder (served output, render, driven
   control, written-not-running), test-as-the-user, context-cheap output, the

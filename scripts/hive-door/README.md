@@ -27,6 +27,10 @@ node scripts/hive-door/setup.mjs --owner-id alice --owner-name Alice --title MyA
 
 Creates the owner (an admin) and their first token (private file, not printed), seeds seat names, and installs `hive-door.service` on Linux. People open the door's address (`http://<machine>:18795/tinker/`), never the gateway's. Keep the gateway on loopback. `DOOR_BIND` serves the door on a LAN address; the default is loopback, for use behind your own proxy or tunnel.
 
+## Tokens per person (admins)
+
+The Graphs section of the 🎯 HUD's Pulse tab opens with a time graph of the model tokens the other people used: one coloured line per person showing their running total of the week, with the same zoom, pan and hover as the other Pulse graphs. The total starts again every Monday at 07:00 on the viewer's own clock (the page sends its time zone, so a server set to UTC does not move the reset), and the chart opens on the last two weeks. The admin looking is left out, and every active person has a line, also with no calls yet. A count is input + output + cache write + cache read, read from the gateway's LLM ledger (`~/.openclaw/forensic/llm-ledger.sqlite`). A call belongs to the person whose seat sent it, else to the owner of its chat (a subagent goes through the chat that spawned it). Chats from before multi-user mode and background work (titles, reflections, crons) belong to nobody and are not shown. The data comes from `GET /tinker/door/api/usage?tz=<zone>`, admins only. Another host of the same owner can fetch the same report with `node scripts/hive-door/usage.mjs report --tz <zone>` (it reads the door's files and writes nothing).
+
 ## Day to day
 
 From the page: the USERS panel (admins). From a terminal: `node scripts/hive-door/door-tokens.mjs list | add <id> <Name> [--admin] | rotate|revoke|delete <id> | admin <id> on|off | seed-seats`.

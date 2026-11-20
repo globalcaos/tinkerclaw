@@ -346,8 +346,36 @@ const exhaustionOf = (
   return binding ? { exhausted: true, resetAtMs: binding.resetAtMs } : {};
 };
 
+// 2026-11-18: refresh-chatgpt-usage.mjs stamps `api_key_status: "error"` (and the gateway passes
+// the reason as `error` from this date) when it cannot read the account, and keeps the last good
+// windows. Those windows roll over into "capacity left", so a dead sign-in read as a live row and
+// Terra stayed pickable for eight days after the 10 November expiry. A sign-in failure (no token
+// on disk, a refresh the server refused, a 401/403) cannot serve: `disconnected`, with the fix in
+// the hover. A passing failure (network, 5xx, 429) keeps the last windows. Without a reason (a
+// gateway older than this) any failure counts: the cross is a warning, the click still goes out.
+const CHATGPT_RELOGIN = "openclaw models auth login --provider openai-codex";
+const CHATGPT_SIGNIN_DEAD = /no oauth tokens|oauth refresh HTTP 4\d\d|^HTTP 40[13]\b/i;
+
+function chatGptSignInDead(chatgpt: JsonRecord): ModelUsageInfo | null {
+  if (asString(chatgpt.api_key_status) !== "error") {
+    return null;
+  }
+  const reason = asString(chatgpt.error);
+  if (reason && !CHATGPT_SIGNIN_DEAD.test(reason)) {
+    return null;
+  }
+  const tooltip = reason
+    ? `ChatGPT sign-in expired (${reason}). Sign in again: ${CHATGPT_RELOGIN}`
+    : `ChatGPT usage check is failing; if the sign-in expired: ${CHATGPT_RELOGIN}`;
+  return { topPct: 100, bottomPct: 100, tooltip, disconnected: true };
+}
+
 function getChatGptUsage(chatgptValue: unknown, nowMs: number): ModelUsageInfo | null {
   const chatgpt = asRecord(chatgptValue);
+  const dead = chatgpt ? chatGptSignInDead(chatgpt) : null;
+  if (dead) {
+    return dead;
+  }
   const models = asRecord(chatgpt?.models);
   if (!chatgpt || !models) {
     return null;

@@ -136,6 +136,8 @@ export const AA_EFFORT_INDEX: Record<string, Partial<Record<AaEffort, number>>> 
   // 2026-11-13: Gemini 4 Hydrogen. AA tags low, medium and high; its untagged headline (53.92) sits ABOVE the tagged
   // high, so unlike Carbon it is not the high rung and is left out here (no effort tag, no stop).
   "gemini-4-hydrogen": { low: 26.8937, medium: 41.233, high: 50.7871, xhigh: 53.9192 }, // 2026-11-15: AA now scores xhigh
+  // 2026-11-19: Gemini 4 Neon. AA files it ONLY by effort tag (no untagged headline row); xhigh 61.3982 is its best.
+  "gemini-4-neon": { low: 44.0832, medium: 54.8623, high: 59.6189, xhigh: 61.3982 },
   "gemini-3-pro": { low: 22.3196, high: 27.958 },
   "glm-5-2": { max: 33.7055 },
   "glm-5-3": { low: 23.1079, max: 31.6534 },

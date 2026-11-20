@@ -5,7 +5,8 @@
 cd "$(dirname "$0")/.." || exit 1
 PROGRESS=${1:-/dev/null}
 RUNS="1-rebuilds:desktop 1-rebuilds:phone 2-apply:desktop 2-apply:phone 3-reload:desktop 3-reload:phone
-4-network:desktop 4-network:phone 5-refusals:desktop 5-refusals:phone 6-two-devices:both 7-writer:desktop 7-writer:phone"
+4-network:desktop 4-network:phone 5-refusals:desktop 5-refusals:phone 6-two-devices:both 7-writer:desktop 7-writer:phone
+8-sent-then-died:desktop 8-sent-then-died:phone"
 total=$(echo $RUNS | wc -w); pass=0; n=0
 for r in $RUNS; do
   t=${r%%:*}; m=${r##*:}; n=$((n + 1))

@@ -148,10 +148,23 @@ export function createAcl(o) {
     return null;
   }
 
+  /** Like resolve(), through the same parent chain, but read-only: a report never writes acl.json. */
+  function peek(key, depth = 0) {
+    const k = canonKey(key, defaultAgent);
+    if (!k) return null;
+    const hit = state.sessions[k];
+    if (hit) return hit;
+    if (depth > MAX_INHERIT_DEPTH) return null;
+    const gw = gatewayStore()[k];
+    const parent = gw && (gw.spawnedBy || gw.parentSessionKey || gw.requesterSessionKey);
+    return typeof parent === "string" ? peek(parent, depth + 1) : null;
+  }
+
   return {
     canon: (key) => canonKey(key, defaultAgent),
     mainKeyFor: (operatorId) => userMainKey(operatorId, defaultAgent),
     entry: (key) => resolve(key),
+    peek: (key) => peek(key),
     /**
      * Decide a request that names `key`: allow (claiming brand-new chats for `user`) or deny.
      * Unknown chats the gateway created without a parent (crons, reflections) are admin-only.

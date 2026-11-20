@@ -47,6 +47,26 @@ describe("scripts/owner-quote-check.sh", () => {
     expect(run(added("a.ts", 'const p = "Ask the user: \\"Continue?\\"";'))).toBe(0);
   });
 
+  it("says how many hits it held back, and prints every one on request (2026-11-17)", () => {
+    // A publish squash held 16 quoted lines; a 20-line cap can hide the rest of a larger one.
+    const many = Array.from({ length: 25 }, (_, i) =>
+      added(`f${i}.ts`, `// (the architect: "line ${i}")`),
+    ).join("");
+    const out = (env: NodeJS.ProcessEnv = {}) =>
+      spawnSync("bash", [SCRIPT], {
+        input: many,
+        encoding: "utf8",
+        env: { ...process.env, ...env },
+      });
+    const capped = out();
+    expect(capped.status).toBe(1);
+    expect(capped.stderr).toContain("5 more (25 in all)");
+    expect(capped.stderr.split("\n").filter((l) => l.startsWith("f")).length).toBe(20);
+    const all = out({ OWNER_QUOTE_ALL: "1" });
+    expect(all.status).toBe(1);
+    expect(all.stderr.split("\n").filter((l) => l.startsWith("f")).length).toBe(25);
+  });
+
   it("ignores the rule's own documentation and honours the bypass", () => {
     expect(run(added("CLAUDE.md", '// FORK <date> (the architect: "example")'))).toBe(0);
     expect(run(added("a.ts", '// (the architect: "x")'), { OWNER_QUOTE_GUARD: "off" })).toBe(0);

@@ -124,6 +124,33 @@ function numOr0(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
+/** A name, status, id or field key cut down to an identifier: a fail line never carries message or situation text. */
+function ident(v: unknown): string {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v !== "string") return "-";
+  return v.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 40) || "-";
+}
+
+/** What an unusable answer was: its field names when it is an object, else its type. */
+function shapeOf(a: unknown): string {
+  if (isRecord(a)) return Object.keys(a).slice(0, 5).map(ident).join("+") || "{}";
+  return a === null ? "null" : Array.isArray(a) ? "array" : typeof a;
+}
+
+/**
+ * One journal line for a failed call whose cause the verdict row cannot keep (added 2026-11-20). In the week to that
+ * day, 304 of 1,878 end-of-turn verdicts were skipped as "error" (16 %, against under 1 % before and after a tool),
+ * and nothing said which branch failed: the state build, the network, the HTTP status, or an answer left out.
+ * Identifiers only (cause, status, error name or type, question ids, an answer's field names): never an error
+ * message, the key or situation text. A missing key and a timeout stay silent; both are counted already.
+ */
+function failLine(cause: string, ids: readonly string[], extra: Record<string, string> = {}): void {
+  const kv = Object.entries(extra)
+    .map(([k, v]) => ` ${k}=${v}`)
+    .join("");
+  console.warn(`[jev] ask failed cause=${cause}${kv} questions=${ids.map(ident).join(",")}`);
+}
+
 export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuestion = JevQuestion> {
   private readonly transport: JevTransport;
   private readonly cache: TtlLru<JevVerdict>;
@@ -176,6 +203,11 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
       state = this.o.buildState(s, qs);
     } catch (err) {
       if (err instanceof Error && err.name === "SendBlocked") return all("not-allowed");
+      failLine(
+        "state",
+        qs.map((q) => q.id),
+        { name: ident(err instanceof Error ? err.name : typeof err) },
+      );
       return all("error");
     }
     if (this.breaker.isOpen()) return all("breaker-open");
@@ -227,7 +259,15 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
       this.breaker.recordFailure();
       this.breakerNote();
       this.o.report?.({ ok: false });
-      fill(err instanceof Error && err.name === "TimeoutError" ? "timeout" : "error");
+      const timedOut = err instanceof Error && err.name === "TimeoutError";
+      if (!timedOut) {
+        failLine(
+          "network",
+          pending.map((i) => qs[i].id),
+          { name: ident(err instanceof Error ? err.name : typeof err) },
+        );
+      }
+      fill(timedOut ? "timeout" : "error");
       return out as JevVerdict[];
     }
 
@@ -237,6 +277,12 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
       this.breaker.recordFailure();
       this.breakerNote();
       this.o.report?.({ ok: false, status: res.status });
+      const e = isRecord(json) && isRecord(json.error) ? json.error : undefined;
+      failLine(
+        res.status !== 200 ? "http" : "no-answers",
+        pending.map((i) => qs[i].id),
+        { status: ident(res.status), ...(e ? { errType: ident(e.type ?? e.code) } : {}) },
+      );
       fill("error");
       return out as JevVerdict[];
     }
@@ -245,17 +291,22 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
     const tin = numOr0(usage.input_tokens) / pending.length;
     const tout = numOr0(usage.output_tokens) / pending.length;
     let anyMissing = false;
+    const missing: string[] = [];
+    const shapes: string[] = [];
     for (const i of pending) {
       const q = qs[i];
       const v = this.toVerdict(s, q, answers[q.id], res.ms, tin, tout);
       if (!v) {
         anyMissing = true;
+        missing.push(q.id);
+        shapes.push(`${ident(q.id)}:${shapeOf(answers[q.id])}`);
         out[i] = this.skipped(s, q, "error");
         continue;
       }
       out[i] = v;
       this.cache.set(keys[i], v);
     }
+    if (anyMissing) failLine("answer", missing, { got: shapes.join(",") });
     if (anyMissing) this.breaker.recordFailure();
     else this.breaker.recordSuccess();
     this.breakerNote();

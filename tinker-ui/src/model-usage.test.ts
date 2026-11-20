@@ -708,3 +708,58 @@ describe("getModelUsage with a reserve Claude account", () => {
     expect(refreshTooltipResets(tip, [LIVE_RESET], NOW).split("\n")[5]).toBe("reset: old");
   });
 });
+
+// 2026-11-18 (the owner: a red cross on every model we cannot route). The shape is the live
+// report of that morning: the sign-in died on 10 November, the producer kept the last windows,
+// and both had rolled over, so Terra read as a live row for eight days.
+describe("a ChatGPT report that cannot read the account", () => {
+  const AFTER_RESETS = Date.parse("2026-11-18T08:00:00.000Z");
+  const report = (extra: Record<string, unknown>) => ({
+    chatgpt: {
+      fetchedAt: "2026-11-18T07:54:56.831Z",
+      models: {
+        "5h": { utilization_pct: 100, resets_at: "2026-11-08T22:53:06.000Z" },
+        Weekly: { utilization_pct: 17, resets_at: "2026-11-14T02:16:05.000Z" },
+      },
+      ...extra,
+    },
+  });
+  const usageOf = (budget: unknown) =>
+    getModelUsage(
+      "openai-codex",
+      "openai-codex/gpt-6-terra",
+      undefined,
+      budget,
+      null,
+      AFTER_RESETS,
+    );
+
+  it("a dead sign-in cannot serve: disconnected, with the re-login in the hover", () => {
+    const usage = usageOf(
+      report({
+        api_key_status: "error",
+        error:
+          "token expired and refresh failed: oauth refresh HTTP 401 (refresh_token_invalidated)",
+      }),
+    );
+    expect(usage?.disconnected).toBe(true);
+    expect(usage?.tooltip).toContain("refresh_token_invalidated");
+    expect(usage?.tooltip).toContain("openclaw models auth login --provider openai-codex");
+  });
+
+  it("a passing network failure keeps the last windows", () => {
+    const usage = usageOf(
+      report({ api_key_status: "error", error: "fetch failed: getaddrinfo EAI_AGAIN" }),
+    );
+    expect(usage?.disconnected).toBeUndefined();
+    expect(usage?.topPct).toBe(100);
+  });
+
+  it("a gateway that sends no reason still crosses the row", () => {
+    expect(usageOf(report({ api_key_status: "error" }))?.disconnected).toBe(true);
+  });
+
+  it("a healthy report is untouched", () => {
+    expect(usageOf(report({ api_key_status: "oauth:plus" }))?.disconnected).toBeUndefined();
+  });
+});

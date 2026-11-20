@@ -85,7 +85,7 @@ export function newPairCodeString() {
   return crypto.randomBytes(12).toString("base64url");
 }
 
-/** "the architect's flip phone" -> "the-architect-s-flip-phone"; never empty. */
+/** "the architect's flip phone" -> "oscar-s-flip-6"; never empty. */
 export function slugify(name) {
   const s = String(name ?? "")
     .normalize("NFKD")

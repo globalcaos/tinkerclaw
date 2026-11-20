@@ -1461,6 +1461,9 @@ export default function register(api: OpenClawPluginApi) {
         return {
           fetchedAt: chatgptData.fetchedAt,
           api_key_status: chatgptData.api_key_status,
+          // 2026-11-18: the reason the producer could not read the account, so the picker can
+          // tell a dead sign-in (red cross) from a passing network failure (model-usage.ts).
+          error: typeof chatgptData.error === "string" ? chatgptData.error : null,
           models,
           plus_limits: chatgptData.plus_subscription_limits || {},
         };

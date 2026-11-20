@@ -118,6 +118,39 @@ describe("hard-rules hook: deletions held only for a side agenda", () => {
     expect(await decide(`${RMRF} /home/someone/src/app/build`)).toBe("deny");
   });
 
+  // 2026-11-17 (the owner asked for own scratch to pass): scratch under /tmp/<name> passes as a
+  // recursive delete also when the delete runs inside quotes (ssh to another machine, bash -c).
+  it("a recursive delete of /tmp scratch passes, also inside ssh or bash -c quotes", async () => {
+    const scratch = "/tmp/jarvis/task/profile";
+    expect(await decide(`${RMRF} ${scratch}`)).toBe("allow");
+    expect(await decide(`ssh -i /home/someone/.ssh/key someone@host '${RMRF} ${scratch}'`)).toBe(
+      "allow",
+    );
+    expect(await decide(`bash -c "${RMRF} ${scratch}"`)).toBe("allow");
+    // still held: a target outside /tmp, /tmp itself, a climb out of it, a second delete elsewhere
+    expect(await decide(`ssh someone@host '${RMRF} /home/someone/src'`)).toBe("deny");
+    expect(await decide(`ssh someone@host '${RMRF} /tmp'`)).toBe("deny");
+    expect(await decide(`ssh someone@host '${RMRF} /tmp/x/../../home/someone'`)).toBe("deny");
+    expect(await decide(`ssh someone@host '${RMRF} ${scratch}' && ${RMRF} /home/someone/src`)).toBe(
+      "deny",
+    );
+  });
+
+  // 2026-11-19: a delete line continued with a trailing backslash had the backslash read as a
+  // target outside /tmp, so own scratch fell through to the side-agenda check and was held (a
+  // sign-in script's clean-up, run by name, 2026-11-18). The shell joins such lines; so does the
+  // check now, and every target on the continued line is still checked.
+  it("a delete of /tmp scratch continued over two lines passes, a target outside /tmp on the second line does not", async () => {
+    const s = "/tmp/jarvis/photos-task";
+    expect(await decide(`${RMF} ${s}/a.txt ${s}/b.txt \\\n    ${s}/c.txt`)).toBe("allow");
+    expect(await decide(`${RMF} ${s}/a.txt \\\n    /home/someone/photos/2019/beach.jpg`)).toBe(
+      "deny",
+    );
+    const script = join(dir, "photos-cleanup.sh");
+    writeFileSync(script, `#!/bin/bash\n${RMF} ${s}/a.txt ${s}/b.txt \\\n    ${s}/c.txt\n`);
+    expect(await decide(`bash ${script}`)).toBe("allow");
+  });
+
   it("with no prompt to compare against, the old hold stays", async () => {
     expect(await decide(`${RMF} ${bundle}`, { tr: empty })).toBe("deny");
   });

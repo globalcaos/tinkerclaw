@@ -24,7 +24,16 @@ export type GSeries = {
   cumulative?: boolean;
   axis?: "left" | "right";
 };
-export type GGroup = { key: string; title: string; series: GSeries[]; accent?: string };
+export type GGroup = {
+  key: string;
+  title: string;
+  series: GSeries[];
+  accent?: string;
+  /** Shown above the others until the user drags the charts into an order of their own. */
+  first?: boolean;
+  /** The first view shows only the last N days; zooming out still reaches the whole series. */
+  spanDays?: number;
+};
 
 const PALETTE = [
   "#8ECAE6",
@@ -61,6 +70,8 @@ const ICONS: Record<string, string> = {
   inbound: "🔗",
   // tinkerclaw UI favicon (the app's own brand mark) for the Website graph.
   website: `<img src="${ASSET_BASE}favicon.png" width="14" height="14" style="vertical-align:-2px;border-radius:3px"/>`,
+  // FORK 2026-11-18 — model tokens per person (panels/token-users.ts).
+  tokens: "🧮",
   npm: "📦",
   // Real YouTube logomark (red rounded rect + white play triangle), sized to the icon slot.
   youtube:
@@ -246,6 +257,8 @@ function yTicks(min: number, max: number, n = 4): number[] {
   return out;
 }
 function fmtNum(v: number): string {
+  // Token counts reach billions (2026-11-18); without this a day of 5 B read "5000M".
+  if (Math.abs(v) >= 1e9) return (v / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
   if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
   if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
@@ -455,9 +468,16 @@ function domainOf(
   return { lo: ticks[0], hi: ticks[ticks.length - 1], ticks };
 }
 
+/** What a chart shows before any zoom: its whole series, or the last `spanDays` of it. */
+function firstView(g: GGroup): { t0: number; t1: number } {
+  const full = fullRange(g);
+  if (!g.spanDays) return full;
+  return { t0: Math.max(full.t0, full.t1 - g.spanDays * DAY), t1: full.t1 };
+}
+
 function viewOf(g: GGroup): { t0: number; t1: number } {
   if (loadLinkX()) return VIEW.get(g.key) ?? longestRange();
-  return VIEW.get(g.key) ?? fullRange(g);
+  return VIEW.get(g.key) ?? firstView(g);
 }
 
 function renderSvg(g: GGroup): string {
@@ -532,7 +552,7 @@ export function renderPresenceGraphsHtml(groups: GGroup[]): string {
   groups = [...groups].sort((a, b) => {
     const ia = ord.indexOf(a.key),
       ib = ord.indexOf(b.key);
-    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    return (ia < 0 ? (a.first ? -1 : 999) : ia) - (ib < 0 ? (b.first ? -1 : 999) : ib);
   });
   return groups.map(chartHtml).join("");
 }
@@ -728,7 +748,8 @@ export function attachPresenceGraphs(container: HTMLElement): void {
     const body = chart.querySelector(".pg-body") as HTMLElement;
     const svgEl = () => body.querySelector("svg") as SVGSVGElement;
     const limit = () => (loadLinkX() ? longestRange() : fullRange(DATA.get(key)!));
-    const win = () => VIEW.get(key) ?? limit();
+    // No zoom yet: start from what the chart shows (its first view), not from the outer limit.
+    const win = () => VIEW.get(key) ?? (loadLinkX() ? limit() : firstView(DATA.get(key)!));
     const plotFrac = (cx: number) => {
       const r = svgEl().getBoundingClientRect();
       return (cx - r.left - (ML / W) * r.width) / ((PW / W) * r.width);

@@ -19,6 +19,7 @@
 import { EFFORT_COST_MULT } from "../../../src/shared/effort-cost-mult.js";
 import { DEFAULT_REL_COST, REL_COST_TABLE } from "../../../src/shared/rel-cost-table.js";
 import { buildEegSpendClock, EEG_LIVE_GRACE_MS } from "./eeg-spend-clock.js";
+import { modelNameAndVersion } from "./model-surface-catalog.js";
 import { vendorOfModel } from "./vendor-marks.js";
 
 // ─── Stops (MUST mirror app.ts THINK_STOPS order exactly) ───
@@ -137,6 +138,129 @@ export function eegGptShade(vendorKey: string): string {
   return (family && EEG_GPT_SHADES[family]) || EEG_PROVIDER_COLORS.openai;
 }
 
+/**
+ * 2026-11-18 (owner): every model a colour of its own — one hue per family, a different shade per model,
+ * so no two models draw the same tone and none is gray. The page ranks each family's models by score and
+ * registers a step per model (setEegModelShades); eegShadeStep spreads the ranks along a golden-ratio
+ * sequence, so the strongest is the darkest and neighbours in rank land far apart (the two or three models
+ * of a family that share the picker). A model the page has not registered paints its family colour. The
+ * named Claude and GPT shades above stay as they are; the other models of those two families take a muted
+ * shade, so none matches one of them. A vendor with no colour of its own gets a hue from its name.
+ */
+let modelShades: ReadonlyMap<string, number> = new Map();
+export function setEegModelShades(shades: ReadonlyMap<string, number>): void {
+  modelShades = shades;
+}
+/** The shade step of the model in rank `rank` of its family (0 = strongest): in [0, 1), never repeating. */
+export function eegShadeStep(rank: number): number {
+  return (rank * 0.6180339887498949) % 1;
+}
+
+function hexToHsl(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.replace("#", ""), 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h =
+    max === r
+      ? ((g - b) / d + (g < b ? 6 : 0)) / 6
+      : max === g
+        ? ((b - r) / d + 2) / 6
+        : ((r - g) / d + 4) / 6;
+  return [h, s, l];
+}
+function hslToHex(h: number, s: number, l: number): string {
+  const f = (k: number): number => {
+    const a = s * Math.min(l, 1 - l);
+    const t = (k + h * 12) % 12;
+    return l - a * Math.max(-1, Math.min(t - 3, 9 - t, 1));
+  };
+  const to = (x: number): string =>
+    Math.round(x * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${to(f(0))}${to(f(8))}${to(f(4))}`.toUpperCase();
+}
+/** `hex` at shade `step` (0 = darkest): same hue, lightness spread over a band around the colour's own. */
+export function eegShadeHex(hex: string, step: number, muted = false): string {
+  const [h, s, l] = hexToHsl(hex);
+  const lo = Math.max(0.24, l - 0.22);
+  const hi = Math.min(0.8, l + 0.22);
+  return hslToHex(h, muted ? s * 0.45 : s, lo + step * (hi - lo));
+}
+/** The four Google stops at shade `step`, for a Gemini model's own rainbow. */
+export function eegGoogleStopsShaded(step: number): string {
+  return ["#4285F4", "#EA4335", "#FBBC05", "#34A853"]
+    .map(
+      (c, i) =>
+        `<stop offset="${[0, 33, 66, 100][i]}%" stop-color="${eegShadeHex(c, 0.15 + step * 0.7)}"/>`,
+    )
+    .join("");
+}
+
+// The vendor a model belongs to when no branch of eegProviderPaint names it: the org segment of a routed id
+// (openrouter/minimax/…), else the first word of the model's name, with known spellings folded together.
+const VENDOR_ALIASES: Record<string, string> = {
+  hy: "tencent",
+  hunyuan: "tencent",
+  minimaxai: "minimax",
+  mimo: "xiaomi",
+  xiaomimimo: "xiaomi",
+  ling: "inclusionai",
+  ring: "inclusionai",
+  step: "stepfun",
+  "stepfun-ai": "stepfun",
+  "motif-technologies": "motif",
+  beam: "reflection",
+  granite: "ibm",
+  "ibm-granite": "ibm",
+  nemotron: "nvidia",
+  "meta-models": "meta",
+};
+const ROUTE_PREFIXES = new Set([
+  "aa",
+  "openrouter",
+  "deepinfra",
+  "claude-code",
+  "openai-codex",
+  "google",
+  "xai",
+  "copilot",
+  "github-copilot",
+  "ollama",
+]);
+function shadeName(model: string): string {
+  return modelNameAndVersion(model.replace(/^aa\//, "aa:")).name;
+}
+function vendorFamily(model: string): string {
+  const segs = model
+    .toLowerCase()
+    .replace(/^aa[:/]/, "")
+    .split("/");
+  const org =
+    segs.length >= 3
+      ? segs[segs.length - 2]
+      : segs.length === 2 && !ROUTE_PREFIXES.has(segs[0])
+        ? segs[0]
+        : "";
+  const v = org || shadeName(model).split("-")[0] || "unknown";
+  return VENDOR_ALIASES[v] ?? v;
+}
+/** A family's colour: its brand colour, else a hue taken from its name (never the neutral gray). */
+export function eegFamilyColor(family: string): string {
+  const own = EEG_PROVIDER_COLORS[family];
+  if (own) return own;
+  let h = 2166136261;
+  for (const ch of family) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return hslToHex(((h >>> 0) % 360) / 360, 0.6, 0.58);
+}
+
 // FORK 2026-06-13 (eeg): infer the brand from EITHER a provider string OR a bare
 // MODEL name — the live trace gets the cc-bridge model id ("claude-fable-5", no
 // "claude-code/" prefix), so providerOf() returns the bare name and a plain
@@ -148,16 +272,47 @@ export function eegGptShade(vendorKey: string): string {
 // "openrouter" — which carries no vendor token at all. Adding the optional
 // `model` argument is the actual fix; the branch below was correct and unreachable.
 // Callers that hold a model id should pass it.
-export function eegProviderPaint(
+/**
+ * A model's paint before its shade: the family colour (or the anchored Claude/GPT shade), the family it
+ * belongs to, and whether a shade may be applied. Branch order is the 2026-06…09 order, unchanged.
+ */
+function eegBasePaint(
   provider: string,
   model?: string,
-): { stroke: string; isRainbow: boolean } {
+): { stroke: string; isRainbow: boolean; family: string; anchored: boolean; muted: boolean } {
   const p = (provider || "").toLowerCase();
+  const m = (model || "").toLowerCase();
   // Vendor resolution looks at provider AND model together, because the vendor
   // token can live in either one depending on the surface.
-  const vendorKey = `${p} ${(model || "").toLowerCase()}`;
-  if (p === "google" || p.startsWith("google") || /gemini|gemma|bison/.test(p)) {
-    return { stroke: "url(#eeg-google)", isRainbow: true };
+  const vendorKey = `${p} ${m}`;
+  // No model named: only a provider ("anthropic", "openai"). The cc-bridge trace passes a bare model
+  // name in the provider slot ("claude-fable-5", "gpt-5.5"); a name with a digit is a model.
+  const noModel = !m && !/\d/.test(p);
+  const fam = (family: string, stroke: string) => ({
+    stroke,
+    isRainbow: false,
+    family,
+    anchored: false,
+    muted: false,
+  });
+  // A local tool call keeps the neutral gray: it is housekeeping, not a model (FORK 2026-06-25).
+  if (p === "tool" || m.startsWith("tool:")) {
+    return { ...fam("tool", EEG_PROVIDER_COLORS.unknown), anchored: true };
+  }
+  // 2026-11-18: also by model id, so a Gemini reached as a trace id (aa/gemini-…) is not painted gray.
+  if (
+    p === "google" ||
+    p.startsWith("google") ||
+    /gemini|gemma|bison/.test(p) ||
+    /(^|[/:\s])(gemini|gemma)/.test(m)
+  ) {
+    return {
+      stroke: "url(#eeg-google)",
+      isRainbow: true,
+      family: "google",
+      anchored: false,
+      muted: false,
+    };
   }
   // FORK 2026-07-30 (the architect): GitHub Copilot BEFORE the claude/gpt regexes — otherwise
   // a full "github-copilot/claude-…" id would paint Anthropic orange, and gpt twins
@@ -168,7 +323,7 @@ export function eegProviderPaint(
     p.startsWith("github-copilot") ||
     p.includes("github-copilot/")
   ) {
-    return { stroke: EEG_PROVIDER_COLORS["github-copilot"], isRainbow: false };
+    return fam("github-copilot", EEG_PROVIDER_COLORS["github-copilot"]);
   }
   // FORK 2026-08-04 (the architect): the OpenRouter vendors resolve by MODEL id, not by
   // provider — every one of them reports provider "openrouter", so a provider-key
@@ -178,7 +333,7 @@ export function eegProviderPaint(
   {
     const vendor = vendorOfModel(vendorKey);
     if (vendor && EEG_PROVIDER_COLORS[vendor]) {
-      return { stroke: EEG_PROVIDER_COLORS[vendor], isRainbow: false };
+      return fam(vendor, EEG_PROVIDER_COLORS[vendor]);
     }
   }
   // FORK 2026-09-02: the Fable 5.1 trace should take the Claude orange.
@@ -196,17 +351,48 @@ export function eegProviderPaint(
     p === "anthropic" ||
     /claude|fable|opus|sonnet|haiku/.test(vendorKey)
   ) {
-    return { stroke: eegClaudeShade(vendorKey), isRainbow: false };
+    // Fable, Opus, Sonnet and Haiku keep their named shade; any other Claude MODEL takes a muted one.
+    // A call that names no model (the provider alone) is the brand, not a model: brand colour.
+    const named = noModel || /fable|mythos|opus|sonnet|haiku/.test(vendorKey);
+    return { ...fam("anthropic", eegClaudeShade(vendorKey)), anchored: named, muted: !named };
   }
   if (p === "openai" || /gpt|codex|(^|[^a-z])o\d/.test(vendorKey)) {
-    return { stroke: eegGptShade(vendorKey), isRainbow: false };
+    // Astra, Sol, Terra and Luna keep their named shade; any other GPT MODEL takes a muted one.
+    const named = noModel || /\b(astra|sol|terra|luna)\b/.test(vendorKey);
+    return { ...fam("openai", eegGptShade(vendorKey)), anchored: named, muted: !named };
   }
-  if (/grok|xai|x-ai/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.xai, isRainbow: false };
-  if (/deepseek/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.deepseek, isRainbow: false };
-  if (/mistral|mixtral/.test(vendorKey))
-    return { stroke: EEG_PROVIDER_COLORS.mistral, isRainbow: false };
-  if (/llama|meta/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.meta, isRainbow: false };
-  return { stroke: EEG_PROVIDER_COLORS[p] ?? EEG_PROVIDER_COLORS.unknown, isRainbow: false };
+  if (/grok|xai|x-ai/.test(vendorKey)) return fam("xai", EEG_PROVIDER_COLORS.xai);
+  if (/deepseek/.test(vendorKey)) return fam("deepseek", EEG_PROVIDER_COLORS.deepseek);
+  if (/mistral|mixtral/.test(vendorKey)) return fam("mistral", EEG_PROVIDER_COLORS.mistral);
+  // 2026-11-18: Muse is Meta's line (aa/muse-wonder-full carries no "meta").
+  if (/llama|meta|muse/.test(vendorKey)) return fam("meta", EEG_PROVIDER_COLORS.meta);
+  if (EEG_PROVIDER_COLORS[p]) return fam(p, EEG_PROVIDER_COLORS[p]);
+  // No model named and no known provider: nothing to colour, the neutral gray.
+  if (noModel) return { ...fam("unknown", EEG_PROVIDER_COLORS.unknown), anchored: true };
+  const family = vendorFamily(model || provider);
+  return fam(family, eegFamilyColor(family));
+}
+
+/** The registry key of a model's shade (setEegModelShades), or null when its colour is fixed. */
+export function eegShadeKeyOf(provider: string, model?: string): string | null {
+  const base = eegBasePaint(provider, model);
+  return base.anchored ? null : `${base.family}|${shadeName(model || provider)}`;
+}
+
+export function eegProviderPaint(
+  provider: string,
+  model?: string,
+): { stroke: string; isRainbow: boolean; rainbowShade?: number } {
+  const base = eegBasePaint(provider, model);
+  if (base.anchored) return { stroke: base.stroke, isRainbow: base.isRainbow };
+  const step = modelShades.get(`${base.family}|${shadeName(model || provider)}`);
+  if (base.isRainbow) {
+    return step === undefined
+      ? { stroke: base.stroke, isRainbow: true }
+      : { stroke: base.stroke, isRainbow: true, rainbowShade: step };
+  }
+  if (step === undefined && !base.muted) return { stroke: base.stroke, isRainbow: false };
+  return { stroke: eegShadeHex(base.stroke, step ?? 0.5, base.muted), isRainbow: false };
 }
 
 // FORK 2026-06-25 (the architect scope C): a tool call branches off the trunk colored +
@@ -465,21 +651,21 @@ export const EEG_COST_COMPARE_LABEL = "Grok";
  * When a price legitimately changes, update the number here — that is the whole ritual.
  */
 export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
-  ["z-ai/glm-5.3-flash", 0.41], // re-priced 2026-10-27 live endpoints (was 0.44px). re-priced 2026-10-26 live endpoints (was 0.41px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 0.5px)
+  ["z-ai/glm-5.3-flash", 0.46], // re-priced 2026-11-20 live endpoints (was 0.41px; Relace $0.0784, +11.8%). re-priced 2026-10-27 live endpoints (was 0.44px). re-priced 2026-10-26 live endpoints (was 0.41px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 0.5px)
   ["codex/gpt-5.6-luna", 0.48], // off the floor since the 2026-09-23 measured-seat re-base
   ["claude-haiku-4-5", 0.57], // 2026-10-10 seat re-measurement (was 0.66); off the floor since the 2026-09-23 measured-seat re-base
   ["xai/grok-4.5", 0.68], // 2026-10-10 seat re-measurement (was 0.79); off the floor since the 2026-09-23 measured-seat re-base
   ["deepseek/deepseek-v4-flash-0731", 0.87], // re-priced 2026-10-26 live endpoints (was 0.78px). 0.1333 (Baidu fp8, -11%; was Sail Research $0.15) — re-checked 2026-10-24 live endpoints (was 0.87px)
   ["claude-sonnet-5", 1.14], // 2026-10-10 seat re-measurement (was 1.32); 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4.1-flash", 1.18], // 0.2028 (Baidu fp8, +13%; was Decart $0.18) — re-checked 2026-11-14 live endpoints
+  ["deepseek/deepseek-v4.1-flash", 1.95], // 0.336 (DeepInfra, our route; Baidu seat gone, +66%) — re-checked 2026-11-20 live endpoints. Was 1.18px at 0.2028 (Baidu fp8) on 2026-11-14
   ["claude-opus-4-8", 2.84], // 2026-10-10 seat re-measurement (was 3.31); 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4-flash-vision-exp", 3.01], // re-priced 2026-11-19 (was 3.76px): 0.5174 DeepInfra cheapest. Earlier: 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
   ["tencent/hy3", 3.07], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
-  ["deepseek/deepseek-v4-flash-vision-exp", 3.76], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
   ["xiaomi/mimo-v2.6-pro", 4.3], // 0.7395 (GMICloud bf16, −5.6%; was 0.783 DeepInfra via OR) — re-checked 2026-10-28 live endpoints
   ["codex/gpt-5.6-terra", 4.77], // 2026-09-23 measured-seat re-base
   ["minimax/minimax-m3", 5.12], // re-priced 2026-10-27 live endpoints (was 5.58px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
   ["claude-fable-5", 5.68], // 2026-10-10 seat re-measurement (was 6.62); 2026-09-23 measured-seat re-base
-  ["qwen/qwen3.8-27b", 7.27], // re-priced 2026-10-26 live endpoints (was 2.91px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
+  ["qwen/qwen3.8-27b", 6.1], // re-priced 2026-11-19 (was 7.27px): 1.05 StreamLake cheapest, was Chutes $1.25. Earlier: re-priced 2026-10-26 live endpoints (was 2.91px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
   ["z-ai/glm-5.3", 8.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
   ["z-ai/glm-5.2", 8.37], // re-priced 2026-10-26 live endpoints (was 3.45px). 0.594 (Baidu fp8, -59%; was DeepInfra, our route, $1.44) — re-checked 2026-10-24 live endpoints (was 8.37px)
   ["moonshotai/kimi-k2.6", 10.47], // re-priced 2026-10-27 live endpoints (was 11.34px). re-priced 2026-10-26 live endpoints (was 11.0px). 1.892 (Baidu, -3%; was Chutes $1.95) — re-checked 2026-10-25 live endpoints (was 11.34px). Earlier: 1.95 (Chutes, -19%; was DigitalOcean $2.40) — re-checked 2026-10-14 live endpoints
@@ -610,21 +796,21 @@ export const EEG_COST_LOG_PX_FLOOR = 0.375; // tool:local + anything under the r
  */
 export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["tool:local", 0.38],
-  ["z-ai/glm-5.3-flash", 7.23], // re-priced 2026-10-27 live endpoints (was 7.49px). re-priced 2026-10-26 live endpoints (was 7.21px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 7.87px). Earlier: 0.16 (OpenInference, −20%; was $0.20) — re-checked 2026-10-24 live endpoints
+  ["z-ai/glm-5.3-flash", 7.6], // re-priced 2026-11-20 live endpoints (was 7.23px; Relace $0.0784, +11.8%). re-priced 2026-10-27 live endpoints (was 7.49px). re-priced 2026-10-26 live endpoints (was 7.21px). 0.0698 (OpenInference, -18%; was Relace $0.0852) — re-checked 2026-10-25 live endpoints (was 7.87px). Earlier: 0.16 (OpenInference, −20%; was $0.20) — re-checked 2026-10-24 live endpoints
   ["codex/gpt-5.6-luna", 7.75], // 2026-09-23 measured-seat re-base
   ["claude-haiku-4-5", 8.33], // 2026-10-10 seat re-measurement (was 8.83); 2026-09-23 measured-seat re-base
   ["xai/grok-4.5", 8.93], // 2026-10-10 seat re-measurement (was 9.44); 2026-09-23 measured-seat re-base
   ["deepseek/deepseek-v4-flash-0731", 9.75], // re-priced 2026-10-26 live endpoints (was 9.35px). 0.15 (Sail Research fp4, -17%; was DeepInfra, our route, $0.18) — re-checked 2026-10-24 live endpoints
   ["claude-sonnet-5", 10.62], // 2026-10-10 seat re-measurement (was 11.13); 2026-09-23 measured-seat re-base
-  ["deepseek/deepseek-v4.1-flash", 10.74], // 0.2028 (Baidu fp8, +13%; was Decart $0.18) — re-checked 2026-11-14 live endpoints
+  ["deepseek/deepseek-v4.1-flash", 12.42], // 0.336 (DeepInfra, our route; Baidu seat gone, +66%) — re-checked 2026-11-20 live endpoints. Was 10.74px at 0.2028 (Baidu fp8) on 2026-11-14
   ["claude-opus-4-8", 13.66], // 2026-10-10 seat re-measurement (was 14.16); 2026-09-23 measured-seat re-base
+  ["deepseek/deepseek-v4-flash-vision-exp", 13.85], // re-priced 2026-11-19 (was 14.59px): 0.5174 DeepInfra cheapest. Earlier: 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
   ["tencent/hy3", 13.91], // 0.528 — re-checked 2026-09-19 live (Tencent took cheapest back; DeepInfra $0.435 gone)
-  ["deepseek/deepseek-v4-flash-vision-exp", 14.59], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest) · 2026-09-23: now read from the shared table (the eeg copy had drifted)
   ["xiaomi/mimo-v2.6-pro", 15.03], // 0.7395 (GMICloud bf16, −5.6%; was 0.783 DeepInfra via OR) — re-checked 2026-10-28 live endpoints
   ["codex/gpt-5.6-terra", 15.38], // 2026-09-23 measured-seat re-base
   ["minimax/minimax-m3", 15.61], // re-priced 2026-10-27 live endpoints (was 15.89px). 0.96 (CoreWeave, −20% vs the OR list the table carried) — re-checked 2026-10-01 live endpoints
   ["claude-fable-5", 15.95], // 2026-10-10 seat re-measurement (was 16.46); 2026-09-23 measured-seat re-base
-  ["qwen/qwen3.8-27b", 16.77], // re-priced 2026-10-26 live endpoints (was 13.73px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
+  ["qwen/qwen3.8-27b", 16.19], // re-priced 2026-11-19 (was 16.77px): 1.05 StreamLake cheapest, was Chutes $1.25. Earlier: re-priced 2026-10-26 live endpoints (was 13.73px). 0.5 (Tenstorrent fp4, -60%; was Chutes $1.25) — re-checked 2026-10-16 live endpoints
   ["z-ai/glm-5.3", 17.14], // 1.4 (Wafer fp4, -7%; was Sail Research $1.505) — re-checked 2026-10-19 live endpoints
   ["z-ai/glm-5.2", 17.24], // re-priced 2026-10-26 live endpoints (was 14.3px). 1.44 (DeepInfra, our route, -20%; was $1.80) — re-checked 2026-10-24 live endpoints
   ["deepseek/deepseek-v4-pro", 17.37], // re-priced 2026-10-26 live endpoints (was 13.12px). 0.4157 (Baidu, -78%; was StreamLake $1.8966) — re-checked 2026-10-25 live endpoints (was 18.15px). Earlier: 1.8966 (StreamLake still cheapest, +126% vs $0.8376; GMICloud $1.914 next) — re-checked 2026-10-10 live endpoints
@@ -702,6 +888,8 @@ export interface EegPaint {
    *  where linear both clips at the top and floors at the bottom. See the FORK
    *  2026-08-28 block above eegCostWidthLogPx. */
   logWidth: number;
+  /** 2026-11-18: a Gemini model's own shade of the rainbow (eegGoogleStopsShaded), when registered. */
+  rainbowShade?: number;
 }
 
 /** THE central point: run descriptor → EEG color + thickness (both scales). */
@@ -709,7 +897,13 @@ export function resolveEegPaint(run: EegRun): EegPaint {
   const paint = eegProviderPaint(run.provider ?? "", run.model);
   const width = eegCostWidthPx(run.model, run.effort ?? "", run.provider);
   const logWidth = eegCostWidthLogPx(run.model, run.effort ?? "", run.provider);
-  return { stroke: paint.stroke, isRainbow: paint.isRainbow, width, logWidth };
+  return {
+    stroke: paint.stroke,
+    isRainbow: paint.isRainbow,
+    width,
+    logWidth,
+    ...(paint.rainbowShade === undefined ? {} : { rainbowShade: paint.rainbowShade }),
+  };
 }
 
 // FORK 2026-08-06 #2: thinking progress shows in several places (chat, tab title,

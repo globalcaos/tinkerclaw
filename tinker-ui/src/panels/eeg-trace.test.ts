@@ -44,6 +44,11 @@ import {
   eegOwnTurnWindows,
   eegInWindows,
   eegSplitTurnGhosts,
+  eegShadeHex,
+  eegShadeKeyOf,
+  eegShadeStep,
+  eegFamilyColor,
+  setEegModelShades,
 } from "./eeg-trace";
 
 const T0 = 1_750_000_000_000;
@@ -52,6 +57,8 @@ const ANTHROPIC_STROKE = "#E8702A";
 const FABLE_STROKE = "#B8321A";
 const SONNET_STROKE = "#F0A63C";
 const FALLBACK_GRAY = "#8A8F98";
+// 2026-11-18: a GPT with no codename is a model of its own, a muted green, never Sol's exact tone.
+const PLAIN_GPT_STROKE = eegShadeHex("#10A37F", 0.5, true);
 const WIDTH = 300;
 
 const sample = (over: Partial<EegSample> & { runId: string }): EegSample => ({
@@ -1100,7 +1107,7 @@ describe("eegProviderPaint", () => {
     expect(eegProviderPaint("openai-codex", "gpt-6.1-sol").stroke).toBe("#10A37F");
     expect(eegProviderPaint("openai-codex", "gpt-6.1-terra").stroke).toBe("#4FC49D");
     expect(eegProviderPaint("openai-codex", "gpt-6-luna").stroke).toBe("#A8E2CB");
-    expect(eegProviderPaint("openai-codex", "gpt-5.5").stroke).toBe("#10A37F");
+    expect(eegProviderPaint("openai-codex", "gpt-5.5").stroke).toBe(PLAIN_GPT_STROKE);
     expect(eegProviderPaint("github-copilot", "gpt-5.5").stroke).not.toMatch(/^#(0A5C47|10A37F)$/);
   });
   it("google is the rainbow provider", () => {
@@ -1117,7 +1124,7 @@ describe("eegProviderPaint", () => {
     expect(eegProviderPaint("claude-fable-5").stroke).toBe(FABLE_STROKE);
     expect(eegProviderPaint("claude-opus-4-8").stroke).toBe(ANTHROPIC_STROKE);
     expect(eegProviderPaint("gemini-3.1-pro").isRainbow).toBe(true);
-    expect(eegProviderPaint("gpt-5.5").stroke).toBe(EEG_PROVIDER_COLORS.openai);
+    expect(eegProviderPaint("gpt-5.5").stroke).toBe(PLAIN_GPT_STROKE);
   });
 
   it("unknown providers fall back to gray, non-rainbow", () => {
@@ -1140,8 +1147,9 @@ describe("eegProviderPaint", () => {
     // architect banned OpenRouter routes for vendors we hold a direct subscription
     // with and that id left the catalog. The leg locks the BRAND SEGMENT of a routed
     // id, not the model, so it keeps its assertion under a live id.
+    // 2026-11-18: an OpenAI model with no codename draws the muted OpenAI green (still the brand).
     expect(eegProviderPaint("openrouter", "openrouter/openai/gpt-5.4").stroke).toBe(
-      EEG_PROVIDER_COLORS.openai,
+      PLAIN_GPT_STROKE,
     );
     expect(eegProviderPaint("openrouter", "openrouter/x-ai/grok-4.6").stroke).toBe(
       EEG_PROVIDER_COLORS.xai,
@@ -2450,9 +2458,11 @@ describe("resolveEegPaint — the central point (the architect 2026-08-06)", () 
     expect(full).toEqual(bare);
   });
 
-  it("an unrecognized openrouter model falls back to gray + default, never throws", () => {
+  // 2026-11-18 (the owner): every model a colour, none gray — an unknown vendor gets a hue of its own.
+  it("an unrecognized openrouter model gets its vendor's own hue + default width, never throws", () => {
     const unk = resolveEegPaint({ model: "acme/mystery-9b", provider: "openrouter" });
-    expect(unk.stroke).toBe("#8A8F98");
+    expect(unk.stroke).toBe(eegFamilyColor("acme"));
+    expect(unk.stroke).not.toBe("#8A8F98");
     expect(unk.width).toBeGreaterThan(EEG_COST_PX_FLOOR);
   });
 
@@ -2664,15 +2674,66 @@ describe("GPT codenames: one green, one tone each", () => {
     expect(tone("openai-codex/gpt-6-luna")).toBe(EEG_GPT_SHADES.luna);
     expect(new Set(Object.values(EEG_GPT_SHADES)).size).toBe(4);
   });
-  it("a GPT with no codename keeps the brand green, and solar-pro is not Sol", () => {
-    expect(tone("openai-codex/gpt-5.5")).toBe("#10A37F");
-    expect(tone("openrouter/openai/gpt-5.4", "openrouter")).toBe("#10A37F");
+  it("a GPT with no codename takes a muted green, never Sol's tone, and solar-pro is not Sol", () => {
+    expect(tone("openai-codex/gpt-5.5")).toBe(PLAIN_GPT_STROKE);
+    expect(tone("openai-codex/gpt-5.5")).not.toBe(EEG_GPT_SHADES.sol);
+    expect(tone("openrouter/openai/gpt-5.4", "openrouter")).toBe(PLAIN_GPT_STROKE);
     expect(eegProviderPaint("openrouter", "openrouter/upstage/solar-pro4").stroke).not.toBe(
       EEG_GPT_SHADES.sol,
     );
     expect(eegProviderPaint("github-copilot", "github-copilot/gpt-6-astra").stroke).not.toBe(
       EEG_GPT_SHADES.astra,
     );
+  });
+});
+
+// 2026-11-18 (the owner): every model a colour, no two on the same tone; a family shares its hue in
+// different shades. The page registers each family's ranking (setEegModelShades); these lock the paint side.
+describe("every model its own shade of its family colour", () => {
+  const kimi = "deepinfra/moonshotai/Kimi-K3";
+  const kimiPro = "openrouter/moonshotai/kimi-k3.1-pro";
+  it("two models of one family draw two shades of the same family colour", () => {
+    setEegModelShades(
+      new Map([
+        [eegShadeKeyOf("deepinfra", kimi)!, eegShadeStep(0)],
+        [eegShadeKeyOf("openrouter", kimiPro)!, eegShadeStep(1)],
+      ]),
+    );
+    const a = eegProviderPaint("deepinfra", kimi).stroke;
+    const b = eegProviderPaint("openrouter", kimiPro).stroke;
+    setEegModelShades(new Map());
+    expect(a).not.toBe(b);
+    expect(a).toBe(eegShadeHex(EEG_PROVIDER_COLORS.kimi, eegShadeStep(0)));
+    expect(b).toBe(eegShadeHex(EEG_PROVIDER_COLORS.kimi, eegShadeStep(1)));
+  });
+  it("each Gemini model gets its own shade of the rainbow", () => {
+    setEegModelShades(
+      new Map([
+        [eegShadeKeyOf("google", "google/gemini-4-carbon")!, eegShadeStep(0)],
+        [eegShadeKeyOf("google", "google/gemini-4-argon")!, eegShadeStep(1)],
+      ]),
+    );
+    const carbon = eegProviderPaint("google", "google/gemini-4-carbon");
+    const argon = eegProviderPaint("google", "google/gemini-4-argon");
+    setEegModelShades(new Map());
+    expect(carbon.isRainbow && argon.isRainbow).toBe(true);
+    expect(carbon.rainbowShade).not.toBe(argon.rainbowShade);
+  });
+  it("the named Claude and GPT shades never move, and a local tool stays gray", () => {
+    expect(eegShadeKeyOf("claude-code", "claude-code/claude-opus-5-5")).toBeNull();
+    expect(eegShadeKeyOf("openai-codex", "openai-codex/gpt-6.1-terra")).toBeNull();
+    expect(eegProviderPaint("tool", "tool:local").stroke).toBe(FALLBACK_GRAY);
+  });
+  it("a vendor with no colour of its own gets a hue, never gray (Tencent Hy4, MiniMax)", () => {
+    for (const id of ["deepinfra/tencent/Hy4-preview", "openrouter/minimax/minimax-m3.1-flash"]) {
+      expect(eegProviderPaint(id.split("/")[0], id).stroke).not.toBe(FALLBACK_GRAY);
+    }
+  });
+  it("shade steps never repeat, and neighbours in rank sit far apart", () => {
+    const steps = Array.from({ length: 60 }, (_, i) => eegShadeStep(i));
+    expect(new Set(steps).size).toBe(60);
+    expect(Math.abs(steps[0] - steps[1])).toBeGreaterThan(0.2);
+    expect(Math.abs(steps[1] - steps[2])).toBeGreaterThan(0.2);
   });
 });
 

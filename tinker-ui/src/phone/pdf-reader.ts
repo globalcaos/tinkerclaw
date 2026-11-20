@@ -35,11 +35,100 @@ export async function servePdf(path: string, f: Fetch = fetch): Promise<string> 
 }
 
 /** The served path of the PDF read last, or null when nothing was opened yet. */
-export async function lastPdf(f: Fetch = fetch): Promise<string | null> {
-  const r = await f(`${PDF_BASE}/api/history`, { cache: "no-store" });
+export async function lastPdf(f: Fetch = fetch, signal?: AbortSignal): Promise<string | null> {
+  const r = await f(`${PDF_BASE}/api/history`, { cache: "no-store", signal });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const { files } = (await r.json()) as { files?: { path: string }[] };
   return files?.[0]?.path ?? null;
+}
+
+// FORK 2026-11-20: 📄 opens without the Pi. Its first step asked the Pi which file was read last, with no
+// time limit: a phone whose link to the Pi was down or stalled got no reader and no sign, although the
+// viewer and the chapters are kept on the phone for that case (apps/pdf-review sw.js). The viewer's
+// worker cannot cover this call, the Tinker page is outside its scope, so the same rule is applied here:
+// the Pi first, then what this device holds.
+
+/** How long 📄 waits for the Pi to name the file read last. A working link answers in about 0.1 s
+ *  (measured from the phone over a relayed link); after this the file this device read last opens,
+ *  which is nearly always the same one. */
+export const PI_WAIT_MS = 1500;
+
+/** The viewer writes it for every file it opens on this device (apps/pdf-review viewer/web/autoreload.js
+ *  keepOpened), and its own offline page opens the same one. The Tinker page shares the viewer's origin. */
+const LAST_KEY = "pdfreview.last";
+
+/** The served path this device read last, or null (nothing yet, or storage is closed). */
+export function lastPdfHere(): string | null {
+  try {
+    return localStorage.getItem(LAST_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** `lastPdf`, given up after `ms`. The unanswered call is aborted: left open, a few presses on a dead
+ *  link would hold every connection this page has to the door. */
+function lastPdfWithin(ms: number, f: Fetch): Promise<string | null> {
+  const stop = new AbortController();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const late = new Error(`no answer in ${ms} ms`);
+      stop.abort(late);
+      reject(late);
+    }, ms);
+    lastPdf(f, stop.signal)
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+type OpenLine = {
+  /** pi: the Pi named the file. kept: it did not, this device's last file opened. recent: neither, the
+   *  Recent list opened. link: a tapped file link. */
+  via: "pi" | "kept" | "recent" | "link";
+  path?: string | null;
+  /** Why the Pi's answer was not used, or why a link did not open. */
+  why?: string;
+  ms: number;
+};
+const LOG_KEY = "tinker.pdfReaderLog";
+
+/** One line per attempt to open the reader, in the viewer's own log on the Pi
+ *  (~/.local/state/pdf-review.log: `grep -a reader-open`), so a reader that did not open can be read
+ *  there instead of guessed. A line the Pi could not take waits on this device and goes with the next. */
+function logOpen(line: OpenLine, f: Fetch): void {
+  try {
+    const waiting = JSON.parse(localStorage.getItem(LOG_KEY) ?? "[]") as unknown[];
+    const batch = [
+      ...waiting,
+      {
+        id: "tinker",
+        event: "reader-open",
+        at: new Date().toISOString().slice(0, 19) + "Z",
+        ...line,
+      },
+    ].slice(-20);
+    localStorage.setItem(LOG_KEY, JSON.stringify(batch));
+    void f(`${PDF_BASE}/api/clientlog`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batch),
+      keepalive: true,
+    })
+      .then((r) => {
+        if (!r.ok) return;
+        // Only what was sent goes: a press made meanwhile has its own line here.
+        const sent = new Set(batch.map((l) => JSON.stringify(l)));
+        const left = (JSON.parse(localStorage.getItem(LOG_KEY) ?? "[]") as unknown[]).filter(
+          (l) => !sent.has(JSON.stringify(l)),
+        );
+        if (left.length) localStorage.setItem(LOG_KEY, JSON.stringify(left));
+        else localStorage.removeItem(LOG_KEY);
+      })
+      .catch(() => {});
+  } catch {
+    // the log must never stop the reader (storage closed or full)
+  }
 }
 
 export function pdfReaderOpen(doc: Document = document): boolean {
@@ -76,14 +165,42 @@ export function showPdfReader(
   return layer;
 }
 
-/** Open `path` (a file on the gateway's disk) or, with null, the PDF read last. */
+/** Open `path` (a file on the gateway's disk) or, with null, the PDF read last. A file link needs the
+ *  Pi to serve the file, so it still fails when the Pi is out of reach; the PDF read last does not
+ *  (above): it opens from this device and never throws for a Pi that is silent. */
 export async function openPdfReader(
   path: string | null,
   f: Fetch = fetch,
   doc: Document = document,
 ): Promise<void> {
-  const where = path ? await servePdf(path, f) : await lastPdf(f);
+  const t0 = Date.now();
+  const reason = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  if (path) {
+    try {
+      const where = await servePdf(path, f);
+      showPdfReader(pdfViewerUrl(where), doc);
+      logOpen({ via: "link", path: where, ms: Date.now() - t0 }, f);
+    } catch (err) {
+      logOpen({ via: "link", why: reason(err), ms: Date.now() - t0 }, f);
+      throw err;
+    }
+    return;
+  }
+  let where: string | null;
+  let why: string | undefined;
+  try {
+    where = await lastPdfWithin(PI_WAIT_MS, f);
+  } catch (err) {
+    why = reason(err);
+    where = lastPdfHere();
+    console.warn(
+      "[phone] the Pi did not name the PDF read last; opening what this device holds",
+      why,
+    );
+  }
   showPdfReader(pdfViewerUrl(where), doc);
+  const via = why === undefined ? "pi" : where ? "kept" : "recent";
+  logOpen({ via, path: where, why, ms: Date.now() - t0 }, f);
 }
 
 /** FORK 2026-10-28 (a comment marker accepts a voice note dictated into its text

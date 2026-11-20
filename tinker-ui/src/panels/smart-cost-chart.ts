@@ -794,6 +794,9 @@ export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   { match: /gpt-6\.1-sol/i, out: 10 },
   // FORK 2026-10-27: gpt-6.1-terra, $1/$5 (OpenRouter live catalog 2026-10-27).
   { match: /gpt-6\.1-terra/i, out: 5 },
+  // FORK 2026-11-18: gpt-6.2-astra $8/$40 and gpt-6.2-sol $2/$10 (OpenRouter live catalog).
+  { match: /gpt-6\.2-astra/i, out: 40 },
+  { match: /gpt-6\.2-sol/i, out: 10 },
   { match: /gpt-6-sol/i, out: 10 },
   { match: /gpt-6-luna/i, out: 0.5 },
   { match: /5\.6-sol/i, out: 20 },

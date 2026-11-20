@@ -828,6 +828,26 @@ export const SC_FACTS: { match: RegExp; facts: ModelFacts }[] = [
   //    generic /gpt-5|gpt-4/ row below, which would otherwise never be reached for them
   //    anyway — but the ordering hazard is real for the dossier rules, so it is mirrored
   //    here rather than left to luck.
+  // GPT-6.2 (2026-11-18, AA scored both; no seat or paid route works yet, so they ride the unrouted list). Price and
+  // window are the OpenRouter catalog's of that day; WebDev and omniscience are NOT carried over from GPT-6 Astra.
+  {
+    match: /gpt-6\.2-astra/i,
+    facts: {
+      refusal: [17.67, "GPT-4o, same policy family"],
+      price: [8, 40],
+      ctx: 1_050_000,
+      as: "price and window per the OpenRouter catalog, 2026-11-18; no WebDev or omniscience mark measured yet",
+    },
+  },
+  {
+    match: /gpt-6\.2-sol/i,
+    facts: {
+      refusal: [17.67, "GPT-4o, same policy family"],
+      price: [2, 10],
+      ctx: 1_050_000,
+      as: "price and window per the OpenRouter catalog, 2026-11-18",
+    },
+  },
   {
     match: /gpt-6-astra/i,
     facts: {
@@ -4438,6 +4458,25 @@ export const SC_DOSSIER_RULES: { match: RegExp; entry: DossierEntry }[] = [
   // Codex harness row would claim all three GPT-6 tiers and paint a code-specialist
   // profile on a general flagship. Same ordering hazard as the abliterated rows at
   // the top of this list, one rule further down the file.
+  // GPT-6.2: skill grades are inherited from the GPT-6 family rows below until a measurement exists (JUDGED, not graded).
+  {
+    match: /gpt-6\.2-astra/i,
+    entry: {
+      bloc: "US",
+      best: "Top of the Artificial Analysis Intelligence Index at 62.1 (max effort), 5.3 points above GPT-6 Astra",
+      skills: withVerticals(GPT6_ASTRA_SKILLS, "gpt6astra"),
+      topics: OPENAI_TOPICS,
+    },
+  },
+  {
+    match: /gpt-6\.2-sol/i,
+    entry: {
+      bloc: "US",
+      best: "Artificial Analysis Intelligence Index 57.3 (max effort), 2.6 points above GPT-6.1 Sol at the same $2/$10",
+      skills: withVerticals(GPT6_SOL_SKILLS, "gpt6sol"),
+      topics: OPENAI_TOPICS,
+    },
+  },
   {
     match: /gpt-6-astra/i,
     entry: {

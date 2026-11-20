@@ -21,6 +21,16 @@ spoken=$(printf '%s\n' "$diff_lines" | awk -F': ' '{f=$1; l=substr($0, length(f)
 hits=$(printf '%s\n%s' "$hits" "$spoken" | sed '/^$/d')
 if [[ -n "$hits" ]]; then
   echo "🛑 owner-quote-check: these added lines paste the owner's words; describe the need in neutral words instead:" >&2
-  echo "$hits" | head -20 >&2
+  # FORK 2026-11-17: a publish squash can hold more than 20 hits; say how many were held back, and
+  # print every one with OWNER_QUOTE_ALL=1 so one pass finds them all.
+  n=$(printf '%s\n' "$hits" | wc -l)
+  if [[ "${OWNER_QUOTE_ALL:-}" == "1" ]]; then
+    echo "$hits" >&2
+  else
+    echo "$hits" | head -20 >&2
+    if (( n > 20 )); then
+      echo "… and $((n - 20)) more ($n in all). OWNER_QUOTE_ALL=1 prints every one." >&2
+    fi
+  fi
   exit 1
 fi
